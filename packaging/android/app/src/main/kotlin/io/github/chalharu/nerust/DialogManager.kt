@@ -59,16 +59,21 @@ class DialogManager(private val activity: MainActivity) {
         "dialogTag=$tag, dialog=${dialog.debugDialogState()}, " +
             "dialogRoot=${rootView.debugViewState()}, dialogCompose=${composeView.debugViewState()}"
 
+    /** Key routing while the dialog window holds focus (activity dispatch
+     * never fires in that state). Back resolves first; the rest is optional. */
+    data class KeyActions(
+        val onBackPressed: (() -> Boolean)? = null,
+        // Invoked for non-Back keys.
+        val onKeyEvent: ((keyCode: Int, event: KeyEvent) -> Boolean)? = null,
+    )
+
     fun show(
         dialogTag: String,
         contentDescription: String,
         presentation: String,
         onDismiss: () -> Unit,
         ownedByTest: Boolean = false,
-        onBackPressed: (() -> Boolean)? = null,
-        // Invoked for non-Back keys while the dialog window holds focus;
-        // the activity's dispatchKeyEvent never fires in that state.
-        onKeyEvent: ((keyCode: Int, event: KeyEvent) -> Boolean)? = null,
+        keys: KeyActions = KeyActions(),
         content: @Composable (dismiss: () -> Unit) -> Unit,
     ) {
         dismiss(notifyDismiss = !this.ownedByTest)
@@ -104,9 +109,9 @@ class DialogManager(private val activity: MainActivity) {
                 setCanceledOnTouchOutside(true)
                 setOnKeyListener { _, keyCode, event ->
                     if (keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) {
-                        onBackPressed?.invoke() == true
+                        keys.onBackPressed?.invoke() == true
                     } else {
-                        onKeyEvent?.invoke(keyCode, event) == true
+                        keys.onKeyEvent?.invoke(keyCode, event) == true
                     }
                 }
             }

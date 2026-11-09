@@ -686,34 +686,37 @@ class MainActivity :
                 ),
             presentation = DIALOG_PRESENTATION_FULL_SCREEN,
             ownedByTest = ownedByTest,
-            onKeyEvent = { keyCode, event ->
-                routeSettingsKeyEvent(keyCode, event.action, event.source)
-            },
-            onBackPressed = {
-                val nav = settingsNavActions
-                when {
-                    nav == null -> false
-                    // The discard confirm is a Compose overlay inside the
-                    // settings dialog; close it before any navigation.
-                    nav.isConfirming -> {
-                        nav.dismissConfirm()
-                        true
-                    }
-                    nav.isCapturing -> {
-                        nav.cancelCapture()
-                        true
-                    }
-                    nav.canNavigateUp -> {
-                        nav.navigateUp()
-                        true
-                    }
-                    nav.isDirty -> {
-                        nav.requestCancel()
-                        true
-                    }
-                    else -> false
-                }
-            },
+            keys =
+                DialogManager.KeyActions(
+                    onKeyEvent = { keyCode, event ->
+                        routeSettingsKeyEvent(keyCode, event.action, event.source)
+                    },
+                    onBackPressed = {
+                        val nav = settingsNavActions
+                        when {
+                            nav == null -> false
+                            // The discard confirm is a Compose overlay inside the
+                            // settings dialog; close it before any navigation.
+                            nav.isConfirming -> {
+                                nav.dismissConfirm()
+                                true
+                            }
+                            nav.isCapturing -> {
+                                nav.cancelCapture()
+                                true
+                            }
+                            nav.canNavigateUp -> {
+                                nav.navigateUp()
+                                true
+                            }
+                            nav.isDirty -> {
+                                nav.requestCancel()
+                                true
+                            }
+                            else -> false
+                        }
+                    },
+                ),
             onDismiss = {
                 settingsNavActions = null
                 if (!resultSent && requestId != null) {
