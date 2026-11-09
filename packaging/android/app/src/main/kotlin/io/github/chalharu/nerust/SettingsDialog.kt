@@ -14,8 +14,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -27,13 +27,14 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialExpressiveTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.rememberSliderState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -43,6 +44,7 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -52,6 +54,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToLong
 import org.json.JSONObject
 
 /** Settings section fallback labels: Rust pushes the label per section.
@@ -80,9 +83,10 @@ internal object SettingsSectionFallback {
 }
 
 /** One pick-list entry: the value rides back to Rust by index, so Kotlin
- * only needs the label. */
+ * only needs the label plus whether the choice is currently selectable. */
 internal data class SettingsChoice(
     val label: String,
+    val enabled: Boolean = true,
 )
 
 /** One settings row as projected by Rust (`settings_views::RowWire`). */
@@ -94,8 +98,11 @@ internal data class SettingsRow(
     val selected: Int,
     val number: Long,
     val step: Long,
+    val min: Long,
+    val max: Long,
     val unit: String,
     val text: String,
+    val target: String = "",
     val visible: Boolean = true,
 )
 
@@ -104,6 +111,7 @@ internal data class SettingsSection(
     val id: String,
     val label: String,
     val rows: List<SettingsRow>,
+    val visible: Boolean = true,
 )
 
 internal fun parseSettingsSections(payload: JSONObject): List<SettingsSection> {
@@ -119,7 +127,12 @@ internal fun parseSettingsSections(payload: JSONObject): List<SettingsSection> {
             val options = row.optJSONArray("choices")
             if (options != null) {
                 for (k in 0 until options.length()) {
-                    choices += SettingsChoice(label = options.getJSONObject(k).getString("label"))
+                    val option = options.getJSONObject(k)
+                    choices +=
+                        SettingsChoice(
+                            label = option.getString("label"),
+                            enabled = option.optBoolean("enabled", true),
+                        )
                 }
             }
             rows +=
@@ -131,14 +144,18 @@ internal fun parseSettingsSections(payload: JSONObject): List<SettingsSection> {
                     selected = row.optInt("selected", 0),
                     number = row.optLong("number", 0L),
                     step = row.optLong("step", 1L).coerceAtLeast(1L),
+                    min = row.optLong("min", 0L),
+                    max = row.optLong("max", 0L),
                     unit = row.optString("unit", ""),
                     text = row.optString("text", ""),
+                    target = row.optString("target", ""),
                     visible = row.optBoolean("visible", true),
                 )
         }
         val id = section.getString("id")
         val label = section.optString("label").ifBlank { SettingsSectionFallback.labelFor(id) }
-        out += SettingsSection(id = id, label = label, rows = rows.filter { it.visible })
+        val visible = section.optBoolean("visible", true)
+        out += SettingsSection(id = id, label = label, rows = rows.filter { it.visible }, visible = visible)
     }
     return out
 }
@@ -147,12 +164,26 @@ internal fun settingsCommandJson(
     key: String,
     index: Int,
     number: Long,
+    op: String = "set",
 ): String =
     JSONObject()
         .put("key", key)
         .put("index", index)
         .put("number", number)
+        .put("op", op)
         .toString()
+
+/** Cross-boundary navigation actions the activity needs for system back,
+ * discard confirmation, and hardware-key payload delivery. */
+internal data class SettingsNavActions(
+    val canNavigateUp: Boolean,
+    val isDirty: Boolean,
+    val isCapturing: Boolean,
+    val navigateUp: () -> Unit,
+    val requestCancel: () -> Unit,
+    val cancelCapture: () -> Unit,
+    val applyPayload: (String) -> Unit,
+)
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -269,36 +300,54 @@ internal fun NerustSettingsDialogCard(
     onDismissRequest: () -> Unit,
     onSave: () -> Unit,
     onCommand: (String) -> String?,
+    onNavStateChanged: (SettingsNavActions) -> Unit,
+    initialIssues: List<String> = emptyList(),
+    initialCapture: String? = null,
 ) {
     var sections by remember(initialSections) { mutableStateOf(initialSections) }
+    var issues by remember(initialIssues) { mutableStateOf(initialIssues) }
+    var capturePrompt by remember(initialCapture) { mutableStateOf(initialCapture) }
     var activeSectionId by remember { mutableStateOf<String?>(null) }
     var activeRowKey by remember { mutableStateOf<String?>(null) }
     var commandError by remember { mutableStateOf<String?>(null) }
+    var confirmDiscard by remember { mutableStateOf(false) }
+    var isDirty by remember { mutableStateOf(false) }
+
+    fun applyPayloadJson(raw: String): Boolean {
+        try {
+            val doc = JSONObject(raw)
+            if (!doc.optBoolean("ok", false)) {
+                commandError = doc.optString("error", COMMAND_FAILED)
+                return false
+            }
+            val payload = doc.getJSONObject("payload")
+            commandError = null
+            sections = parseSettingsSections(payload)
+            issues = parseIssues(payload)
+            capturePrompt = parseCapture(payload)
+            return true
+        } catch (e: Exception) {
+            commandError = e.message ?: COMMAND_FAILED
+            return false
+        }
+    }
 
     fun sendCommand(
         key: String,
         index: Int,
         number: Long,
+        op: String = "set",
+        mutating: Boolean = true,
     ) {
         val raw =
             try {
-                onCommand(settingsCommandJson(key, index, number))
+                onCommand(settingsCommandJson(key, index, number, op))
                     ?: throw IllegalStateException("settings bridge returned null")
             } catch (e: Exception) {
                 commandError = e.message ?: COMMAND_FAILED
                 return
             }
-        try {
-            val doc = JSONObject(raw)
-            if (!doc.optBoolean("ok", false)) {
-                commandError = doc.optString("error", COMMAND_FAILED)
-                return
-            }
-            commandError = null
-            sections = parseSettingsSections(doc.getJSONObject("payload"))
-        } catch (e: Exception) {
-            commandError = e.message ?: COMMAND_FAILED
-        }
+        if (applyPayloadJson(raw) && mutating) isDirty = true
     }
 
     val activeSection = sections.find { it.id == activeSectionId }
@@ -307,7 +356,38 @@ internal fun NerustSettingsDialogCard(
         activeRow?.label
             ?: activeSection?.label
             ?: "Settings"
-    val canNavigateBack = activeSection != null || activeRow != null
+    val canNavigateUp = activeSection != null || activeRow != null
+    val isCapturing = capturePrompt != null
+
+    fun navigateUp() {
+        if (activeRow != null) {
+            activeRowKey = null
+        } else {
+            activeSectionId = null
+        }
+    }
+
+    fun requestCancel() {
+        if (isDirty) {
+            confirmDiscard = true
+        } else {
+            onDismissRequest()
+        }
+    }
+
+    onNavStateChanged(
+        SettingsNavActions(
+            canNavigateUp = canNavigateUp,
+            isDirty = isDirty,
+            isCapturing = isCapturing,
+            navigateUp = ::navigateUp,
+            requestCancel = ::requestCancel,
+            cancelCapture = { sendCommand("", 0, 0L, "cancel_capture", mutating = false) },
+            applyPayload = { raw ->
+                if (applyPayloadJson(raw)) isDirty = true
+            },
+        ),
+    )
 
     NerustExpressiveHost {
         Scaffold(
@@ -315,16 +395,10 @@ internal fun NerustSettingsDialogCard(
                 TopAppBar(
                     title = { Text(text = title) },
                     navigationIcon = {
-                        if (canNavigateBack) {
-                            TextButton(onClick = {
-                                if (activeRow != null) {
-                                    activeRowKey = null
-                                } else {
-                                    activeSectionId = null
-                                }
-                            }) { Text("Back") }
+                        if (canNavigateUp) {
+                            TextButton(onClick = ::navigateUp) { Text("Back") }
                         } else {
-                            TextButton(onClick = onDismissRequest) { Text("Cancel") }
+                            TextButton(onClick = ::requestCancel) { Text("Cancel") }
                         }
                     },
                     actions = {
@@ -345,7 +419,31 @@ internal fun NerustSettingsDialogCard(
                         .padding(padding)
                         .padding(horizontal = 16.dp),
             ) {
-                commandError?.let {
+                capturePrompt?.let { prompt ->
+                    Card(
+                        colors =
+                            CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            ),
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 8.dp),
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                text = prompt,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            TextButton(
+                                onClick = { sendCommand("", 0, 0L, "cancel_capture", mutating = false) },
+                            ) { Text("Cancel") }
+                        }
+                    }
+                }
+                if (issues.isNotEmpty()) {
                     Card(
                         colors =
                             CardDefaults.cardColors(
@@ -356,13 +454,24 @@ internal fun NerustSettingsDialogCard(
                                 .fillMaxWidth()
                                 .padding(vertical = 8.dp),
                     ) {
-                        Text(
-                            text = it,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onErrorContainer,
-                            modifier = Modifier.padding(16.dp),
-                        )
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            issues.forEach { issue ->
+                                Text(
+                                    text = "\u2022 $issue",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                )
+                            }
+                        }
                     }
+                }
+                commandError?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                    )
                 }
                 when {
                     activeRow != null && activeRow.kind == "choice" -> {
@@ -381,24 +490,70 @@ internal fun NerustSettingsDialogCard(
                             onToggle = { row, checked ->
                                 sendCommand(row.key, if (checked) 1 else 0, 0L)
                             },
-                            onStep = { row, delta ->
-                                sendCommand(row.key, 0, row.number + delta * row.step)
+                            onCommitNumber = { row, value ->
+                                sendCommand(row.key, 0, value)
                             },
-                            onRowClick = { activeRowKey = it },
+                            onRowClick = { row ->
+                                when (row.kind) {
+                                    "group" -> {
+                                        if (sections.any { it.id == row.target }) {
+                                            activeRowKey = null
+                                            activeSectionId = row.target
+                                        }
+                                    }
+                                    "capture" -> {
+                                        sendCommand(row.key, 0, 0L, "start_capture", mutating = false)
+                                    }
+                                    else -> activeRowKey = row.key
+                                }
+                            },
+                            onClearCapture = { row ->
+                                sendCommand(row.key, 0, 0L, "clear_binding")
+                            },
                         )
                     }
 
                     else -> {
                         SettingsCategoryList(
-                            sections = sections,
+                            sections = sections.filter { it.visible },
                             onSectionClick = { activeSectionId = it },
                         )
                     }
                 }
             }
         }
+        if (confirmDiscard) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { confirmDiscard = false },
+                title = { Text("Discard changes?") },
+                text = { Text("Unsaved settings will be lost.") },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            confirmDiscard = false
+                            onDismissRequest()
+                        },
+                    ) { Text("Discard") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmDiscard = false }) { Text("Keep editing") }
+                },
+            )
+        }
     }
 }
+
+internal fun parseIssues(payload: JSONObject): List<String> {
+    val out = mutableListOf<String>()
+    val issues = payload.optJSONArray("issues") ?: return out
+    for (i in 0 until issues.length()) {
+        out += issues.optString(i)
+    }
+    return out
+}
+
+internal fun parseCapture(payload: JSONObject): String? =
+    payload.optJSONObject("capture")?.optString("prompt")?.ifBlank { null }
 
 @Composable
 private fun SettingsCategoryList(
@@ -408,7 +563,7 @@ private fun SettingsCategoryList(
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(12.dp),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 12.dp),
+        contentPadding = PaddingValues(vertical = 12.dp),
     ) {
         itemsIndexed(sections, key = { _, section -> section.id }) { _, section ->
             val summary =
@@ -452,15 +607,16 @@ private fun SettingsCategoryList(
 private fun SettingsSectionList(
     section: SettingsSection,
     onToggle: (SettingsRow, Boolean) -> Unit,
-    onStep: (SettingsRow, Long) -> Unit,
-    onRowClick: (String) -> Unit,
+    onCommitNumber: (SettingsRow, Long) -> Unit,
+    onRowClick: (SettingsRow) -> Unit,
+    onClearCapture: (SettingsRow) -> Unit,
 ) {
     // Split rows into groups at header rows; each group renders as one card.
     val groups = remember(section) { splitSectionGroups(section.rows) }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(12.dp),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 12.dp),
+        contentPadding = PaddingValues(vertical = 12.dp),
     ) {
         groups.forEach { group ->
             if (group.title.isNotBlank()) {
@@ -492,9 +648,9 @@ private fun SettingsSectionList(
                                     )
                                 }
                                 "number" -> {
-                                    SettingsStepperRow(
+                                    SettingsSliderRow(
                                         row = row,
-                                        onStep = { onStep(row, it) },
+                                        onCommit = { onCommitNumber(row, it) },
                                     )
                                 }
                                 "choice" -> {
@@ -502,7 +658,22 @@ private fun SettingsSectionList(
                                         title = row.label,
                                         value = settingsRowDisplayValue(row),
                                         semanticsLabel = "${row.key}: ${row.label}: ${settingsRowDisplayValue(row)}",
-                                        onClick = { onRowClick(row.key) },
+                                        onClick = { onRowClick(row) },
+                                    )
+                                }
+                                "group" -> {
+                                    SettingsNavigationRow(
+                                        title = row.label,
+                                        value = "\u203a",
+                                        semanticsLabel = "${row.key}: ${row.label}",
+                                        onClick = { onRowClick(row) },
+                                    )
+                                }
+                                "capture" -> {
+                                    SettingsCaptureRow(
+                                        row = row,
+                                        onStart = { onRowClick(row) },
+                                        onClear = { onClearCapture(row) },
                                     )
                                 }
                                 else -> {
@@ -510,7 +681,7 @@ private fun SettingsSectionList(
                                         title = row.label,
                                         value = settingsRowDisplayValue(row),
                                         semanticsLabel = "${row.key}: ${row.label}",
-                                        onClick = {},
+                                        onClick = { onRowClick(row) },
                                     )
                                 }
                             }
@@ -577,14 +748,66 @@ private fun SettingsToggleRow(
 }
 
 @Composable
-private fun SettingsStepperRow(
+private fun SettingsSliderRow(
     row: SettingsRow,
-    onStep: (Long) -> Unit,
+    onCommit: (Long) -> Unit,
+) {
+    val span = (row.max - row.min).coerceAtLeast(0L)
+    val step = row.step.coerceAtLeast(1L)
+    fun snap(value: Long): Long {
+        val steps = ((value - row.min).toDouble() / step).roundToLong()
+        return (row.min + steps * step).coerceIn(row.min, row.min + span)
+    }
+    val sliderState =
+        rememberSliderState(
+            value = snap(row.number).toFloat(),
+            trackRange = row.min.toFloat()..(row.min + span).toFloat(),
+        )
+    LaunchedEffect(row.key, row.number) {
+        sliderState.value = snap(row.number).toFloat()
+    }
+    Column(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 12.dp)
+                .semantics { contentDescription = "${row.key}: ${row.label}" },
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = row.label,
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = "${snap(sliderState.value.roundToLong())}${row.unit}",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Slider(
+            state = sliderState,
+            onValueChange = { v -> sliderState.value = snap(v.roundToLong()).toFloat() },
+            onValueChangeFinished = { onCommit(snap(sliderState.value.roundToLong())) },
+        )
+    }
+}
+
+@Composable
+private fun SettingsCaptureRow(
+    row: SettingsRow,
+    onStart: () -> Unit,
+    onClear: () -> Unit,
 ) {
     Row(
         modifier =
             Modifier
                 .fillMaxWidth()
+                .clickable(onClick = onStart)
                 .padding(horizontal = 24.dp, vertical = 12.dp)
                 .semantics { contentDescription = "${row.key}: ${row.label}" },
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -593,15 +816,11 @@ private fun SettingsStepperRow(
         Column(modifier = Modifier.weight(1f)) {
             Text(text = row.label, style = MaterialTheme.typography.titleMedium)
             Text(
-                text = "${row.number}${row.unit}",
+                text = row.text.ifBlank { "Tap to assign" },
                 style = MaterialTheme.typography.bodyMedium,
             )
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            FilledTonalIconButton(onClick = { onStep(-1) }) { Text("−") }
-            Spacer(modifier = Modifier.width(8.dp))
-            FilledTonalIconButton(onClick = { onStep(1) }) { Text("+") }
-        }
+        TextButton(onClick = onClear) { Text("Clear") }
     }
 }
 
@@ -613,7 +832,7 @@ private fun SettingsChoiceList(
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(12.dp),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 12.dp),
+        contentPadding = PaddingValues(vertical = 12.dp),
     ) {
         item(key = "${row.key}#card") {
             Card(
@@ -630,14 +849,30 @@ private fun SettingsChoiceList(
                             modifier =
                                 Modifier
                                     .fillMaxWidth()
-                                    .clickable(onClick = { onSelect(choiceIndex) })
+                                    .clickable(
+                                        enabled = choice.enabled,
+                                        onClick = { onSelect(choiceIndex) },
+                                    )
                                     .padding(vertical = 12.dp, horizontal = 20.dp)
                                     .semantics { contentDescription = choice.label },
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text(text = choice.label, modifier = Modifier.weight(1f))
-                            RadioButton(selected = row.selected == choiceIndex, onClick = null)
+                            Text(
+                                text = choice.label,
+                                modifier = Modifier.weight(1f),
+                                color =
+                                    if (choice.enabled) {
+                                        MaterialTheme.colorScheme.onSurface
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                            )
+                            RadioButton(
+                                selected = row.selected == choiceIndex,
+                                onClick = null,
+                                enabled = choice.enabled,
+                            )
                         }
                         if (choiceIndex < row.choices.lastIndex) HorizontalDivider()
                     }

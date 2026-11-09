@@ -7,7 +7,7 @@ use jni::objects::{JObject, JString, JValue};
 use winit::platform::android::activity::AndroidApp;
 
 use super::bridge::{self, SettingsDialogResult};
-use super::settings_views::{self, SETTINGS_SCHEMA_VERSION};
+use super::settings_views::{self, CaptureSlot, SETTINGS_SCHEMA_VERSION};
 use crate::settings_flight::SettingsRequestId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_settings_core::model::local::ScreenOrientation;
@@ -34,6 +34,7 @@ pub(super) fn request_show_settings_dialog(
     let payload = bridge::with_settings(|state| {
         let request_id = state.flight.begin()?;
         state.draft = Some(snapshot.clone());
+        state.capture = None;
         Some((request_id, payload))
     });
     let Some((request_id, payload)) = payload else {
@@ -52,7 +53,10 @@ pub(super) fn request_show_settings_dialog(
         move |env, activity| show_settings_with_env_inner(env, &activity, &tagged),
         Some(Box::new(move || {
             // The push failed: drop the stashed draft with the dead flight.
-            bridge::with_settings(|state| state.draft = None);
+            bridge::with_settings(|state| {
+                state.draft = None;
+                state.capture = None;
+            });
             publish_result(request_id, SettingsDialogResult::Dismissed)
         })),
     );
@@ -151,8 +155,10 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDia
                 let result = bridge::with_settings(|state| {
                     if payload.dismissed {
                         state.draft = None;
+                        state.capture = None;
                         Some(SettingsDialogResult::Dismissed)
                     } else {
+                        state.capture = None;
                         state
                             .draft
                             .take()
@@ -188,7 +194,43 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDia
     }
 }
 
-/// Synchronous settings command: one edit in, refreshed sections
+/// Hardware key routing for capture: consumes the key when a capture is
+/// pending and returns the refreshed payload (or an error envelope).
+/// Non-capture keys pass through untouched (null payload marker).
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_nativeHardwareKey(
+    mut env: jni::EnvUnowned<'_>,
+    _activity: JObject<'_>,
+    keycode: jni::sys::jint,
+    pressed: jni::sys::jboolean,
+) -> jni::sys::jstring {
+    let parsed = bridge::with_callback_env(&mut env, |env| -> jni::errors::Result<(i32, bool)> {
+        Ok((keycode, pressed != 0))
+    });
+    let out = match parsed {
+        jni::Outcome::Ok((keycode, pressed)) => bridge::with_settings(|state| {
+            let Some(draft) = state.draft.as_mut() else {
+                return serde_json::json!({"ok": false, "error": "no settings draft"}).to_string();
+            };
+            if state.capture.is_none() {
+                return serde_json::json!({"ok": true, "consumed": false}).to_string();
+            }
+            match settings_views::apply_hardware_key(keycode, pressed, draft, &mut state.capture)
+            {
+                Ok(sections) => serde_json::json!({"ok": true, "consumed": true, "payload": serde_json::from_str::<serde_json::Value>(&sections).unwrap_or(serde_json::Value::Null)}).to_string(),
+                Err(error) => serde_json::json!({"ok": false, "error": error}).to_string(),
+            }
+        }),
+        _ => serde_json::json!({"ok": false, "error": "jni decode failed"}).to_string(),
+    };
+    match bridge::with_callback_env(&mut env, |env| -> jni::errors::Result<jni::sys::jstring> {
+        Ok(env.new_string(out)?.into_raw())
+    }) {
+        jni::Outcome::Ok(ptr) => ptr,
+        _ => std::ptr::null_mut(),
+    }
+}
+/// Synchronous settings command: one edit in, refreshed payload
 /// (or `{"ok":false,"error"}`) out. The draft lives in the bridge vault;
 /// the view model lives only for this call, so any calling thread is safe.
 #[unsafe(no_mangle)]
@@ -205,7 +247,7 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_nativeSetting
             let Some(draft) = state.draft.as_mut() else {
                 return serde_json::json!({"ok": false, "error": "no settings draft"}).to_string();
             };
-            match settings_views::apply_command_to(draft, &command_json) {
+            match settings_views::apply_command_to(draft, &command_json, &mut state.capture) {
                 Ok(sections) => serde_json::json!({"ok": true, "payload": serde_json::from_str::<serde_json::Value>(&sections).unwrap_or(serde_json::Value::Null)}).to_string(),
                 Err(error) => serde_json::json!({"ok": false, "error": error}).to_string(),
             }

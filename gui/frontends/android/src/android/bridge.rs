@@ -82,6 +82,7 @@ pub(super) enum SettingsDialogResult {
 pub(super) struct SettingsSlot {
     pub(super) flight: crate::settings_flight::SettingsFlight<SettingsDialogResult>,
     pub(super) draft: Option<nerust_gui_runtime::settings::SettingsSnapshot>,
+    pub(super) capture: super::settings_views::CaptureSlot,
 }
 
 impl SettingsSlot {
@@ -89,6 +90,7 @@ impl SettingsSlot {
         Self {
             flight: crate::settings_flight::SettingsFlight::new(),
             draft: None,
+            capture: None,
         }
     }
 }
