@@ -16,24 +16,25 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialExpressiveTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -42,8 +43,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import kotlin.math.max
-import kotlin.math.roundToInt
+import org.json.JSONObject
 
 /** Settings section fallback labels: Rust pushes the label per section.
  * Used only for test-constructed content without a pushed label. */
@@ -70,55 +70,88 @@ internal object SettingsSectionFallback {
         }
 }
 
+/** One pick-list entry: the value rides back to Rust by index, so Kotlin
+ * only needs the label. */
+internal data class SettingsChoice(
+    val label: String,
+)
 
-/** Settings dialog UI: cards, section builders, visibility filtering, and selection state. */
-internal data class AndroidSetting(
+/** One settings row as projected by Rust (`settings_views::RowWire`). */
+internal data class SettingsRow(
     val key: String,
-    val section: String,
-    val sectionLabel: String,
     val label: String,
     val kind: String,
-    val choices: List<String>,
-    val rangeMin: Int,
-    val rangeMax: Int,
+    val choices: List<SettingsChoice>,
+    val selected: Int,
+    val number: Long,
+    val step: Long,
     val unit: String,
+    val text: String,
     val visible: Boolean = true,
 )
 
-internal data class AndroidSettingsSection(
+/** One settings section as projected by Rust (`settings_views::SectionWire`). */
+internal data class SettingsSection(
     val id: String,
     val label: String,
-    val settingIndices: List<Int>,
+    val rows: List<SettingsRow>,
 )
 
-/** One dialog field as pushed by Rust: choices arrive as a JSON array,
- * ranged ints as min/max/unit with an offset value. No string escaping. */
-internal data class SettingsField(
-    val key: String,
-    val section: String,
-    val sectionLabel: String,
-    val label: String,
-    val kind: String,
-    val choices: List<String>,
-    val value: Int,
-    val visible: Boolean,
-    val rangeMin: Int = 0,
-    val rangeMax: Int = 0,
-    val unit: String = "",
-)
-
-/** Display value for a row: ranged fields render `min+index` with the unit. */
-internal fun settingDisplayValue(setting: AndroidSetting, selection: Int): String =
-    if (setting.kind == "range") {
-        "${setting.rangeMin + selection}${setting.unit}"
-    } else {
-        setting.choices.getOrElse(selection) { "?" }
+internal fun parseSettingsSections(payload: JSONObject): List<SettingsSection> {
+    val out = mutableListOf<SettingsSection>()
+    val sections = payload.getJSONArray("sections")
+    for (i in 0 until sections.length()) {
+        val section = sections.getJSONObject(i)
+        val rows = mutableListOf<SettingsRow>()
+        val fields = section.getJSONArray("rows")
+        for (j in 0 until fields.length()) {
+            val row = fields.getJSONObject(j)
+            val choices = mutableListOf<SettingsChoice>()
+            val options = row.optJSONArray("choices")
+            if (options != null) {
+                for (k in 0 until options.length()) {
+                    choices += SettingsChoice(label = options.getJSONObject(k).getString("label"))
+                }
+            }
+            rows +=
+                SettingsRow(
+                    key = row.getString("key"),
+                    label = row.optString("label", ""),
+                    kind = row.optString("kind", "info"),
+                    choices = choices,
+                    selected = row.optInt("selected", 0),
+                    number = row.optLong("number", 0L),
+                    step = row.optLong("step", 1L).coerceAtLeast(1L),
+                    unit = row.optString("unit", ""),
+                    text = row.optString("text", ""),
+                    visible = row.optBoolean("visible", true),
+                )
+        }
+        val id = section.getString("id")
+        val label = section.optString("label").ifBlank { SettingsSectionFallback.labelFor(id) }
+        out += SettingsSection(id = id, label = label, rows = rows.filter { it.visible })
     }
+    return out
+}
 
-/** Keyed dialog content assembled by MainActivity from the Rust payload. */
-internal data class SettingsDialogContent(
-    val fields: List<SettingsField>,
-)
+internal fun settingsCommandJson(
+    key: String,
+    index: Int,
+    number: Long,
+): String =
+    JSONObject()
+        .put("key", key)
+        .put("index", index)
+        .put("number", number)
+        .toString()
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+internal fun NerustExpressiveHost(content: @Composable () -> Unit) {
+    MaterialExpressiveTheme {
+        content()
+    }
+}
 
 @Composable
 private fun NerustDialogHost(content: @Composable () -> Unit) {
@@ -130,20 +163,6 @@ private fun NerustDialogHost(content: @Composable () -> Unit) {
         contentAlignment = Alignment.Center,
     ) {
         content()
-    }
-}
-
-@Composable
-private fun NerustFullScreenDialogHost(content: @Composable ColumnScope.() -> Unit) {
-    Surface(modifier = Modifier.fillMaxSize()) {
-        Column(
-            modifier =
-                Modifier
-                    .fillMaxSize()
-                    .padding(WindowInsets.safeDrawing.asPaddingValues())
-                    .padding(horizontal = 24.dp, vertical = 16.dp),
-            content = content,
-        )
     }
 }
 
@@ -197,120 +216,136 @@ internal fun NerustErrorDialogCard(
     }
 }
 
-internal fun settingsContentDescription(
-    settings: List<AndroidSetting>,
-    selections: List<Int>,
-): String =
+internal fun settingsContentDescription(sections: List<SettingsSection>): String =
     buildList {
         add("Settings")
-        settings.forEachIndexed { index, setting ->
-            add("${setting.label}: ${settingDisplayValue(setting, selections.getOrElse(index) { 0 })}")
+        sections.flatMap { it.rows }.forEach { row ->
+            add("${row.label}: ${settingsRowDisplayValue(row)}")
         }
     }.joinToString("\n")
 
+internal fun settingsRowDisplayValue(row: SettingsRow): String =
+    when (row.kind) {
+        "choice" -> row.choices.getOrNull(row.selected)?.label ?: "?"
+        "toggle" -> row.choices.getOrNull(row.selected)?.label ?: if (row.selected == 1) "On" else "Off"
+        "number" -> "${row.number}${row.unit}"
+        else -> row.text
+    }
+
+/** DTO-driven settings screen: sections from Rust, one synchronous command
+ * per edit, save/dismiss only at the end. */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 internal fun NerustSettingsDialogCard(
-    settings: List<AndroidSetting>,
-    initialSelections: List<Int>,
+    initialSections: List<SettingsSection>,
     onDismissRequest: () -> Unit,
-    onSave: (List<Int>) -> Unit,
-    onPositionDraftChanged: (Int, Int) -> Boolean = { _, _ -> true },
+    onSave: () -> Unit,
+    onCommand: (String) -> String?,
 ) {
-    val selections = rememberSettingsSelections(settings, initialSelections)
-    // Draft visibility for the Rust-owned same-edge rule: overrides only, so
-    // cancel never leaks an unsaved projection into the persisted model.
-    val visibleOverrides = remember { mutableStateMapOf<Int, Boolean>() }
-    fun indexOfKey(key: String) = settings.indexOfFirst { it.key == key }
-    val sections = remember(settings) { buildSettingsSections(settings) }
+    var sections by remember(initialSections) { mutableStateOf(initialSections) }
     var activeSectionId by remember { mutableStateOf<String?>(null) }
-    var activeSettingIndex by remember { mutableStateOf<Int?>(null) }
+    var activeRowKey by remember { mutableStateOf<String?>(null) }
+    var commandError by remember { mutableStateOf<String?>(null) }
 
-    Surface(modifier = Modifier.fillMaxSize()) {
-        Column(
-            modifier =
-                Modifier
-                    .fillMaxSize()
-                    .padding(WindowInsets.safeDrawing.asPaddingValues()),
-        ) {
-            val activeSection = sections.find { it.id == activeSectionId }
-            val visibleSettingCount =
-                activeSection
-                    ?.let { visibleSettingIndices(settings, it).size }
-            SettingsNavigationHeader(
-                title =
-                    activeSettingIndex?.let { settings[it].label }
-                        ?: activeSection?.label
-                        ?: "Settings",
-                subtitle =
-                    when {
-                        activeSettingIndex != null -> "Choose a value"
-                        activeSection != null -> settingsCountLabel(visibleSettingCount ?: 0)
-                        else -> "Choose a category"
-                    },
-                canNavigateBack = activeSection != null || activeSettingIndex != null,
-                onNavigateBack = {
-                    if (activeSettingIndex != null) {
-                        activeSettingIndex = null
-                    } else {
-                        activeSectionId = null
-                    }
-                },
-                onDismissRequest = onDismissRequest,
-                onSave = { onSave(selections.toList()) },
-            )
-            HorizontalDivider()
+    fun sendCommand(
+        key: String,
+        index: Int,
+        number: Long,
+    ) {
+        val raw =
+            try {
+                onCommand(settingsCommandJson(key, index, number))
+                    ?: throw IllegalStateException("settings bridge returned null")
+            } catch (e: Exception) {
+                commandError = e.message ?: "command failed"
+                return
+            }
+        try {
+            val doc = JSONObject(raw)
+            if (!doc.optBoolean("ok", false)) {
+                commandError = doc.optString("error", "command failed")
+                return
+            }
+            commandError = null
+            sections = parseSettingsSections(doc.getJSONObject("payload"))
+        } catch (e: Exception) {
+            commandError = e.message ?: "command failed"
+        }
+    }
 
-            when {
-                activeSettingIndex != null -> {
-                    val settingIndex = requireNotNull(activeSettingIndex)
-                    SettingsChoiceList(
-                        setting = settings[settingIndex],
-                        selectedIndex = selections[settingIndex],
-                        onSelect = { choiceIndex ->
-                            selections[settingIndex] = choiceIndex
-                            // Position drafts re-project Status Area visibility
-                            // through Rust; the override dies with the dialog.
-                            val changedKey = settings[settingIndex].key
-                            if (changedKey == NOTIFICATIONS_POSITION_KEY || changedKey == STATUS_POSITION_KEY) {
-                                val notifIndex = indexOfKey(NOTIFICATIONS_POSITION_KEY)
-                                val statusIndex = indexOfKey(STATUS_POSITION_KEY)
-                                val areaIndex = indexOfKey(STATUS_AREA_MODE_KEY)
-                                if (notifIndex >= 0 && statusIndex >= 0 && areaIndex >= 0) {
-                                    visibleOverrides[areaIndex] =
-                                        onPositionDraftChanged(
-                                            selections[notifIndex],
-                                            selections[statusIndex],
-                                        )
-                                }
-                            }
-                            if (settings[settingIndex].kind != "range") {
-                                activeSettingIndex = null
-                            }
+    val activeSection = sections.find { it.id == activeSectionId }
+    val activeRow = activeSection?.rows?.find { it.key == activeRowKey }
+
+    NerustExpressiveHost {
+        Surface(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier =
+                    Modifier
+                        .fillMaxSize()
+                        .padding(WindowInsets.safeDrawing.asPaddingValues()),
+            ) {
+                SettingsNavigationHeader(
+                    title =
+                        activeRow?.label
+                            ?: activeSection?.label
+                            ?: "Settings",
+                    subtitle =
+                        when {
+                            activeRow != null -> settingsRowDisplayValue(activeRow)
+                            activeSection != null -> settingsCountLabel(activeSection.rows.size)
+                            else -> "Choose a category"
                         },
+                    canNavigateBack = activeSection != null || activeRow != null,
+                    onNavigateBack = {
+                        if (activeRow != null) {
+                            activeRowKey = null
+                        } else {
+                            activeSectionId = null
+                        }
+                    },
+                    onDismissRequest = onDismissRequest,
+                    onSave = onSave,
+                )
+                commandError?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                     )
                 }
+                HorizontalDivider()
 
-                activeSection != null -> {
-                    val visibleSection =
-                        activeSection.copy(
-                            settingIndices =
-                                visibleSettingIndices(settings, activeSection, visibleOverrides),
+                when {
+                    activeRow != null && activeRow.kind == "choice" -> {
+                        SettingsChoiceList(
+                            row = activeRow,
+                            onSelect = { choiceIndex ->
+                                sendCommand(activeRow.key, choiceIndex, 0L)
+                                activeRowKey = null
+                            },
                         )
-                    SettingsSectionList(
-                        section = visibleSection,
-                        settings = settings,
-                        selections = selections,
-                        onSettingClick = { activeSettingIndex = it },
-                    )
-                }
+                    }
 
-                else -> {
-                    SettingsCategoryList(
-                        sections = sections,
-                        settings = settings,
-                        selections = selections,
-                        onSectionClick = { activeSectionId = it },
-                    )
+                    activeSection != null -> {
+                        SettingsSectionList(
+                            section = activeSection,
+                            onToggle = { row, checked ->
+                                sendCommand(row.key, if (checked) 1 else 0, 0L)
+                            },
+                            onStep = { row, delta ->
+                                sendCommand(row.key, 0, row.number + delta * row.step)
+                            },
+                            onRowClick = { activeRowKey = it },
+                        )
+                    }
+
+                    else -> {
+                        SettingsCategoryList(
+                            sections = sections,
+                            onSectionClick = { activeSectionId = it },
+                        )
+                    }
                 }
             }
         }
@@ -346,24 +381,20 @@ private fun SettingsNavigationHeader(
 
 @Composable
 private fun SettingsCategoryList(
-    sections: List<AndroidSettingsSection>,
-    settings: List<AndroidSetting>,
-    selections: List<Int>,
+    sections: List<SettingsSection>,
     onSectionClick: (String) -> Unit,
 ) {
     LazyColumn(modifier = Modifier.fillMaxSize()) {
         itemsIndexed(sections) { index, section ->
-            val visibleIndices = visibleSettingIndices(settings, section)
             val summary =
-                visibleIndices.take(2).joinToString(" · ") { settingIndex ->
-                    val setting = settings[settingIndex]
-                    "${setting.label}: ${settingDisplayValue(setting, selections[settingIndex])}"
+                section.rows.take(2).joinToString(" · ") { row ->
+                    "${row.label}: ${settingsRowDisplayValue(row)}"
                 }
             SettingsNavigationRow(
                 title = section.label,
-                value = settingsCountLabel(visibleIndices.size),
+                value = settingsCountLabel(section.rows.size),
                 supportingText = summary,
-                semanticsLabel = "${section.label}: ${settingsCountLabel(visibleIndices.size)}",
+                semanticsLabel = "${section.label}: ${settingsCountLabel(section.rows.size)}",
                 onClick = { onSectionClick(section.id) },
             )
             if (index < sections.lastIndex) HorizontalDivider()
@@ -373,45 +404,125 @@ private fun SettingsCategoryList(
 
 @Composable
 private fun SettingsSectionList(
-    section: AndroidSettingsSection,
-    settings: List<AndroidSetting>,
-    selections: List<Int>,
-    onSettingClick: (Int) -> Unit,
+    section: SettingsSection,
+    onToggle: (SettingsRow, Boolean) -> Unit,
+    onStep: (SettingsRow, Long) -> Unit,
+    onRowClick: (String) -> Unit,
 ) {
     LazyColumn(modifier = Modifier.fillMaxSize()) {
-        itemsIndexed(section.settingIndices) { index, settingIndex ->
-            val setting = settings[settingIndex]
-            val value = settingDisplayValue(setting, selections[settingIndex])
-            SettingsNavigationRow(
-                title = setting.label,
-                value = value,
-                semanticsLabel = "${setting.key}: ${setting.label}: $value",
-                onClick = { onSettingClick(settingIndex) },
+        itemsIndexed(section.rows) { index, row ->
+            when (row.kind) {
+                "toggle" -> {
+                    SettingsToggleRow(
+                        row = row,
+                        onToggle = { onToggle(row, it) },
+                    )
+                }
+                "number" -> {
+                    SettingsStepperRow(
+                        row = row,
+                        onStep = { onStep(row, it) },
+                    )
+                }
+                "choice" -> {
+                    SettingsNavigationRow(
+                        title = row.label,
+                        value = settingsRowDisplayValue(row),
+                        semanticsLabel = "${row.key}: ${row.label}: ${settingsRowDisplayValue(row)}",
+                        onClick = { onRowClick(row.key) },
+                    )
+                }
+                else -> {
+                    SettingsNavigationRow(
+                        title = row.label,
+                        value = settingsRowDisplayValue(row),
+                        semanticsLabel = "${row.key}: ${row.label}",
+                        onClick = {},
+                    )
+                }
+            }
+            if (index < section.rows.lastIndex) HorizontalDivider()
+        }
+    }
+}
+
+@Composable
+private fun SettingsToggleRow(
+    row: SettingsRow,
+    onToggle: (Boolean) -> Unit,
+) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable(onClick = { onToggle(row.selected != 1) })
+                .padding(horizontal = 24.dp, vertical = 12.dp)
+                .semantics { contentDescription = "${row.key}: ${row.label}" },
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = row.label,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.titleMedium,
+        )
+        Switch(
+            checked = row.selected == 1,
+            onCheckedChange = onToggle,
+        )
+    }
+}
+
+@Composable
+private fun SettingsStepperRow(
+    row: SettingsRow,
+    onStep: (Long) -> Unit,
+) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 12.dp)
+                .semantics { contentDescription = "${row.key}: ${row.label}" },
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = row.label, style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = "${row.number}${row.unit}",
+                style = MaterialTheme.typography.bodyMedium,
             )
-            if (index < section.settingIndices.lastIndex) HorizontalDivider()
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            FilledTonalIconButton(onClick = { onStep(-1) }) { Text("−") }
+            Spacer(modifier = Modifier.width(8.dp))
+            FilledTonalIconButton(onClick = { onStep(1) }) { Text("+") }
         }
     }
 }
 
 @Composable
 private fun SettingsChoiceList(
-    setting: AndroidSetting,
-    selectedIndex: Int,
+    row: SettingsRow,
     onSelect: (Int) -> Unit,
 ) {
-    if (setting.kind == "range") {
-        SettingsSliderRow(setting, selectedIndex, onSelect)
-        return
-    }
     LazyColumn(modifier = Modifier.fillMaxSize()) {
-        itemsIndexed(setting.choices) { choiceIndex, choiceLabel ->
-            DialogChoiceButton(
-                label = choiceLabel,
-                selected = selectedIndex == choiceIndex,
+        itemsIndexed(row.choices) { choiceIndex, choice ->
+            Row(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = { onSelect(choiceIndex) })
+                        .padding(vertical = 12.dp)
+                        .semantics { contentDescription = choice.label },
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                onSelect(choiceIndex)
+                Text(text = choice.label, modifier = Modifier.weight(1f))
+                RadioButton(selected = row.selected == choiceIndex, onClick = null)
             }
-            if (choiceIndex < setting.choices.lastIndex) HorizontalDivider()
+            if (choiceIndex < row.choices.lastIndex) HorizontalDivider()
         }
     }
 }
@@ -444,114 +555,6 @@ private fun SettingsNavigationRow(
     }
 }
 
-internal fun buildSettingsSections(settings: List<AndroidSetting>): List<AndroidSettingsSection> =
-    settings
-        .withIndex()
-        .groupBy({ it.value.section }, { it.index })
-        .map { (id, indices) ->
-            val label =
-                indices.firstNotNullOfOrNull { settings[it].sectionLabel.ifBlank { null } }
-                    ?: SettingsSectionFallback.labelFor(id)
-            AndroidSettingsSection(id, label, indices)
-        }
+internal fun buildSettingsSections(sections: List<SettingsSection>): List<SettingsSection> = sections
 
 internal fun settingsCountLabel(count: Int): String = "$count ${if (count == 1) "setting" else "settings"}"
-
-/** Native ranged row: a Slider over `min..max` with a value label.
- * Kotlin expands nothing; the index rides back as `value - min`. */
-@Composable
-private fun SettingsSliderRow(
-    setting: AndroidSetting,
-    selectedIndex: Int,
-    onSelect: (Int) -> Unit,
-) {
-    val span = (setting.rangeMax - setting.rangeMin).coerceAtLeast(0)
-    val clamped = selectedIndex.coerceIn(0, span)
-    Column(modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 18.dp)) {
-        Text(
-            text = "${setting.rangeMin + clamped}${setting.unit}",
-            style = MaterialTheme.typography.titleLarge,
-        )
-        Spacer(modifier = Modifier.height(16.dp))
-        Slider(
-            value = clamped.toFloat(),
-            onValueChange = { onSelect(it.roundToInt().coerceIn(0, span)) },
-            valueRange = 0f..span.toFloat(),
-            steps = (span - 1).coerceAtLeast(0),
-        )
-    }
-}
-
-// Visibility is resolved in Rust per field; Kotlin only filters on the flag.
-// Draft position changes overlay per-dialog overrides; cancel drops them.
-internal fun visibleSettingIndices(
-    settings: List<AndroidSetting>,
-    section: AndroidSettingsSection,
-    overrides: Map<Int, Boolean> = emptyMap(),
-): List<Int> = section.settingIndices.filter { overrides[it] ?: settings[it].visible }
-
-// Payload key literals shared with the Rust schema; the same-edge rule itself stays in Rust.
-private const val NOTIFICATIONS_POSITION_KEY = "notifications.position"
-private const val STATUS_POSITION_KEY = "status.position"
-private const val STATUS_AREA_MODE_KEY = "status.area_mode"
-
-@Composable
-internal fun rememberSettingsSelections(
-    settings: List<AndroidSetting>,
-    initialSelections: List<Int>,
-) = remember(settings, initialSelections) {
-    mutableStateListOf<Int>().apply {
-        settings.forEachIndexed { index, setting ->
-            val maxIndex =
-                if (setting.kind == "range") {
-                    (setting.rangeMax - setting.rangeMin).coerceAtLeast(0)
-                } else {
-                    max(0, setting.choices.lastIndex)
-                }
-            add(initialSelections.getOrElse(index) { 0 }.coerceIn(0, maxIndex))
-        }
-    }
-}
-
-@Composable
-private fun DialogSettingButton(
-    label: String,
-    value: String,
-    key: String,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onClick)
-                .padding(vertical = 16.dp)
-                .semantics { contentDescription = "$key: $label: $value" },
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(text = label, modifier = Modifier.weight(1f))
-        Text(text = value, style = MaterialTheme.typography.bodyMedium)
-    }
-}
-
-@Composable
-private fun DialogChoiceButton(
-    label: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onClick)
-                .padding(vertical = 12.dp)
-                .semantics { contentDescription = label },
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(text = label, modifier = Modifier.weight(1f))
-        RadioButton(selected = selected, onClick = null)
-    }
-}

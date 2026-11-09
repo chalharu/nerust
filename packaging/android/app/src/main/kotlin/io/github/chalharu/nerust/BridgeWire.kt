@@ -2,7 +2,7 @@
 package io.github.chalharu.nerust
 
 internal const val BRIDGE_EVENT_VERSION = 1
-internal const val SETTINGS_SCHEMA_VERSION = 1
+internal const val SETTINGS_SCHEMA_VERSION = 2
 internal const val SAF_CHUNK_BYTES = 65536
 internal const val SAF_SUMMARY_BYTES = 65536
 

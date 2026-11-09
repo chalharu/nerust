@@ -42,16 +42,10 @@ mod reentrancy;
 #[cfg(target_os = "android")]
 mod android;
 
-// Exercise the actual settings serializer/model on the host, without JNI.
+// Exercise the actual settings views serializer on the host, without JNI.
 #[cfg(all(test, not(target_os = "android")))]
-#[path = "android/settings_codec.rs"]
-mod settings_codec;
-#[cfg(all(test, not(target_os = "android")))]
-#[path = "android/settings_model.rs"]
-mod settings_model;
-#[cfg(all(test, not(target_os = "android")))]
-#[path = "android/settings_schema.rs"]
-mod settings_schema;
+#[path = "android/settings_views.rs"]
+mod settings_views;
 
 #[cfg(any(target_os = "android", test))]
 use std::sync::Arc;

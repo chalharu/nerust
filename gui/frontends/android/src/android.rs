@@ -16,9 +16,7 @@ mod saf;
 mod settings;
 mod settings_apply;
 mod settings_bridge;
-mod settings_codec;
-mod settings_model;
-mod settings_schema;
+mod settings_views;
 mod storage;
 mod touch_layout;
 mod touch_tracker;
@@ -65,7 +63,6 @@ use self::{
     lifecycle::Lifecycle,
     peripheral_sync::PeripheralSync,
     render_sync::RenderSync,
-    settings::AndroidSettings,
     storage::AndroidStorage,
 };
 use crate::{
@@ -109,9 +106,9 @@ pub(super) fn register_main_activity_natives(
                     as *mut c_void,
             ),
             jni::NativeMethod::from_raw_parts(
-                jni_str!("nativeSettingsAreaVisible"),
-                jni_str!("(II)Z"),
-                settings_bridge::Java_io_github_chalharu_nerust_MainActivity_nativeSettingsAreaVisible
+                jni_str!("nativeSettingsCommand"),
+                jni_str!("(Ljava/lang/String;)Ljava/lang/String;"),
+                settings_bridge::Java_io_github_chalharu_nerust_MainActivity_nativeSettingsCommand
                     as *mut c_void,
             ),
             jni::NativeMethod::from_raw_parts(
@@ -331,6 +328,17 @@ impl AndroidFrontend {
             }
         }
         let restore_pending = storage.has_restore_pending();
+        // Stateless settings screen: the view model is rebuilt per JNI call
+        // against the vault draft, so only factories and probed rates are shared.
+        settings::install_vm_deps(
+            system_registry.all().to_vec(),
+            session
+                .audio_registry()
+                .supported_rates()
+                .iter()
+                .copied()
+                .collect(),
+        );
         let frontend = Self {
             app,
             core: SessionCore {
@@ -364,15 +372,13 @@ impl AndroidFrontend {
         Ok(frontend)
     }
 
-    /// Update settings for the asynchronous, event-loop-owned dialog request.
+    /// Refresh orientation from the live snapshot; the screen itself is
+    /// stateless and rebuilt from the snapshot on every open.
     fn refresh_dialog_caches(&self) {
-        let mut current = AndroidSettings::from_snapshot(
-            self.core.session.settings_snapshot(),
-            self.core.session.factories(),
+        settings::apply_screen_orientation(
+            &self.app,
+            self.core.session.settings_snapshot().local.screen_orientation,
         );
-        current.prioritize_system(self.core.session.active_system_id());
-        settings::update_cached_settings(&current);
-        settings::apply_screen_orientation(&self.app, current.screen_orientation);
     }
 
     fn handle_picker_result(&mut self, event_loop: &ActiveEventLoop, result: RomPickerResult) {
@@ -559,14 +565,8 @@ impl AndroidFrontend {
     }
 
     fn request_settings_dialog(&mut self) {
-        let mut current = settings::cloned_cached_settings().unwrap_or_else(|| {
-            AndroidSettings::from_snapshot(
-                self.core.session.settings_snapshot(),
-                self.core.session.factories(),
-            )
-        });
-        current.prioritize_system(self.core.session.active_system_id());
-        match settings::request_show_settings_dialog(&self.app, &current) {
+        let snapshot = self.core.session.settings_snapshot().clone();
+        match settings::request_show_settings_dialog(&self.app, &snapshot) {
             Ok(true) => {}
             Ok(false) => {
                 log::debug!("Android settings dialog already open");

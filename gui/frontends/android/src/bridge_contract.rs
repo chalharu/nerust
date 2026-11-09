@@ -2,7 +2,7 @@
 #[allow(dead_code)]
 pub(crate) const BRIDGE_EVENT_VERSION: u32 = 1;
 #[allow(dead_code)]
-pub(crate) const SETTINGS_SCHEMA_VERSION: u32 = 1;
+pub(crate) const SETTINGS_SCHEMA_VERSION: u32 = 2;
 #[allow(dead_code)]
 pub(crate) const SAF_CHUNK_BYTES: usize = 65536;
 #[allow(dead_code)]

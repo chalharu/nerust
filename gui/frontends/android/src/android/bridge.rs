@@ -1,7 +1,7 @@
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::VecDeque,
     sync::{
-        Arc, Mutex,
+        Mutex,
         atomic::{AtomicU64, Ordering},
     },
 };
@@ -11,8 +11,6 @@ use jni::refs::Global;
 use nerust_core_traits::peripheral::{AccelerationSample, AccelerometerInputHandle};
 use winit::{event_loop::EventLoopProxy, platform::android::activity::AndroidApp};
 
-use super::settings_model::AndroidSettings;
-use super::settings_schema::SettingDef;
 use crate::bridge_events::FrontendEvent;
 
 /// Worker-thread completion produced by the single picker fetch worker.
@@ -70,26 +68,27 @@ impl PickerSlot {
     }
 }
 
-/// Keyed dialog outcome produced by the settings bridge.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Screen outcome produced by the settings bridge.
+#[derive(Debug, Clone, PartialEq)]
 pub(super) enum SettingsDialogResult {
     Dismissed,
-    Applied(BTreeMap<String, usize>),
+    /// Accepted draft snapshot; validation runs on the event thread.
+    Applied(nerust_gui_runtime::settings::SettingsSnapshot),
 }
 
 /// Single-flight dialog state; lives in the unified bridge vault.
+/// The draft snapshot rides here while the screen is open; commands mutate it
+/// through throwaway view models, so no editor state crosses JNI.
 pub(super) struct SettingsSlot {
     pub(super) flight: crate::settings_flight::SettingsFlight<SettingsDialogResult>,
-    pub(super) cache: Option<AndroidSettings>,
-    pub(super) defs_cache: Option<(AndroidSettings, Arc<Vec<SettingDef>>)>,
+    pub(super) draft: Option<nerust_gui_runtime::settings::SettingsSnapshot>,
 }
 
 impl SettingsSlot {
     pub(super) const fn empty() -> Self {
         Self {
             flight: crate::settings_flight::SettingsFlight::new(),
-            cache: None,
-            defs_cache: None,
+            draft: None,
         }
     }
 }

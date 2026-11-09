@@ -172,25 +172,41 @@ class MainActivityE2eTest {
             require(!activity.isDestroyed) { "MainActivity should remain alive before opening Settings" }
             activity.showSettingsDialogForTest(
                 listOf(
-                    SettingsField(
-                        key = "video_filter",
-                        section = "video",
-                        sectionLabel = "Video",
-                        label = "Video Filter",
-                        kind = "choice",
-                        choices = listOf("CRT", "LCD"),
-                        value = 1,
-                        visible = true,
+                    SettingsSection(
+                        id = "video",
+                        label = "Video",
+                        rows =
+                            listOf(
+                                SettingsRow(
+                                    key = "video_filter",
+                                    label = "Video Filter",
+                                    kind = "choice",
+                                    choices = listOf(SettingsChoice("CRT"), SettingsChoice("LCD")),
+                                    selected = 1,
+                                    number = 0L,
+                                    step = 1L,
+                                    unit = "",
+                                    text = "",
+                                ),
+                            ),
                     ),
-                    SettingsField(
-                        key = "touch_overlay",
-                        section = "controls",
-                        sectionLabel = "Controls",
-                        label = "Touch Overlay",
-                        kind = "choice",
-                        choices = listOf("On", "Off"),
-                        value = 0,
-                        visible = true,
+                    SettingsSection(
+                        id = "controls",
+                        label = "Controls",
+                        rows =
+                            listOf(
+                                SettingsRow(
+                                    key = "touch_overlay",
+                                    label = "Touch Overlay",
+                                    kind = "toggle",
+                                    choices = listOf(SettingsChoice("On"), SettingsChoice("Off")),
+                                    selected = 0,
+                                    number = 0L,
+                                    step = 1L,
+                                    unit = "",
+                                    text = "",
+                                ),
+                            ),
                     ),
                 ),
             )

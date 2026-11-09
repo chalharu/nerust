@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "nerust Android bridge events v1",
-  "x-settings-schema-version": 1,
+  "x-settings-schema-version": 2,
   "x-saf-chunk-bytes": 65536,
   "x-saf-summary-bytes": 65536,
   "description": "Canonical v1 Kotlin→Rust bridge strings. The Rust bridge_events.rs decoder validates this schema before dispatch. Error acknowledgements require the correlated request_id; Kotlin sends it through the dedicated onErrorDialogDismissed(J)V native.",
