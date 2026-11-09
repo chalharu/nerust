@@ -217,7 +217,7 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_nativeHardwar
             }
             match settings_views::apply_hardware_key(keycode, pressed, draft, &mut state.capture)
             {
-                Ok(sections) => serde_json::json!({"ok": true, "consumed": true, "payload": serde_json::from_str::<serde_json::Value>(&sections).unwrap_or(serde_json::Value::Null)}).to_string(),
+                Ok((payload, consumed)) => serde_json::json!({"ok": true, "consumed": consumed, "payload": serde_json::from_str::<serde_json::Value>(&payload).unwrap_or(serde_json::Value::Null)}).to_string(),
                 Err(error) => serde_json::json!({"ok": false, "error": error}).to_string(),
             }
         }),

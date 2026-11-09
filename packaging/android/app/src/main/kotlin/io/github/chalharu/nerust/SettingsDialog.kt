@@ -1,6 +1,7 @@
 package io.github.chalharu.nerust
 
 import android.os.Build
+import android.util.Log
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.selection.toggleable
@@ -269,9 +270,11 @@ internal fun NerustErrorDialogCard(
     NerustExpressiveHost {
         NerustDialogHost {
             NerustDialogCard(
-                title = "Error",
+                title = stringResource(R.string.settings_error_title),
                 buttons = {
-                    TextButton(onClick = onDismissRequest) { Text("OK") }
+                    TextButton(onClick = onDismissRequest) {
+                        Text(stringResource(R.string.settings_ok))
+                    }
                 },
             ) {
                 SelectionContainer {
@@ -291,6 +294,8 @@ internal fun NerustErrorDialogCard(
 internal fun settingsContentDescription(
     sections: List<SettingsSection>,
     title: String = "Settings",
+    onLabel: String = "On",
+    offLabel: String = "Off",
 ): String =
     buildList {
         add(title)
@@ -299,19 +304,24 @@ internal fun settingsContentDescription(
             .flatMap { it.rows }
             .filter { it.kind != "header" }
             .forEach { row ->
-                add("${row.label}: ${settingsRowDisplayValue(row)}")
+                add("${row.label}: ${settingsRowDisplayValue(row, onLabel, offLabel)}")
             }
     }.joinToString("\n")
 
-internal fun settingsRowDisplayValue(row: SettingsRow): String =
+internal fun settingsRowDisplayValue(
+    row: SettingsRow,
+    onLabel: String = "On",
+    offLabel: String = "Off",
+): String =
     when (row.kind) {
         "choice" -> row.choices.getOrNull(row.selected)?.label ?: "?"
-        "toggle" -> row.choices.getOrNull(row.selected)?.label ?: if (row.selected == 1) "On" else "Off"
+        "toggle" -> row.choices.getOrNull(row.selected)?.label ?: if (row.selected == 1) onLabel else offLabel
         "number" -> "${row.number}${row.unit}"
         else -> row.text
     }
 
 /** Fallback when a settings command fails before Rust answers. */
+private const val TAG = "SettingsDialog"
 private const val COMMAND_FAILED = "command failed"
 
 /** DTO-driven settings screen: sections from Rust, one synchronous command
@@ -340,6 +350,7 @@ internal fun NerustSettingsDialogCard(
         try {
             val doc = JSONObject(raw)
             if (!doc.optBoolean("ok", false)) {
+                Log.e(TAG, "settings command rejected: ${doc.optString("error", COMMAND_FAILED)}")
                 commandError = doc.optString("error", COMMAND_FAILED)
                 return false
             }
@@ -350,6 +361,7 @@ internal fun NerustSettingsDialogCard(
             capturePrompt = parseCapture(payload)
             return true
         } catch (e: Exception) {
+            Log.e(TAG, "settings payload parse failed", e)
             commandError = e.message ?: COMMAND_FAILED
             return false
         }
@@ -367,6 +379,7 @@ internal fun NerustSettingsDialogCard(
                 onCommand(settingsCommandJson(key, index, number, op))
                     ?: throw IllegalStateException("settings bridge returned null")
             } catch (e: Exception) {
+                Log.e(TAG, "settings bridge call failed", e)
                 commandError = e.message ?: COMMAND_FAILED
                 return
             }
@@ -549,6 +562,110 @@ internal fun parseIssues(payload: JSONObject): List<String> {
 internal fun parseCapture(payload: JSONObject): String? =
     payload.optJSONObject("capture")?.optString("prompt")?.ifBlank { null }
 
+private data class SettingsBanners(
+    val capturePrompt: String?,
+    val issues: List<String>,
+    val commandError: String?,
+)
+
+@Composable
+private fun CaptureBanner(
+    prompt: String,
+    onCancelCapture: () -> Unit,
+) {
+    Card(
+        colors =
+            CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
+            ),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp),
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = prompt,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            TextButton(onClick = onCancelCapture) {
+                Text(stringResource(R.string.settings_cancel))
+            }
+        }
+    }
+}
+
+@Composable
+private fun IssuesBanner(issues: List<String>) {
+    Card(
+        colors =
+            CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.errorContainer,
+            ),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp),
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = stringResource(R.string.settings_needs_attention),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            issues.forEach { issue ->
+                Text(
+                    text = "\u2022 $issue",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CommandErrorBanner() {
+    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+        Text(
+            text = stringResource(R.string.settings_update_failed),
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.error,
+        )
+        Text(
+            text = stringResource(R.string.settings_update_retry),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+        )
+    }
+}
+
+// Banners ride as the first lazy items so they scroll with the content
+// instead of squeezing the list on small screens.
+private fun androidx.compose.foundation.lazy.LazyListScope.settingsBannerItems(
+    banners: SettingsBanners,
+    onCancelCapture: () -> Unit,
+) {
+    banners.capturePrompt?.let { prompt ->
+        item(key = "banner-capture") {
+            CaptureBanner(prompt = prompt, onCancelCapture = onCancelCapture)
+        }
+    }
+    if (banners.issues.isNotEmpty()) {
+        item(key = "banner-issues") {
+            IssuesBanner(issues = banners.issues)
+        }
+    }
+    if (banners.commandError != null) {
+        item(key = "banner-error") {
+            CommandErrorBanner()
+        }
+    }
+}
+
 @Composable
 private fun SettingsScreenContent(
     modifier: Modifier,
@@ -566,77 +683,21 @@ private fun SettingsScreenContent(
     onClearCapture: (SettingsRow) -> Unit,
     onSectionClick: (String) -> Unit,
 ) {
-    Column(modifier = modifier) {
-        capturePrompt?.let { prompt ->
-            Card(
-                colors =
-                    CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    ),
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 8.dp),
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = prompt,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    TextButton(onClick = onCancelCapture) {
-                        Text(stringResource(R.string.settings_cancel))
-                    }
-                }
-            }
+    val banners =
+        remember(capturePrompt, issues, commandError) {
+            SettingsBanners(
+                capturePrompt = capturePrompt,
+                issues = issues,
+                commandError = commandError,
+            )
         }
-        if (issues.isNotEmpty()) {
-            Card(
-                colors =
-                    CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                    ),
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 8.dp),
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = stringResource(R.string.settings_needs_attention),
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onErrorContainer,
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    issues.forEach { issue ->
-                        Text(
-                            text = "\u2022 $issue",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onErrorContainer,
-                        )
-                    }
-                }
-            }
-        }
-        commandError?.let {
-            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
-                Text(
-                    text = stringResource(R.string.settings_update_failed),
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.error,
-                )
-                Text(
-                    text = it,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                )
-            }
-        }
+    Box(modifier = modifier) {
         when {
             activeRow != null && activeRow.kind == "choice" -> {
                 SettingsChoiceList(
                     row = activeRow,
+                    banners = banners,
+                    onCancelCapture = onCancelCapture,
                     onSelect = { choiceIndex -> onSelectChoice(activeRow, choiceIndex) },
                 )
             }
@@ -644,6 +705,8 @@ private fun SettingsScreenContent(
             activeSection != null -> {
                 SettingsSectionList(
                     section = activeSection,
+                    banners = banners,
+                    onCancelCapture = onCancelCapture,
                     onToggle = onToggle,
                     onCommitNumber = onCommitNumber,
                     onRowClick = onRowClick,
@@ -654,6 +717,8 @@ private fun SettingsScreenContent(
             else -> {
                 SettingsCategoryList(
                     sections = sections.filter { it.visible },
+                    banners = banners,
+                    onCancelCapture = onCancelCapture,
                     onSectionClick = onSectionClick,
                 )
             }
@@ -664,6 +729,8 @@ private fun SettingsScreenContent(
 @Composable
 private fun SettingsCategoryList(
     sections: List<SettingsSection>,
+    banners: SettingsBanners,
+    onCancelCapture: () -> Unit,
     onSectionClick: (String) -> Unit,
 ) {
     LazyColumn(
@@ -671,16 +738,21 @@ private fun SettingsCategoryList(
         verticalArrangement = Arrangement.spacedBy(12.dp),
         contentPadding = PaddingValues(vertical = 12.dp),
     ) {
+        settingsBannerItems(banners = banners, onCancelCapture = onCancelCapture)
         itemsIndexed(sections, key = { _, section -> section.id }) { _, section ->
             // Summaries show only inline-editable rows; group/capture/info
             // rows would leak a bare chevron or a binding label here.
+            val onLabel = stringResource(R.string.settings_on)
+            val offLabel = stringResource(R.string.settings_off)
             val summary =
                 section.rows
                     .filter { it.kind == "choice" || it.kind == "toggle" || it.kind == "number" }
                     .take(2)
                     .joinToString(" · ") { row ->
-                        "${row.label}: ${settingsRowDisplayValue(row)}"
+                        "${row.label}: ${settingsRowDisplayValue(row, onLabel, offLabel)}"
                     }
+            // Headers group rows visually; only real entries count.
+            val entryCount = section.rows.count { it.kind != "header" }
             Card(
                 onClick = { onSectionClick(section.id) },
                 shape = RoundedCornerShape(28.dp),
@@ -699,8 +771,8 @@ private fun SettingsCategoryList(
                         text =
                             pluralStringResource(
                                 R.plurals.settings_count,
-                                section.rows.size,
-                                section.rows.size,
+                                entryCount,
+                                entryCount,
                             ),
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.primary,
@@ -722,6 +794,8 @@ private fun SettingsCategoryList(
 @Composable
 private fun SettingsSectionList(
     section: SettingsSection,
+    banners: SettingsBanners,
+    onCancelCapture: () -> Unit,
     onToggle: (SettingsRow, Boolean) -> Unit,
     onCommitNumber: (SettingsRow, Long) -> Unit,
     onRowClick: (SettingsRow) -> Unit,
@@ -734,6 +808,7 @@ private fun SettingsSectionList(
         verticalArrangement = Arrangement.spacedBy(12.dp),
         contentPadding = PaddingValues(vertical = 12.dp),
     ) {
+        settingsBannerItems(banners = banners, onCancelCapture = onCancelCapture)
         groups.forEach { group ->
             if (group.title.isNotBlank()) {
                 item(key = "${section.id}#${group.title}") {
@@ -773,7 +848,7 @@ private fun SettingsSectionList(
                                     SettingsNavigationRow(
                                         title = row.label,
                                         value = settingsRowDisplayValue(row),
-                                        semanticsLabel = "${row.key}: ${row.label}: ${settingsRowDisplayValue(row)}",
+                                        semanticsLabel = "${row.label}: ${settingsRowDisplayValue(row)}",
                                         onClick = { onRowClick(row) },
                                     )
                                 }
@@ -781,7 +856,7 @@ private fun SettingsSectionList(
                                     SettingsNavigationRow(
                                         title = row.label,
                                         value = "",
-                                        semanticsLabel = "${row.key}: ${row.label}",
+                                        semanticsLabel = row.label,
                                         showChevron = true,
                                         onClick = { onRowClick(row) },
                                     )
@@ -797,7 +872,7 @@ private fun SettingsSectionList(
                                     SettingsInfoRow(
                                         title = row.label,
                                         value = settingsRowDisplayValue(row),
-                                        semanticsLabel = "${row.key}: ${row.label}",
+                                        semanticsLabel = row.label,
                                     )
                                 }
                             }
@@ -852,7 +927,7 @@ private fun SettingsToggleRow(
                     onValueChange = onToggle,
                 )
                 .padding(horizontal = 24.dp, vertical = 12.dp)
-                .semantics { contentDescription = "${row.key}: ${row.label}" },
+                .semantics { contentDescription = row.label },
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -896,7 +971,7 @@ private fun SettingsSliderRow(
             Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 24.dp, vertical = 12.dp)
-                .semantics { contentDescription = "${row.key}: ${row.label}" },
+                .semantics { contentDescription = row.label },
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -936,7 +1011,7 @@ private fun SettingsCaptureRow(
             Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 24.dp, vertical = 12.dp)
-                .semantics { contentDescription = "${row.key}: ${row.label}" },
+                .semantics { contentDescription = row.label },
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -960,6 +1035,8 @@ private fun SettingsCaptureRow(
 @Composable
 private fun SettingsChoiceList(
     row: SettingsRow,
+    banners: SettingsBanners,
+    onCancelCapture: () -> Unit,
     onSelect: (Int) -> Unit,
 ) {
     LazyColumn(
@@ -967,6 +1044,7 @@ private fun SettingsChoiceList(
         verticalArrangement = Arrangement.spacedBy(12.dp),
         contentPadding = PaddingValues(vertical = 12.dp),
     ) {
+        settingsBannerItems(banners = banners, onCancelCapture = onCancelCapture)
         item(key = "${row.key}#card") {
             Card(
                 shape = RoundedCornerShape(28.dp),
@@ -978,14 +1056,10 @@ private fun SettingsChoiceList(
             ) {
                 Column {
                     row.choices.forEachIndexed { choiceIndex, choice ->
+                        // Rust passes the owner slot label; Kotlin owns the sentence.
                         val reason =
                             choice.reason.ifBlank { null }?.let { owner ->
-                                if (owner.isBlank()) {
-                                    stringResource(R.string.settings_used_elsewhere)
-                                } else {
-                                    // Rust passes the owner slot label; Kotlin owns the sentence.
-                                    LocalContext.current.getString(R.string.settings_used_in, owner)
-                                }
+                                stringResource(R.string.settings_used_in, owner)
                             }
                         Row(
                             modifier =
@@ -1100,4 +1174,3 @@ private fun SettingsInfoRow(
 
 internal fun buildSettingsSections(sections: List<SettingsSection>): List<SettingsSection> = sections
 
-internal fun settingsCountLabel(count: Int): String = "$count ${if (count == 1) "setting" else "settings"}"

@@ -66,6 +66,9 @@ class DialogManager(private val activity: MainActivity) {
         onDismiss: () -> Unit,
         ownedByTest: Boolean = false,
         onBackPressed: (() -> Boolean)? = null,
+        // Invoked for non-Back keys while the dialog window holds focus;
+        // the activity's dispatchKeyEvent never fires in that state.
+        onKeyEvent: ((keyCode: Int, event: KeyEvent) -> Boolean)? = null,
         content: @Composable (dismiss: () -> Unit) -> Unit,
     ) {
         dismiss(notifyDismiss = !this.ownedByTest)
@@ -100,9 +103,11 @@ class DialogManager(private val activity: MainActivity) {
                 setCancelable(true)
                 setCanceledOnTouchOutside(true)
                 setOnKeyListener { _, keyCode, event ->
-                    keyCode == KeyEvent.KEYCODE_BACK &&
-                        event.action == KeyEvent.ACTION_UP &&
+                    if (keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) {
                         onBackPressed?.invoke() == true
+                    } else {
+                        onKeyEvent?.invoke(keyCode, event) == true
+                    }
                 }
             }
 
