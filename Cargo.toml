@@ -231,6 +231,8 @@ thiserror = { version = "=2.0.21" }
 time = { version = "=0.3.55" }
 typetag = { version = "=0.2.23" }
 wgpu = { version = "=30.0.1" }
+windows-sys = { features = ["Win32_Storage_FileSystem"], version = "=0.61.2" }
 winit = { version = "=0.30.13" }
+x11-dl = { version = "=2.21.0" }
 zerocopy = { features = ["derive"], version = "=0.8.63" }
 zip = { default-features = false, features = ["deflate"], version = "=9.3.0" }
