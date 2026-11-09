@@ -137,12 +137,17 @@ pub(super) fn reset_transient() {
 
 // JNI callback for the settings screen result: dismissal drops the draft,
 // save takes it into the flight for the event thread to validate and apply.
+// The standalone SettingsActivity hosts the screen.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDialogResult(
+pub extern "system" fn Java_io_github_chalharu_nerust_SettingsActivity_onSettingsDialogResult(
     mut env: jni::EnvUnowned<'_>,
     _activity: JObject<'_>,
     result: JString<'_>,
 ) {
+    on_settings_dialog_result(&mut env, result);
+}
+
+fn on_settings_dialog_result(env: &mut jni::EnvUnowned<'_>, result: JString<'_>) {
     match bridge::with_callback_env(&mut env, |env| -> jni::errors::Result<Option<String>> {
         if result.is_null() {
             Ok(None)
@@ -197,10 +202,19 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onSettingsDia
 /// Hardware key routing for capture: consumes the key when a capture is
 /// pending and returns the refreshed payload (or an error envelope).
 /// Non-capture keys pass through untouched (null payload marker).
+/// The standalone SettingsActivity hosts capture, so only it binds this.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_nativeHardwareKey(
+pub extern "system" fn Java_io_github_chalharu_nerust_SettingsActivity_nativeHardwareKey(
     mut env: jni::EnvUnowned<'_>,
     _activity: JObject<'_>,
+    keycode: jni::sys::jint,
+    pressed: jni::sys::jboolean,
+) -> jni::sys::jstring {
+    hardware_key(&mut env, keycode, pressed)
+}
+
+fn hardware_key(
+    env: &mut jni::EnvUnowned<'_>,
     keycode: jni::sys::jint,
     pressed: jni::sys::jboolean,
 ) -> jni::sys::jstring {
@@ -233,12 +247,17 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_nativeHardwar
 /// Synchronous settings command: one edit in, refreshed payload
 /// (or `{"ok":false,"error"}`) out. The draft lives in the bridge vault;
 /// the view model lives only for this call, so any calling thread is safe.
+/// The standalone SettingsActivity hosts the screen, so only it binds this.
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_nativeSettingsCommand(
+pub extern "system" fn Java_io_github_chalharu_nerust_SettingsActivity_nativeSettingsCommand(
     mut env: jni::EnvUnowned<'_>,
     _activity: JObject<'_>,
     command: JString<'_>,
 ) -> jni::sys::jstring {
+    settings_command(&mut env, command)
+}
+
+fn settings_command(env: &mut jni::EnvUnowned<'_>, command: JString<'_>) -> jni::sys::jstring {
     let parsed = bridge::with_callback_env(&mut env, |env| -> jni::errors::Result<String> {
         command.try_to_string(env)
     });

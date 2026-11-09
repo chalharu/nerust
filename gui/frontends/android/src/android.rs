@@ -100,24 +100,6 @@ pub(super) fn register_main_activity_natives(
                     as *mut c_void,
             ),
             jni::NativeMethod::from_raw_parts(
-                jni_str!("onSettingsDialogResult"),
-                jni_str!("(Ljava/lang/String;)V"),
-                settings_bridge::Java_io_github_chalharu_nerust_MainActivity_onSettingsDialogResult
-                    as *mut c_void,
-            ),
-            jni::NativeMethod::from_raw_parts(
-                jni_str!("nativeSettingsCommand"),
-                jni_str!("(Ljava/lang/String;)Ljava/lang/String;"),
-                settings_bridge::Java_io_github_chalharu_nerust_MainActivity_nativeSettingsCommand
-                    as *mut c_void,
-            ),
-            jni::NativeMethod::from_raw_parts(
-                jni_str!("nativeHardwareKey"),
-                jni_str!("(IZ)Ljava/lang/String;"),
-                settings_bridge::Java_io_github_chalharu_nerust_MainActivity_nativeHardwareKey
-                    as *mut c_void,
-            ),
-            jni::NativeMethod::from_raw_parts(
                 jni_str!("onActivityDestroyed"),
                 jni_str!("(Z)V"),
                 bridge::Java_io_github_chalharu_nerust_MainActivity_onActivityDestroyed
@@ -137,7 +119,34 @@ pub(super) fn register_main_activity_natives(
             ),
         ]
     };
-    unsafe { env.register_native_methods(class, &methods) }
+    unsafe { env.register_native_methods(class, &methods)? };
+
+    // The standalone settings screen talks to the same vault from its own
+    // activity class, so the same callbacks are bound there too.
+    let settings_class = env.find_class(jni_str!("io/github/chalharu/nerust/SettingsActivity"))?;
+    let settings_methods = unsafe {
+        [
+            jni::NativeMethod::from_raw_parts(
+                jni_str!("onSettingsDialogResult"),
+                jni_str!("(Ljava/lang/String;)V"),
+                settings_bridge::Java_io_github_chalharu_nerust_SettingsActivity_onSettingsDialogResult
+                    as *mut c_void,
+            ),
+            jni::NativeMethod::from_raw_parts(
+                jni_str!("nativeSettingsCommand"),
+                jni_str!("(Ljava/lang/String;)Ljava/lang/String;"),
+                settings_bridge::Java_io_github_chalharu_nerust_SettingsActivity_nativeSettingsCommand
+                    as *mut c_void,
+            ),
+            jni::NativeMethod::from_raw_parts(
+                jni_str!("nativeHardwareKey"),
+                jni_str!("(IZ)Ljava/lang/String;"),
+                settings_bridge::Java_io_github_chalharu_nerust_SettingsActivity_nativeHardwareKey
+                    as *mut c_void,
+            ),
+        ]
+    };
+    unsafe { env.register_native_methods(settings_class, &settings_methods) }
 }
 
 pub(super) fn run(
