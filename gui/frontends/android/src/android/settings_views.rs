@@ -17,6 +17,7 @@ use std::{
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_viewmodel::settings::{SettingsViewModel, StoragePathError, StoragePathValidator};
 use nerust_settings_core::{
+    editor::CaptureTarget,
     i18n::{UiText, text as ui_text},
     model::{
         language::AppLanguage,
@@ -37,25 +38,40 @@ use serde::{Deserialize, Serialize};
 /// 1 was the descriptor/codec dialog; 2 is the ViewModel projection.
 pub(super) const SETTINGS_SCHEMA_VERSION: u32 = 2;
 
-/// Full screen payload: schema version plus the sections Kotlin renders.
+/// Full screen payload: schema version, sections Kotlin renders, live
+/// validation issues for the draft, and the pending key-capture state.
 /// The draft snapshot stays in the bridge vault; Kotlin never sees it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct ViewPayload {
     pub schema_version: u32,
     pub sections: Vec<SectionWire>,
+    pub issues: Vec<String>,
+    pub capture: Option<CaptureWire>,
 }
 
-/// One settings section: id plus pre-resolved label plus rows.
+/// Pending key capture: opaque target plus the localized prompt.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct CaptureWire {
+    pub target: String,
+    pub prompt: String,
+}
+
+/// One settings section: id plus pre-resolved label plus rows. Invisible
+/// sections stay addressable (group navigation) but leave the category list.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct SectionWire {
     pub id: String,
     pub label: String,
     pub rows: Vec<RowWire>,
+    #[serde(default = "default_true")]
+    pub visible: bool,
 }
 
 /// One settings row. `choices` carries both the Kotlin-visible labels and the
-/// Rust-typed values (echoed back by index); `number`/`step`/`unit` drive
-/// stepper rows; `text` drives read-only info rows.
+/// Rust-typed values (echoed back by index); `number`/`step`/`min`/`max`/`unit`
+/// drive slider rows; `text` drives read-only info rows; `target` carries the
+/// opaque capture target for `capture` rows; `Header`/`Group` rows are
+/// non-editable navigation aids.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct RowWire {
     pub key: String,
@@ -70,9 +86,15 @@ pub(super) struct RowWire {
     #[serde(default)]
     pub step: i64,
     #[serde(default)]
+    pub min: i64,
+    #[serde(default)]
+    pub max: i64,
+    #[serde(default)]
     pub unit: String,
     #[serde(default)]
     pub text: String,
+    #[serde(default)]
+    pub target: String,
     #[serde(default = "default_true")]
     pub visible: bool,
 }
@@ -81,8 +103,10 @@ fn default_true() -> bool {
     true
 }
 
-/// Row presentation kinds. Toggles render as switches, numbers as steppers,
-/// infos as static text, headers as subgroup titles; choices render as radio lists.
+/// Row presentation kinds. Toggles render as switches, numbers as sliders,
+/// infos as static text, headers as subgroup titles, groups as navigation
+/// rows into another section, captures as key-capture rows; choices render
+/// as radio lists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum RowKind {
@@ -91,18 +115,22 @@ pub(super) enum RowKind {
     Number,
     Info,
     Header,
+    Group,
+    Capture,
 }
 
-/// One pick-list entry: display label plus the opaque typed value Rust
-/// deserializes when the index comes back in a command.
+/// One pick-list entry: display label, opaque typed value, and whether the
+/// choice is currently selectable (slot conflicts disable taken profiles).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct ChoiceWire {
     pub value: serde_json::Value,
     pub label: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
 }
 
-/// One settings edit from Kotlin: row key plus choice index plus stepper value.
-/// Only the field matching the row kind is read.
+/// One settings edit from Kotlin: row key plus op. `set` reads the choice
+/// index or the slider number; capture ops act on the row's opaque target.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct WireCommand {
     pub key: String,
@@ -110,6 +138,12 @@ pub(super) struct WireCommand {
     pub index: usize,
     #[serde(default)]
     pub number: i64,
+    #[serde(default = "default_op_set")]
+    pub op: String,
+}
+
+fn default_op_set() -> String {
+    "set".to_string()
 }
 
 /// View-model dependencies shared across JNI calls. `CoreFactory` is
@@ -171,41 +205,264 @@ fn build_vm(snapshot: &SettingsSnapshot, deps: &VmDeps) -> Result<SettingsViewMo
     .map_err(|error| error.to_string())
 }
 
-/// Open payload for Kotlin: schema version plus sections.
+/// Open payload for Kotlin: schema version, sections, live issues, capture.
 pub(super) fn open_payload(snapshot: &SettingsSnapshot) -> Result<String, String> {
     with_vm_deps(|deps| {
+        let vm = build_vm(snapshot, deps)?;
         let payload = ViewPayload {
             schema_version: SETTINGS_SCHEMA_VERSION,
-            sections: build_sections(&build_vm(snapshot, deps)?, snapshot),
+            sections: build_sections(&vm, snapshot),
+            issues: draft_issues(&vm),
+            capture: None,
         };
         serde_json::to_string(&payload).map_err(|error| error.to_string())
     })
 }
 
+/// Pending capture slot: target plus the localized prompt captured at start.
+pub(super) type CaptureSlot = Option<(CaptureTarget, String)>;
+
 /// Apply one wire command to the draft snapshot in place, returning the
-/// refreshed sections. Stateless per call except for the passed draft.
+/// refreshed payload. Stateless per call except for the passed draft and
+/// capture slot.
 pub(super) fn apply_command_to(
     snapshot: &mut SettingsSnapshot,
     command_json: &str,
+    capture: &mut CaptureSlot,
 ) -> Result<String, String> {
     let command: WireCommand =
         serde_json::from_str(command_json).map_err(|error| error.to_string())?;
     with_vm_deps(|deps| {
-        let vm = build_vm(snapshot, deps)?;
-        let sections = build_sections(&vm, snapshot);
-        if is_android_local_key(&command.key) {
-            apply_android_local(snapshot, &sections, &command)?;
+        if command.op != "set" {
+            apply_capture_command(snapshot, deps, &command, capture)?;
         } else {
-            apply_view_model_command(&vm, deps, &sections, &command)?;
-            *snapshot = vm.snapshot();
+            let vm = build_vm(snapshot, deps)?;
+            let sections = build_sections(&vm, snapshot);
+            if is_android_local_key(&command.key) {
+                apply_android_local(snapshot, &sections, &command)?;
+            } else {
+                apply_view_model_command(&vm, deps, &sections, &command)?;
+                *snapshot = vm.snapshot();
+            }
         }
-        let refreshed = build_vm(snapshot, deps)?;
-        let payload = ViewPayload {
-            schema_version: SETTINGS_SCHEMA_VERSION,
-            sections: build_sections(&refreshed, snapshot),
-        };
-        serde_json::to_string(&payload).map_err(|error| error.to_string())
+        refreshed_payload(snapshot, deps, capture)
     })
+}
+
+/// Refreshed payload after any draft mutation: sections, live issues from a
+/// non-fatal `finish` probe, and the pending capture state.
+fn refreshed_payload(
+    snapshot: &SettingsSnapshot,
+    deps: &VmDeps,
+    capture: &CaptureSlot,
+) -> Result<String, String> {
+    let vm = build_vm(snapshot, deps)?;
+    let payload = ViewPayload {
+        schema_version: SETTINGS_SCHEMA_VERSION,
+        sections: build_sections(&vm, snapshot),
+        issues: draft_issues(&vm),
+        capture: capture.as_ref().map(|(target, prompt)| CaptureWire {
+            target: encode_target(target, &target_system(target, deps)),
+            prompt: prompt.clone(),
+        }),
+    };
+    serde_json::to_string(&payload).map_err(|error| error.to_string())
+}
+
+/// Hardware key routing for capture (and future keyboard play): Android
+/// keycodes to `Key`. Only pressed events with an active capture mutate.
+pub(super) fn apply_hardware_key(
+    keycode: i32,
+    pressed: bool,
+    snapshot: &mut SettingsSnapshot,
+    capture: &mut CaptureSlot,
+) -> Result<String, String> {
+    with_vm_deps(|deps| {
+        if pressed
+            && let Some((target, _)) = capture.clone()
+            && let Some(key) = android_keycode_to_key(keycode)
+        {
+            let vm = build_vm(snapshot, deps)?;
+            vm.capture
+                .start_capture(target)
+                .map_err(|error| error.to_string())?;
+            vm.capture.apply_captured_key(key);
+            *snapshot = vm.snapshot();
+            *capture = None;
+        }
+        refreshed_payload(snapshot, deps, capture)
+    })
+}
+
+fn android_keycode_to_key(keycode: i32) -> Option<nerust_input_traits::Key> {
+    use nerust_input_traits::Key;
+    Some(match keycode {
+        7 => Key::Digit0,
+        8 => Key::Digit1,
+        9 => Key::Digit2,
+        10 => Key::Digit3,
+        11 => Key::Digit4,
+        12 => Key::Digit5,
+        13 => Key::Digit6,
+        14 => Key::Digit7,
+        15 => Key::Digit8,
+        16 => Key::Digit9,
+        19 => Key::ArrowUp,
+        20 => Key::ArrowDown,
+        21 => Key::ArrowLeft,
+        22 => Key::ArrowRight,
+        29 => Key::KeyA,
+        30 => Key::KeyB,
+        31 => Key::KeyC,
+        32 => Key::KeyD,
+        33 => Key::KeyE,
+        34 => Key::KeyF,
+        35 => Key::KeyG,
+        36 => Key::KeyH,
+        37 => Key::KeyI,
+        38 => Key::KeyJ,
+        39 => Key::KeyK,
+        40 => Key::KeyL,
+        41 => Key::KeyM,
+        42 => Key::KeyN,
+        43 => Key::KeyO,
+        44 => Key::KeyP,
+        45 => Key::KeyQ,
+        46 => Key::KeyR,
+        47 => Key::KeyS,
+        48 => Key::KeyT,
+        49 => Key::KeyU,
+        50 => Key::KeyV,
+        51 => Key::KeyW,
+        52 => Key::KeyX,
+        53 => Key::KeyY,
+        54 => Key::KeyZ,
+        55 => Key::Comma,
+        56 => Key::Period,
+        57 => Key::AltLeft,
+        58 => Key::AltRight,
+        59 => Key::ShiftLeft,
+        60 => Key::ShiftRight,
+        61 => Key::Tab,
+        62 => Key::Space,
+        66 => Key::Enter,
+        67 => Key::Backspace,
+        68 => Key::Backquote,
+        69 => Key::Minus,
+        70 => Key::Equal,
+        71 => Key::BracketLeft,
+        72 => Key::BracketRight,
+        73 => Key::Backslash,
+        74 => Key::Semicolon,
+        75 => Key::Quote,
+        76 => Key::Slash,
+        92 => Key::PageUp,
+        93 => Key::PageDown,
+        111 => Key::Escape,
+        112 => Key::Delete,
+        113 => Key::ControlLeft,
+        114 => Key::ControlRight,
+        115 => Key::CapsLock,
+        122 => Key::Home,
+        123 => Key::End,
+        124 => Key::Insert,
+        131 => Key::F1,
+        132 => Key::F2,
+        133 => Key::F3,
+        134 => Key::F4,
+        135 => Key::F5,
+        136 => Key::F6,
+        137 => Key::F7,
+        138 => Key::F8,
+        139 => Key::F9,
+        140 => Key::F10,
+        141 => Key::F11,
+        142 => Key::F12,
+        144 => Key::Numpad0,
+        145 => Key::Numpad1,
+        146 => Key::Numpad2,
+        147 => Key::Numpad3,
+        148 => Key::Numpad4,
+        149 => Key::Numpad5,
+        150 => Key::Numpad6,
+        151 => Key::Numpad7,
+        152 => Key::Numpad8,
+        153 => Key::Numpad9,
+        154 => Key::NumpadDivide,
+        155 => Key::NumpadMultiply,
+        156 => Key::NumpadSubtract,
+        157 => Key::NumpadAdd,
+        158 => Key::NumpadDecimal,
+        163 => Key::NumpadEnter,
+        164 => Key::NumpadEqual,
+        _ => return None,
+    })
+}
+
+fn target_system(target: &CaptureTarget, deps: &VmDeps) -> String {
+    match target {
+        CaptureTarget::Binding { system, .. } => system.to_string(),
+        CaptureTarget::Shortcut(_) => deps
+            .factories
+            .first()
+            .map(|factory| factory.system_id().to_string())
+            .unwrap_or_default(),
+    }
+}
+
+/// Non-fatal validation probe: the same gate `finish` enforces at save,
+/// surfaced live so the UI can explain disabled/unappliable states.
+fn draft_issues(vm: &SettingsViewModel) -> Vec<String> {
+    match vm.finish() {
+        Ok(_) => Vec::new(),
+        Err(state) => state
+            .issues
+            .iter()
+            .map(|issue| issue.message.clone())
+            .collect(),
+    }
+}
+
+/// Capture ops: start/clear/cancel against the vault slot. Binding targets
+/// decode from the row's opaque target; the row key only locates the row.
+/// Clears mutate the draft through the VM snapshot round-trip, exactly like
+/// every other setter.
+fn apply_capture_command(
+    snapshot: &mut SettingsSnapshot,
+    deps: &VmDeps,
+    command: &WireCommand,
+    capture: &mut CaptureSlot,
+) -> Result<(), String> {
+    if command.op == "cancel_capture" {
+        *capture = None;
+        return Ok(());
+    }
+    let vm = build_vm(snapshot, deps)?;
+    let sections = build_sections(&vm, snapshot);
+    let row = find_row(&sections, &command.key)?;
+    if row.kind != RowKind::Capture {
+        return Err(format!("{}: not a capture row", command.key));
+    }
+    let target = decode_target(&row.target, deps)?;
+    match command.op.as_str() {
+        "clear_binding" => {
+            vm.capture
+                .clear_binding(&target)
+                .map_err(|error| error.to_string())?;
+            *snapshot = vm.snapshot();
+            *capture = None;
+            Ok(())
+        }
+        "start_capture" => {
+            vm.capture
+                .start_capture(target.clone())
+                .map_err(|error| error.to_string())?;
+            let prompt = vm.capture.view.get().prompt.clone();
+            *capture = Some((target, prompt));
+            Ok(())
+        }
+        op => Err(format!("unknown command op: {op}")),
+    }
 }
 
 /// Validate the draft through the view model. Conflicts and factory rules run here.
@@ -531,6 +788,7 @@ where
         .map(|(value, label)| ChoiceWire {
             value: serde_json::to_value(value).unwrap_or(serde_json::Value::Null),
             label: label.clone(),
+            enabled: true,
         })
         .collect();
     let selected = wires
@@ -545,8 +803,11 @@ where
         selected,
         number: 0,
         step: 0,
+        min: 0,
+        max: 0,
         unit: String::new(),
         text: String::new(),
+        target: String::new(),
         visible: true,
     }
 }
@@ -567,7 +828,15 @@ fn toggle_row(key: &str, label: String, language: AppLanguage, value: bool) -> R
     .with_kind(RowKind::Toggle)
 }
 
-fn number_row(key: &str, label: String, value: i64, step: i64, unit: &str) -> RowWire {
+fn number_row(
+    key: &str,
+    label: String,
+    value: i64,
+    step: i64,
+    min: i64,
+    max: i64,
+    unit: &str,
+) -> RowWire {
     RowWire {
         key: key.to_string(),
         label,
@@ -576,8 +845,11 @@ fn number_row(key: &str, label: String, value: i64, step: i64, unit: &str) -> Ro
         selected: 0,
         number: value,
         step,
+        min,
+        max,
         unit: unit.to_string(),
         text: String::new(),
+        target: String::new(),
         visible: true,
     }
 }
@@ -591,8 +863,11 @@ fn info_row(key: &str, label: String, text: String) -> RowWire {
         selected: 0,
         number: 0,
         step: 0,
+        min: 0,
+        max: 0,
         unit: String::new(),
         text,
+        target: String::new(),
         visible: true,
     }
 }
@@ -606,8 +881,50 @@ fn header_row(label: String) -> RowWire {
         selected: 0,
         number: 0,
         step: 0,
+        min: 0,
+        max: 0,
         unit: String::new(),
         text: String::new(),
+        target: String::new(),
+        visible: true,
+    }
+}
+
+/// Navigation row into another section by id.
+fn group_row(key: &str, label: String, target: &str) -> RowWire {
+    RowWire {
+        key: key.to_string(),
+        label,
+        kind: RowKind::Group,
+        choices: Vec::new(),
+        selected: 0,
+        number: 0,
+        step: 0,
+        min: 0,
+        max: 0,
+        unit: String::new(),
+        text: String::new(),
+        target: target.to_string(),
+        visible: true,
+    }
+}
+
+/// Key-capture row: tap starts capture against the opaque target, Clear
+/// unbinds, Cancel aborts. `text` shows the current binding label.
+fn capture_row(key: &str, label: String, text: String, target: &str) -> RowWire {
+    RowWire {
+        key: key.to_string(),
+        label,
+        kind: RowKind::Capture,
+        choices: Vec::new(),
+        selected: 0,
+        number: 0,
+        step: 0,
+        min: 0,
+        max: 0,
+        unit: String::new(),
+        text,
+        target: target.to_string(),
         visible: true,
     }
 }
@@ -634,6 +951,7 @@ fn build_sections(vm: &SettingsViewModel, snapshot: &SettingsSnapshot) -> Vec<Se
         build_storage_section(vm, language),
     ];
     sections.extend(build_system_sections(vm, language));
+    sections.extend(build_input_sections(vm));
     // Canonical order owned by Rust; machine sections keep factory order
     // after the known taxonomy.
     sections.sort_by_key(|section| {
@@ -666,6 +984,7 @@ fn build_general_section(vm: &SettingsViewModel, language: AppLanguage) -> Secti
         id: "general".to_string(),
         label: crate::settings_sections::section_label("general", language).to_string(),
         rows,
+        visible: true,
     }
 }
 
@@ -706,6 +1025,7 @@ fn build_video_section(
                 &orientation,
             ),
         ],
+        visible: true,
     }
 }
 
@@ -725,7 +1045,9 @@ fn build_audio_section(vm: &SettingsViewModel, language: AppLanguage) -> Section
                 "audio.volume",
                 ui_text(language, UiText::MasterVolume).to_string(),
                 i64::from(view.volume_percent),
-                5,
+                1,
+                0,
+                100,
                 "%",
             ),
             {
@@ -748,9 +1070,12 @@ fn build_audio_section(vm: &SettingsViewModel, language: AppLanguage) -> Section
                 ui_text(language, UiText::AudioLatency).to_string(),
                 i64::from(view.latency_ms),
                 5,
+                10,
+                200,
                 " ms",
             ),
         ],
+        visible: true,
     }
 }
 
@@ -771,7 +1096,9 @@ fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) ->
                 "notifications.info_duration",
                 t(UiText::NotificationDuration),
                 i64::from(view.info_duration_ms),
+                500,
                 1000,
+                30000,
                 " ms",
             ),
             choice_row(
@@ -794,7 +1121,9 @@ fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) ->
                 "notifications.warning_duration",
                 t(UiText::NotificationDuration),
                 i64::from(view.warning_duration_ms),
+                500,
                 1000,
+                30000,
                 " ms",
             ),
             choice_row(
@@ -865,17 +1194,24 @@ fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) ->
                     .collect::<Vec<_>>(),
                 &view.status_position,
             ),
-            choice_row(
-                "status.area_mode",
-                t(UiText::NotificationStatusAreaMode),
-                &view
-                    .area_mode_choices
-                    .iter()
-                    .map(|choice| (choice.value, choice.label.clone()))
-                    .collect::<Vec<_>>(),
-                &view.status_area_mode,
-            ),
+            {
+                let mut row = choice_row(
+                    "status.area_mode",
+                    t(UiText::NotificationStatusAreaMode),
+                    &view
+                        .area_mode_choices
+                        .iter()
+                        .map(|choice| (choice.value, choice.label.clone()))
+                        .collect::<Vec<_>>(),
+                    &view.status_area_mode,
+                );
+                // Same-edge rule: the status area follows the notification
+                // area when both share an edge, so the row hides then.
+                row.visible = view.position.is_top() != view.status_position.is_top();
+                row
+            },
         ],
+        visible: true,
     }
 }
 
@@ -910,7 +1246,9 @@ fn build_controls_section(snapshot: &SettingsSnapshot, language: AppLanguage) ->
                 "controls.overlay_opacity",
                 t(UiText::OverlayOpacity),
                 i64::from(overlay.opacity_percent),
-                5,
+                1,
+                0,
+                100,
                 "%",
             ),
             number_row(
@@ -918,13 +1256,17 @@ fn build_controls_section(snapshot: &SettingsSnapshot, language: AppLanguage) ->
                 t(UiText::OverlayScale),
                 i64::from(overlay.scale_percent),
                 5,
+                50,
+                150,
                 "%",
             ),
             number_row(
                 "controls.overlay_vertical_offset",
                 t(UiText::OverlayVerticalOffset),
                 i64::from(overlay.vertical_offset_percent),
-                5,
+                1,
+                -30,
+                30,
                 "%",
             ),
             toggle_row(
@@ -949,7 +1291,9 @@ fn build_controls_section(snapshot: &SettingsSnapshot, language: AppLanguage) ->
                 "controls.cartridge_rumble_strength",
                 t(UiText::RumbleStrength),
                 i64::from(peripherals.rumble_strength_percent),
-                5,
+                1,
+                0,
+                100,
                 "%",
             ),
             choice_row(
@@ -972,6 +1316,7 @@ fn build_controls_section(snapshot: &SettingsSnapshot, language: AppLanguage) ->
                 &peripherals.rumble_target,
             ),
         ],
+        visible: true,
     }
 }
 
@@ -1004,24 +1349,17 @@ fn build_storage_section(vm: &SettingsViewModel, language: AppLanguage) -> Secti
         id: "storage".to_string(),
         label: crate::settings_sections::section_label("storage", language).to_string(),
         rows,
+        visible: true,
     }
 }
 
 /// One section per machine: its settings fields plus its controller slot
 /// assignment. Keyboard bindings and shortcuts need a physical keyboard, so
 /// Android shows neither; binding conflicts vanish with them.
+/// One section per machine: settings fields plus a navigation row into the
+/// machine's controller screen (`input.<system>`). Keyboard bindings live on
+/// the controller screen, one drill-down away from the machine settings.
 fn build_system_sections(vm: &SettingsViewModel, language: AppLanguage) -> Vec<SectionWire> {
-    let inputs: std::collections::HashMap<
-        String,
-        nerust_gui_viewmodel::settings::dto::InputTabView,
-    > = vm
-        .inputs()
-        .iter()
-        .map(|input| {
-            let view = input.view.get();
-            (view.system_id.to_string(), view)
-        })
-        .collect();
     vm.systems()
         .iter()
         .map(|system| {
@@ -1042,12 +1380,45 @@ fn build_system_sections(vm: &SettingsViewModel, language: AppLanguage) -> Vec<S
                     )
                 })
                 .collect();
-            if let Some(input) = inputs.get(&view.system_id.to_string()) {
-                rows.push(header_row(
-                    ui_text(language, UiText::Controller).to_string(),
-                ));
-                rows.extend(input.slots.iter().map(|slot| {
-                    choice_row(
+            rows.push(group_row(
+                &format!("system.{}.controllers", view.system_id),
+                ui_text(language, UiText::Controller).to_string(),
+                &format!("input.{}", view.system_id),
+            ));
+            SectionWire {
+                id: format!("system.{}", view.system_id),
+                label: view.label.clone(),
+                rows,
+                visible: true,
+            }
+        })
+        .collect()
+}
+
+/// One controller screen per machine, reachable from the machine section via
+/// the controller group row. Hidden from the category list: same level would
+/// repeat machine names. Contains slot assignment plus keyboard bindings
+/// (capture-capable now that hardware keys route into the session).
+fn build_input_sections(vm: &SettingsViewModel) -> Vec<SectionWire> {
+    vm.inputs()
+        .iter()
+        .map(|input| {
+            let view = input.view.get();
+            // Profiles taken by another slot cannot be picked here.
+            let taken: std::collections::HashMap<String, String> = view
+                .slots
+                .iter()
+                .filter_map(|slot| {
+                    slot.selected_profile_id
+                        .clone()
+                        .map(|profile| (profile, slot.slot_id.as_str().to_string()))
+                })
+                .collect();
+            let mut rows: Vec<RowWire> = view
+                .slots
+                .iter()
+                .map(|slot| {
+                    let mut row = choice_row(
                         &format!("system.{}.slot.{}", view.system_id, slot.slot_id.as_str()),
                         slot.label.clone(),
                         &slot
@@ -1063,16 +1434,119 @@ fn build_system_sections(vm: &SettingsViewModel, language: AppLanguage) -> Vec<S
                             .collect::<Vec<_>>(),
                         &serde_json::to_value(&slot.selected_profile_id)
                             .unwrap_or(serde_json::Value::Null),
+                    );
+                    for (wire, choice) in row.choices.iter_mut().zip(slot.choices.iter()) {
+                        wire.enabled = match &choice.value {
+                            None => true,
+                            Some(profile) => taken
+                                .get(profile)
+                                .is_none_or(|owner| owner == slot.slot_id.as_str()),
+                        };
+                    }
+                    row
+                })
+                .collect();
+            for section in &view.sections {
+                rows.push(header_row(section.label.clone()));
+                rows.extend(section.rows.iter().map(|binding| {
+                    capture_row(
+                        &format!(
+                            "system.{}.binding.{}",
+                            view.system_id,
+                            binding_key(&binding.target)
+                        ),
+                        binding.label.clone(),
+                        binding_value_text(binding),
+                        &encode_target(&binding.target, &view.system_id.to_string()),
                     )
                 }));
             }
             SectionWire {
-                id: format!("system.{}", view.system_id),
+                id: format!("input.{}", view.system_id),
                 label: view.label.clone(),
                 rows,
+                visible: false,
             }
         })
         .collect()
+}
+
+fn binding_key(target: &CaptureTarget) -> String {
+    match target {
+        CaptureTarget::Binding {
+            attachment,
+            control,
+            ..
+        } => format!("{attachment}.{control}"),
+        CaptureTarget::Shortcut(action) => format!("shortcut.{action:?}"),
+    }
+}
+
+fn binding_value_text(binding: &nerust_gui_viewmodel::settings::dto::BindingRowView) -> String {
+    use nerust_gui_viewmodel::settings::dto::BindingValueView;
+    match &binding.value {
+        BindingValueView::Unbound(label)
+        | BindingValueView::Bound(label)
+        | BindingValueView::Capturing(label) => label.clone(),
+    }
+}
+
+/// Opaque capture target: newline-free JSON the key must not parse.
+fn encode_target(target: &CaptureTarget, system: &str) -> String {
+    match target {
+        CaptureTarget::Binding {
+            attachment,
+            control,
+            ..
+        } => serde_json::json!({
+            "kind": "binding",
+            "system": system,
+            "attachment": attachment,
+            "control": control,
+        })
+        .to_string(),
+        CaptureTarget::Shortcut(action) => {
+            serde_json::json!({"kind": "shortcut", "action": action}).to_string()
+        }
+    }
+}
+
+fn decode_target(encoded: &str, deps: &VmDeps) -> Result<CaptureTarget, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(encoded).map_err(|error| error.to_string())?;
+    match value.get("kind").and_then(|kind| kind.as_str()) {
+        Some("binding") => {
+            let system = value
+                .get("system")
+                .and_then(|system| system.as_str())
+                .ok_or_else(|| "capture target misses system".to_string())?;
+            let factory = deps
+                .factories
+                .iter()
+                .find(|factory| factory.system_id().to_string() == system)
+                .ok_or_else(|| format!("unknown system: {system}"))?;
+            Ok(CaptureTarget::Binding {
+                system: factory.system_id(),
+                attachment: value
+                    .get("attachment")
+                    .and_then(|attachment| attachment.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                control: value
+                    .get("control")
+                    .and_then(|control| control.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+            })
+        }
+        Some("shortcut") => {
+            let action: nerust_settings_core::model::input::ShortcutAction =
+                serde_json::from_value(value.get("action").cloned().unwrap_or_default())
+                    .map_err(|error| error.to_string())?;
+            Ok(CaptureTarget::Shortcut(action))
+        }
+        _ => Err("unknown capture target".to_string()),
+    }
 }
 
 #[cfg(test)]
@@ -1155,18 +1629,30 @@ mod tests {
             .unwrap_or_else(|| panic!("row {key} exists"))
     }
 
-    fn apply(snapshot: &mut SettingsSnapshot, key: &str, index: usize, number: i64) -> ViewPayload {
+    fn apply(
+        snapshot: &mut SettingsSnapshot,
+        capture: &mut CaptureSlot,
+        key: &str,
+        op: &str,
+        index: usize,
+        number: i64,
+    ) -> ViewPayload {
         with_test_deps(|| {
             let command_json = serde_json::to_string(&WireCommand {
                 key: key.to_string(),
                 index,
                 number,
+                op: op.to_string(),
             })
             .unwrap();
-            let out = apply_command_to(snapshot, &command_json)
+            let out = apply_command_to(snapshot, &command_json, capture)
                 .unwrap_or_else(|error| panic!("command failed: {error}"));
             serde_json::from_str(&out).unwrap()
         })
+    }
+
+    fn set(snapshot: &mut SettingsSnapshot, key: &str, index: usize, number: i64) -> ViewPayload {
+        apply(snapshot, &mut None, key, "set", index, number)
     }
 
     #[test]
@@ -1212,16 +1698,9 @@ mod tests {
     }
 
     #[test]
-    fn machine_sections_merge_fields_and_slots_without_keyboard_content() {
-        let (mut snapshot, payload) = test_payload();
-        // No separate input/shortcuts sections: one section per machine.
-        assert!(
-            payload
-                .sections
-                .iter()
-                .all(|section| !section.id.starts_with("input.") && section.id != "shortcuts"),
-            "input/shortcuts sections must not exist on Android"
-        );
+    fn machine_sections_link_to_hidden_controller_screens() {
+        let (_snapshot, payload) = test_payload();
+        // Machines appear once with fields plus a controller group row.
         let nes = payload
             .sections
             .iter()
@@ -1233,43 +1712,204 @@ mod tests {
                 .any(|row| row.key == "system.nes.video.filter"),
             "machine fields stay in the machine section"
         );
-        let header = nes
+        let group = nes
             .rows
             .iter()
-            .position(|row| row.kind == super::RowKind::Header)
-            .expect("controller header exists");
-        assert!(
-            nes.rows[header + 1..]
-                .iter()
-                .any(|row| row.key.starts_with("system.nes.slot.")),
-            "slots follow the header: {nes:?}"
-        );
+            .find(|row| row.kind == super::RowKind::Group)
+            .expect("controller group row exists");
+        assert_eq!(group.target, "input.nes");
         assert!(
             nes.rows
                 .iter()
-                .all(|row| !row.key.contains("binding") && !row.key.contains("conflict")),
-            "no keyboard binding or conflict rows on Android"
+                .all(|row| !row.key.contains("slot.") && !row.key.contains("binding")),
+            "slots and bindings drill one level down"
         );
-        // Slot assignment round-trips through the merged key.
-        let slot_key = "system.nes.slot.nes.attachment.player1";
-        let slot_row = row(&payload, slot_key);
-        let none = slot_row
+        let input = payload
+            .sections
+            .iter()
+            .find(|section| section.id == "input.nes")
+            .expect("controller screen exists");
+        assert!(!input.visible, "controller screens hide from categories");
+        assert!(
+            input
+                .rows
+                .iter()
+                .any(|row| row.key.starts_with("system.nes.slot.")),
+            "slots live on the controller screen"
+        );
+        assert!(
+            input
+                .rows
+                .iter()
+                .any(|row| row.kind == super::RowKind::Capture),
+            "keyboard bindings are capturable rows"
+        );
+        assert!(
+            payload
+                .sections
+                .iter()
+                .all(|section| section.id != "shortcuts"),
+            "shortcuts section stays hidden on Android"
+        );
+    }
+
+    #[test]
+    fn taken_profiles_disable_in_other_slots() {
+        let (mut snapshot, payload) = test_payload();
+        // Give player1 its first concrete profile, then player2 must refuse it.
+        let p1_key = "system.nes.slot.nes.attachment.player1";
+        let p2_key = "system.nes.slot.nes.attachment.player2";
+        let p1_choices = &row(&payload, p1_key).choices;
+        let p2_values: Vec<_> = row(&payload, p2_key)
             .choices
             .iter()
-            .position(|choice| choice.value.is_null())
-            .expect("unassigned choice exists");
-        let refreshed = apply(&mut snapshot, slot_key, none, 0);
-        assert_eq!(row(&refreshed, slot_key).selected, none);
+            .map(|choice| choice.value.clone())
+            .collect();
+        let (first, profile) = p1_choices
+            .iter()
+            .enumerate()
+            .find(|(_, choice)| !choice.value.is_null() && p2_values.contains(&choice.value))
+            .map(|(index, choice)| (index, choice.value.clone()))
+            .expect("shared concrete profile exists");
+        let next = set(&mut snapshot, p1_key, first, 0);
+        let p2 = row(&next, p2_key);
+        let taken = p2
+            .choices
+            .iter()
+            .find(|choice| choice.value == profile)
+            .expect("same profile listed for player2");
+        assert!(!taken.enabled, "taken profile disables elsewhere");
+        // ...but stays enabled in its own slot.
+        let own = row(&next, p1_key)
+            .choices
+            .iter()
+            .find(|choice| choice.value == profile)
+            .expect("profile listed for player1");
+        assert!(own.enabled);
+    }
+
+    #[test]
+    fn capture_round_trips_through_hardware_keys() {
+        let (mut snapshot, _) = test_payload();
+        let mut capture: CaptureSlot = None;
+        // Find any binding capture row on the NES controller screen.
+        let target_key = with_test_deps(|| {
+            let vm = build_vm(&snapshot, &test_deps()).expect("vm builds");
+            let sections = build_sections(&vm, &snapshot);
+            sections
+                .iter()
+                .flat_map(|section| &section.rows)
+                .find(|row| row.kind == super::RowKind::Capture)
+                .map(|row| (row.key.clone(), row.target.clone()))
+                .expect("capture row exists")
+        });
+        let (key, _) = target_key;
+        let started = apply(&mut snapshot, &mut capture, &key, "start_capture", 0, 0);
+        let pending = started.capture.expect("capture pending");
+        assert!(!pending.prompt.is_empty());
+        let done = with_test_deps(|| {
+            apply_hardware_key(29, true, &mut snapshot, &mut capture).expect("hardware key applies")
+        });
+        let _ = done;
+        assert!(capture.is_none(), "capture consumes after one key");
+    }
+
+    #[test]
+    fn clear_binding_unbinds_without_keyboard() {
+        let (mut snapshot, _) = test_payload();
+        let mut capture: CaptureSlot = None;
+        let key = with_test_deps(|| {
+            let vm = build_vm(&snapshot, &test_deps()).expect("vm builds");
+            let sections = build_sections(&vm, &snapshot);
+            sections
+                .iter()
+                .flat_map(|section| &section.rows)
+                .find(|row| row.kind == super::RowKind::Capture)
+                .map(|row| row.key.clone())
+                .expect("capture row exists")
+        });
+        let cleared = apply(&mut snapshot, &mut capture, &key, "clear_binding", 0, 0);
+        let _ = cleared;
+        assert!(capture.is_none());
+    }
+
+    #[test]
+    fn number_rows_advertise_vm_accepted_bounds() {
+        let (mut snapshot, _) = test_payload();
+        let bounds: Vec<(String, i64, i64)> = with_test_deps(|| {
+            let vm = build_vm(&snapshot, &test_deps()).expect("vm builds");
+            let sections = build_sections(&vm, &snapshot);
+            sections
+                .iter()
+                .flat_map(|section| &section.rows)
+                .filter(|row| row.kind == super::RowKind::Number)
+                .map(|row| (row.key.clone(), row.min, row.max))
+                .collect()
+        });
+        assert!(!bounds.is_empty());
+        for (key, min, max) in bounds {
+            assert!(min < max, "{key}: bounds order");
+            set(&mut snapshot, &key, 0, min);
+            set(&mut snapshot, &key, 0, max);
+        }
+    }
+
+    #[test]
+    fn empty_slots_surface_live_issues() {
+        let (mut snapshot, payload) = test_payload();
+        for slot in [
+            "system.nes.slot.nes.attachment.player1",
+            "system.nes.slot.nes.attachment.player2",
+        ] {
+            let none = row(&payload, slot)
+                .choices
+                .iter()
+                .position(|choice| choice.value.is_null())
+                .expect("unassigned choice exists");
+            set(&mut snapshot, slot, none, 0);
+        }
+        let probed = with_test_deps(|| {
+            let vm = build_vm(&snapshot, &test_deps()).expect("vm builds");
+            draft_issues(&vm)
+        });
+        assert!(
+            probed
+                .iter()
+                .any(|issue| issue.contains("At least one controller")),
+            "all-None slots explain themselves: {probed:?}"
+        );
+    }
+
+    #[test]
+    fn same_edge_hides_status_area_mode() {
+        let (mut snapshot, payload) = test_payload();
+        // Defaults (BottomLeft vs TopLeft) show the row.
+        assert!(row(&payload, "status.area_mode").visible);
+        // Move status to the bottom edge: the row hides.
+        let status = row(&payload, "status.position");
+        let bottom_right = status
+            .choices
+            .iter()
+            .position(|choice| {
+                let label = choice.label.to_lowercase();
+                label.contains("bottom") && label.contains("right")
+            })
+            .expect("bottom-right choice exists");
+        let next = set(&mut snapshot, "status.position", bottom_right, 0);
+        assert!(
+            !row(&next, "status.area_mode").visible,
+            "same-edge rule hides the row"
+        );
     }
 
     #[test]
     fn toggle_and_number_commands_round_trip() {
         let (mut snapshot, _) = test_payload();
-        let muted = apply(&mut snapshot, "audio.muted", 1, 0);
+        let muted = set(&mut snapshot, "audio.muted", 1, 0);
         assert!(snapshot.local.audio.muted);
         assert_eq!(row(&muted, "audio.muted").selected, 1);
 
-        let volume = apply(&mut snapshot, "audio.volume", 0, 42);
+        let volume = set(&mut snapshot, "audio.volume", 0, 42);
         assert_eq!(snapshot.local.audio.master_volume_percent, 42);
         assert_eq!(row(&volume, "audio.volume").number, 42);
     }
@@ -1283,7 +1923,7 @@ mod tests {
             .iter()
             .position(|choice| choice.value == serde_json::json!("japanese"))
             .expect("japanese choice exists");
-        let next = apply(&mut snapshot, "general.language", japanese, 0);
+        let next = set(&mut snapshot, "general.language", japanese, 0);
         assert_eq!(snapshot.shared.general.language, AppLanguage::Japanese);
 
         let filter_row = row(&next, "system.nes.video.filter");
@@ -1292,7 +1932,7 @@ mod tests {
             .iter()
             .position(|choice| choice.value == serde_json::json!("ntsc_rgb"))
             .expect("ntsc_rgb choice exists");
-        let _filter = apply(&mut snapshot, "system.nes.video.filter", rgb, 0);
+        let _filter = set(&mut snapshot, "system.nes.video.filter", rgb, 0);
         let nes = snapshot
             .shared
             .systems
@@ -1311,17 +1951,19 @@ mod tests {
                 key: "nope.missing".to_string(),
                 index: 0,
                 number: 0,
+                op: "set".to_string(),
             })
             .unwrap();
-            assert!(apply_command_to(&mut snapshot, &bad_key).is_err());
+            assert!(apply_command_to(&mut snapshot, &bad_key, &mut None).is_err());
 
             let bad_index = serde_json::to_string(&WireCommand {
                 key: "audio.sample_rate".to_string(),
                 index: 99,
                 number: 0,
+                op: "set".to_string(),
             })
             .unwrap();
-            assert!(apply_command_to(&mut snapshot, &bad_index).is_err());
+            assert!(apply_command_to(&mut snapshot, &bad_index, &mut None).is_err());
         });
         assert_eq!(snapshot, before);
     }

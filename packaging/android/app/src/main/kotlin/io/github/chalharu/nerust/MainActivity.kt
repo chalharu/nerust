@@ -75,6 +75,9 @@ class MainActivity :
     private val safRepository = SafRepository(this)
     // Test-only dialog probe: release builds skip the write so the
     // production show path pays one branch and keeps no test state.
+    internal var settingsNavActions: SettingsNavActions? = null
+        private set
+
     internal var lastDialogStateForTest = "not requested"
         set(value) {
             if (BuildConfig.DEBUG) field = value
@@ -160,6 +163,30 @@ class MainActivity :
                 source and InputDevice.SOURCE_DPAD == InputDevice.SOURCE_DPAD ||
                 source and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
         if (!isController) {
+            val nav = settingsNavActions
+            if (nav != null && nav.isCapturing &&
+                (event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_UP)
+            ) {
+                val raw =
+                    try {
+                        nativeHardwareKey(event.keyCode, event.action == KeyEvent.ACTION_DOWN)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "nativeHardwareKey failed", e)
+                        null
+                    }
+                val doc =
+                    raw?.let {
+                        try {
+                            JSONObject(it)
+                        } catch (e: JSONException) {
+                            null
+                        }
+                    }
+                if (doc != null && doc.optBoolean("consumed", false)) {
+                    nav.applyPayload(doc.toString())
+                }
+                return true
+            }
             return super.dispatchKeyEvent(event)
         }
         val key =
@@ -561,7 +588,9 @@ class MainActivity :
 
     internal fun showSettingsDialogForTest(sections: List<SettingsSection>) {
         showSettingsDialogInternal(
-            sections = sections,
+            payload =
+                JSONObject()
+                    .put("sections", sectionsToJson(sections)),
             requestId = null,
             ownedByTest = true,
         )
@@ -586,15 +615,15 @@ class MainActivity :
             return
         }
         val requestId = document.getLong("requestId")
-        val sections =
+        val payload =
             try {
-                parseSettingsSections(document.getJSONObject("payload"))
+                document.getJSONObject("payload")
             } catch (e: JSONException) {
                 Log.e(TAG, "showSettingsDialog: malformed sections", e)
                 return
             }
         showSettingsDialogInternal(
-            sections = sections,
+            payload = payload,
             requestId = requestId,
             ownedByTest = false,
         )
@@ -612,10 +641,13 @@ class MainActivity :
     }
 
     private fun showSettingsDialogInternal(
-        sections: List<SettingsSection>,
+        payload: JSONObject,
         requestId: Long?,
         ownedByTest: Boolean,
     ) {
+        val sections = parseSettingsSections(payload)
+        val issues = parseIssues(payload)
+        val capture = parseCapture(payload)
         var resultSent = false
 
         dialogManager.show(
@@ -623,7 +655,27 @@ class MainActivity :
             contentDescription = settingsContentDescription(sections),
             presentation = DIALOG_PRESENTATION_FULL_SCREEN,
             ownedByTest = ownedByTest,
+            onBackPressed = {
+                val nav = settingsNavActions
+                when {
+                    nav == null -> false
+                    nav.isCapturing -> {
+                        nav.cancelCapture()
+                        true
+                    }
+                    nav.canNavigateUp -> {
+                        nav.navigateUp()
+                        true
+                    }
+                    nav.isDirty -> {
+                        nav.requestCancel()
+                        true
+                    }
+                    else -> false
+                }
+            },
             onDismiss = {
+                settingsNavActions = null
                 if (!resultSent && requestId != null) {
                     onSettingsDialogResult(
                         JSONObject()
@@ -637,8 +689,11 @@ class MainActivity :
         ) { dismiss ->
             NerustSettingsDialogCard(
                 initialSections = sections,
+                initialIssues = issues,
+                initialCapture = capture,
                 onDismissRequest = dismiss,
                 onCommand = { command -> nativeSettingsCommand(command) },
+                onNavStateChanged = { actions -> settingsNavActions = actions },
                 onSave = {
                     resultSent = true
                     if (requestId != null) {
@@ -660,6 +715,52 @@ class MainActivity :
                 "${section.label}: ${settingsCountLabel(count)}"
             },
         )
+    }
+
+    internal fun sectionsToJson(sections: List<SettingsSection>): JSONObject {
+        val rowsOf = { rows: List<SettingsRow> ->
+            val array = org.json.JSONArray()
+            rows.forEach { row ->
+                val choices = org.json.JSONArray()
+                row.choices.forEach { choice ->
+                    choices.put(
+                        JSONObject()
+                            .put("label", choice.label)
+                            .put("enabled", choice.enabled),
+                    )
+                }
+                array.put(
+                    JSONObject()
+                        .put("key", row.key)
+                        .put("label", row.label)
+                        .put("kind", row.kind)
+                        .put("choices", choices)
+                        .put("selected", row.selected)
+                        .put("number", row.number)
+                        .put("step", row.step)
+                        .put("min", row.min)
+                        .put("max", row.max)
+                        .put("unit", row.unit)
+                        .put("text", row.text)
+                        .put("target", row.target)
+                        .put("visible", row.visible),
+                )
+            }
+            array
+        }
+        val array = org.json.JSONArray()
+        sections.forEach { section ->
+            array.put(
+                JSONObject()
+                    .put("id", section.id)
+                    .put("label", section.label)
+                    .put("rows", rowsOf(section.rows))
+                    .put("visible", section.visible),
+            )
+        }
+        return JSONObject()
+            .put("sections", array)
+            .put("issues", org.json.JSONArray())
     }
 
     /** Dumb host for the Rust dialog gate: always present what Rust requests.
@@ -711,6 +812,11 @@ class MainActivity :
     private external fun onSettingsDialogResult(result: String?)
 
     private external fun nativeSettingsCommand(command: String): String?
+
+    private external fun nativeHardwareKey(
+        keyCode: Int,
+        pressed: Boolean,
+    ): String?
 
     private external fun onActivityDestroyed(userInitiatedExit: Boolean)
 

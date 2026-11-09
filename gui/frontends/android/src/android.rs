@@ -112,6 +112,12 @@ pub(super) fn register_main_activity_natives(
                     as *mut c_void,
             ),
             jni::NativeMethod::from_raw_parts(
+                jni_str!("nativeHardwareKey"),
+                jni_str!("(IZ)Ljava/lang/String;"),
+                settings_bridge::Java_io_github_chalharu_nerust_MainActivity_nativeHardwareKey
+                    as *mut c_void,
+            ),
+            jni::NativeMethod::from_raw_parts(
                 jni_str!("onActivityDestroyed"),
                 jni_str!("(Z)V"),
                 bridge::Java_io_github_chalharu_nerust_MainActivity_onActivityDestroyed

@@ -435,7 +435,7 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::OverlayOpacity => ("Overlay opacity", "オーバーレイ不透明度"),
         UiText::OverlayScale => ("Overlay scale", "オーバーレイ拡大率"),
         UiText::OverlayVerticalOffset => ("Overlay vertical position", "オーバーレイ垂直位置"),
-        UiText::OverlayHaptics => ("Overlay haptics", "オーバーレイ振動"),
+        UiText::OverlayHaptics => ("Touch feedback", "タッチ操作時の振動"),
         UiText::CartridgeMotion => ("Cartridge motion sensor", "カートリッジモーションセンサー"),
         UiText::CartridgeRumble => ("Cartridge rumble", "カートリッジ振動"),
         UiText::RumbleStrength => ("Rumble strength", "振動の強さ"),
