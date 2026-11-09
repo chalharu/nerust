@@ -75,9 +75,6 @@ class MainActivity :
     private val safRepository = SafRepository(this)
     // Test-only dialog probe: release builds skip the write so the
     // production show path pays one branch and keeps no test state.
-    internal var settingsNavActions: SettingsNavActions? = null
-        private set
-
     internal var lastDialogStateForTest = "not requested"
         set(value) {
             if (BuildConfig.DEBUG) field = value
@@ -157,14 +154,16 @@ class MainActivity :
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        // Settings capture lives in SettingsActivity with its own dispatch;
+        // here only gamepad sources divert, everything else keeps platform
+        // behavior (volume, Back, hardware keyboards in gameplay).
         val source = event.source
         val isController =
             source and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
                 source and InputDevice.SOURCE_DPAD == InputDevice.SOURCE_DPAD ||
                 source and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
         if (!isController) {
-            return routeSettingsKeyEvent(event.keyCode, event.action, event.source) ||
-                super.dispatchKeyEvent(event)
+            return super.dispatchKeyEvent(event)
         }
         val key =
             when (event.keyCode) {
@@ -507,9 +506,9 @@ class MainActivity :
 
     fun isChromeViewShowingForTest(tag: String): Boolean =
         chromeManager.isViewShowingForTest(tag) ?: when (tag) {
-            SETTINGS_DIALOG_TAG,
-            -> {
-                dialogManager.isShowing(tag)
+            SETTINGS_DIALOG_TAG -> {
+                val settings = SettingsActivity.currentActivityForTest()
+                settings != null && !settings.isFinishing && !settings.isDestroyed
             }
 
             else -> {
@@ -519,9 +518,8 @@ class MainActivity :
 
     fun findChromeViewForTest(tag: String): View? =
         chromeManager.findViewForTest(tag) ?: when (tag) {
-            SETTINGS_DIALOG_TAG,
-            -> {
-                dialogManager.rootViewForTag(tag)
+            SETTINGS_DIALOG_TAG -> {
+                SettingsActivity.currentActivityForTest()?.window?.decorView
             }
 
             else -> {
@@ -532,6 +530,7 @@ class MainActivity :
     fun chromeDebugStateForTest(tag: String): String =
         "tag=$tag, destroyed=$isDestroyed, finishing=$isFinishing, decor=${window.decorView.debugViewState()}, " +
             chromeManager.debugStateForTest() + dialogManager.debugState() +
+            ", settings=${SettingsActivity.currentActivityForTest()?.isFinishing}" +
             ", lastDialog=$lastDialogStateForTest"
 
     fun dispatchMenuActionForTest(action: String) {
@@ -555,19 +554,24 @@ class MainActivity :
     }
 
     fun dismissComposeDialogForTest() {
-        dialogManager.dismissForTest()
+        SettingsActivity.currentActivityForTest()?.finishForReplacement()
+            ?: dialogManager.dismissForTest()
     }
 
     fun resetChromeStateForTest() {
+        SettingsActivity.currentActivityForTest()?.finish()
         dialogManager.resetForTest()
         chromeManager.removeDrawerOverlay()
     }
 
     internal fun showSettingsDialogForTest(sections: List<SettingsSection>) {
-        showSettingsDialogInternal(
-            payload = sectionsToJson(sections),
-            requestId = null,
-            ownedByTest = true,
+        startActivity(
+            SettingsActivity.createIntent(
+                this,
+                SETTINGS_SCHEMA_VERSION,
+                -1L,
+                sectionsToJson(sections).toString(),
+            ),
         )
     }
 
@@ -600,58 +604,7 @@ class MainActivity :
         showSettingsDialogInternal(
             payload = payload,
             requestId = requestId,
-            ownedByTest = false,
         )
-    }
-
-    /** Route a key event to Rust while a binding capture is pending. Returns
-     * true only when Rust consumed the key as a binding; unmapped keys and
-     * releases fall through so the platform keeps handling them. Shared by
-     * the activity dispatcher and the dialog key hook (the dialog window
-     * holds focus while settings are open, so activity dispatch never fires
-     * there). Gamepad-source keys stay out: gamepad capture is future work. */
-    private fun routeSettingsKeyEvent(
-        keyCode: Int,
-        action: Int,
-        source: Int,
-    ): Boolean {
-        val isController =
-            source and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
-                source and InputDevice.SOURCE_DPAD == InputDevice.SOURCE_DPAD ||
-                source and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
-        if (isController) return false
-        return forwardHardwareKeyIfCapturing(keyCode, action)
-    }
-
-    private fun forwardHardwareKeyIfCapturing(
-        keyCode: Int,
-        action: Int,
-    ): Boolean {
-        val nav = settingsNavActions ?: return false
-        if (!nav.isCapturing) return false
-        if (action != KeyEvent.ACTION_DOWN && action != KeyEvent.ACTION_UP) return true
-        val raw =
-            try {
-                nativeHardwareKey(keyCode, action == KeyEvent.ACTION_DOWN)
-            } catch (e: Exception) {
-                Log.e(TAG, "nativeHardwareKey failed", e)
-                null
-            }
-        val doc =
-            raw?.let {
-                try {
-                    JSONObject(it)
-                } catch (e: JSONException) {
-                    null
-                }
-            }
-        // Swallow only what Rust consumed as a binding; everything else
-        // (volume, unmapped keys, releases) keeps its platform behavior.
-        if (doc != null && doc.optBoolean("consumed", false)) {
-            nav.applyPayload(doc.toString())
-            return true
-        }
-        return false
     }
 
     fun applyScreenOrientation(value: Int) {
@@ -667,96 +620,15 @@ class MainActivity :
 
     private fun showSettingsDialogInternal(
         payload: JSONObject,
-        requestId: Long?,
-        ownedByTest: Boolean,
+        requestId: Long,
     ) {
-        val sections = parseSettingsSections(payload)
-        val issues = parseIssues(payload)
-        val capture = parseCapture(payload)
-        var resultSent = false
-
-        dialogManager.show(
-            dialogTag = SETTINGS_DIALOG_TAG,
-            contentDescription =
-                settingsContentDescription(
-                    sections,
-                    getString(R.string.settings_title),
-                    getString(R.string.settings_on),
-                    getString(R.string.settings_off),
-                ),
-            presentation = DIALOG_PRESENTATION_FULL_SCREEN,
-            ownedByTest = ownedByTest,
-            keys =
-                DialogManager.KeyActions(
-                    onKeyEvent = { keyCode, event ->
-                        routeSettingsKeyEvent(keyCode, event.action, event.source)
-                    },
-                    onBackPressed = {
-                        val nav = settingsNavActions
-                        when {
-                            nav == null -> false
-                            // The discard confirm is a Compose overlay inside the
-                            // settings dialog; close it before any navigation.
-                            nav.isConfirming -> {
-                                nav.dismissConfirm()
-                                true
-                            }
-                            nav.isCapturing -> {
-                                nav.cancelCapture()
-                                true
-                            }
-                            nav.canNavigateUp -> {
-                                nav.navigateUp()
-                                true
-                            }
-                            nav.isDirty -> {
-                                nav.requestCancel()
-                                true
-                            }
-                            else -> false
-                        }
-                    },
-                ),
-            onDismiss = {
-                settingsNavActions = null
-                if (!resultSent && requestId != null) {
-                    onSettingsDialogResult(
-                        JSONObject()
-                            .put("schemaVersion", SETTINGS_SCHEMA_VERSION)
-                            .put("requestId", requestId)
-                            .put("dismissed", true)
-                            .toString(),
-                    )
-                }
-            },
-        ) { dismiss ->
-            NerustSettingsDialogCard(
-                initialSections = sections,
-                initialIssues = issues,
-                initialCapture = capture,
-                onDismissRequest = dismiss,
-                onCommand = { command -> nativeSettingsCommand(command) },
-                onNavStateChanged = { actions -> settingsNavActions = actions },
-                onSave = {
-                    resultSent = true
-                    if (requestId != null) {
-                        val result =
-                            JSONObject()
-                                .put("schemaVersion", SETTINGS_SCHEMA_VERSION)
-                                .put("requestId", requestId)
-                                .put("dismissed", false)
-                        onSettingsDialogResult(result.toString())
-                    }
-                    dismiss()
-                },
-            )
-        }
-        dialogManager.rootViewForTag(SETTINGS_DIALOG_TAG)?.setTag(
-            R.id.nerust_settings_hierarchy_probe,
-            buildSettingsSections(sections).joinToString("\n") { section ->
-                val count = section.rows.count { it.kind != "header" }
-                "${section.label}: ${resources.getQuantityString(R.plurals.settings_count, count, count)}"
-            },
+        startActivity(
+            SettingsActivity.createIntent(
+                this,
+                SETTINGS_SCHEMA_VERSION,
+                requestId,
+                payload.toString(),
+            ),
         )
     }
 
@@ -808,11 +680,10 @@ class MainActivity :
     }
 
     /** Dumb host for the Rust dialog gate: always present what Rust requests.
-     * A showing settings dialog is dismissed with notify so Rust resolves it. */
+     * A showing settings screen finishes with its own dismissal result so
+     * Rust resolves it before the error shows. */
     fun showErrorDialog(requestId: Long, message: String) {
-        if (dialogManager.isShowing(SETTINGS_DIALOG_TAG)) {
-            dialogManager.dismissForStop()
-        }
+        SettingsActivity.currentActivityForTest()?.finishForReplacement()
         dialogManager.show(
             dialogTag = ERROR_DIALOG_TAG,
             contentDescription = message,
@@ -852,15 +723,6 @@ class MainActivity :
     private external fun onErrorDialogDismissed(requestId: Long)
 
     private external fun onDirectoryPickerResult(uri: String?)
-
-    private external fun onSettingsDialogResult(result: String?)
-
-    private external fun nativeSettingsCommand(command: String): String?
-
-    private external fun nativeHardwareKey(
-        keyCode: Int,
-        pressed: Boolean,
-    ): String?
 
     private external fun onActivityDestroyed(userInitiatedExit: Boolean)
 

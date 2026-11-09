@@ -212,41 +212,52 @@ class MainActivityE2eTest {
             )
         }
 
-        assertChromeViewAvailable(
-            activity,
-            SETTINGS_DIALOG_TAG,
-            DIALOG_TIMEOUT_MS,
-            "Settings dialog should be attached after requesting it",
+        assertTrue(
+            "SettingsActivity should start after requesting it",
+            waitUntil(DIALOG_TIMEOUT_MS) { SettingsActivity.currentActivityForTest() != null },
         )
 
         runOnActivityThread(activity) {
-            val dialogRoot =
+            val settingsRoot =
                 requireNotNull(activity.findChromeViewForTest(SETTINGS_DIALOG_TAG)) {
-                    "Settings dialog root should be available"
+                    "SettingsActivity decor should be available"
                 }
-            assertEquals(
-                "Settings\nVideo Filter: LCD\nTouch Overlay: On",
-                dialogRoot.getTag(R.id.nerust_dialog_content_probe),
+            assertTrue(
+                "Settings should run in its own activity",
+                SettingsActivity.currentActivityForTest() != null,
             )
             assertEquals(
-                DIALOG_PRESENTATION_FULL_SCREEN,
-                dialogRoot.getTag(R.id.nerust_dialog_presentation_probe),
+                "Settings\nVideo Filter: LCD\nTouch Overlay: On",
+                settingsRoot.getTag(R.id.nerust_dialog_content_probe),
             )
             assertEquals(
                 "Video: 1 setting\nControls: 1 setting",
-                dialogRoot.getTag(R.id.nerust_settings_hierarchy_probe),
+                settingsRoot.getTag(R.id.nerust_settings_hierarchy_probe),
             )
             activity.dismissComposeDialogForTest()
         }
+        assertTrue(
+            "SettingsActivity should finish after dismissal",
+            waitUntil(DIALOG_TIMEOUT_MS) { SettingsActivity.currentActivityForTest() == null },
+        )
 
         runOnActivityThread(activity) {
             activity.resetChromeStateForTest()
         }
-        exerciseMenuAction(
-            activity,
-            MenuAction.OPEN_SETTINGS,
-            SETTINGS_DIALOG_TAG,
-            "Settings dialog should be attached after dispatching open_settings",
+        runOnActivityThread(activity) {
+            require(!activity.isDestroyed) { "MainActivity should remain alive before dispatching open_settings" }
+            activity.dispatchMenuActionForTest(MenuAction.OPEN_SETTINGS)
+        }
+        assertTrue(
+            "SettingsActivity should start after dispatching open_settings",
+            waitUntil(DIALOG_TIMEOUT_MS) { SettingsActivity.currentActivityForTest() != null },
+        )
+        runOnActivityThread(activity) {
+            activity.resetChromeStateForTest()
+        }
+        assertTrue(
+            "SettingsActivity should finish after reset",
+            waitUntil(DIALOG_TIMEOUT_MS) { SettingsActivity.currentActivityForTest() == null },
         )
 
         runOnActivityThread(activity) {
