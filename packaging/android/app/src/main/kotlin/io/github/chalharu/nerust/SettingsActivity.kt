@@ -59,6 +59,11 @@ class SettingsActivity :
         super.onCreate(savedInstanceState)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         requestId = intent.getLongExtra(EXTRA_REQUEST_ID, -1L)
+        if (intent.getIntExtra(EXTRA_SCHEMA_VERSION, -1) != SETTINGS_SCHEMA_VERSION) {
+            Log.e(TAG, "SettingsActivity: unsupported schemaVersion")
+            finish()
+            return
+        }
         val rawPayload = intent.getStringExtra(EXTRA_PAYLOAD)
         val payload =
             try {
