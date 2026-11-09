@@ -17,7 +17,6 @@ use std::{
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_viewmodel::settings::{SettingsViewModel, StoragePathError, StoragePathValidator};
 use nerust_settings_core::{
-    editor::CaptureTarget,
     i18n::{UiText, text as ui_text},
     model::{
         language::AppLanguage,
@@ -83,7 +82,7 @@ fn default_true() -> bool {
 }
 
 /// Row presentation kinds. Toggles render as switches, numbers as steppers,
-/// infos as static text; choices render as radio lists.
+/// infos as static text, headers as subgroup titles; choices render as radio lists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum RowKind {
@@ -91,6 +90,7 @@ pub(super) enum RowKind {
     Toggle,
     Number,
     Info,
+    Header,
 }
 
 /// One pick-list entry: display label plus the opaque typed value Rust
@@ -411,9 +411,7 @@ fn apply_view_model_command(
         }
         key => {
             if let Some(rest) = key.strip_prefix("system.") {
-                apply_system_command(vm, rest, row, command)
-            } else if let Some(rest) = key.strip_prefix("input.") {
-                apply_input_command(vm, deps, rest, row, command)
+                apply_system_command(vm, deps, rest, row, command)
             } else {
                 Err(format!("unknown settings key: {key}"))
             }
@@ -423,10 +421,14 @@ fn apply_view_model_command(
 
 fn apply_system_command(
     vm: &SettingsViewModel,
+    deps: &VmDeps,
     rest: &str,
     row: &RowWire,
     command: &WireCommand,
 ) -> Result<(), String> {
+    if let Some((system, slot)) = rest.split_once(".slot.") {
+        return apply_slot_command(vm, deps, system, slot, row, command);
+    }
     let (system, field) = rest
         .split_once('.')
         .ok_or_else(|| format!("malformed system key: {}", command.key))?;
@@ -444,16 +446,14 @@ fn apply_system_command(
         .map_err(|error| error.to_string())
 }
 
-fn apply_input_command(
+fn apply_slot_command(
     vm: &SettingsViewModel,
     deps: &VmDeps,
-    rest: &str,
+    system: &str,
+    slot: &str,
     row: &RowWire,
     command: &WireCommand,
 ) -> Result<(), String> {
-    let (system, slot) = rest
-        .split_once(".slot.")
-        .ok_or_else(|| format!("malformed input key: {}", command.key))?;
     let factory = deps
         .factories
         .iter()
@@ -597,6 +597,21 @@ fn info_row(key: &str, label: String, text: String) -> RowWire {
     }
 }
 
+fn header_row(label: String) -> RowWire {
+    RowWire {
+        key: String::new(),
+        label,
+        kind: RowKind::Header,
+        choices: Vec::new(),
+        selected: 0,
+        number: 0,
+        step: 0,
+        unit: String::new(),
+        text: String::new(),
+        visible: true,
+    }
+}
+
 trait WithKind {
     fn with_kind(self, kind: RowKind) -> Self;
 }
@@ -618,11 +633,9 @@ fn build_sections(vm: &SettingsViewModel, snapshot: &SettingsSnapshot) -> Vec<Se
         build_controls_section(snapshot, language),
         build_storage_section(vm, language),
     ];
-    sections.extend(build_system_sections(vm));
-    sections.extend(build_input_sections(vm));
-    sections.push(build_shortcuts_section(vm));
-    // Canonical order owned by Rust; extras keep discovery order. Stable sort
-    // keeps unknown ids (input.*, shortcuts) after the known taxonomy.
+    sections.extend(build_system_sections(vm, language));
+    // Canonical order owned by Rust; machine sections keep factory order
+    // after the known taxonomy.
     sections.sort_by_key(|section| {
         crate::settings_sections::SETTINGS_SECTION_IDS
             .iter()
@@ -994,48 +1007,48 @@ fn build_storage_section(vm: &SettingsViewModel, language: AppLanguage) -> Secti
     }
 }
 
-fn build_system_sections(vm: &SettingsViewModel) -> Vec<SectionWire> {
+/// One section per machine: its settings fields plus its controller slot
+/// assignment. Keyboard bindings and shortcuts need a physical keyboard, so
+/// Android shows neither; binding conflicts vanish with them.
+fn build_system_sections(vm: &SettingsViewModel, language: AppLanguage) -> Vec<SectionWire> {
+    let inputs: std::collections::HashMap<
+        String,
+        nerust_gui_viewmodel::settings::dto::InputTabView,
+    > = vm
+        .inputs()
+        .iter()
+        .map(|input| {
+            let view = input.view.get();
+            (view.system_id.to_string(), view)
+        })
+        .collect();
     vm.systems()
         .iter()
         .map(|system| {
             let view = system.view.get();
-            SectionWire {
-                id: format!("system.{}", view.system_id),
-                label: view.label.clone(),
-                rows: view
-                    .fields
-                    .iter()
-                    .map(|field| {
-                        choice_row(
-                            &format!("system.{}.{}", view.system_id, field.id.as_str()),
-                            field.label.clone(),
-                            &field
-                                .choices
-                                .iter()
-                                .map(|choice| {
-                                    (choice.value.as_str().to_string(), choice.label.clone())
-                                })
-                                .collect::<Vec<_>>(),
-                            &field.selected.as_str().to_string(),
-                        )
-                    })
-                    .collect(),
-            }
-        })
-        .collect()
-}
-
-fn build_input_sections(vm: &SettingsViewModel) -> Vec<SectionWire> {
-    vm.inputs()
-        .iter()
-        .map(|input| {
-            let view = input.view.get();
             let mut rows: Vec<RowWire> = view
-                .slots
+                .fields
                 .iter()
-                .map(|slot| {
+                .map(|field| {
                     choice_row(
-                        &format!("input.{}.slot.{}", view.system_id, slot.slot_id.as_str()),
+                        &format!("system.{}.{}", view.system_id, field.id.as_str()),
+                        field.label.clone(),
+                        &field
+                            .choices
+                            .iter()
+                            .map(|choice| (choice.value.as_str().to_string(), choice.label.clone()))
+                            .collect::<Vec<_>>(),
+                        &field.selected.as_str().to_string(),
+                    )
+                })
+                .collect();
+            if let Some(input) = inputs.get(&view.system_id.to_string()) {
+                rows.push(header_row(
+                    ui_text(language, UiText::Controller).to_string(),
+                ));
+                rows.extend(input.slots.iter().map(|slot| {
+                    choice_row(
+                        &format!("system.{}.slot.{}", view.system_id, slot.slot_id.as_str()),
                         slot.label.clone(),
                         &slot
                             .choices
@@ -1051,75 +1064,15 @@ fn build_input_sections(vm: &SettingsViewModel) -> Vec<SectionWire> {
                         &serde_json::to_value(&slot.selected_profile_id)
                             .unwrap_or(serde_json::Value::Null),
                     )
-                })
-                .collect();
-            rows.extend(view.conflicts.iter().map(|conflict| {
-                info_row(
-                    &format!("input.{}.conflict", view.system_id),
-                    conflict.message.clone(),
-                    String::new(),
-                )
-            }));
-            // Binding rows are read-only on Android: capture needs a physical
-            // keyboard, which a follow-up will wire to `CaptureViewModel`.
-            rows.extend(view.sections.iter().flat_map(|section| {
-                section.rows.iter().map(|binding| {
-                    info_row(
-                        &format!("input.{}.binding", view.system_id),
-                        format!("{}: {}", section.label, binding.label),
-                        binding_value_text(binding),
-                    )
-                })
-            }));
+                }));
+            }
             SectionWire {
-                id: format!("input.{}", view.system_id),
+                id: format!("system.{}", view.system_id),
                 label: view.label.clone(),
                 rows,
             }
         })
         .collect()
-}
-
-fn binding_value_text(binding: &nerust_gui_viewmodel::settings::dto::BindingRowView) -> String {
-    use nerust_gui_viewmodel::settings::dto::BindingValueView;
-    match &binding.value {
-        BindingValueView::Unbound(label)
-        | BindingValueView::Bound(label)
-        | BindingValueView::Capturing(label) => label.clone(),
-    }
-}
-
-fn build_shortcuts_section(vm: &SettingsViewModel) -> SectionWire {
-    let view = vm.shortcuts.view.get();
-    SectionWire {
-        id: "shortcuts".to_string(),
-        label: view.label.clone(),
-        rows: view
-            .rows
-            .iter()
-            .map(|binding| {
-                info_row(
-                    &format!("shortcut.{}", shortcut_key(&binding.target)),
-                    binding.label.clone(),
-                    binding_value_text(binding),
-                )
-            })
-            .collect(),
-    }
-}
-
-fn shortcut_key(target: &CaptureTarget) -> String {
-    match target {
-        CaptureTarget::Binding {
-            system,
-            attachment,
-            control,
-        } => format!("binding.{system}.{attachment}.{control}"),
-        CaptureTarget::Shortcut(action) => serde_json::to_value(action)
-            .ok()
-            .and_then(|value| value.as_str().map(str::to_string))
-            .unwrap_or_else(|| format!("{action:?}")),
-    }
 }
 
 #[cfg(test)]
@@ -1256,6 +1209,57 @@ mod tests {
                 .any(|row| row.key.starts_with("system.") && row.key.ends_with("video.filter")),
             "system filter rows exist"
         );
+    }
+
+    #[test]
+    fn machine_sections_merge_fields_and_slots_without_keyboard_content() {
+        let (mut snapshot, payload) = test_payload();
+        // No separate input/shortcuts sections: one section per machine.
+        assert!(
+            payload
+                .sections
+                .iter()
+                .all(|section| !section.id.starts_with("input.") && section.id != "shortcuts"),
+            "input/shortcuts sections must not exist on Android"
+        );
+        let nes = payload
+            .sections
+            .iter()
+            .find(|section| section.id == "system.nes")
+            .expect("nes section exists");
+        assert!(
+            nes.rows
+                .iter()
+                .any(|row| row.key == "system.nes.video.filter"),
+            "machine fields stay in the machine section"
+        );
+        let header = nes
+            .rows
+            .iter()
+            .position(|row| row.kind == super::RowKind::Header)
+            .expect("controller header exists");
+        assert!(
+            nes.rows[header + 1..]
+                .iter()
+                .any(|row| row.key.starts_with("system.nes.slot.")),
+            "slots follow the header: {nes:?}"
+        );
+        assert!(
+            nes.rows
+                .iter()
+                .all(|row| !row.key.contains("binding") && !row.key.contains("conflict")),
+            "no keyboard binding or conflict rows on Android"
+        );
+        // Slot assignment round-trips through the merged key.
+        let slot_key = "system.nes.slot.nes.attachment.player1";
+        let slot_row = row(&payload, slot_key);
+        let none = slot_row
+            .choices
+            .iter()
+            .position(|choice| choice.value.is_null())
+            .expect("unassigned choice exists");
+        let refreshed = apply(&mut snapshot, slot_key, none, 0);
+        assert_eq!(row(&refreshed, slot_key).selected, none);
     }
 
     #[test]

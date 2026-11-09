@@ -656,7 +656,8 @@ class MainActivity :
         dialogManager.rootViewForTag(SETTINGS_DIALOG_TAG)?.setTag(
             R.id.nerust_settings_hierarchy_probe,
             buildSettingsSections(sections).joinToString("\n") { section ->
-                "${section.label}: ${settingsCountLabel(section.rows.size)}"
+                val count = section.rows.count { it.kind != "header" }
+                "${section.label}: ${settingsCountLabel(count)}"
             },
         )
     }

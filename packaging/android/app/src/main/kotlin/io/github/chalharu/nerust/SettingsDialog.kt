@@ -1,6 +1,8 @@
 package io.github.chalharu.nerust
 
+import android.os.Build
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -8,31 +10,36 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialExpressiveTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -40,6 +47,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -148,8 +156,24 @@ internal fun settingsCommandJson(
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 internal fun NerustExpressiveHost(content: @Composable () -> Unit) {
-    MaterialExpressiveTheme {
-        content()
+    val context = LocalContext.current
+    val darkTheme = isSystemInDarkTheme()
+    val dynamicScheme =
+        remember(context, darkTheme) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+            } else {
+                null
+            }
+        }
+    if (dynamicScheme != null) {
+        MaterialExpressiveTheme(colorScheme = dynamicScheme) {
+            content()
+        }
+    } else {
+        MaterialExpressiveTheme {
+            content()
+        }
     }
 }
 
@@ -219,7 +243,7 @@ internal fun NerustErrorDialogCard(
 internal fun settingsContentDescription(sections: List<SettingsSection>): String =
     buildList {
         add("Settings")
-        sections.flatMap { it.rows }.forEach { row ->
+        sections.flatMap { it.rows }.filter { it.kind != "header" }.forEach { row ->
             add("${row.label}: ${settingsRowDisplayValue(row)}")
         }
     }.joinToString("\n")
@@ -278,47 +302,67 @@ internal fun NerustSettingsDialogCard(
 
     val activeSection = sections.find { it.id == activeSectionId }
     val activeRow = activeSection?.rows?.find { it.key == activeRowKey }
+    val title =
+        activeRow?.label
+            ?: activeSection?.label
+            ?: "Settings"
+    val canNavigateBack = activeSection != null || activeRow != null
 
     NerustExpressiveHost {
-        Surface(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text(text = title) },
+                    navigationIcon = {
+                        if (canNavigateBack) {
+                            TextButton(onClick = {
+                                if (activeRow != null) {
+                                    activeRowKey = null
+                                } else {
+                                    activeSectionId = null
+                                }
+                            }) { Text("Back") }
+                        } else {
+                            TextButton(onClick = onDismissRequest) { Text("Cancel") }
+                        }
+                    },
+                    actions = {
+                        FilledTonalButton(onClick = onSave) { Text("Save") }
+                    },
+                    colors =
+                        TopAppBarDefaults.topAppBarColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                        ),
+                )
+            },
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ) { padding ->
             Column(
                 modifier =
                     Modifier
                         .fillMaxSize()
-                        .padding(WindowInsets.safeDrawing.asPaddingValues()),
+                        .padding(padding)
+                        .padding(horizontal = 16.dp),
             ) {
-                SettingsNavigationHeader(
-                    title =
-                        activeRow?.label
-                            ?: activeSection?.label
-                            ?: "Settings",
-                    subtitle =
-                        when {
-                            activeRow != null -> settingsRowDisplayValue(activeRow)
-                            activeSection != null -> settingsCountLabel(activeSection.rows.size)
-                            else -> "Choose a category"
-                        },
-                    canNavigateBack = activeSection != null || activeRow != null,
-                    onNavigateBack = {
-                        if (activeRow != null) {
-                            activeRowKey = null
-                        } else {
-                            activeSectionId = null
-                        }
-                    },
-                    onDismissRequest = onDismissRequest,
-                    onSave = onSave,
-                )
                 commandError?.let {
-                    Text(
-                        text = it,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                    )
+                    Card(
+                        colors =
+                            CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.errorContainer,
+                            ),
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 8.dp),
+                    ) {
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.padding(16.dp),
+                        )
+                    }
                 }
-                HorizontalDivider()
-
                 when {
                     activeRow != null && activeRow.kind == "choice" -> {
                         SettingsChoiceList(
@@ -356,51 +400,49 @@ internal fun NerustSettingsDialogCard(
 }
 
 @Composable
-private fun SettingsNavigationHeader(
-    title: String,
-    subtitle: String,
-    canNavigateBack: Boolean,
-    onNavigateBack: () -> Unit,
-    onDismissRequest: () -> Unit,
-    onSave: () -> Unit,
-) {
-    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (canNavigateBack) {
-                TextButton(onClick = onNavigateBack) { Text("Back") }
-            } else {
-                TextButton(onClick = onDismissRequest) { Text("Cancel") }
-            }
-            TextButton(onClick = onSave) { Text("Save") }
-        }
-        Text(text = title, style = MaterialTheme.typography.headlineSmall)
-        Text(text = subtitle, style = MaterialTheme.typography.bodyMedium)
-    }
-}
-
-@Composable
 private fun SettingsCategoryList(
     sections: List<SettingsSection>,
     onSectionClick: (String) -> Unit,
 ) {
-    LazyColumn(modifier = Modifier.fillMaxSize()) {
-        itemsIndexed(sections) { index, section ->
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 12.dp),
+    ) {
+        itemsIndexed(sections, key = { _, section -> section.id }) { _, section ->
             val summary =
-                section.rows.take(2).joinToString(" · ") { row ->
+                section.rows.filter { it.kind != "header" }.take(2).joinToString(" · ") { row ->
                     "${row.label}: ${settingsRowDisplayValue(row)}"
                 }
-            SettingsNavigationRow(
-                title = section.label,
-                value = settingsCountLabel(section.rows.size),
-                supportingText = summary,
-                semanticsLabel = "${section.label}: ${settingsCountLabel(section.rows.size)}",
+            Card(
                 onClick = { onSectionClick(section.id) },
-            )
-            if (index < sections.lastIndex) HorizontalDivider()
+                shape = RoundedCornerShape(28.dp),
+                colors =
+                    CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    ),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(modifier = Modifier.padding(20.dp)) {
+                    Text(
+                        text = section.label,
+                        style = MaterialTheme.typography.titleLarge,
+                    )
+                    Text(
+                        text = settingsCountLabel(section.rows.size),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    if (summary.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = summary,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -412,41 +454,98 @@ private fun SettingsSectionList(
     onStep: (SettingsRow, Long) -> Unit,
     onRowClick: (String) -> Unit,
 ) {
-    LazyColumn(modifier = Modifier.fillMaxSize()) {
-        itemsIndexed(section.rows) { index, row ->
-            when (row.kind) {
-                "toggle" -> {
-                    SettingsToggleRow(
-                        row = row,
-                        onToggle = { onToggle(row, it) },
-                    )
-                }
-                "number" -> {
-                    SettingsStepperRow(
-                        row = row,
-                        onStep = { onStep(row, it) },
-                    )
-                }
-                "choice" -> {
-                    SettingsNavigationRow(
-                        title = row.label,
-                        value = settingsRowDisplayValue(row),
-                        semanticsLabel = "${row.key}: ${row.label}: ${settingsRowDisplayValue(row)}",
-                        onClick = { onRowClick(row.key) },
-                    )
-                }
-                else -> {
-                    SettingsNavigationRow(
-                        title = row.label,
-                        value = settingsRowDisplayValue(row),
-                        semanticsLabel = "${row.key}: ${row.label}",
-                        onClick = {},
+    // Split rows into groups at header rows; each group renders as one card.
+    val groups = remember(section) { splitSectionGroups(section.rows) }
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 12.dp),
+    ) {
+        groups.forEach { group ->
+            if (group.title.isNotBlank()) {
+                item(key = "${section.id}#${group.title}") {
+                    Text(
+                        text = group.title,
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(start = 8.dp, top = 8.dp, bottom = 4.dp),
                     )
                 }
             }
-            if (index < section.rows.lastIndex) HorizontalDivider()
+            item(key = "${section.id}#${group.title}#card") {
+                Card(
+                    shape = RoundedCornerShape(28.dp),
+                    colors =
+                        CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        ),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column {
+                        group.rows.forEachIndexed { index, row ->
+                            when (row.kind) {
+                                "toggle" -> {
+                                    SettingsToggleRow(
+                                        row = row,
+                                        onToggle = { onToggle(row, it) },
+                                    )
+                                }
+                                "number" -> {
+                                    SettingsStepperRow(
+                                        row = row,
+                                        onStep = { onStep(row, it) },
+                                    )
+                                }
+                                "choice" -> {
+                                    SettingsNavigationRow(
+                                        title = row.label,
+                                        value = settingsRowDisplayValue(row),
+                                        semanticsLabel = "${row.key}: ${row.label}: ${settingsRowDisplayValue(row)}",
+                                        onClick = { onRowClick(row.key) },
+                                    )
+                                }
+                                else -> {
+                                    SettingsNavigationRow(
+                                        title = row.label,
+                                        value = settingsRowDisplayValue(row),
+                                        semanticsLabel = "${row.key}: ${row.label}",
+                                        onClick = {},
+                                    )
+                                }
+                            }
+                            if (index < group.rows.lastIndex) HorizontalDivider()
+                        }
+                    }
+                }
+            }
         }
     }
+}
+
+private data class SettingsRowGroup(
+    val title: String,
+    val rows: List<SettingsRow>,
+)
+
+private fun splitSectionGroups(rows: List<SettingsRow>): List<SettingsRowGroup> {
+    val groups = mutableListOf<SettingsRowGroup>()
+    var title = ""
+    var current = mutableListOf<SettingsRow>()
+    for (row in rows) {
+        if (row.kind == "header") {
+            if (current.isNotEmpty()) {
+                groups += SettingsRowGroup(title, current)
+                current = mutableListOf()
+            }
+            title = row.label
+        } else {
+            current += row
+        }
+    }
+    if (current.isNotEmpty() || groups.isEmpty()) {
+        groups += SettingsRowGroup(title, current)
+    }
+    return groups
 }
 
 @Composable
@@ -510,22 +609,39 @@ private fun SettingsChoiceList(
     row: SettingsRow,
     onSelect: (Int) -> Unit,
 ) {
-    LazyColumn(modifier = Modifier.fillMaxSize()) {
-        itemsIndexed(row.choices) { choiceIndex, choice ->
-            Row(
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .clickable(onClick = { onSelect(choiceIndex) })
-                        .padding(vertical = 12.dp)
-                        .semantics { contentDescription = choice.label },
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 12.dp),
+    ) {
+        item(key = "${row.key}#card") {
+            Card(
+                shape = RoundedCornerShape(28.dp),
+                colors =
+                    CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    ),
+                modifier = Modifier.fillMaxWidth(),
             ) {
-                Text(text = choice.label, modifier = Modifier.weight(1f))
-                RadioButton(selected = row.selected == choiceIndex, onClick = null)
+                Column {
+                    row.choices.forEachIndexed { choiceIndex, choice ->
+                        Row(
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable(onClick = { onSelect(choiceIndex) })
+                                    .padding(vertical = 12.dp, horizontal = 20.dp)
+                                    .semantics { contentDescription = choice.label },
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(text = choice.label, modifier = Modifier.weight(1f))
+                            RadioButton(selected = row.selected == choiceIndex, onClick = null)
+                        }
+                        if (choiceIndex < row.choices.lastIndex) HorizontalDivider()
+                    }
+                }
             }
-            if (choiceIndex < row.choices.lastIndex) HorizontalDivider()
         }
     }
 }
