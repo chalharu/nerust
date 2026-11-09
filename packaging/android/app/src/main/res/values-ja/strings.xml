@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_title">設定</string>
+    <string name="settings_back">戻る</string>
+    <string name="settings_cancel">キャンセル</string>
+    <string name="settings_clear">解除</string>
+    <string name="settings_close">設定を閉じる</string>
+    <string name="settings_save">保存</string>
+    <string name="settings_discard_title">変更を破棄しますか？</string>
+    <string name="settings_discard_message">保存されていない設定は失われます。</string>
+    <string name="settings_discard_confirm">破棄する</string>
+    <string name="settings_keep_editing">編集を続ける</string>
+    <string name="settings_tap_to_assign">タップして割り当て</string>
+    <string name="settings_used_in">%1$sで使用中</string>
+    <string name="settings_used_elsewhere">他のスロットで使用中</string>
+    <string name="settings_needs_attention">保存前に確認が必要です</string>
+    <string name="settings_update_failed">設定を更新できませんでした</string>
+    <plurals name="settings_count">
+        <item quantity="other">%d件の設定</item>
+    </plurals>
+</resources>
