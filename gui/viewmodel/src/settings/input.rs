@@ -218,7 +218,7 @@ fn project_slot_view(
 
     let mut choices: Vec<ChoiceView<Option<String>>> = vec![ChoiceView {
         value: None,
-        label: ui_text(language, UiText::None).to_string(),
+        label: ui_text(language, UiText::NotAssigned).to_string(),
     }];
 
     choices.extend(
