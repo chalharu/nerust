@@ -172,7 +172,11 @@ class SettingsActivity :
     /** Enumerate physical keyboards (Kotlin `InputDevice`, Rust owns labels):
      * the built-in row (device id 0) plus one row per external descriptor.
      * BT/USB are indistinguishable via public API so rows stay agnostic;
-     * virtual devices are excluded; duplicate HID descriptors merge. */
+     * virtual devices are excluded; duplicate HID descriptors merge.
+     * Button clusters (power keys, headset jacks, touch panels, fingerprint
+     * sensors) also expose SOURCE_KEYBOARD, so externals must additionally
+     * carry letter keys to count as keyboards. */
+    internal fun enumerateKeyboards(): JSONArray {
     internal fun enumerateKeyboards(): JSONArray {
         val out = JSONArray()
         val seen = mutableSetOf<String>()
@@ -198,6 +202,10 @@ class SettingsActivity :
                 device.id < 0 ||
                     (android.os.Build.VERSION.SDK_INT >= 29 && device.isVirtual)
             if (virtual) continue
+            // gpio-keys, pmic power keys, headset jacks, touch panels and
+            // fingerprint sensors all expose SOURCE_KEYBOARD; a letter key
+            // is what separates a keyboard from a button cluster.
+            if (!device.hasKeys(KeyEvent.KEYCODE_A)[0]) continue
             val member = "kbd:${device.descriptor}"
             if (!seen.add(member)) continue
             out.put(
