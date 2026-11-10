@@ -56,7 +56,6 @@ pub(crate) const CONTROLLER_KEY_TABLE: &[(&str, AbstractKey)] = &[
 #[serde(tag = "type", rename_all = "snake_case")]
 enum BridgeEventV1 {
     Menu {
-        #[allow(dead_code)]
         v: u32,
         action: String,
         #[serde(default)]
@@ -67,7 +66,6 @@ enum BridgeEventV1 {
         pressed: Option<bool>,
     },
     ErrorDialogDismissed {
-        #[allow(dead_code)]
         v: u32,
         request_id: crate::error_dialog_controller::DialogRequestId,
     },

@@ -215,9 +215,15 @@ def outputs(schema):
                               ("SETTINGS_SCHEMA_VERSION", "u32", settings),
                               ("SAF_CHUNK_BYTES", "usize", chunk),
                               ("SAF_SUMMARY_BYTES", "usize", summary)]:
-        # Cross-language pin: Rust reads the wire version through validation,
-        # so an unused pin here must not trip deny-warnings builds.
-        rs.append(f"#[allow(dead_code)]\npub(crate) const {name}: {kind} = {value};")
+        # SAF_SUMMARY_BYTES is live on the Android target (saf.rs sidecar
+        # reads) but host test builds have no live caller, so the pin would
+        # trip deny-warnings host clippy. The other pins are read on the host
+        # too (bridge_events validation/tests), so they stay bare: an unused
+        # pin must warn.
+        if name == "SAF_SUMMARY_BYTES":
+            rs.append(f"#[allow(dead_code)]\npub(crate) const {name}: {kind} = {value};")
+        else:
+            rs.append(f"pub(crate) const {name}: {kind} = {value};")
     for action in actions:
         rs.append(f'pub(crate) const ACTION_{action.upper()}: &str = "{action}";')
     rs += rust_validator(definitions)

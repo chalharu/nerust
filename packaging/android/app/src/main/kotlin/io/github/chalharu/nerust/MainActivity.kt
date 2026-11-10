@@ -339,7 +339,8 @@ class MainActivity :
         }
     }
 
-    @Deprecated("Used on Android 12 and earlier; API 33+ uses OnBackInvokedDispatcher")
+    // Deprecated upstream; kept because minSdk 28 predates the
+    // OnBackInvokedDispatcher replacement (API 33+ path lives above).
     @SuppressLint("GestureBackNavigation")
     @Suppress("DEPRECATION")
     override fun onBackPressed() {
