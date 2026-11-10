@@ -3,6 +3,7 @@ package io.github.chalharu.nerust
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.hardware.input.InputManager
 import android.os.Bundle
 import android.util.Log
@@ -117,7 +118,7 @@ class SettingsActivity :
                     navActions = actions
                     // First publish lands after composition; hotplug and
                     // resume pushes below converge to the same state.
-                    pushKeyboardEnumeration()
+                    pushDeviceTruth()
                 },
                 onSave = {
                     sendResult(dismissed = false)
@@ -132,7 +133,7 @@ class SettingsActivity :
         activeActivityForTest = this
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
         (getSystemService(INPUT_SERVICE) as InputManager).registerInputDeviceListener(this, null)
-        pushKeyboardEnumeration()
+        pushDeviceTruth()
     }
 
     override fun onPause() {
@@ -141,11 +142,11 @@ class SettingsActivity :
         super.onPause()
     }
 
-    override fun onInputDeviceAdded(deviceId: Int) = pushKeyboardEnumeration()
+    override fun onInputDeviceAdded(deviceId: Int) = pushDeviceTruth()
 
-    override fun onInputDeviceRemoved(deviceId: Int) = pushKeyboardEnumeration()
+    override fun onInputDeviceRemoved(deviceId: Int) = pushDeviceTruth()
 
-    override fun onInputDeviceChanged(deviceId: Int) = pushKeyboardEnumeration()
+    override fun onInputDeviceChanged(deviceId: Int) = pushDeviceTruth()
 
     /** Enumerate physical keyboards (Kotlin `InputDevice`, Rust owns labels):
      * the built-in row (device id 0) plus one row per external descriptor.
@@ -190,6 +191,11 @@ class SettingsActivity :
 
     /** Push the enumeration through the existing command pipe; Rust
      * re-projects and the card applies it without marking the draft dirty. */
+    internal fun pushDeviceTruth() {
+        pushKeyboardEnumeration()
+        pushTouchCapability()
+    }
+
     internal fun pushKeyboardEnumeration() {
         val nav = navActions ?: return
         val raw =
@@ -199,6 +205,29 @@ class SettingsActivity :
                 )
             } catch (e: Exception) {
                 Log.e(TAG, "keyboard enumeration push failed", e)
+                return
+            }
+        raw?.let { nav.refreshPayload(it) }
+    }
+
+    /** Push touch capability alongside the keyboards: Rust disables the
+     * Always/Auto overlay choices on terminals without a touch screen. */
+    internal fun pushTouchCapability() {
+        val nav = navActions ?: return
+        val capable = packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN)
+        val raw =
+            try {
+                nativeSettingsCommand(
+                    settingsCommandJson(
+                        "touch",
+                        0,
+                        0,
+                        "touch",
+                        JSONObject().put("capable", capable),
+                    ),
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "touch capability push failed", e)
                 return
             }
         raw?.let { nav.refreshPayload(it) }

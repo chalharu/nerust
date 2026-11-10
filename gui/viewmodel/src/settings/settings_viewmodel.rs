@@ -2,6 +2,7 @@ use std::{collections::HashMap, rc::Rc, sync::Arc};
 
 use crate::settings::catalog::FactoryCatalog;
 use crate::settings::topology_adapter::build_topology;
+use nerust_input_traits::{InputAssignments, InputPorts};
 use nerust_settings_core::bindings::{BindingIndex, conflicting_keys_indexed};
 use nerust_settings_core::model::snapshot::SettingsSnapshot;
 use nerust_system_traits::factory::CoreFactory;
@@ -247,6 +248,18 @@ fn validate_factory_settings(
                 "{}: At least one controller must be assigned",
                 factory.display_name()
             ),
+        });
+    }
+    // Combinations the UI must never draft (e.g. NES P1 famicom set plus
+    // a P2 pad) fail here too, so the rule holds for every frontend and
+    // for hand-edited files — not just for screens that disable the
+    // conflicting choices.
+    if let Err(error) =
+        InputAssignments::new(assignments.clone()).placement_plan(input_factory as &dyn InputPorts)
+    {
+        issues.push(super::ValidationIssue {
+            scope: super::ValidationScope::Input(sid.clone_box()),
+            message: format!("{}: {error}", factory.display_name()),
         });
     }
     let topology = build_topology(&assignments, input_factory.slots());

@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.app.NativeActivity
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.hardware.input.InputManager
 import android.media.AudioManager
@@ -130,6 +131,7 @@ class MainActivity :
         sensorController.onResume()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
         (getSystemService(INPUT_SERVICE) as InputManager).registerInputDeviceListener(this, null)
+        refreshPhysicalChrome()
         chromeManager.scheduleChromeAttach()
     }
 
@@ -231,13 +233,44 @@ class MainActivity :
         controllerPressed.keys.toList().forEach(::releaseController)
     }
 
-    override fun onInputDeviceAdded(deviceId: Int) = Unit
+    override fun onInputDeviceAdded(deviceId: Int) {
+        refreshPhysicalChrome()
+    }
 
-    override fun onInputDeviceChanged(deviceId: Int) = Unit
+    override fun onInputDeviceChanged(deviceId: Int) {
+        refreshPhysicalChrome()
+    }
 
     override fun onInputDeviceRemoved(deviceId: Int) {
         releaseController(deviceId)
         sensorController.noteControllerRemoved(deviceId)
+        refreshPhysicalChrome()
+    }
+
+    /** Auto overlay rule, evaluated live: non-touch terminals never draw
+     * buttons; while a keyboard or gamepad is connected Auto hides them.
+     * Virtual devices never count (same exclusion as the settings picker). */
+    private fun refreshPhysicalChrome() {
+        chromeManager.setTouchCapable(
+            packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN),
+        )
+        var connected = false
+        for (id in InputDevice.getDeviceIds()) {
+            val device = InputDevice.getDevice(id) ?: continue
+            if (device.id < 0) continue
+            if (Build.VERSION.SDK_INT >= 29 && device.isVirtual) continue
+            val sources = device.sources
+            val keyboard = sources and InputDevice.SOURCE_KEYBOARD == InputDevice.SOURCE_KEYBOARD
+            val gamepad =
+                sources and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
+                    sources and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK ||
+                    sources and InputDevice.SOURCE_DPAD == InputDevice.SOURCE_DPAD
+            if (keyboard || gamepad) {
+                connected = true
+                break
+            }
+        }
+        chromeManager.setPhysicalInputConnected(connected)
     }
 
     override fun onPause() {

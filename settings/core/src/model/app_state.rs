@@ -5,6 +5,8 @@ use std::{
 
 use nerust_core_traits::identity::SystemId;
 
+use crate::input::BUILTIN_KEYBOARD_MEMBER;
+
 pub const DESKTOP_APP_STATE_SCHEMA_VERSION: u32 = 2;
 
 pub type ControllerAssignmentsBySystem = HashMap<Box<dyn SystemId>, Vec<(String, Option<String>)>>;
@@ -25,7 +27,10 @@ pub const PORT_PLAYER_2: &str = "p2";
 /// the built-in keyboard drives player 1. One source so deserialized
 /// defaults and `Default` can never drift apart.
 fn default_port_devices() -> PortDeviceSets {
-    BTreeMap::from([(PORT_PLAYER_1.to_string(), vec!["kbd:builtin".to_string()])])
+    BTreeMap::from([(
+        PORT_PLAYER_1.to_string(),
+        vec![BUILTIN_KEYBOARD_MEMBER.to_string()],
+    )])
 }
 
 /// Application state not synced per ROM: window geometry, controller
