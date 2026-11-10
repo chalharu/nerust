@@ -2230,7 +2230,12 @@ fn keyboard_member_name(member: &str, keyboards: &[KeyboardInfo], language: AppL
     if member == "kbd:builtin" {
         t(UiText::BuiltInKeyboard)
     } else if let Some(info) = keyboards.iter().find(|info| info.member == member) {
-        info.name.clone()
+        if info.name.trim().is_empty() {
+            // OS gave no name: fall back instead of rendering blank.
+            t(UiText::ExternalKeyboard)
+        } else {
+            info.name.clone()
+        }
     } else if member.starts_with(nerust_settings_core::input::KEYBOARD_MEMBER_PREFIX) {
         t(UiText::ExternalKeyboard)
     } else if member.starts_with(nerust_settings_core::input::GAMEPAD_MEMBER_PREFIX) {
@@ -2272,7 +2277,7 @@ fn build_devices_section(
     for info in keyboards {
         let mut row = toggle_row(
             &format!("devices.{port}.{}", info.member),
-            info.name.clone(),
+            keyboard_member_name(&info.member, keyboards, language),
             if info.builtin {
                 t(UiText::AlwaysAvailable)
             } else {
@@ -2343,7 +2348,13 @@ fn build_device_sections(
             }
             SectionWire {
                 id: format!("device.{}", info.member),
-                label: info.name.clone(),
+                label: if info.builtin {
+                    t(UiText::BuiltInKeyboard)
+                } else if info.name.trim().is_empty() {
+                    t(UiText::ExternalKeyboard)
+                } else {
+                    info.name.clone()
+                },
                 sub: t(UiText::Devices),
                 rows,
                 visible: false,

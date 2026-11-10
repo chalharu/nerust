@@ -16,6 +16,14 @@
     <string name="settings_discard_confirm">Discard</string>
     <string name="settings_keep_editing">Keep editing</string>
     <string name="settings_tap_to_assign">Tap to assign</string>
+    <string name="settings_details">Details</string>
+    <string name="settings_search_hint">Search settings</string>
+    <string name="settings_search_empty">No results for \"%1$s\"</string>
+    <string name="settings_reset_all_title">Reset all settings?</string>
+    <string name="settings_reset_all_message">Every setting returns to its default. This cannot be undone.</string>
+    <string name="settings_reset_screen_title">Reset this screen?</string>
+    <string name="settings_reset_screen_message">This screen returns to its defaults. Other screens are untouched.</string>
+    <string name="settings_reset_confirm">Reset</string>
     <string name="settings_used_in">Used in %1$s</string>
     <string name="settings_used_elsewhere">Used in another slot</string>
     <string name="settings_needs_attention">Needs attention before saving</string>

@@ -99,14 +99,35 @@ fn build_touch_overlay(
 
 impl SessionHandle {
     /// Called by touch overlay (Android) with a pre-resolved DigitalInputEvent.
+    /// Routes through the OR/neutral machine so multi-device holds merge and
+    /// opposite dpad directions neutralize instead of sticking.
     pub fn apply_input_event(&mut self, event: DigitalInputEvent) {
-        if let Some(&field) = self
-            .emu
-            .field_map()
-            .and_then(|fields| fields.get(&(event.attachment, ControlId::from(event.control))))
-            && let Some(gui_input) = self.emu.input_mut()
-        {
-            let _ = gui_input.set(field, InputValue::Digital(event.is_pressed()));
+        let field = self.emu.field_map().and_then(|fields| {
+            fields
+                .get(&(event.attachment, ControlId::from(event.control)))
+                .copied()
+        });
+        let Some(field) = field else {
+            return;
+        };
+        let attachment = event.attachment.as_str().to_string();
+        let control = event.control.as_str().to_string();
+        let dpad = self
+            .input
+            .abstract_for(&attachment, &control)
+            .and_then(|abs| {
+                super::field_press::dpad_axis_of(abs).map(|_| (attachment, control, abs))
+            });
+        let source = super::field_press::FieldSource::Control(event.attachment, event.control);
+        let updates = if event.is_pressed() {
+            self.input.press_state.press(field, source, dpad)
+        } else {
+            self.input.press_state.release(field, source, dpad)
+        };
+        if let Some(gui_input) = self.emu.input_mut() {
+            for (field, assert) in updates {
+                let _ = gui_input.set(field, InputValue::Digital(assert));
+            }
         }
     }
 
@@ -118,10 +139,29 @@ impl SessionHandle {
             false
         };
 
-        if let Some(&field) = self.input.key_field_map.get(&key)
-            && let Some(gui_input) = self.emu.input_mut()
-        {
-            let _ = gui_input.set(field, InputValue::Digital(pressed));
+        // Repeats change nothing (the source already holds the field);
+        // releases always re-sync so a stuck field cannot survive.
+        let changed = (pressed && first_press) || !pressed;
+        if changed && let Some(&field) = self.input.key_field_map.get(&key) {
+            let source_info = self.input.key_source.get(&key).cloned();
+            let dpad = source_info.and_then(|(attachment, control)| {
+                self.input
+                    .abstract_for(&attachment, &control)
+                    .and_then(|abs| {
+                        super::field_press::dpad_axis_of(abs).map(|_| (attachment, control, abs))
+                    })
+            });
+            let source = super::field_press::FieldSource::Key(key);
+            let updates = if pressed {
+                self.input.press_state.press(field, source, dpad)
+            } else {
+                self.input.press_state.release(field, source, dpad)
+            };
+            if let Some(gui_input) = self.emu.input_mut() {
+                for (field, assert) in updates {
+                    let _ = gui_input.set(field, InputValue::Digital(assert));
+                }
+            }
         }
 
         if first_press {
@@ -140,6 +180,7 @@ impl SessionHandle {
 
     pub fn clear_input(&mut self) {
         self.input.pressed_keys.clear();
+        self.input.press_state.clear();
         if let Some(gui_input) = self.emu.input_mut() {
             gui_input.clear();
         }

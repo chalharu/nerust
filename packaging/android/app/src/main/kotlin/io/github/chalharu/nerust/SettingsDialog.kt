@@ -34,6 +34,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialExpressiveTheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.rememberSliderState
@@ -65,6 +66,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
 import kotlin.math.roundToLong
 import org.json.JSONObject
 
@@ -117,6 +119,7 @@ internal data class SettingsRow(
     val target: String = "",
     val visible: Boolean = true,
     val description: String = "",
+    val detailTarget: String = "",
 )
 
 /** One settings section as projected by Rust (`settings_views::SectionWire`). */
@@ -125,6 +128,7 @@ internal data class SettingsSection(
     val label: String,
     val rows: List<SettingsRow>,
     val visible: Boolean = true,
+    val sub: String = "",
 )
 
 internal fun parseSettingsSections(payload: JSONObject): List<SettingsSection> {
@@ -165,12 +169,14 @@ internal fun parseSettingsSections(payload: JSONObject): List<SettingsSection> {
                     target = row.optString("target", ""),
                     visible = row.optBoolean("visible", true),
                     description = row.optString("description", ""),
+                    detailTarget = row.optString("detail_target", ""),
                 )
         }
         val id = section.getString("id")
         val label = section.optString("label").ifBlank { SettingsSectionFallback.labelFor(id) }
         val visible = section.optBoolean("visible", true)
-        out += SettingsSection(id = id, label = label, rows = rows.filter { it.visible }, visible = visible)
+        val sub = section.optString("sub", "")
+        out += SettingsSection(id = id, label = label, rows = rows.filter { it.visible }, visible = visible, sub = sub)
     }
     return out
 }
@@ -180,16 +186,21 @@ internal fun settingsCommandJson(
     index: Int,
     number: Long,
     op: String = "set",
-): String =
-    JSONObject()
-        .put("key", key)
-        .put("index", index)
-        .put("number", number)
-        .put("op", op)
-        .toString()
+    payload: org.json.JSONArray? = null,
+): String {
+    val doc =
+        JSONObject()
+            .put("key", key)
+            .put("index", index)
+            .put("number", number)
+            .put("op", op)
+    if (payload != null) doc.put("payload", payload)
+    return doc.toString()
+}
 
 /** Cross-boundary navigation actions the activity needs for system back,
- * discard confirmation, and hardware-key payload delivery. */
+ * discard confirmation, hardware-key/capture payload delivery, and
+ * out-of-band refreshes (hotplug) that must not mark the draft dirty. */
 internal data class SettingsNavActions(
     val canNavigateUp: Boolean,
     val isDirty: Boolean,
@@ -200,6 +211,7 @@ internal data class SettingsNavActions(
     val dismissConfirm: () -> Unit,
     val cancelCapture: () -> Unit,
     val applyPayload: (String) -> Unit,
+    val refreshPayload: (String) -> Unit,
 )
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
@@ -347,8 +359,15 @@ internal fun NerustSettingsDialogCard(
     var commandError by remember { mutableStateOf<String?>(null) }
     var confirmDiscard by remember { mutableStateOf(false) }
     var isDirty by remember { mutableStateOf(false) }
+    // Row keys touched since open: per-section unsaved dots. Reset-all
+    // marks every row; a screen reset marks that screen's rows.
+    var dirtyKeys by remember { mutableStateOf(setOf<String>()) }
+    var pendingResetKey by remember { mutableStateOf<String?>(null) }
 
-    fun applyPayloadJson(raw: String): Boolean {
+    fun applyPayloadJson(
+        raw: String,
+        mutating: Boolean,
+    ): Boolean {
         try {
             val doc = JSONObject(raw)
             if (!doc.optBoolean("ok", false)) {
@@ -361,6 +380,7 @@ internal fun NerustSettingsDialogCard(
             sections = parseSettingsSections(payload)
             issues = parseIssues(payload)
             capturePrompt = parseCapture(payload)
+            if (mutating) isDirty = true
             return true
         } catch (e: Exception) {
             Log.e(TAG, "settings payload parse failed", e)
@@ -375,17 +395,33 @@ internal fun NerustSettingsDialogCard(
         number: Long,
         op: String = "set",
         mutating: Boolean = true,
+        payload: org.json.JSONArray? = null,
     ) {
         val raw =
             try {
-                onCommand(settingsCommandJson(key, index, number, op))
+                onCommand(settingsCommandJson(key, index, number, op, payload))
                     ?: throw IllegalStateException("settings bridge returned null")
             } catch (e: Exception) {
                 Log.e(TAG, "settings bridge call failed", e)
                 commandError = e.message ?: COMMAND_FAILED
                 return
             }
-        if (applyPayloadJson(raw) && mutating) isDirty = true
+        if (!applyPayloadJson(raw, mutating)) return
+        if (!mutating) return
+        dirtyKeys =
+            when {
+                op == "reset_section" && key == "reset.all" ->
+                    sections.flatMap { section -> section.rows.map { it.key } }.toSet()
+                op == "reset_section" ->
+                    sections
+                        .find { it.id == key.removePrefix("reset.") }
+                        ?.rows
+                        ?.map { it.key }
+                        .orEmpty()
+                        .toSet() + dirtyKeys
+                key.isNotBlank() -> dirtyKeys + key
+                else -> dirtyKeys
+            }
     }
 
     val activeSection = sections.find { it.id == activeSectionId }
@@ -423,18 +459,26 @@ internal fun NerustSettingsDialogCard(
                 dismissConfirm = { confirmDiscard = false },
                 cancelCapture = { sendCommand("", 0, 0L, "cancel_capture", mutating = false) },
                 applyPayload = { raw ->
-                    if (applyPayloadJson(raw)) isDirty = true
+                    applyPayloadJson(raw, mutating = true)
+                },
+                refreshPayload = { raw ->
+                    applyPayloadJson(raw, mutating = false)
                 },
             ),
         )
     }
 
     val screenTitle = activeRow?.label ?: activeSection?.label ?: stringResource(R.string.settings_title)
-    // activeRow is looked up inside activeSection, so a non-null row implies
-    // a non-null section; `let` keeps that guarantee null-safe.
+    // Breadcrumb parent: a section's own sub (player name, controller root),
+    // falling back to the section label under a choice row and to nothing
+    // on the top level.
     val screenSubtitle =
         activeSection?.let { section ->
-            if (activeRow != null) section.label else stringResource(R.string.settings_title)
+            when {
+                section.sub.isNotBlank() -> section.sub
+                activeRow != null -> section.label
+                else -> null
+            }
         }
 
     NerustExpressiveHost {
@@ -526,7 +570,25 @@ internal fun NerustSettingsDialogCard(
                 onClearCapture = { row ->
                     sendCommand(row.key, 0, 0L, "clear_binding")
                 },
+                onDetailClick = { row ->
+                    if (row.detailTarget.isNotBlank() &&
+                        sections.any { it.id == row.detailTarget }
+                    ) {
+                        activeRowKey = null
+                        activeSectionId = row.detailTarget
+                    }
+                },
                 onSectionClick = { activeSectionId = it },
+                dirtySections =
+                    sections
+                        .filter { section ->
+                            section.rows.any { it.key in dirtyKeys }
+                        }.map { it.id }
+                        .toSet(),
+                onSearchNavigate = { sectionId, rowKey ->
+                    activeSectionId = sectionId
+                    activeRowKey = rowKey
+                },
             )
         }
         if (confirmDiscard) {
@@ -544,6 +606,47 @@ internal fun NerustSettingsDialogCard(
                 },
                 dismissButton = {
                     TextButton(onClick = { confirmDiscard = false }) {
+                        Text(stringResource(R.string.settings_keep_editing))
+                    }
+                },
+            )
+        }
+        pendingResetKey?.let { resetKey ->
+            val isAll = resetKey == "reset.all"
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { pendingResetKey = null },
+                title = {
+                    Text(
+                        stringResource(
+                            if (isAll) {
+                                R.string.settings_reset_all_title
+                            } else {
+                                R.string.settings_reset_screen_title
+                            },
+                        ),
+                    )
+                },
+                text = {
+                    Text(
+                        stringResource(
+                            if (isAll) {
+                                R.string.settings_reset_all_message
+                            } else {
+                                R.string.settings_reset_screen_message
+                            },
+                        ),
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            pendingResetKey = null
+                            sendCommand(resetKey, 0, 0L, "reset_section")
+                        },
+                    ) { Text(stringResource(R.string.settings_reset_confirm)) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingResetKey = null }) {
                         Text(stringResource(R.string.settings_keep_editing))
                     }
                 },
@@ -683,7 +786,10 @@ private fun SettingsScreenContent(
     onCommitNumber: (SettingsRow, Long) -> Unit,
     onRowClick: (SettingsRow) -> Unit,
     onClearCapture: (SettingsRow) -> Unit,
+    onDetailClick: (SettingsRow) -> Unit,
     onSectionClick: (String) -> Unit,
+    dirtySections: Set<String>,
+    onSearchNavigate: (String, String?) -> Unit,
 ) {
     val banners =
         remember(capturePrompt, issues, commandError) {
@@ -713,6 +819,7 @@ private fun SettingsScreenContent(
                     onCommitNumber = onCommitNumber,
                     onRowClick = onRowClick,
                     onClearCapture = onClearCapture,
+                    onDetailClick = onDetailClick,
                 )
             }
 
@@ -720,8 +827,10 @@ private fun SettingsScreenContent(
                 SettingsCategoryList(
                     sections = sections.filter { it.visible },
                     banners = banners,
+                    dirtySections = dirtySections,
                     onCancelCapture = onCancelCapture,
                     onSectionClick = onSectionClick,
+                    onSearchNavigate = onSearchNavigate,
                 )
             }
         }
@@ -732,26 +841,160 @@ private fun SettingsScreenContent(
 private fun SettingsCategoryList(
     sections: List<SettingsSection>,
     banners: SettingsBanners,
+    dirtySections: Set<String>,
     onCancelCapture: () -> Unit,
     onSectionClick: (String) -> Unit,
+    onSearchNavigate: (String, String?) -> Unit,
 ) {
+    var query by remember { mutableStateOf("") }
+    // Child section id -> (parent section id, parent label, via row label).
+    // Group rows and device Details buttons both climb one level.
+    val parents =
+        remember(sections) {
+            buildMap {
+                for (section in sections) {
+                    for (row in section.rows) {
+                        val child =
+                            when {
+                                row.kind == "group" && row.target.isNotBlank() -> row.target
+                                row.detailTarget.isNotBlank() -> row.detailTarget
+                                else -> continue
+                            }
+                        if (sections.any { it.id == child }) {
+                            put(child, Triple(section.id, section.label, row.label))
+                        }
+                    }
+                }
+            }
+        }
+    fun breadcrumb(sectionId: String): String {
+        val chain = mutableListOf<String>()
+        var current: String? = sectionId
+        while (current != null) {
+            val parent = parents[current] ?: break
+            chain.add(0, parent.second)
+            current = parent.first
+        }
+        return chain.joinToString(" › ")
+    }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(12.dp),
         contentPadding = PaddingValues(vertical = 12.dp),
     ) {
         settingsBannerItems(banners = banners, onCancelCapture = onCancelCapture)
+        item(key = "settings-search") {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text(stringResource(R.string.settings_search_hint)) },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Filled.Search,
+                        contentDescription = null,
+                    )
+                },
+                singleLine = true,
+                shape = RoundedCornerShape(28.dp),
+            )
+        }
+        if (query.isNotBlank()) {
+            val onLabel = stringResource(R.string.settings_on)
+            val offLabel = stringResource(R.string.settings_off)
+            val hits =
+                sections.flatMap { section ->
+                    section.rows
+                        .filter { row ->
+                            row.kind != "header" &&
+                                (
+                                    row.label.contains(query, ignoreCase = true) ||
+                                        row.description.contains(query, ignoreCase = true) ||
+                                        section.label.contains(query, ignoreCase = true) ||
+                                        row.text.contains(query, ignoreCase = true) ||
+                                        settingsRowDisplayValue(row, onLabel, offLabel)
+                                            .contains(query, ignoreCase = true)
+                                )
+                        }.map { row -> section to row }
+                }
+            if (hits.isEmpty()) {
+                item(key = "settings-search-empty") {
+                    Card(
+                        shape = RoundedCornerShape(28.dp),
+                        colors =
+                            CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            ),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.settings_search_empty, query),
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(20.dp),
+                        )
+                    }
+                }
+            } else {
+                itemsIndexed(hits, key = { _, (section, row) -> "search:${section.id}:${row.key}" }) { _, (section, row) ->
+                    val trail =
+                        listOf(breadcrumb(section.id), section.label)
+                            .filter { it.isNotBlank() }
+                            .joinToString(" › ")
+                    Card(
+                        onClick = {
+                            when {
+                                row.kind == "choice" -> onSearchNavigate(section.id, row.key)
+                                row.kind == "group" && row.target.isNotBlank() ->
+                                    onSearchNavigate(row.target, null)
+                                row.detailTarget.isNotBlank() ->
+                                    onSearchNavigate(row.detailTarget, null)
+                                else -> onSearchNavigate(section.id, null)
+                            }
+                        },
+                        shape = RoundedCornerShape(28.dp),
+                        colors =
+                            CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            ),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(modifier = Modifier.padding(20.dp)) {
+                            Text(
+                                text = row.label,
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                            if (trail.isNotBlank()) {
+                                Text(
+                                    text = trail,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            return@LazyColumn
+        }
         itemsIndexed(sections, key = { _, section -> section.id }) { _, section ->
-            // Summaries show only inline-editable rows; group/capture/info
-            // rows would leak a bare chevron or a binding label here.
+            // Summaries show inline-editable rows plus group rows that carry
+            // a value (player/device summaries); bare chevrons stay out.
             val onLabel = stringResource(R.string.settings_on)
             val offLabel = stringResource(R.string.settings_off)
             val summary =
                 section.rows
-                    .filter { it.kind == "choice" || it.kind == "toggle" || it.kind == "number" }
-                    .take(2)
+                    .filter {
+                        it.kind == "choice" || it.kind == "toggle" || it.kind == "number" ||
+                            (it.kind == "group" && it.text.isNotBlank())
+                    }.take(2)
                     .joinToString(" · ") { row ->
-                        "${row.label}: ${settingsRowDisplayValue(row, onLabel, offLabel)}"
+                        val value =
+                            if (row.kind == "group") {
+                                row.text
+                            } else {
+                                settingsRowDisplayValue(row, onLabel, offLabel)
+                            }
+                        "${row.label}: $value"
                     }
             // Headers group rows visually; only real entries count.
             val entryCount = section.rows.count { it.kind != "header" }
@@ -765,10 +1008,20 @@ private fun SettingsCategoryList(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Column(modifier = Modifier.padding(20.dp)) {
-                    Text(
-                        text = section.label,
-                        style = MaterialTheme.typography.titleLarge,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = section.label,
+                            style = MaterialTheme.typography.titleLarge,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (section.id in dirtySections) {
+                            Text(
+                                text = "•",
+                                style = MaterialTheme.typography.titleLarge,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
                     Text(
                         text =
                             pluralStringResource(
@@ -802,6 +1055,7 @@ private fun SettingsSectionList(
     onCommitNumber: (SettingsRow, Long) -> Unit,
     onRowClick: (SettingsRow) -> Unit,
     onClearCapture: (SettingsRow) -> Unit,
+    onDetailClick: (SettingsRow) -> Unit,
 ) {
     // Split rows into groups at header rows; each group renders as one card.
     val groups = remember(section) { splitSectionGroups(section.rows) }
@@ -838,6 +1092,7 @@ private fun SettingsSectionList(
                                     SettingsToggleRow(
                                         row = row,
                                         onToggle = { onToggle(row, it) },
+                                        onDetail = { onDetailClick(row) },
                                     )
                                 }
                                 "number" -> {
@@ -858,11 +1113,17 @@ private fun SettingsSectionList(
                                 "group" -> {
                                     SettingsNavigationRow(
                                         title = row.label,
-                                        value = "",
+                                        value = row.text,
                                         semanticsLabel = row.label,
                                         supportingText = row.description,
                                         showChevron = true,
                                         onClick = { onRowClick(row) },
+                                    )
+                                }
+                                "button" -> {
+                                    SettingsButtonRow(
+                                        row = row,
+                                        onRun = { pendingResetKey = row.key },
                                     )
                                 }
                                 "capture" -> {
@@ -920,23 +1181,31 @@ private fun splitSectionGroups(rows: List<SettingsRow>): List<SettingsRowGroup> 
 private fun SettingsToggleRow(
     row: SettingsRow,
     onToggle: (Boolean) -> Unit,
+    onDetail: () -> Unit,
 ) {
     val checked = row.selected == 1
     Row(
         modifier =
             Modifier
                 .fillMaxWidth()
-                .toggleable(
-                    value = checked,
-                    role = Role.Switch,
-                    onValueChange = onToggle,
-                )
-                .padding(horizontal = 24.dp, vertical = 12.dp)
-                .semantics { contentDescription = row.label },
+                .padding(horizontal = 24.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(modifier = Modifier.weight(1f)) {
+        // Sibling tap areas, never nested: the label column toggles
+        // membership, the trailing button opens the device screen.
+        // Semantics and toggle share one node so TalkBack announces
+        // a single switch, as before.
+        Column(
+            modifier =
+                Modifier
+                    .weight(1f)
+                    .toggleable(
+                        value = checked,
+                        role = Role.Switch,
+                        onValueChange = onToggle,
+                    ).semantics { contentDescription = row.label },
+        ) {
             Text(
                 text = row.label,
                 style = MaterialTheme.typography.titleMedium,
@@ -955,6 +1224,44 @@ private fun SettingsToggleRow(
             checked = checked,
             onCheckedChange = null,
         )
+        if (row.detailTarget.isNotBlank()) {
+            TextButton(onClick = onDetail) {
+                Text(stringResource(R.string.settings_details))
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsButtonRow(
+    row: SettingsRow,
+    onRun: () -> Unit,
+) {
+    // A single full-width action: label plus supporting text, no chevron,
+    // no value. Kotlin confirms first; Rust restores defaults on confirm.
+    TextButton(
+        onClick = onRun,
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 4.dp),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.Start,
+        ) {
+            Text(
+                text = row.label,
+                style = MaterialTheme.typography.titleMedium,
+            )
+            if (row.description.isNotBlank()) {
+                Text(
+                    text = row.description,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
     }
 }
 
