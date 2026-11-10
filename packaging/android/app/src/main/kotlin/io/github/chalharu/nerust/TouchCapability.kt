@@ -22,22 +22,40 @@ internal fun hasTouchscreen(packageManager: PackageManager): Boolean {
 
 /** Names of devices the Auto overlay gate counts, shared by the runtime
  * gate (MainActivity) and the settings status push (SettingsActivity).
- * One function so the two can never disagree about what "connected" means:
- * `SOURCE_GAMEPAD` as-is; `SOURCE_JOYSTICK`-only with a gamepad button
- * (button clusters without one can't replace touch). Empty means Auto
- * currently hides nothing. */
+ * One function so the two can never disagree about what "connected" means.
+ * Sources alone prove nothing: button clusters (power keys, headset jacks,
+ * fingerprint sensors, touch panels) can expose gamepad or joystick bits.
+ * A counted device must also carry a gamepad button: without buttons it is
+ * not usable alternative input, and hiding touch controls for one strands
+ * the user with no way back. */
 internal fun connectedGamepadNames(): List<String> {
+    // Canonical gamepad buttons; any one proves a real controller.
+    // All exist since API 1, so no version guard is needed.
+    val buttonCodes =
+        intArrayOf(
+            KeyEvent.KEYCODE_BUTTON_A,
+            KeyEvent.KEYCODE_BUTTON_B,
+            KeyEvent.KEYCODE_BUTTON_X,
+            KeyEvent.KEYCODE_BUTTON_Y,
+            KeyEvent.KEYCODE_BUTTON_L1,
+            KeyEvent.KEYCODE_BUTTON_R1,
+            KeyEvent.KEYCODE_BUTTON_L2,
+            KeyEvent.KEYCODE_BUTTON_R2,
+            KeyEvent.KEYCODE_BUTTON_START,
+            KeyEvent.KEYCODE_BUTTON_SELECT,
+        )
     val names = mutableListOf<String>()
     for (id in InputDevice.getDeviceIds()) {
         val device = InputDevice.getDevice(id) ?: continue
         if (device.id < 0) continue
         if (Build.VERSION.SDK_INT >= 29 && device.isVirtual) continue
         val sources = device.sources
-        val gamepad = sources and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD
-        val joystickWithButtons =
-            sources and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK &&
-                device.hasKeys(KeyEvent.KEYCODE_BUTTON_A)[0]
-        if (gamepad || joystickWithButtons) names += device.name
+        val stick =
+            sources and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
+                sources and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
+        if (!stick) continue
+        if (!device.hasKeys(buttonCodes).any { it }) continue
+        names += device.name
     }
     return names.distinct()
 }
