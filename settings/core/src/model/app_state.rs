@@ -5,8 +5,6 @@ use std::{
 
 use nerust_core_traits::identity::SystemId;
 
-use crate::input::BUILTIN_KEYBOARD_MEMBER;
-
 pub const DESKTOP_APP_STATE_SCHEMA_VERSION: u32 = 2;
 
 pub type ControllerAssignmentsBySystem = HashMap<Box<dyn SystemId>, Vec<(String, Option<String>)>>;
@@ -17,6 +15,17 @@ pub type ControllerAssignmentsBySystem = HashMap<Box<dyn SystemId>, Vec<(String,
 /// pending, but the schema and the exclusivity rule already cover them).
 /// Touch is a global setting, never a port member.
 pub type PortDeviceSets = BTreeMap<String, Vec<String>>;
+
+/// Member-id prefixes for global port device sets. Keyboards ("kbd:")
+/// share ports; gamepads ("pad:") occupy exactly one port at a time.
+/// Touch is a global setting, never a port member.
+pub const KEYBOARD_MEMBER_PREFIX: &str = "kbd:";
+pub const GAMEPAD_MEMBER_PREFIX: &str = "pad";
+
+/// The built-in keyboard row (device id 0). Unlike external descriptors
+/// it is a capability flag, not a known device: terminals without one
+/// must never display or persist it.
+pub const BUILTIN_KEYBOARD_MEMBER: &str = "kbd:builtin";
 
 /// Player port ids. Ports are global (not per machine): every system's
 /// player-N slot fans out from the same port set.
