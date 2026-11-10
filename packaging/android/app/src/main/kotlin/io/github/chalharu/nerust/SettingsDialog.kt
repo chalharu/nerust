@@ -578,6 +578,7 @@ internal fun NerustSettingsDialogCard(
                     }
                 },
                 onSectionClick = { activeSectionId = it },
+                onResetRequest = { pendingResetKey = it },
                 parents = parents,
                 dirtySections = dirtyVisibleSections,
                 onSearchNavigate = { sectionId, rowKey ->
@@ -767,7 +768,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.settingsBannerItems(
     }
 }
 
-@Composable
+// Search results ride the lazy DSL like banners: the caller resolves
+// labels up front, this only emits items.
 private fun LazyListScope.settingsSearchResults(
     hits: List<Pair<SettingsSection, SettingsRow>>,
     emptyText: String,
@@ -856,6 +858,7 @@ private fun parentMap(sections: List<SettingsSection>): Map<String, Triple<Strin
         }
     }
 
+@Composable
 private fun SettingsScreenContent(
     modifier: Modifier,
     sections: List<SettingsSection>,
@@ -872,6 +875,7 @@ private fun SettingsScreenContent(
     onClearCapture: (SettingsRow) -> Unit,
     onDetailClick: (SettingsRow) -> Unit,
     onSectionClick: (String) -> Unit,
+    onResetRequest: (String) -> Unit,
     parents: Map<String, Triple<String, String, String>>,
     dirtySections: Set<String>,
     onSearchNavigate: (String, String?) -> Unit,
@@ -905,6 +909,7 @@ private fun SettingsScreenContent(
                     onRowClick = onRowClick,
                     onClearCapture = onClearCapture,
                     onDetailClick = onDetailClick,
+                    onResetRequest = onResetRequest,
                 )
             }
 
@@ -944,6 +949,31 @@ private fun SettingsCategoryList(
         }
         return chain.joinToString(" › ")
     }
+    // Labels and hits resolve in composable context; the lazy content
+    // below only consumes them through the plain list DSL.
+    val onLabel = stringResource(R.string.settings_on)
+    val offLabel = stringResource(R.string.settings_off)
+    val hits =
+        if (query.isBlank()) {
+            emptyList()
+        } else {
+            sections.flatMap { section ->
+                section.rows
+                    .filter { row ->
+                        row.kind != "header" &&
+                            (
+                                row.label.contains(query, ignoreCase = true) ||
+                                    row.description.contains(query, ignoreCase = true) ||
+                                    section.label.contains(query, ignoreCase = true) ||
+                                    row.text.contains(query, ignoreCase = true) ||
+                                    settingsRowDisplayValue(row, onLabel, offLabel)
+                                        .contains(query, ignoreCase = true)
+                            )
+                    }.map { row -> section to row }
+            }
+        }
+    val emptyText =
+        if (query.isBlank()) "" else stringResource(R.string.settings_search_empty, query)
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -967,26 +997,9 @@ private fun SettingsCategoryList(
             )
         }
         if (query.isNotBlank()) {
-            val onLabel = stringResource(R.string.settings_on)
-            val offLabel = stringResource(R.string.settings_off)
-            val hits =
-                sections.flatMap { section ->
-                    section.rows
-                        .filter { row ->
-                            row.kind != "header" &&
-                                (
-                                    row.label.contains(query, ignoreCase = true) ||
-                                        row.description.contains(query, ignoreCase = true) ||
-                                        section.label.contains(query, ignoreCase = true) ||
-                                        row.text.contains(query, ignoreCase = true) ||
-                                        settingsRowDisplayValue(row, onLabel, offLabel)
-                                            .contains(query, ignoreCase = true)
-                                )
-                        }.map { row -> section to row }
-                }
             settingsSearchResults(
                 hits = hits,
-                emptyText = stringResource(R.string.settings_search_empty, query),
+                emptyText = emptyText,
                 breadcrumbOf = ::breadcrumb,
                 onNavigate = onSearchNavigate,
             )
@@ -1076,6 +1089,7 @@ private fun SettingsSectionList(
     onRowClick: (SettingsRow) -> Unit,
     onClearCapture: (SettingsRow) -> Unit,
     onDetailClick: (SettingsRow) -> Unit,
+    onResetRequest: (String) -> Unit,
 ) {
     // Split rows into groups at header rows; each group renders as one card.
     val groups = remember(section) { splitSectionGroups(section.rows) }
@@ -1143,7 +1157,7 @@ private fun SettingsSectionList(
                                 "button" -> {
                                     SettingsButtonRow(
                                         row = row,
-                                        onRun = { pendingResetKey = row.key },
+                                        onRun = { onResetRequest(row.key) },
                                     )
                                 }
                                 "capture" -> {
