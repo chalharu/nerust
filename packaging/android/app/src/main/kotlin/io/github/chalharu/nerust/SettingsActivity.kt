@@ -281,8 +281,10 @@ class SettingsActivity :
         return super.dispatchKeyEvent(event)
     }
 
+    // Deprecated upstream; kept because minSdk 28 predates the
+    // OnBackInvokedDispatcher replacement. Back resolves inside the
+    // settings nav stack first (see handleSettingsBack).
     @Suppress("DEPRECATION")
-    @Deprecated("Back resolves inside the settings nav stack first")
     override fun onBackPressed() {
         if (handleSettingsBack()) return
         dismissWithResult(dismissed = true)

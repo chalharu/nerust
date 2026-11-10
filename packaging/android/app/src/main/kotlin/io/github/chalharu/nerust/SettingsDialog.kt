@@ -158,12 +158,15 @@ internal fun parseSettingsSections(payload: JSONObject): List<SettingsSection> {
     return out
 }
 
+/** Single command builder: `payload` is op-specific JSON (`keyboards` uses
+ * an array, `touch` an object, `set` omits it). One function, not two
+ * overloads: Any? covers both shapes without duplicating the envelope. */
 internal fun settingsCommandJson(
     key: String,
     index: Int,
     number: Long,
     op: String = "set",
-    payload: JSONArray? = null,
+    payload: Any? = null,
 ): String {
     val doc =
         JSONObject()
@@ -172,25 +175,6 @@ internal fun settingsCommandJson(
             .put("number", number)
             .put("op", op)
     if (payload != null) doc.put("payload", payload)
-    return doc.toString()
-}
-
-/** Object-payload variant for ops like `touch` whose payload is a JSON
- * object, not an array. */
-internal fun settingsCommandJson(
-    key: String,
-    index: Int,
-    number: Long,
-    op: String,
-    payload: JSONObject,
-): String {
-    val doc =
-        JSONObject()
-            .put("key", key)
-            .put("index", index)
-            .put("number", number)
-            .put("op", op)
-            .put("payload", payload)
     return doc.toString()
 }
 
