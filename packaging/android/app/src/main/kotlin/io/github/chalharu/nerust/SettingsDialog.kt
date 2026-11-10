@@ -350,7 +350,10 @@ internal fun NerustSettingsDialogCard(
     var sections by remember(initialSections) { mutableStateOf(initialSections) }
     var issues by remember(initialIssues) { mutableStateOf(initialIssues) }
     var capturePrompt by remember(initialCapture) { mutableStateOf(initialCapture) }
-    var activeSectionId by remember { mutableStateOf<String?>(null) }
+    // Navigation stack of section ids: pushing drills down one level,
+    // popping returns exactly one level. The old single-id model jumped
+    // from deep screens (device detail) straight to the top.
+    var backStack by remember { mutableStateOf(listOf<String>()) }
     var activeRowKey by remember { mutableStateOf<String?>(null) }
     var commandError by remember { mutableStateOf<String?>(null) }
     var confirmDiscard by remember { mutableStateOf(false) }
@@ -407,16 +410,22 @@ internal fun NerustSettingsDialogCard(
         dirtyKeys = resetDirtyKeys(sections, dirtyKeys, op, key)
     }
 
-    val activeSection = sections.find { it.id == activeSectionId }
+    val activeSection = backStack.lastOrNull()?.let { id -> sections.find { it.id == id } }
     val activeRow = activeSection?.rows?.find { it.key == activeRowKey }
     val canNavigateUp = activeSection != null || activeRow != null
     val isCapturing = capturePrompt != null
 
+    fun pushSection(id: String) {
+        activeRowKey = null
+        if (backStack.lastOrNull() != id) backStack = backStack + id
+    }
+
     fun navigateUp() {
         if (activeRow != null) {
             activeRowKey = null
-        } else {
-            activeSectionId = null
+        } else if (backStack.isNotEmpty()) {
+            activeRowKey = null
+            backStack = backStack.dropLast(1)
         }
     }
 
@@ -476,8 +485,7 @@ internal fun NerustSettingsDialogCard(
                 when (row.kind) {
                     "group" -> {
                         if (sections.any { it.id == row.target }) {
-                            activeRowKey = null
-                            activeSectionId = row.target
+                            pushSection(row.target)
                         }
                     }
                     "capture" -> {
@@ -496,14 +504,13 @@ internal fun NerustSettingsDialogCard(
                 if (row.detailTarget.isNotBlank() &&
                     sections.any { it.id == row.detailTarget }
                 ) {
-                    activeRowKey = null
-                    activeSectionId = row.detailTarget
+                    pushSection(row.detailTarget)
                 }
             },
-            onSectionClick = { activeSectionId = it },
+            onSectionClick = { pushSection(it) },
             onResetRequest = { pendingResetKey = it },
             onSearchNavigate = { sectionId, rowKey ->
-                activeSectionId = sectionId
+                pushSection(sectionId)
                 activeRowKey = rowKey
             },
         )
