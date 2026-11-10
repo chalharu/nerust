@@ -116,6 +116,7 @@ internal data class SettingsRow(
     val text: String,
     val target: String = "",
     val visible: Boolean = true,
+    val description: String = "",
 )
 
 /** One settings section as projected by Rust (`settings_views::SectionWire`). */
@@ -163,6 +164,7 @@ internal fun parseSettingsSections(payload: JSONObject): List<SettingsSection> {
                     text = row.optString("text", ""),
                     target = row.optString("target", ""),
                     visible = row.optBoolean("visible", true),
+                    description = row.optString("description", ""),
                 )
         }
         val id = section.getString("id")
@@ -849,6 +851,7 @@ private fun SettingsSectionList(
                                         title = row.label,
                                         value = settingsRowDisplayValue(row),
                                         semanticsLabel = "${row.label}: ${settingsRowDisplayValue(row)}",
+                                        supportingText = row.description,
                                         onClick = { onRowClick(row) },
                                     )
                                 }
@@ -857,6 +860,7 @@ private fun SettingsSectionList(
                                         title = row.label,
                                         value = "",
                                         semanticsLabel = row.label,
+                                        supportingText = row.description,
                                         showChevron = true,
                                         onClick = { onRowClick(row) },
                                     )
@@ -873,6 +877,7 @@ private fun SettingsSectionList(
                                         title = row.label,
                                         value = settingsRowDisplayValue(row),
                                         semanticsLabel = row.label,
+                                        supportingText = row.description,
                                     )
                                 }
                             }
@@ -931,11 +936,19 @@ private fun SettingsToggleRow(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = row.label,
-            modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.titleMedium,
-        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = row.label,
+                style = MaterialTheme.typography.titleMedium,
+            )
+            if (row.description.isNotBlank()) {
+                Text(
+                    text = row.description,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
         // Row owns the toggle; the switch is a static indicator so a tap
         // never fires twice and TalkBack announces a single switch.
         Switch(
@@ -978,11 +991,19 @@ private fun SettingsSliderRow(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = row.label,
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.weight(1f),
-            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = row.label,
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                if (row.description.isNotBlank()) {
+                    Text(
+                        text = row.description,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
             Text(
                 text = "${snap(sliderState.value.roundToLong())}${row.unit}",
                 style = MaterialTheme.typography.bodyMedium,
@@ -1130,7 +1151,11 @@ private fun SettingsNavigationRow(
         Column(modifier = Modifier.weight(1f)) {
             Text(text = title, style = MaterialTheme.typography.titleMedium)
             supportingText?.takeIf(String::isNotBlank)?.let {
-                Text(text = it, style = MaterialTheme.typography.bodySmall)
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
         if (value.isNotBlank()) {
@@ -1151,6 +1176,7 @@ private fun SettingsInfoRow(
     title: String,
     value: String,
     semanticsLabel: String,
+    supportingText: String? = null,
 ) {
     // Static readout: deliberately not clickable so it never pushes a
     // detail level that renders nothing.
@@ -1163,11 +1189,16 @@ private fun SettingsInfoRow(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.weight(1f),
-        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = title, style = MaterialTheme.typography.titleMedium)
+            supportingText?.takeIf(String::isNotBlank)?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
         Text(text = value, style = MaterialTheme.typography.bodyMedium)
     }
 }

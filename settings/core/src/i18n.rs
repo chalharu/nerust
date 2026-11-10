@@ -184,6 +184,40 @@ pub enum UiText {
     Controls,
     Storage,
     Unknown,
+    NotAssigned,
+    OverlayDetail,
+    DescLanguage,
+    DescVsync,
+    DescOrientation,
+    DescMute,
+    DescVolume,
+    DescSampleRate,
+    DescLatency,
+    DescNotifInfo,
+    DescNotifDuration,
+    DescNotifColor,
+    DescNotifWarning,
+    DescNotifError,
+    DescNotifErrorModal,
+    DescNotifPosition,
+    DescNotifArea,
+    DescStatusDisplay,
+    DescStatusPosition,
+    DescStatusArea,
+    DescOverlayVisibility,
+    DescOverlayOpacity,
+    DescOverlayScale,
+    DescOverlayOffset,
+    DescOverlayHaptics,
+    DescCartridgeMotion,
+    DescCartridgeRumble,
+    DescRumbleStrength,
+    DescRumbleTarget,
+    DescOverlayDetail,
+    DescShortcutsLink,
+    DescStoragePolicy,
+    DescStorageDirectory,
+    DescSystemControllers,
 }
 
 pub fn resolve_language(language: AppLanguage) -> AppLanguage {
@@ -445,6 +479,109 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::Controls => ("Controls", "操作"),
         UiText::Storage => ("Storage", "ストレージ"),
         UiText::Unknown => ("Unknown", "不明"),
+        UiText::NotAssigned => ("Not assigned", "未割当"),
+        UiText::OverlayDetail => ("Overlay detail", "オーバーレイ詳細"),
+        UiText::DescLanguage => (
+            "Display language. You can also follow the system.",
+            "表示言語。システム既定にもできます",
+        ),
+        UiText::DescVsync => (
+            "Keeps the picture tear-free. Leave on unless a game needs it off.",
+            "画面のちらつきを抑えます。通常はオンのままに",
+        ),
+        UiText::DescOrientation => (
+            "Auto rotate, portrait, or landscape. Applies immediately, even mid-game.",
+            "自動回転／縦固定／横固定。ゲーム中も即時反映されます",
+        ),
+        UiText::DescMute => (
+            "Silences everything. The volume setting is kept.",
+            "すべての音を止めます。音量設定は保持されます",
+        ),
+        UiText::DescVolume => ("Loudness from 0 to 100%.", "音の大きさ。0〜100%"),
+        UiText::DescSampleRate => (
+            "Change only if audio crackles.",
+            "音が途切れる場合に調整します",
+        ),
+        UiText::DescLatency => (
+            "Higher hides crackles but adds delay.",
+            "大きくすると途切れにくくなりますが遅延が増えます",
+        ),
+        UiText::DescNotifInfo => (
+            "Game messages such as save confirmations.",
+            "セーブ完了などのお知らせ",
+        ),
+        UiText::DescNotifDuration => (
+            "Seconds before the message fades.",
+            "通知が消えるまでの秒数",
+        ),
+        UiText::DescNotifColor => ("Color of the message text.", "通知文字の色"),
+        UiText::DescNotifWarning => (
+            "Warnings such as slowdown or missing files.",
+            "遅延やファイル不足などの警告",
+        ),
+        UiText::DescNotifError => ("Errors that stop or block an action.", "操作を止めるエラー"),
+        UiText::DescNotifErrorModal => (
+            "Also pop up a dialog for errors.",
+            "エラー時にダイアログも出します",
+        ),
+        UiText::DescNotifPosition => ("Corner where messages appear.", "通知を出す隅"),
+        UiText::DescNotifArea => (
+            "Overlay messages, or reserve a strip.",
+            "重ねて表示するか帯を確保するか",
+        ),
+        UiText::DescStatusDisplay => ("FPS and state readout.", "FPSなどの状態表示"),
+        UiText::DescStatusPosition => ("Corner for the status readout.", "状態表示の位置"),
+        UiText::DescStatusArea => (
+            "On a shared edge it follows the message area.",
+            "同じ辺では通知の領域に従います",
+        ),
+        UiText::DescOverlayVisibility => (
+            "Auto shows touch buttons on touch devices only.",
+            "自動はタッチ端末のみ表示",
+        ),
+        UiText::DescOverlayOpacity => (
+            "Transparency of the on-screen buttons.",
+            "画面ボタンの透明度",
+        ),
+        UiText::DescOverlayScale => ("Size of the on-screen buttons.", "画面ボタンの大きさ"),
+        UiText::DescOverlayOffset => (
+            "Vertical shift of the on-screen buttons.",
+            "画面ボタンの上下位置",
+        ),
+        UiText::DescOverlayHaptics => (
+            "Light vibration when a touch button is pressed.",
+            "ボタンを押した時の軽い振動です",
+        ),
+        UiText::DescCartridgeMotion => (
+            "Extra sensor for cartridges that need it.",
+            "対応カートリッジ用の追加センサー",
+        ),
+        UiText::DescCartridgeRumble => (
+            "Vibration for cartridges that support it.",
+            "対応カートリッジの振動",
+        ),
+        UiText::DescRumbleStrength => ("How strong the vibration feels.", "振動の強さ"),
+        UiText::DescRumbleTarget => (
+            "Vibrate the handset, the controller, or decide automatically.",
+            "本体・コントローラー・自動",
+        ),
+        UiText::DescOverlayDetail => (
+            "Fine-tune size, position, and transparency.",
+            "大きさ・位置・透明度を調整します",
+        ),
+        UiText::DescShortcutsLink => (
+            "Global keys such as save state. Always active.",
+            "セーブ等の全体操作。ポートと無関係に常時有効",
+        ),
+        UiText::DescStoragePolicy => (
+            "Where save data lives. Takes effect on next launch.",
+            "保存先。次回起動から有効です",
+        ),
+        UiText::DescStorageDirectory => ("The folder currently in use.", "使用中のフォルダ"),
+        UiText::DescSystemControllers => (
+            "Open the controller screen for this system.",
+            "この機種のコントローラー画面を開きます",
+        ),
     }
 }
 
@@ -486,6 +623,36 @@ pub fn notification_group_label(language: AppLanguage, level: &str) -> String {
         language,
         format!("{level} notifications"),
         format!("{level}通知")
+    )
+}
+
+/// Description for a controller-slot choice row: which port the row drives
+/// is in the row label, so the description only states the action.
+pub fn slot_description(language: AppLanguage) -> String {
+    localized!(
+        language,
+        "Choose the controller for this port.".to_string(),
+        "このポートで使うコントローラーを選びます".to_string()
+    )
+}
+
+/// Description for a machine-specific core setting row. The row label comes
+/// from the core descriptor, so the description only states when to touch it.
+pub fn system_field_description(language: AppLanguage) -> String {
+    localized!(
+        language,
+        "Provided by this system's core. Change only if a game misbehaves.".to_string(),
+        "機種コア固有の設定。動作がおかしい時のみ変更".to_string()
+    )
+}
+
+/// Description for a global-shortcut capture row. Shortcuts stay active
+/// regardless of port assignment, unlike device bindings.
+pub fn shortcut_row_description(language: AppLanguage) -> String {
+    localized!(
+        language,
+        "Global key. Works regardless of port assignment.".to_string(),
+        "全体操作キー。ポート割当と無関係に有効".to_string()
     )
 }
 
@@ -732,6 +899,40 @@ mod tests {
             Controls,
             Storage,
             Unknown,
+            NotAssigned,
+            OverlayDetail,
+            DescLanguage,
+            DescVsync,
+            DescOrientation,
+            DescMute,
+            DescVolume,
+            DescSampleRate,
+            DescLatency,
+            DescNotifInfo,
+            DescNotifDuration,
+            DescNotifColor,
+            DescNotifWarning,
+            DescNotifError,
+            DescNotifErrorModal,
+            DescNotifPosition,
+            DescNotifArea,
+            DescStatusDisplay,
+            DescStatusPosition,
+            DescStatusArea,
+            DescOverlayVisibility,
+            DescOverlayOpacity,
+            DescOverlayScale,
+            DescOverlayOffset,
+            DescOverlayHaptics,
+            DescCartridgeMotion,
+            DescCartridgeRumble,
+            DescRumbleStrength,
+            DescRumbleTarget,
+            DescOverlayDetail,
+            DescShortcutsLink,
+            DescStoragePolicy,
+            DescStorageDirectory,
+            DescSystemControllers,
         ] {
             assert!(!text(en(), key).is_empty());
             assert!(!text(ja(), key).is_empty());

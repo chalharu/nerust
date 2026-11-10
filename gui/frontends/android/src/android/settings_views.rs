@@ -18,7 +18,10 @@ use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_viewmodel::settings::{SettingsViewModel, StoragePathError, StoragePathValidator};
 use nerust_settings_core::{
     editor::CaptureTarget,
-    i18n::{UiText, text as ui_text},
+    i18n::{
+        UiText, shortcut_row_description, slot_description, system_field_description,
+        text as ui_text,
+    },
     model::{
         language::AppLanguage,
         local::{
@@ -69,13 +72,19 @@ pub(super) struct SectionWire {
 
 /// One settings row. `choices` carries both the Kotlin-visible labels and the
 /// Rust-typed values (echoed back by index); `number`/`step`/`min`/`max`/`unit`
-/// drive slider rows; `text` drives read-only info rows; `target` carries the
-/// opaque capture target for `capture` rows; `Header`/`Group` rows are
-/// non-editable navigation aids.
+/// drive slider rows; `text` drives read-only info rows; `description` is the
+/// M3 supporting text shown under the label (IA principle 3: every non-header
+/// row explains itself); `target` carries the opaque capture target for
+/// `capture` rows; `Header`/`Group` rows are non-editable navigation aids.
+/// Capture rows keep `description` empty by design: the value line already
+/// serves as the副文 (bound key name, or "Tap to assign"), and the IA slot
+/// rule shows exactly one of description/value.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct RowWire {
     pub key: String,
     pub label: String,
+    #[serde(default)]
+    pub description: String,
     pub kind: RowKind,
     #[serde(default)]
     pub choices: Vec<ChoiceWire>,
@@ -786,7 +795,13 @@ fn apply_android_local(
 
 // ── Section builders ────────────────────────────────────────────────
 
-fn choice_row<T>(key: &str, label: String, choices: &[(T, String)], selected: &T) -> RowWire
+fn choice_row<T>(
+    key: &str,
+    label: String,
+    description: String,
+    choices: &[(T, String)],
+    selected: &T,
+) -> RowWire
 where
     T: Serialize + PartialEq,
 {
@@ -807,6 +822,7 @@ where
     RowWire {
         key: key.to_string(),
         label,
+        description,
         kind: RowKind::Choice,
         choices: wires,
         selected,
@@ -821,12 +837,19 @@ where
     }
 }
 
-fn toggle_row(key: &str, label: String, language: AppLanguage, value: bool) -> RowWire {
+fn toggle_row(
+    key: &str,
+    label: String,
+    description: String,
+    language: AppLanguage,
+    value: bool,
+) -> RowWire {
     RowWire {
         selected: usize::from(value),
         ..choice_row(
             key,
             label,
+            description,
             &[
                 (false, ui_text(language, UiText::Off).to_string()),
                 (true, ui_text(language, UiText::On).to_string()),
@@ -837,9 +860,14 @@ fn toggle_row(key: &str, label: String, language: AppLanguage, value: bool) -> R
     .with_kind(RowKind::Toggle)
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Wire builder: slider bounds read as one tuple"
+)]
 fn number_row(
     key: &str,
     label: String,
+    description: String,
     value: i64,
     step: i64,
     min: i64,
@@ -849,6 +877,7 @@ fn number_row(
     RowWire {
         key: key.to_string(),
         label,
+        description,
         kind: RowKind::Number,
         choices: Vec::new(),
         selected: 0,
@@ -863,10 +892,11 @@ fn number_row(
     }
 }
 
-fn info_row(key: &str, label: String, text: String) -> RowWire {
+fn info_row(key: &str, label: String, description: String, text: String) -> RowWire {
     RowWire {
         key: key.to_string(),
         label,
+        description,
         kind: RowKind::Info,
         choices: Vec::new(),
         selected: 0,
@@ -885,6 +915,7 @@ fn header_row(label: String) -> RowWire {
     RowWire {
         key: String::new(),
         label,
+        description: String::new(),
         kind: RowKind::Header,
         choices: Vec::new(),
         selected: 0,
@@ -900,10 +931,11 @@ fn header_row(label: String) -> RowWire {
 }
 
 /// Navigation row into another section by id.
-fn group_row(key: &str, label: String, target: &str) -> RowWire {
+fn group_row(key: &str, label: String, description: String, target: &str) -> RowWire {
     RowWire {
         key: key.to_string(),
         label,
+        description,
         kind: RowKind::Group,
         choices: Vec::new(),
         selected: 0,
@@ -920,10 +952,19 @@ fn group_row(key: &str, label: String, target: &str) -> RowWire {
 
 /// Key-capture row: tap starts capture against the opaque target, Clear
 /// unbinds, Cancel aborts. `text` shows the current binding label.
-fn capture_row(key: &str, label: String, text: String, target: &str) -> RowWire {
+/// `description` stays empty: the value line already serves as the副文
+/// (bound key name, or "Tap to assign").
+fn capture_row(
+    key: &str,
+    label: String,
+    description: String,
+    text: String,
+    target: &str,
+) -> RowWire {
     RowWire {
         key: key.to_string(),
         label,
+        description,
         kind: RowKind::Capture,
         choices: Vec::new(),
         selected: 0,
@@ -956,11 +997,11 @@ fn build_sections(vm: &SettingsViewModel, snapshot: &SettingsSnapshot) -> Vec<Se
         build_video_section(vm, snapshot, language),
         build_audio_section(vm, language),
         build_notifications_section(vm, language),
-        build_controls_section(snapshot, language),
         build_storage_section(vm, language),
     ];
+    sections.extend(build_controls_sections(vm, snapshot, language));
     sections.extend(build_system_sections(vm, language));
-    sections.extend(build_input_sections(vm));
+    sections.extend(build_input_sections(vm, language));
     // Canonical order owned by Rust; machine sections keep factory order
     // after the known taxonomy.
     sections.sort_by_key(|section| {
@@ -985,6 +1026,7 @@ fn build_general_section(vm: &SettingsViewModel, language: AppLanguage) -> Secti
         choice_row(
             "general.language",
             ui_text(language, UiText::Language).to_string(),
+            ui_text(language, UiText::DescLanguage).to_string(),
             &choices,
             &selected,
         )
@@ -1011,12 +1053,14 @@ fn build_video_section(
             toggle_row(
                 "video.vsync",
                 ui_text(language, UiText::Vsync).to_string(),
+                ui_text(language, UiText::DescVsync).to_string(),
                 language,
                 video.vsync,
             ),
             choice_row(
                 "video.orientation",
                 ui_text(language, UiText::ScreenOrientation).to_string(),
+                ui_text(language, UiText::DescOrientation).to_string(),
                 &[
                     (
                         ScreenOrientation::Auto,
@@ -1047,12 +1091,14 @@ fn build_audio_section(vm: &SettingsViewModel, language: AppLanguage) -> Section
             toggle_row(
                 "audio.muted",
                 ui_text(language, UiText::Mute).to_string(),
+                ui_text(language, UiText::DescMute).to_string(),
                 language,
                 view.muted,
             ),
             number_row(
                 "audio.volume",
                 ui_text(language, UiText::MasterVolume).to_string(),
+                ui_text(language, UiText::DescVolume).to_string(),
                 i64::from(view.volume_percent),
                 1,
                 0,
@@ -1070,6 +1116,7 @@ fn build_audio_section(vm: &SettingsViewModel, language: AppLanguage) -> Section
                 choice_row(
                     "audio.sample_rate",
                     ui_text(language, UiText::SampleRate).to_string(),
+                    ui_text(language, UiText::DescSampleRate).to_string(),
                     &choices,
                     &selected,
                 )
@@ -1077,6 +1124,7 @@ fn build_audio_section(vm: &SettingsViewModel, language: AppLanguage) -> Section
             number_row(
                 "audio.latency",
                 ui_text(language, UiText::AudioLatency).to_string(),
+                ui_text(language, UiText::DescLatency).to_string(),
                 i64::from(view.latency_ms),
                 5,
                 10,
@@ -1098,12 +1146,14 @@ fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) ->
             toggle_row(
                 "notifications.info_enabled",
                 t(UiText::NotificationInfo),
+                t(UiText::DescNotifInfo),
                 language,
                 view.info_enabled,
             ),
             number_row(
                 "notifications.info_duration",
                 t(UiText::NotificationDuration),
+                t(UiText::DescNotifDuration),
                 i64::from(view.info_duration_ms),
                 500,
                 1000,
@@ -1113,6 +1163,7 @@ fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) ->
             choice_row(
                 "notifications.info_color",
                 t(UiText::NotificationInfo),
+                t(UiText::DescNotifColor),
                 &view
                     .color_choices
                     .iter()
@@ -1123,12 +1174,14 @@ fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) ->
             toggle_row(
                 "notifications.warning_enabled",
                 t(UiText::NotificationWarning),
+                t(UiText::DescNotifWarning),
                 language,
                 view.warning_enabled,
             ),
             number_row(
                 "notifications.warning_duration",
                 t(UiText::NotificationDuration),
+                t(UiText::DescNotifDuration),
                 i64::from(view.warning_duration_ms),
                 500,
                 1000,
@@ -1138,6 +1191,7 @@ fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) ->
             choice_row(
                 "notifications.warning_color",
                 t(UiText::NotificationWarning),
+                t(UiText::DescNotifColor),
                 &view
                     .color_choices
                     .iter()
@@ -1148,18 +1202,21 @@ fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) ->
             toggle_row(
                 "notifications.error_enabled",
                 t(UiText::NotificationError),
+                t(UiText::DescNotifError),
                 language,
                 view.error_enabled,
             ),
             toggle_row(
                 "notifications.error_modal",
                 t(UiText::NotificationErrorModal),
+                t(UiText::DescNotifErrorModal),
                 language,
                 view.error_modal,
             ),
             choice_row(
                 "notifications.error_color",
                 t(UiText::NotificationError),
+                t(UiText::DescNotifColor),
                 &view
                     .color_choices
                     .iter()
@@ -1170,6 +1227,7 @@ fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) ->
             choice_row(
                 "notifications.position",
                 t(UiText::NotificationPosition),
+                t(UiText::DescNotifPosition),
                 &view
                     .position_choices
                     .iter()
@@ -1180,6 +1238,7 @@ fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) ->
             choice_row(
                 "notifications.area_mode",
                 t(UiText::NotificationAreaMode),
+                t(UiText::DescNotifArea),
                 &view
                     .area_mode_choices
                     .iter()
@@ -1190,12 +1249,14 @@ fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) ->
             toggle_row(
                 "status.enabled",
                 t(UiText::NotificationStatus),
+                t(UiText::DescStatusDisplay),
                 language,
                 view.status_enabled,
             ),
             choice_row(
                 "status.position",
                 t(UiText::NotificationStatusPosition),
+                t(UiText::DescStatusPosition),
                 &view
                     .position_choices
                     .iter()
@@ -1207,6 +1268,7 @@ fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) ->
                 let mut row = choice_row(
                     "status.area_mode",
                     t(UiText::NotificationStatusAreaMode),
+                    t(UiText::DescStatusArea),
                     &view
                         .area_mode_choices
                         .iter()
@@ -1224,17 +1286,28 @@ fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) ->
     }
 }
 
-fn build_controls_section(snapshot: &SettingsSnapshot, language: AppLanguage) -> SectionWire {
+/// Controls quick section plus its two hidden detail screens, reachable via
+/// group rows. The overlay detail holds the size/position/transparency
+/// sliders (Display mode ›); haptics stays in the quick section so there is
+/// exactly one place to toggle it. Global shortcuts live in their own hidden
+/// screen (Shortcuts ›): port-independent and always active, never mixed
+/// into per-port device assignment.
+fn build_controls_sections(
+    vm: &SettingsViewModel,
+    snapshot: &SettingsSnapshot,
+    language: AppLanguage,
+) -> Vec<SectionWire> {
     let overlay = &snapshot.local.touch_overlay;
     let peripherals = &snapshot.local.cartridge_peripherals;
     let t = |text: UiText| ui_text(language, text).to_string();
-    SectionWire {
+    let quick = SectionWire {
         id: "controls".to_string(),
         label: crate::settings_sections::section_label("controls", language).to_string(),
         rows: vec![
             choice_row(
                 "controls.overlay_visibility",
                 t(UiText::TouchOverlay),
+                t(UiText::DescOverlayVisibility),
                 &[
                     (
                         TouchOverlayVisibility::Always,
@@ -1251,54 +1324,43 @@ fn build_controls_section(snapshot: &SettingsSnapshot, language: AppLanguage) ->
                 ],
                 &overlay.visibility,
             ),
-            number_row(
-                "controls.overlay_opacity",
-                t(UiText::OverlayOpacity),
-                i64::from(overlay.opacity_percent),
-                1,
-                0,
-                100,
-                "%",
-            ),
-            number_row(
-                "controls.overlay_scale",
-                t(UiText::OverlayScale),
-                i64::from(overlay.scale_percent),
-                5,
-                50,
-                150,
-                "%",
-            ),
-            number_row(
-                "controls.overlay_vertical_offset",
-                t(UiText::OverlayVerticalOffset),
-                i64::from(overlay.vertical_offset_percent),
-                1,
-                -30,
-                30,
-                "%",
+            group_row(
+                "controls.overlay_detail_link",
+                t(UiText::OverlayDetail),
+                t(UiText::DescOverlayDetail),
+                "controls.overlay_detail",
             ),
             toggle_row(
                 "controls.overlay_haptics",
                 t(UiText::OverlayHaptics),
+                t(UiText::DescOverlayHaptics),
                 language,
                 overlay.haptics,
+            ),
+            group_row(
+                "controls.shortcuts_link",
+                t(UiText::Shortcuts),
+                t(UiText::DescShortcutsLink),
+                "controls.shortcuts",
             ),
             toggle_row(
                 "controls.cartridge_motion",
                 t(UiText::CartridgeMotion),
+                t(UiText::DescCartridgeMotion),
                 language,
                 peripherals.motion_enabled,
             ),
             toggle_row(
                 "controls.cartridge_rumble",
                 t(UiText::CartridgeRumble),
+                t(UiText::DescCartridgeRumble),
                 language,
                 peripherals.rumble_enabled,
             ),
             number_row(
                 "controls.cartridge_rumble_strength",
                 t(UiText::RumbleStrength),
+                t(UiText::DescRumbleStrength),
                 i64::from(peripherals.rumble_strength_percent),
                 1,
                 0,
@@ -1308,6 +1370,7 @@ fn build_controls_section(snapshot: &SettingsSnapshot, language: AppLanguage) ->
             choice_row(
                 "controls.cartridge_rumble_target",
                 t(UiText::RumbleTarget),
+                t(UiText::DescRumbleTarget),
                 &[
                     (
                         RumbleTarget::Auto,
@@ -1326,7 +1389,71 @@ fn build_controls_section(snapshot: &SettingsSnapshot, language: AppLanguage) ->
             ),
         ],
         visible: true,
-    }
+    };
+    let overlay_detail = SectionWire {
+        id: "controls.overlay_detail".to_string(),
+        label: t(UiText::TouchOverlay),
+        rows: vec![
+            number_row(
+                "controls.overlay_opacity",
+                t(UiText::OverlayOpacity),
+                t(UiText::DescOverlayOpacity),
+                i64::from(overlay.opacity_percent),
+                1,
+                0,
+                100,
+                "%",
+            ),
+            number_row(
+                "controls.overlay_scale",
+                t(UiText::OverlayScale),
+                t(UiText::DescOverlayScale),
+                i64::from(overlay.scale_percent),
+                5,
+                50,
+                150,
+                "%",
+            ),
+            number_row(
+                "controls.overlay_vertical_offset",
+                t(UiText::OverlayVerticalOffset),
+                t(UiText::DescOverlayOffset),
+                i64::from(overlay.vertical_offset_percent),
+                1,
+                -30,
+                30,
+                "%",
+            ),
+        ],
+        visible: false,
+    };
+    let shortcuts_view = vm.shortcuts.view.get();
+    // Shortcut targets encode a system only as a decoding hint; every
+    // global shortcut decodes identically, so the first system suffices.
+    let shortcut_system = vm
+        .systems()
+        .first()
+        .map(|system| system.system_id().to_string())
+        .unwrap_or_default();
+    let shortcuts = SectionWire {
+        id: "controls.shortcuts".to_string(),
+        label: t(UiText::Shortcuts),
+        rows: shortcuts_view
+            .rows
+            .iter()
+            .map(|binding| {
+                capture_row(
+                    &format!("controls.{}", binding_key(&binding.target)),
+                    binding.label.clone(),
+                    shortcut_row_description(language),
+                    binding_value_text(binding),
+                    &encode_target(&binding.target, &shortcut_system),
+                )
+            })
+            .collect(),
+        visible: false,
+    };
+    vec![quick, overlay_detail, shortcuts]
 }
 
 fn build_storage_section(vm: &SettingsViewModel, language: AppLanguage) -> SectionWire {
@@ -1343,6 +1470,7 @@ fn build_storage_section(vm: &SettingsViewModel, language: AppLanguage) -> Secti
         choice_row(
             "general.storage_policy",
             ui_text(language, UiText::SaveStoragePolicy).to_string(),
+            ui_text(language, UiText::DescStoragePolicy).to_string(),
             &choices,
             &selected,
         )
@@ -1351,6 +1479,7 @@ fn build_storage_section(vm: &SettingsViewModel, language: AppLanguage) -> Secti
         rows.push(info_row(
             "general.storage_directory",
             ui_text(language, UiText::SaveStorageDirectory).to_string(),
+            ui_text(language, UiText::DescStorageDirectory).to_string(),
             general.storage_directory.clone(),
         ));
     }
@@ -1380,6 +1509,7 @@ fn build_system_sections(vm: &SettingsViewModel, language: AppLanguage) -> Vec<S
                     choice_row(
                         &format!("system.{}.{}", view.system_id, field.id.as_str()),
                         field.label.clone(),
+                        system_field_description(language),
                         &field
                             .choices
                             .iter()
@@ -1392,6 +1522,7 @@ fn build_system_sections(vm: &SettingsViewModel, language: AppLanguage) -> Vec<S
             rows.push(group_row(
                 &format!("system.{}.controllers", view.system_id),
                 ui_text(language, UiText::Controller).to_string(),
+                ui_text(language, UiText::DescSystemControllers).to_string(),
                 &format!("input.{}", view.system_id),
             ));
             SectionWire {
@@ -1408,7 +1539,7 @@ fn build_system_sections(vm: &SettingsViewModel, language: AppLanguage) -> Vec<S
 /// the controller group row. Hidden from the category list: same level would
 /// repeat machine names. Contains slot assignment plus keyboard bindings
 /// (capture-capable now that hardware keys route into the session).
-fn build_input_sections(vm: &SettingsViewModel) -> Vec<SectionWire> {
+fn build_input_sections(vm: &SettingsViewModel, language: AppLanguage) -> Vec<SectionWire> {
     vm.inputs()
         .iter()
         .map(|input| {
@@ -1436,6 +1567,7 @@ fn build_input_sections(vm: &SettingsViewModel) -> Vec<SectionWire> {
                     let mut row = choice_row(
                         &format!("system.{}.slot.{}", view.system_id, slot.slot_id.as_str()),
                         slot.label.clone(),
+                        slot_description(language),
                         &slot
                             .choices
                             .iter()
@@ -1476,6 +1608,7 @@ fn build_input_sections(vm: &SettingsViewModel) -> Vec<SectionWire> {
                             binding_key(&binding.target)
                         ),
                         binding.label.clone(),
+                        String::new(),
                         binding_value_text(binding),
                         &encode_target(&binding.target, &view.system_id.to_string()),
                     )
@@ -1769,7 +1902,49 @@ mod tests {
                 .sections
                 .iter()
                 .all(|section| section.id != "shortcuts"),
-            "shortcuts section stays hidden on Android"
+            "no top-level shortcuts section on Android"
+        );
+        // Global shortcuts live one drill-down under Controls, next to the
+        // overlay detail screen: port-independent and always active.
+        for (id, probe_key) in [
+            ("controls.overlay_detail", "controls.overlay_opacity"),
+            ("controls.shortcuts", "controls.shortcut.TogglePause"),
+        ] {
+            let hidden = payload
+                .sections
+                .iter()
+                .find(|section| section.id == id)
+                .unwrap_or_else(|| panic!("{id} screen exists"));
+            assert!(!hidden.visible, "{id} hides from categories");
+            assert!(
+                hidden.rows.iter().any(|row| row.key == probe_key),
+                "{id} holds its rows"
+            );
+            assert!(
+                payload
+                    .sections
+                    .iter()
+                    .flat_map(|section| &section.rows)
+                    .any(|row| row.kind == super::RowKind::Group && row.target == id),
+                "controls links to {id}"
+            );
+        }
+        let shortcuts = payload
+            .sections
+            .iter()
+            .find(|section| section.id == "controls.shortcuts")
+            .expect("shortcuts screen exists");
+        assert_eq!(
+            shortcuts.rows.len(),
+            8,
+            "all global shortcut actions stay reachable"
+        );
+        assert!(
+            shortcuts
+                .rows
+                .iter()
+                .all(|row| row.kind == super::RowKind::Capture),
+            "shortcuts rows are capturable"
         );
     }
 
@@ -1938,6 +2113,25 @@ mod tests {
             !row(&next, "status.area_mode").visible,
             "same-edge rule hides the row"
         );
+    }
+
+    #[test]
+    fn non_capture_rows_carry_descriptions() {
+        let (_snapshot, payload) = test_payload();
+        // IA principle 3: every row explains itself. Headers carry no
+        // supporting text and capture rows show the value line instead
+        // (bound key name, or "Tap to assign"), so both stay exempt.
+        let bare: Vec<String> = payload
+            .sections
+            .iter()
+            .flat_map(|section| &section.rows)
+            .filter(|row| {
+                !matches!(row.kind, super::RowKind::Header | super::RowKind::Capture)
+                    && row.description.is_empty()
+            })
+            .map(|row| row.key.clone())
+            .collect();
+        assert!(bare.is_empty(), "rows without description: {bare:?}");
     }
 
     #[test]
