@@ -190,11 +190,19 @@ pub(super) struct KeyboardInfo {
     pub builtin: bool,
 }
 
+/// One gamepad the Auto overlay gate counts (Kotlin `InputDevice`,
+/// same rule as the runtime gate). Names only: Rust displays them in the
+/// overlay detail screen so users see why Auto hides, without logcat.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct GamepadInfo {
+    pub name: String,
+}
+
 /// One settings edit from Kotlin: row key plus op. `set` reads the choice
 /// index or the slider number; capture ops act on the row's opaque target;
-/// `keyboards` upserts the vault's enumerated keyboard list from `payload`;
-/// `reset_section` restores one screen (or `all`) to defaults.
-/// `payload` is op-specific JSON (`keyboards` only today).
+/// `keyboards`/`gamepads` upsert the vault's enumerated device lists from
+/// `payload`; `reset_section` restores one screen (or `all`) to defaults.
+/// `payload` is op-specific JSON (`keyboards`/`gamepads` only today).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct WireCommand {
     pub key: String,
@@ -279,12 +287,13 @@ pub(super) fn open_payload(
     snapshot: &SettingsSnapshot,
     keyboards: &[KeyboardInfo],
     touch_capable: Option<bool>,
+    gamepads: &[GamepadInfo],
 ) -> Result<String, String> {
     with_vm_deps(|deps| {
         let vm = build_vm(snapshot, deps)?;
         let payload = ViewPayload {
             schema_version: SETTINGS_SCHEMA_VERSION,
-            sections: build_sections(&vm, snapshot, keyboards, touch_capable),
+            sections: build_sections(&vm, snapshot, keyboards, touch_capable, gamepads),
             issues: draft_issues(&vm),
             capture: None,
         };
@@ -297,14 +306,16 @@ pub(super) type CaptureSlot = Option<(CaptureTarget, String)>;
 
 /// Apply one wire command to the draft snapshot in place, returning the
 /// refreshed payload. Stateless per call except for the passed draft,
-/// capture slot, vault keyboard list (`keyboards` op upserts it), and
-/// touch capability (`touch` op upserts it).
+/// capture slot, vault keyboard list (`keyboards` op upserts it), touch
+/// capability (`touch` op upserts it), and the counted gamepad list
+/// (`gamepads` op upserts it).
 pub(super) fn apply_command_to(
     snapshot: &mut SettingsSnapshot,
     command_json: &str,
     capture: &mut CaptureSlot,
     keyboards: &mut Vec<KeyboardInfo>,
     touch_capable: &mut Option<bool>,
+    gamepads: &mut Vec<GamepadInfo>,
 ) -> Result<String, String> {
     let command: WireCommand =
         serde_json::from_str(command_json).map_err(|error| error.to_string())?;
@@ -315,9 +326,10 @@ pub(super) fn apply_command_to(
                 prune_missing_builtin(snapshot, keyboards);
             }
             "touch" => apply_touch_command(touch_capable, &command)?,
+            "gamepads" => apply_gamepads_command(gamepads, &command)?,
             "reset_section" => {
                 let vm = build_vm(snapshot, deps)?;
-                let sections = build_sections(&vm, snapshot, keyboards, *touch_capable);
+                let sections = build_sections(&vm, snapshot, keyboards, *touch_capable, gamepads);
                 apply_reset_section(
                     snapshot,
                     deps,
@@ -325,19 +337,26 @@ pub(super) fn apply_command_to(
                     &command,
                     keyboards,
                     *touch_capable,
+                    gamepads,
                 )?;
             }
-            "cancel_capture" | "clear_binding" | "start_capture" => {
-                apply_capture_command(snapshot, deps, &command, capture, keyboards, *touch_capable)?
-            }
+            "cancel_capture" | "clear_binding" | "start_capture" => apply_capture_command(
+                snapshot,
+                deps,
+                &command,
+                capture,
+                keyboards,
+                *touch_capable,
+                gamepads,
+            )?,
             "set" => {
                 let vm = build_vm(snapshot, deps)?;
-                let sections = build_sections(&vm, snapshot, keyboards, *touch_capable);
+                let sections = build_sections(&vm, snapshot, keyboards, *touch_capable, gamepads);
                 apply_set_command(snapshot, deps, &vm, &sections, &command)?;
             }
             op => return Err(format!("unknown command op: {op}")),
         }
-        refreshed_payload(snapshot, deps, capture, keyboards, *touch_capable)
+        refreshed_payload(snapshot, deps, capture, keyboards, *touch_capable, gamepads)
     })
 }
 
@@ -370,11 +389,12 @@ fn refreshed_payload(
     capture: &CaptureSlot,
     keyboards: &[KeyboardInfo],
     touch_capable: Option<bool>,
+    gamepads: &[GamepadInfo],
 ) -> Result<String, String> {
     let vm = build_vm(snapshot, deps)?;
     let payload = ViewPayload {
         schema_version: SETTINGS_SCHEMA_VERSION,
-        sections: build_sections(&vm, snapshot, keyboards, touch_capable),
+        sections: build_sections(&vm, snapshot, keyboards, touch_capable, gamepads),
         issues: draft_issues(&vm),
         capture: capture.as_ref().map(|(target, prompt)| CaptureWire {
             target: encode_target(target, &target_system(target, deps)),
@@ -396,6 +416,7 @@ pub(super) fn apply_hardware_key(
     capture: &mut CaptureSlot,
     keyboards: &[KeyboardInfo],
     touch_capable: Option<bool>,
+    gamepads: &[GamepadInfo],
 ) -> Result<(String, bool), String> {
     with_vm_deps(|deps| {
         if pressed
@@ -410,12 +431,12 @@ pub(super) fn apply_hardware_key(
             *snapshot = vm.snapshot();
             *capture = None;
             Ok((
-                refreshed_payload(snapshot, deps, capture, keyboards, touch_capable)?,
+                refreshed_payload(snapshot, deps, capture, keyboards, touch_capable, gamepads)?,
                 true,
             ))
         } else {
             Ok((
-                refreshed_payload(snapshot, deps, capture, keyboards, touch_capable)?,
+                refreshed_payload(snapshot, deps, capture, keyboards, touch_capable, gamepads)?,
                 false,
             ))
         }
@@ -571,13 +592,14 @@ fn apply_capture_command(
     capture: &mut CaptureSlot,
     keyboards: &[KeyboardInfo],
     touch_capable: Option<bool>,
+    gamepads: &[GamepadInfo],
 ) -> Result<(), String> {
     if command.op == "cancel_capture" {
         *capture = None;
         return Ok(());
     }
     let vm = build_vm(snapshot, deps)?;
-    let sections = build_sections(&vm, snapshot, keyboards, touch_capable);
+    let sections = build_sections(&vm, snapshot, keyboards, touch_capable, gamepads);
     let row = find_row(&sections, &command.key)?;
     if row.kind != RowKind::Capture {
         return Err(format!("{}: not a capture row", command.key));
@@ -638,6 +660,24 @@ fn apply_keyboards_command(
         }
     }
     *keyboards = list;
+    Ok(())
+}
+
+/// Upsert the vault's counted-gamepad list (Kotlin `InputDevice`, same
+/// rule as the runtime Auto gate). Display-only device truth: projected
+/// into the overlay detail screen, never persisted.
+fn apply_gamepads_command(
+    gamepads: &mut Vec<GamepadInfo>,
+    command: &WireCommand,
+) -> Result<(), String> {
+    let list: Vec<GamepadInfo> =
+        serde_json::from_value(command.payload.clone()).map_err(|error| error.to_string())?;
+    for info in &list {
+        if info.name.is_empty() {
+            return Err("gamepad name must not be empty".to_string());
+        }
+    }
+    *gamepads = list;
     Ok(())
 }
 
@@ -717,6 +757,7 @@ fn apply_reset_section(
     command: &WireCommand,
     keyboards: &[KeyboardInfo],
     touch_capable: Option<bool>,
+    gamepads: &[GamepadInfo],
 ) -> Result<(), String> {
     let scope = command
         .key
@@ -724,7 +765,8 @@ fn apply_reset_section(
         .ok_or_else(|| format!("malformed reset key: {}", command.key))?;
     let default = default_snapshot(deps);
     let default_vm = build_vm(&default, deps)?;
-    let default_sections = build_sections(&default_vm, &default, keyboards, touch_capable);
+    let default_sections =
+        build_sections(&default_vm, &default, keyboards, touch_capable, gamepads);
     let reset_all = scope == "all";
     if reset_all {
         // Membership rows only cover enumerated keyboards; stale members
@@ -1306,6 +1348,7 @@ fn build_sections(
     snapshot: &SettingsSnapshot,
     keyboards: &[KeyboardInfo],
     touch_capable: Option<bool>,
+    gamepads: &[GamepadInfo],
 ) -> Vec<SectionWire> {
     let language = snapshot.shared.general.language;
     let mut sections = vec![
@@ -1323,6 +1366,7 @@ fn build_sections(
         language,
         keyboards,
         touch_capable,
+        gamepads,
     ));
     sections.extend(build_player_sections(vm, snapshot, language, keyboards));
     sections.extend(build_system_sections(vm, language));
@@ -1815,6 +1859,7 @@ fn build_controllers_sections(
     language: AppLanguage,
     keyboards: &[KeyboardInfo],
     touch_capable: Option<bool>,
+    gamepads: &[GamepadInfo],
 ) -> Vec<SectionWire> {
     let overlay = &snapshot.local.touch_overlay;
     let t = |text: UiText| ui_text(language, text).to_string();
@@ -1902,6 +1947,20 @@ fn build_controllers_sections(
         label: t(UiText::TouchOverlay),
         sub: t(UiText::SectionControllers),
         rows: vec![
+            info_row(
+                "controls.auto_hide_status",
+                t(UiText::AutoHideStatus),
+                t(UiText::DescAutoHideStatus),
+                if gamepads.is_empty() {
+                    t(UiText::AutoHideNone)
+                } else {
+                    gamepads
+                        .iter()
+                        .map(|info| info.name.clone())
+                        .collect::<Vec<_>>()
+                        .join(" · ")
+                },
+            ),
             number_row(
                 "controls.overlay_opacity",
                 t(UiText::OverlayOpacity),
@@ -2613,7 +2672,7 @@ mod tests {
     fn test_payload_with_keyboards(keyboards: &[KeyboardInfo]) -> (SettingsSnapshot, ViewPayload) {
         with_test_deps(|| {
             let snapshot = default_snapshot();
-            let json = open_payload(&snapshot, keyboards, None).expect("open payload builds");
+            let json = open_payload(&snapshot, keyboards, None, &[]).expect("open payload builds");
             let payload: ViewPayload = serde_json::from_str(&json).expect("payload parses");
             assert_eq!(payload.schema_version, SETTINGS_SCHEMA_VERSION);
             (snapshot, payload)
@@ -2647,8 +2706,15 @@ mod tests {
                 payload: serde_json::Value::Null,
             })
             .unwrap();
-            let out = apply_command_to(snapshot, &command_json, capture, keyboards, &mut None)
-                .unwrap_or_else(|error| panic!("command failed: {error}"));
+            let out = apply_command_to(
+                snapshot,
+                &command_json,
+                capture,
+                keyboards,
+                &mut None,
+                &mut Vec::new(),
+            )
+            .unwrap_or_else(|error| panic!("command failed: {error}"));
             serde_json::from_str(&out).unwrap()
         })
     }
@@ -3074,6 +3140,7 @@ mod tests {
                 &mut None,
                 &mut keyboards,
                 &mut None,
+                &mut Vec::new(),
             )
             .expect("keyboards op applies")
         });
@@ -3107,6 +3174,7 @@ mod tests {
                 &mut None,
                 &mut Vec::new(),
                 &mut None,
+                &mut Vec::new(),
             )
             .expect("empty enumeration applies")
         });
@@ -3146,6 +3214,7 @@ mod tests {
                 &mut None,
                 &mut keyboards,
                 &mut None,
+                &mut Vec::new(),
             )
             .expect("keyboards op applies")
         });
@@ -3159,6 +3228,80 @@ mod tests {
                 .flat_map(|section| &section.rows)
                 .any(|row| row.key == "devices.p1.kbd:usb-1"),
             "refreshed payload lists the enumerated keyboard"
+        );
+    }
+
+    fn test_gamepads() -> Vec<GamepadInfo> {
+        vec![GamepadInfo {
+            name: "Wireless Controller".to_string(),
+        }]
+    }
+
+    #[test]
+    fn gamepads_op_upserts_without_mutating_draft() {
+        let (mut snapshot, _) = test_payload();
+        let before = snapshot.clone();
+        let mut gamepads = Vec::new();
+        let command_json = serde_json::to_string(&WireCommand {
+            key: "gamepads".to_string(),
+            index: 0,
+            number: 0,
+            op: "gamepads".to_string(),
+            payload: serde_json::to_value(test_gamepads()).unwrap(),
+        })
+        .unwrap();
+        let out = with_test_deps(|| {
+            apply_command_to(
+                &mut snapshot,
+                &command_json,
+                &mut None,
+                &mut test_keyboards(),
+                &mut None,
+                &mut gamepads,
+            )
+            .expect("gamepads op applies")
+        });
+        assert_eq!(snapshot, before, "enumeration never touches the draft");
+        assert_eq!(gamepads.len(), 1, "vault holds the counted gamepads");
+        let payload: ViewPayload = serde_json::from_str(&out).unwrap();
+        let status = row(&payload, "controls.auto_hide_status");
+        assert!(
+            status.text.contains("Wireless Controller"),
+            "status names the counted gamepad: {}",
+            status.text
+        );
+        let bad = serde_json::to_string(&WireCommand {
+            key: "gamepads".to_string(),
+            index: 0,
+            number: 0,
+            op: "gamepads".to_string(),
+            payload: serde_json::json!([{ "name": "" }]),
+        })
+        .unwrap();
+        with_test_deps(|| {
+            assert!(
+                apply_command_to(
+                    &mut snapshot,
+                    &bad,
+                    &mut None,
+                    &mut test_keyboards(),
+                    &mut None,
+                    &mut gamepads,
+                )
+                .is_err(),
+                "nameless gamepads never persist"
+            );
+        });
+    }
+
+    #[test]
+    fn auto_hide_status_row_shows_none_when_empty() {
+        let (_, payload) = test_payload();
+        let status = row(&payload, "controls.auto_hide_status");
+        assert_eq!(
+            status.text,
+            ui_text(AppLanguage::English, UiText::AutoHideNone).to_string(),
+            "empty gate says so"
         );
     }
 
@@ -3181,6 +3324,7 @@ mod tests {
                     &mut None,
                     &mut test_keyboards(),
                     &mut touch,
+                    &mut Vec::new(),
                 )
                 .expect("touch op applies")
             });
@@ -3191,7 +3335,7 @@ mod tests {
         // rows behave as before.
         let touch = None;
         with_test_deps(|| {
-            open_payload(&snapshot, &test_keyboards(), touch)
+            open_payload(&snapshot, &test_keyboards(), touch, &[])
                 .map(|json| serde_json::from_str(&json).unwrap())
                 .expect("open payload builds")
         })
@@ -3247,8 +3391,15 @@ mod tests {
         })
         .unwrap();
         let out = with_test_deps(|| {
-            apply_command_to(&mut snapshot, &reset, &mut None, &mut keyboards, &mut None)
-                .expect("reset applies")
+            apply_command_to(
+                &mut snapshot,
+                &reset,
+                &mut None,
+                &mut keyboards,
+                &mut None,
+                &mut Vec::new(),
+            )
+            .expect("reset applies")
         });
         let payload: ViewPayload = serde_json::from_str(&out).unwrap();
         assert_eq!(
@@ -3366,7 +3517,7 @@ mod tests {
         // Find any binding capture row on the NES controller screen.
         let target_key = with_test_deps(|| {
             let vm = build_vm(&snapshot, &test_deps()).expect("vm builds");
-            let sections = build_sections(&vm, &snapshot, &test_keyboards(), None);
+            let sections = build_sections(&vm, &snapshot, &test_keyboards(), None, &[]);
             sections
                 .iter()
                 .flat_map(|section| &section.rows)
@@ -3396,6 +3547,7 @@ mod tests {
                 &mut capture,
                 &test_keyboards(),
                 None,
+                &[],
             )
             .expect("hardware key release probes")
         });
@@ -3409,6 +3561,7 @@ mod tests {
                 &mut capture,
                 &test_keyboards(),
                 None,
+                &[],
             )
             .expect("unknown keycode probes")
         });
@@ -3422,6 +3575,7 @@ mod tests {
                 &mut capture,
                 &test_keyboards(),
                 None,
+                &[],
             )
             .expect("hardware key applies")
         });
@@ -3435,7 +3589,7 @@ mod tests {
         let mut capture: CaptureSlot = None;
         let key = with_test_deps(|| {
             let vm = build_vm(&snapshot, &test_deps()).expect("vm builds");
-            let sections = build_sections(&vm, &snapshot, &test_keyboards(), None);
+            let sections = build_sections(&vm, &snapshot, &test_keyboards(), None, &[]);
             sections
                 .iter()
                 .flat_map(|section| &section.rows)
@@ -3461,7 +3615,7 @@ mod tests {
         let (mut snapshot, _) = test_payload();
         let bounds: Vec<(String, i64, i64)> = with_test_deps(|| {
             let vm = build_vm(&snapshot, &test_deps()).expect("vm builds");
-            let sections = build_sections(&vm, &snapshot, &test_keyboards(), None);
+            let sections = build_sections(&vm, &snapshot, &test_keyboards(), None, &[]);
             sections
                 .iter()
                 .flat_map(|section| &section.rows)
@@ -3610,7 +3764,8 @@ mod tests {
                     &bad_key,
                     &mut None,
                     &mut test_keyboards(),
-                    &mut None
+                    &mut None,
+                    &mut Vec::new()
                 )
                 .is_err()
             );
@@ -3629,7 +3784,8 @@ mod tests {
                     &bad_index,
                     &mut None,
                     &mut test_keyboards(),
-                    &mut None
+                    &mut None,
+                    &mut Vec::new()
                 )
                 .is_err()
             );
@@ -3648,7 +3804,8 @@ mod tests {
                     &bad_op,
                     &mut None,
                     &mut test_keyboards(),
-                    &mut None
+                    &mut None,
+                    &mut Vec::new()
                 )
                 .is_err()
             );
@@ -3667,7 +3824,8 @@ mod tests {
                     &bad_port,
                     &mut None,
                     &mut test_keyboards(),
-                    &mut None
+                    &mut None,
+                    &mut Vec::new()
                 )
                 .is_err(),
                 "unknown ports never persist"
@@ -3687,7 +3845,8 @@ mod tests {
                     &bad_scope,
                     &mut None,
                     &mut test_keyboards(),
-                    &mut None
+                    &mut None,
+                    &mut Vec::new()
                 )
                 .is_err(),
                 "unknown reset scopes never no-op silently"

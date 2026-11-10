@@ -186,6 +186,8 @@ pub enum UiText {
     Unknown,
     NotAssigned,
     OverlayDetail,
+    AutoHideStatus,
+    AutoHideNone,
     DescLanguage,
     DescVsync,
     DescOrientation,
@@ -214,6 +216,7 @@ pub enum UiText {
     DescRumbleStrength,
     DescRumbleTarget,
     DescOverlayDetail,
+    DescAutoHideStatus,
     DescShortcutsLink,
     DescStoragePolicy,
     DescStorageDirectory,
@@ -510,6 +513,8 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::Unknown => ("Unknown", "不明"),
         UiText::NotAssigned => ("Not assigned", "未割当"),
         UiText::OverlayDetail => ("Overlay detail", "オーバーレイ詳細"),
+        UiText::AutoHideStatus => ("Auto-hide status", "自動非表示の状態"),
+        UiText::AutoHideNone => ("No gamepad counted", "数えたゲームパッドなし"),
         UiText::DescLanguage => (
             "Display language. You can also follow the system.",
             "表示言語。システム既定にもできます",
@@ -597,6 +602,10 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::DescOverlayDetail => (
             "Fine-tune size, position, and transparency.",
             "大きさ・位置・透明度を調整します",
+        ),
+        UiText::DescAutoHideStatus => (
+            "Devices the Auto gate counts right now. Non-empty means Auto hides.",
+            "自動で数えている機器の一覧。空でなければ自動は非表示になります",
         ),
         UiText::DescShortcutsLink => (
             "Global keys such as save state. Always active.",
@@ -1011,6 +1020,8 @@ mod tests {
             Unknown,
             NotAssigned,
             OverlayDetail,
+            AutoHideStatus,
+            AutoHideNone,
             DescLanguage,
             DescVsync,
             DescOrientation,
@@ -1039,6 +1050,7 @@ mod tests {
             DescRumbleStrength,
             DescRumbleTarget,
             DescOverlayDetail,
+            DescAutoHideStatus,
             DescShortcutsLink,
             DescStoragePolicy,
             DescStorageDirectory,
