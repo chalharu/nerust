@@ -257,35 +257,12 @@ class MainActivity :
      * would save yet never draw. */
     private fun refreshControllerPresence() {
         chromeManager.setTouchCapable(hasTouchscreen(packageManager))
-        var connected = false
-        for (id in InputDevice.getDeviceIds()) {
-            val device = InputDevice.getDevice(id) ?: continue
-            if (device.id < 0) continue
-            if (Build.VERSION.SDK_INT >= 29 && device.isVirtual) continue
-            val sources = device.sources
-            // A gamepad claims SOURCE_GAMEPAD (sticks add SOURCE_JOYSTICK).
-            // SOURCE_DPAD alone proves nothing: keyboards and remotes often
-            // carry the dpad bit, and counting them hides the overlay on
-            // terminals (and emulators) that only have a keyboard.
-            // Symmetric to the keyboard letter-key rule: a JOYSTICK-only
-            // device must also carry a gamepad button to count. Button
-            // clusters (power keys, headset jacks, fingerprint sensors,
-            // touch panels) can expose joystick bits without being usable
-            // alternative input; hiding touch controls for one strands the
-            // user with no way back.
-            val gamepad =
-                sources and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD
-            val joystickWithButtons =
-                sources and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK &&
-                    device.hasKeys(KeyEvent.KEYCODE_BUTTON_A)[0]
-            if (gamepad || joystickWithButtons) {
-                connected = true
-                // Debug breadcrumb for Auto-hide reports: which device hid it.
-                Log.d(TAG, "overlay auto-hide counts gamepad: ${device.name} (id=${device.id})")
-                break
-            }
+        val present = connectedGamepadNames()
+        if (present.isNotEmpty()) {
+            // Debug breadcrumb for Auto-hide reports: which device hid it.
+            Log.d(TAG, "overlay auto-hide counts gamepad: ${present.joinToString()}")
         }
-        chromeManager.setControllerConnected(connected)
+        chromeManager.setControllerConnected(present.isNotEmpty())
     }
 
     override fun onPause() {

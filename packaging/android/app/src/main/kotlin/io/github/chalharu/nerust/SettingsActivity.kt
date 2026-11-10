@@ -222,6 +222,7 @@ class SettingsActivity :
     internal fun pushDeviceTruth() {
         pushKeyboardEnumeration()
         pushTouchCapability()
+        pushGamepads()
     }
 
     internal fun pushKeyboardEnumeration() {
@@ -257,6 +258,25 @@ class SettingsActivity :
                 )
             } catch (e: Exception) {
                 Log.e(TAG, "touch capability push failed", e)
+                return
+            }
+        raw?.let { nav.refreshPayload(it) }
+    }
+
+    /** Push the devices the Auto gate counts (see [connectedGamepadNames]):
+     * Rust shows them in the overlay detail screen so users can see why
+     * Auto currently hides, without logcat. Non-mutating like the rest. */
+    internal fun pushGamepads() {
+        val nav = navActions ?: return
+        val names = JSONArray()
+        connectedGamepadNames().forEach { names.put(JSONObject().put("name", it)) }
+        val raw =
+            try {
+                nativeSettingsCommand(
+                    settingsCommandJson("gamepads", 0, 0, "gamepads", names),
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "gamepad push failed", e)
                 return
             }
         raw?.let { nav.refreshPayload(it) }
