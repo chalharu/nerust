@@ -1317,19 +1317,15 @@ private fun SettingsToggleRow(
     onDetail: () -> Unit,
 ) {
     val checked = row.selected == 1
+    // The whole toggle area flips the value: the inner row owns one
+    // toggleable (label, description, switch state announced as a single
+    // switch), the trailing Details button stays a sibling so TalkBack
+    // keeps it separately activatable.
     Row(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 12.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
+        modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Sibling tap areas, never nested: the label column toggles
-        // membership, the trailing button opens the device screen.
-        // Semantics and toggle share one node so TalkBack announces
-        // a single switch, as before.
-        Column(
+        Row(
             modifier =
                 Modifier
                     .weight(1f)
@@ -1337,26 +1333,32 @@ private fun SettingsToggleRow(
                         value = checked,
                         role = Role.Switch,
                         onValueChange = onToggle,
-                    ).semantics { contentDescription = row.label },
+                    )
+                    .padding(horizontal = 24.dp, vertical = 12.dp)
+                    .semantics(mergeDescendants = true) { contentDescription = row.label },
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = row.label,
-                style = MaterialTheme.typography.titleMedium,
-            )
-            if (row.description.isNotBlank()) {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = row.description,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    text = row.label,
+                    style = MaterialTheme.typography.titleMedium,
                 )
+                if (row.description.isNotBlank()) {
+                    Text(
+                        text = row.description,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
+            // Indicator only: the row owns the toggle so a tap on either
+            // end fires once.
+            Switch(
+                checked = checked,
+                onCheckedChange = null,
+            )
         }
-        // Row owns the toggle; the switch is a static indicator so a tap
-        // never fires twice and TalkBack announces a single switch.
-        Switch(
-            checked = checked,
-            onCheckedChange = null,
-        )
         if (row.detailTarget.isNotBlank()) {
             TextButton(onClick = onDetail) {
                 Text(stringResource(R.string.settings_details))
