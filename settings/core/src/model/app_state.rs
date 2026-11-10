@@ -21,6 +21,13 @@ pub type PortDeviceSets = BTreeMap<String, Vec<String>>;
 pub const PORT_PLAYER_1: &str = "p1";
 pub const PORT_PLAYER_2: &str = "p2";
 
+/// Port membership for fresh installs and for files predating the field:
+/// the built-in keyboard drives player 1. One source so deserialized
+/// defaults and `Default` can never drift apart.
+fn default_port_devices() -> PortDeviceSets {
+    BTreeMap::from([(PORT_PLAYER_1.to_string(), vec!["kbd:builtin".to_string()])])
+}
+
 /// Application state not synced per ROM: window geometry, controller
 /// assignments, and global port device sets.
 
@@ -41,6 +48,7 @@ pub struct DesktopAppState {
     pub controller_assignments: ControllerAssignmentsBySystem,
     /// Global port device sets: port id → member ids ("kbd:*" shareable,
     /// "pad:*" exclusive). Default: built-in keyboard drives player 1.
+    #[serde(default = "default_port_devices")]
     pub port_devices: PortDeviceSets,
 }
 
@@ -61,10 +69,27 @@ impl Default for DesktopAppState {
             last_successful_rom_directory: None,
             window_sizes: BTreeMap::new(),
             controller_assignments: HashMap::new(),
-            port_devices: BTreeMap::from([(
-                PORT_PLAYER_1.to_string(),
-                vec!["kbd:builtin".to_string()],
-            )]),
+            port_devices: default_port_devices(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn files_predating_port_devices_get_the_same_default() {
+        // Old files lack the field; fresh defaults must agree with them.
+        let migrated: DesktopAppState =
+            serde_json::from_str(r#"{"schema_version": 2}"#).expect("old file parses");
+        assert_eq!(
+            migrated.port_devices,
+            DesktopAppState::default().port_devices
+        );
+        assert_eq!(
+            migrated.port_devices.get(PORT_PLAYER_1).map(Vec::as_slice),
+            Some(["kbd:builtin".to_string()].as_slice())
+        );
     }
 }

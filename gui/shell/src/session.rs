@@ -37,8 +37,7 @@ use nerust_gui_runtime::settings::{
     HostBackendCapabilities, SettingsError, SettingsPaths, SettingsSnapshot,
     manager::SettingsManager,
 };
-use nerust_input_traits::Key;
-use nerust_input_traits::{AbstractKey, InputAssignments, UnifiedFieldMap};
+use nerust_input_traits::{AbstractKey, InputAssignments, Key, UnifiedFieldMap};
 use nerust_persistence::error::PersistenceError;
 use nerust_render_traits::{FrameBuffer, VideoRenderProfile};
 use nerust_settings_core::factory::settings_view;
@@ -122,7 +121,7 @@ struct InputDept {
     current_assignments: InputAssignments,
     /// Reverse map: keyboard key → field index, rebuilt on binding/controller change.
     key_field_map: HashMap<nerust_input_traits::Key, usize>,
-    pressed_keys: std::collections::HashSet<Key>,
+    pressed_keys: HashSet<Key>,
     /// Key → (attachment, control) for dpad-neutral resolution.
     key_source: HashMap<nerust_input_traits::Key, (String, String)>,
     /// OR merge + neutral resolution across keyboards and controls.
@@ -190,6 +189,9 @@ impl InputDept {
     /// Abstract button of an emulated control on an attachment, resolved
     /// through the live assignments (same traversal as the overlay builder).
     /// Powers dpad-neutral resolution for keyboards and physical controls.
+    /// Same traversal as `build_touch_overlay` in `session/input.rs`, kept
+    /// separate on purpose: the overlay fans out whole port sets into
+    /// controls, while this resolves one control's abstract.
     fn abstract_for(&self, attachment: &str, control: &str) -> Option<AbstractKey> {
         use nerust_input_traits::ControlId;
         for (_slot, profile) in self.current_assignments.slots() {

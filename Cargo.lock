@@ -3556,6 +3556,7 @@ dependencies = [
  "nerust_system_traits",
  "serde",
  "serde-saphyr",
+ "serde_json",
  "typetag",
 ]
 

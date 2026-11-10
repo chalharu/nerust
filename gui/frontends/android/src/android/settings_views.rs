@@ -22,13 +22,16 @@ use nerust_settings_core::{
         UiText, port_count_line, port_summary, shortcut_row_description, slot_description,
         system_field_description, text as ui_text,
     },
+    input::{GAMEPAD_MEMBER_PREFIX, KEYBOARD_MEMBER_PREFIX},
     model::{
+        app_state::{DesktopAppState, PORT_PLAYER_1, PORT_PLAYER_2},
+        input::{default_shortcut_bindings, ensure_default_shortcuts},
         language::AppLanguage,
         local::{
-            NotificationAreaMode, NotificationColor, NotificationPosition, RumbleTarget,
-            ScreenOrientation, TouchOverlayVisibility,
+            HostBackendLocalSettings, NotificationAreaMode, NotificationColor,
+            NotificationPosition, RumbleTarget, ScreenOrientation, TouchOverlayVisibility,
         },
-        shared::StoragePolicy,
+        shared::{DesktopSharedSettings, StoragePolicy},
     },
 };
 use nerust_system_traits::factory::{
@@ -292,21 +295,36 @@ pub(super) fn apply_command_to(
             "cancel_capture" | "clear_binding" | "start_capture" => {
                 apply_capture_command(snapshot, deps, &command, capture, keyboards)?
             }
-            _ => {
+            "set" => {
                 let vm = build_vm(snapshot, deps)?;
                 let sections = build_sections(&vm, snapshot, keyboards);
-                if is_android_local_key(&command.key) {
-                    apply_android_local(snapshot, &sections, &command)?;
-                } else if is_device_key(&command.key) {
-                    apply_device_command(snapshot, &sections, &command)?;
-                } else {
-                    apply_view_model_command(&vm, deps, &sections, &command)?;
-                    *snapshot = vm.snapshot();
-                }
+                apply_set_command(snapshot, deps, &vm, &sections, &command)?;
             }
+            op => return Err(format!("unknown command op: {op}")),
         }
         refreshed_payload(snapshot, deps, capture, keyboards)
     })
+}
+
+/// One `set` edit: route by key family (Android-local overlay/cartridge
+/// keys, port device membership, everything else through the view model).
+/// Shared by live commands and reset replays so both take the same path.
+fn apply_set_command(
+    snapshot: &mut SettingsSnapshot,
+    deps: &VmDeps,
+    vm: &SettingsViewModel,
+    sections: &[SectionWire],
+    command: &WireCommand,
+) -> Result<(), String> {
+    if is_android_local_key(&command.key) {
+        apply_android_local(snapshot, sections, command)
+    } else if is_device_key(&command.key) {
+        apply_device_command(snapshot, sections, command)
+    } else {
+        apply_view_model_command(vm, deps, sections, command)?;
+        *snapshot = vm.snapshot();
+        Ok(())
+    }
 }
 
 /// Refreshed payload after any draft mutation: sections, live issues from a
@@ -580,6 +598,9 @@ fn apply_device_command(
         .split('.')
         .nth(1)
         .ok_or_else(|| format!("malformed device key: {}", command.key))?;
+    if !PLAYER_PORTS.iter().any(|(known, ..)| *known == port) {
+        return Err(format!("unknown port: {port}"));
+    }
     let members = snapshot
         .app_state
         .port_devices
@@ -598,10 +619,6 @@ fn apply_device_command(
 /// factory's default system settings, with canonical shortcut bindings
 /// seeded (mirrors the load-time migration).
 fn default_snapshot(deps: &VmDeps) -> SettingsSnapshot {
-    use nerust_settings_core::model::{
-        app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
-        snapshot::SettingsSnapshot,
-    };
     let mut shared = DesktopSharedSettings::default();
     for factory in &deps.factories {
         if let Some(defaults) = factory
@@ -611,7 +628,7 @@ fn default_snapshot(deps: &VmDeps) -> SettingsSnapshot {
             shared.systems.insert(factory.system_id(), defaults);
         }
     }
-    nerust_settings_core::model::input::ensure_default_shortcuts(&mut shared.input.shortcuts);
+    ensure_default_shortcuts(&mut shared.input.shortcuts);
     SettingsSnapshot {
         shared,
         local: HostBackendLocalSettings::default(),
@@ -639,6 +656,14 @@ fn apply_reset_section(
     let default_vm = build_vm(&default, deps)?;
     let default_sections = build_sections(&default_vm, &default, keyboards);
     let reset_all = scope == "all";
+    if reset_all {
+        // Membership rows only cover enumerated keyboards; stale members
+        // have no rows, so restore the whole port map wholesale.
+        snapshot.app_state.port_devices = default.app_state.port_devices.clone();
+    }
+    if !reset_all && sections.iter().all(|section| section.id != scope) {
+        return Err(format!("unknown reset scope: {scope}"));
+    }
     for section in sections {
         if !reset_all && section.id != scope {
             continue;
@@ -669,43 +694,22 @@ fn reset_row(
 ) -> Result<(), String> {
     debug_assert_eq!(row.key, default_row.key);
     match row.kind {
-        RowKind::Choice | RowKind::Toggle => {
-            if row.selected != default_row.selected {
+        RowKind::Choice | RowKind::Toggle | RowKind::Number => {
+            let differs = if matches!(row.kind, RowKind::Number) {
+                row.number != default_row.number
+            } else {
+                row.selected != default_row.selected
+            };
+            if differs {
                 let reset = WireCommand {
                     key: row.key.clone(),
                     index: default_row.selected,
-                    number: 0,
-                    op: "set".to_string(),
-                    payload: serde_json::Value::Null,
-                };
-                if is_android_local_key(&row.key) {
-                    apply_android_local(snapshot, sections, &reset)?;
-                } else if is_device_key(&row.key) {
-                    apply_device_command(snapshot, sections, &reset)?;
-                } else {
-                    let vm = build_vm(snapshot, deps)?;
-                    apply_view_model_command(&vm, deps, sections, &reset)?;
-                    *snapshot = vm.snapshot();
-                }
-            }
-            Ok(())
-        }
-        RowKind::Number => {
-            if row.number != default_row.number {
-                let reset = WireCommand {
-                    key: row.key.clone(),
-                    index: 0,
                     number: default_row.number,
                     op: "set".to_string(),
                     payload: serde_json::Value::Null,
                 };
-                if is_android_local_key(&row.key) {
-                    apply_android_local(snapshot, sections, &reset)?;
-                } else {
-                    let vm = build_vm(snapshot, deps)?;
-                    apply_view_model_command(&vm, deps, sections, &reset)?;
-                    *snapshot = vm.snapshot();
-                }
+                let vm = build_vm(snapshot, deps)?;
+                apply_set_command(snapshot, deps, &vm, sections, &reset)?;
             }
             Ok(())
         }
@@ -718,11 +722,10 @@ fn reset_row(
                         vm.capture
                             .clear_binding(&target)
                             .map_err(|error| error.to_string())?;
-                        if let Some(key) =
-                            nerust_settings_core::model::input::default_shortcut_bindings()
-                                .iter()
-                                .find(|binding| binding.action == *action)
-                                .and_then(|binding| binding.key)
+                        if let Some(key) = default_shortcut_bindings()
+                            .iter()
+                            .find(|binding| binding.action == *action)
+                            .and_then(|binding| binding.key)
                         {
                             vm.capture
                                 .start_capture(target)
@@ -1109,20 +1112,19 @@ fn toggle_row(
     language: AppLanguage,
     value: bool,
 ) -> RowWire {
-    RowWire {
-        selected: usize::from(value),
-        ..choice_row(
-            key,
-            label,
-            description,
-            &[
-                (false, ui_text(language, UiText::Off).to_string()),
-                (true, ui_text(language, UiText::On).to_string()),
-            ],
-            &value,
-        )
-    }
-    .with_kind(RowKind::Toggle)
+    let mut row = choice_row(
+        key,
+        label,
+        description,
+        &[
+            (false, ui_text(language, UiText::Off).to_string()),
+            (true, ui_text(language, UiText::On).to_string()),
+        ],
+        &value,
+    );
+    row.selected = usize::from(value);
+    row.kind = RowKind::Toggle;
+    row
 }
 
 #[allow(
@@ -1272,23 +1274,12 @@ fn button_row(key: &str, label: String, description: String) -> RowWire {
     }
 }
 
-trait WithKind {
-    fn with_kind(self, kind: RowKind) -> Self;
-}
-
-impl WithKind for RowWire {
-    fn with_kind(mut self, kind: RowKind) -> Self {
-        self.kind = kind;
-        self
-    }
-}
-
 /// Global player ports: port id, player screen, device picker, type screen.
 /// Ports are global (not per machine): every system's player-N slot fans
 /// out from the same port set.
 const PLAYER_PORTS: [(&str, &str, &str, &str); 2] = [
-    ("p1", "player.1", "devices.1", "types.1"),
-    ("p2", "player.2", "devices.2", "types.2"),
+    (PORT_PLAYER_1, "player.1", "devices.1", "types.1"),
+    (PORT_PLAYER_2, "player.2", "devices.2", "types.2"),
 ];
 
 fn player_label(index: usize, language: AppLanguage) -> String {
@@ -2134,7 +2125,21 @@ fn build_player_sections(
             visible: false,
         });
         // Controller-type list: one group row per machine that actually
-        // has a slot on this port (NES-only for player 2).
+        // has a slot on this port (NES-only for player 2). Slot ids must
+        // end in player1/player2; fail loudly in tests when a factory
+        // diverges instead of silently dropping its slots.
+        debug_assert!(
+            {
+                let mut ok = true;
+                for input in vm.inputs() {
+                    for slot in &input.view.get().slots {
+                        ok &= slot_port_index(slot.slot_id.as_str()).is_some();
+                    }
+                }
+                ok
+            },
+            "slot ids must end with player1/player2"
+        );
         let type_rows: Vec<RowWire> = vm
             .inputs()
             .iter()
@@ -2167,7 +2172,7 @@ fn build_player_sections(
             port, devices_id, &label, snapshot, keyboards, language,
         ));
     }
-    sections.extend(build_device_sections(vm, snapshot, keyboards, language));
+    sections.extend(build_device_sections(vm, keyboards, language));
     sections
 }
 
@@ -2236,9 +2241,9 @@ fn keyboard_member_name(member: &str, keyboards: &[KeyboardInfo], language: AppL
         } else {
             info.name.clone()
         }
-    } else if member.starts_with(nerust_settings_core::input::KEYBOARD_MEMBER_PREFIX) {
+    } else if member.starts_with(KEYBOARD_MEMBER_PREFIX) {
         t(UiText::ExternalKeyboard)
-    } else if member.starts_with(nerust_settings_core::input::GAMEPAD_MEMBER_PREFIX) {
+    } else if member.starts_with(GAMEPAD_MEMBER_PREFIX) {
         t(UiText::GamepadDevice)
     } else {
         member.to_string()
@@ -2310,7 +2315,6 @@ fn build_devices_section(
 /// per-system key-mapping tables (shared single table, not per device).
 fn build_device_sections(
     vm: &SettingsViewModel,
-    _snapshot: &SettingsSnapshot,
     keyboards: &[KeyboardInfo],
     language: AppLanguage,
 ) -> Vec<SectionWire> {
@@ -3315,6 +3319,46 @@ mod tests {
             assert!(
                 apply_command_to(&mut snapshot, &bad_index, &mut None, &mut test_keyboards())
                     .is_err()
+            );
+
+            let bad_op = serde_json::to_string(&WireCommand {
+                key: "audio.volume".to_string(),
+                index: 0,
+                number: 42,
+                op: "frobnicate".to_string(),
+                payload: serde_json::Value::Null,
+            })
+            .unwrap();
+            assert!(
+                apply_command_to(&mut snapshot, &bad_op, &mut None, &mut test_keyboards()).is_err()
+            );
+
+            let bad_port = serde_json::to_string(&WireCommand {
+                key: "devices.evil.kbd:builtin".to_string(),
+                index: 1,
+                number: 0,
+                op: "set".to_string(),
+                payload: serde_json::Value::Null,
+            })
+            .unwrap();
+            assert!(
+                apply_command_to(&mut snapshot, &bad_port, &mut None, &mut test_keyboards())
+                    .is_err(),
+                "unknown ports never persist"
+            );
+
+            let bad_scope = serde_json::to_string(&WireCommand {
+                key: "reset.evil".to_string(),
+                index: 0,
+                number: 0,
+                op: "reset_section".to_string(),
+                payload: serde_json::Value::Null,
+            })
+            .unwrap();
+            assert!(
+                apply_command_to(&mut snapshot, &bad_scope, &mut None, &mut test_keyboards())
+                    .is_err(),
+                "unknown reset scopes never no-op silently"
             );
         });
         assert_eq!(snapshot, before);

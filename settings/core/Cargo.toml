@@ -18,4 +18,5 @@ serde = { features = ["derive", "std"], workspace = true }
 
 [dev-dependencies]
 serde-saphyr.workspace = true
+serde_json.workspace = true
 typetag.workspace = true
