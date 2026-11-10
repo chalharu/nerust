@@ -2666,6 +2666,24 @@ mod tests {
     }
 
     #[test]
+    fn overlay_always_roundtrip_through_finish() {
+        use nerust_settings_core::model::local::TouchOverlayVisibility;
+        // Auto -> Always must survive the validation gate: the choice write,
+        // the save, and the runtime push all read the same snapshot field.
+        let (mut snapshot, _) = test_payload();
+        let next = set(&mut snapshot, "controls.overlay_visibility", 0, 0);
+        assert_eq!(row(&next, "controls.overlay_visibility").selected, 0);
+        let deps = test_deps();
+        match super::finish_snapshot(&snapshot, &deps.factories, deps.rates.clone()) {
+            Ok(done) => assert_eq!(
+                done.local.touch_overlay.visibility,
+                TouchOverlayVisibility::Always
+            ),
+            Err(issues) => panic!("finish failed: {issues:?}"),
+        }
+    }
+
+    #[test]
     fn open_payload_covers_legacy_items() {
         let (_snapshot, payload) = test_payload();
         // Every row the old descriptor dialog exposed must exist.

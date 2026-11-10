@@ -251,11 +251,12 @@ class MainActivity :
      * buttons; while a gamepad is connected Auto hides them. Keyboards
      * stay out of this gate on purpose: they are shareable auxiliary
      * input (and the emulator always enumerates one), so mere presence
-     * must not evict the touch controls. */
+     * must not evict the touch controls.
+     * Touch capability mirrors the settings push (feature flag or a
+     * touchscreen device): settings and runtime must agree, or "Always"
+     * would save yet never draw. */
     private fun refreshControllerPresence() {
-        chromeManager.setTouchCapable(
-            packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN),
-        )
+        chromeManager.setTouchCapable(hasTouchscreen(packageManager))
         var connected = false
         for (id in InputDevice.getDeviceIds()) {
             val device = InputDevice.getDevice(id) ?: continue
@@ -266,9 +267,18 @@ class MainActivity :
             // SOURCE_DPAD alone proves nothing: keyboards and remotes often
             // carry the dpad bit, and counting them hides the overlay on
             // terminals (and emulators) that only have a keyboard.
-            if (sources and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
-                sources and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
-            ) {
+            // Symmetric to the keyboard letter-key rule: a JOYSTICK-only
+            // device must also carry a gamepad button to count. Button
+            // clusters (power keys, headset jacks, fingerprint sensors,
+            // touch panels) can expose joystick bits without being usable
+            // alternative input; hiding touch controls for one strands the
+            // user with no way back.
+            val gamepad =
+                sources and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD
+            val joystickWithButtons =
+                sources and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK &&
+                    device.hasKeys(KeyEvent.KEYCODE_BUTTON_A)[0]
+            if (gamepad || joystickWithButtons) {
                 connected = true
                 break
             }
