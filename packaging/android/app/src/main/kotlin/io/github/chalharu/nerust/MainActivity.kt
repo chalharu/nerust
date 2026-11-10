@@ -131,7 +131,7 @@ class MainActivity :
         sensorController.onResume()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
         (getSystemService(INPUT_SERVICE) as InputManager).registerInputDeviceListener(this, null)
-        refreshPhysicalChrome()
+        refreshControllerPresence()
         chromeManager.scheduleChromeAttach()
     }
 
@@ -234,23 +234,25 @@ class MainActivity :
     }
 
     override fun onInputDeviceAdded(deviceId: Int) {
-        refreshPhysicalChrome()
+        refreshControllerPresence()
     }
 
     override fun onInputDeviceChanged(deviceId: Int) {
-        refreshPhysicalChrome()
+        refreshControllerPresence()
     }
 
     override fun onInputDeviceRemoved(deviceId: Int) {
         releaseController(deviceId)
         sensorController.noteControllerRemoved(deviceId)
-        refreshPhysicalChrome()
+        refreshControllerPresence()
     }
 
     /** Auto overlay rule, evaluated live: non-touch terminals never draw
-     * buttons; while a keyboard or gamepad is connected Auto hides them.
-     * Virtual devices never count (same exclusion as the settings picker). */
-    private fun refreshPhysicalChrome() {
+     * buttons; while a gamepad is connected Auto hides them. Keyboards
+     * stay out of this gate on purpose: they are shareable auxiliary
+     * input (and the emulator always enumerates one), so mere presence
+     * must not evict the touch controls. */
+    private fun refreshControllerPresence() {
         chromeManager.setTouchCapable(
             packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN),
         )
@@ -260,17 +262,15 @@ class MainActivity :
             if (device.id < 0) continue
             if (Build.VERSION.SDK_INT >= 29 && device.isVirtual) continue
             val sources = device.sources
-            val keyboard = sources and InputDevice.SOURCE_KEYBOARD == InputDevice.SOURCE_KEYBOARD
-            val gamepad =
-                sources and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
-                    sources and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK ||
-                    sources and InputDevice.SOURCE_DPAD == InputDevice.SOURCE_DPAD
-            if (keyboard || gamepad) {
+            if (sources and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
+                sources and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK ||
+                sources and InputDevice.SOURCE_DPAD == InputDevice.SOURCE_DPAD
+            ) {
                 connected = true
                 break
             }
         }
-        chromeManager.setPhysicalInputConnected(connected)
+        chromeManager.setControllerConnected(connected)
     }
 
     override fun onPause() {
