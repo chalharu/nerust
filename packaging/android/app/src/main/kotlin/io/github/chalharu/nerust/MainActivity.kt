@@ -565,12 +565,14 @@ class MainActivity :
     }
 
     internal fun showSettingsDialogForTest(sections: List<SettingsSection>) {
+        // Mirror the production envelope: SettingsActivity unwraps "payload".
+        val envelope = JSONObject().put("payload", sectionsToJson(sections))
         startActivity(
             SettingsActivity.createIntent(
                 this,
                 SETTINGS_SCHEMA_VERSION,
                 -1L,
-                sectionsToJson(sections).toString(),
+                envelope.toString(),
             ),
         )
     }

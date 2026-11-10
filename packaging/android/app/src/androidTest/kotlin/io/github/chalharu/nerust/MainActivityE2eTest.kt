@@ -442,29 +442,6 @@ class MainActivityE2eTest {
         )
     }
 
-    private fun exerciseMenuAction(
-        activity: MainActivity,
-        action: String,
-        expectedDialogTag: String,
-        expectedDialogMessage: String,
-    ) {
-        SystemClock.sleep(STARTUP_STABILITY_DELAY_MS)
-        runOnActivityThread(activity) {
-            require(!activity.isDestroyed) { "MainActivity should remain alive before dispatching $action" }
-            activity.dispatchMenuActionForTest(action)
-        }
-        assertChromeViewAvailable(activity, expectedDialogTag, DIALOG_TIMEOUT_MS, expectedDialogMessage)
-        runOnActivityThread(activity) {
-            activity.resetChromeStateForTest()
-        }
-        if (!waitUntil(DIALOG_TIMEOUT_MS) { !safeChromeViewIsShowing(activity, expectedDialogTag) }) {
-            fail("Dialog for $action should be dismissed after handling the action; ${safeChromeDebugState(activity, expectedDialogTag)}")
-        }
-        runOnActivityThread(activity) {
-            require(!activity.isDestroyed) { "MainActivity should remain alive after dispatching $action" }
-        }
-    }
-
     @Test
     fun pushedZonesParseToDrawableRects() {
         // Geometry lives in Rust; Kotlin only parses the pushed payload.

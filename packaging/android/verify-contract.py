@@ -104,9 +104,10 @@ def _callback_signature(symbol, args_text, result_text):
     else:
         # Callbacks stay one-way; only native queries return values, from
         # either host activity (dialog-era MainActivity or SettingsActivity).
-        require(symbol.startswith("Java_io_github_chalharu_nerust_MainActivity_native")
-                or symbol.startswith("Java_io_github_chalharu_nerust_SettingsActivity_native"),
-                f"only native queries may return values: {symbol}")
+        require(symbol.startswith((
+            "Java_io_github_chalharu_nerust_MainActivity_native",
+            "Java_io_github_chalharu_nerust_SettingsActivity_native",
+        )), f"only native queries may return values: {symbol}")
         match = re.fullmatch(r"->\s*jni::sys::(\w+)", result)
         require(match and match[1] in RUST_TYPES,
                 f"unsupported JNI query return: {symbol}: {result}")
