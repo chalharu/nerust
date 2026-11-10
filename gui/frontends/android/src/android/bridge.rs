@@ -86,12 +86,12 @@ pub(super) struct SettingsSlot {
     /// Enumerated physical keyboards (Kotlin `InputDevice`, hotplug live).
     /// Ephemeral device truth: projected into sections, never persisted.
     pub(super) keyboards: Vec<super::settings_views::KeyboardInfo>,
-    /// Devices the Auto overlay gate counts (Kotlin `InputDevice`, hotplug
-    /// live). Display-only device truth, never persisted.
     /// Whether the terminal has a touch screen (Kotlin
     /// `PackageManager`, re-pushed with the keyboard enumeration).
     /// `None` until the first push: rows behave as before.
     pub(super) touch_capable: Option<bool>,
+    /// Devices the Auto overlay gate counts (Kotlin `InputDevice`, hotplug
+    /// live). Display-only device truth, never persisted.
     pub(super) gamepads: Vec<super::settings_views::GamepadInfo>,
 }
 
