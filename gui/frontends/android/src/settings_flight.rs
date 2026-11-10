@@ -6,6 +6,11 @@ pub(crate) struct SettingsRequestId(pub(crate) u64);
 pub(crate) struct SettingsFlight<T> {
     next: u64,
     pending: Option<SettingsRequestId>,
+    /// Last begun id, kept across `suspend`. The standalone settings
+    /// activity stops MainActivity (surface destroyed → app suspend) by
+    /// design, so `suspend` must release the gate for reopening without
+    /// invalidating the request the open screen will still deliver.
+    last: Option<SettingsRequestId>,
     accepted: Option<T>,
 }
 
@@ -14,6 +19,7 @@ impl<T> SettingsFlight<T> {
         Self {
             next: 1,
             pending: None,
+            last: None,
             accepted: None,
         }
     }
@@ -25,14 +31,20 @@ impl<T> SettingsFlight<T> {
         let id = SettingsRequestId(self.next);
         self.next = self.next.wrapping_add(1).max(1);
         self.pending = Some(id);
+        self.last = Some(id);
         Some(id)
     }
 
     pub(crate) fn accept(&mut self, id: SettingsRequestId, result: T) -> bool {
-        if self.pending != Some(id) {
+        // The live request, or the remembered one when no newer request
+        // began after a suspend. A consumed id never works twice: `last`
+        // clears on success, so replayed/delayed duplicates still fail.
+        let known = self.pending == Some(id) || (self.pending.is_none() && self.last == Some(id));
+        if !known {
             return false;
         }
         self.pending = None;
+        self.last = None;
         self.accepted = Some(result);
         true
     }
@@ -74,5 +86,36 @@ mod tests {
         assert!(flight.is_open());
         assert!(flight.accept(live, "new"));
         assert_eq!(flight.take(), Some("new"));
+    }
+
+    #[test]
+    fn standalone_activity_result_survives_cover_suspend() {
+        // The production order: begin, MainActivity stops under the opaque
+        // settings activity (surface destroyed → app suspend clears the
+        // gate), then the still-open screen delivers its result. Dropping
+        // that result silently discarded every settings save.
+        let mut flight = SettingsFlight::new();
+        let id = flight.begin().unwrap();
+        flight.suspend();
+        assert!(!flight.is_open(), "suspend releases the reopen gate");
+        assert!(flight.accept(id, "save"));
+        assert!(
+            !flight.accept(id, "save"),
+            "a consumed id never works twice"
+        );
+        assert_eq!(flight.take(), Some("save"));
+    }
+
+    #[test]
+    fn consumed_id_never_applies_to_later_request() {
+        let mut flight = SettingsFlight::new();
+        let first = flight.begin().unwrap();
+        flight.suspend();
+        assert!(flight.accept(first, "first"));
+        assert_eq!(flight.take(), Some("first"));
+        let second = flight.begin().unwrap();
+        assert!(!flight.accept(first, "first"), "no replay across requests");
+        assert!(flight.accept(second, "second"));
+        assert_eq!(flight.take(), Some("second"));
     }
 }

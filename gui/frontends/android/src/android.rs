@@ -871,7 +871,9 @@ impl ApplicationHandler for AndroidFrontend {
         picker::reset_transient();
         settings::reset_transient();
         // Transient UI dies with the activity: release the gate, requeue the head.
-        // The settings bridge pending id dies with its dialog.
+        // The suspend releases the settings gate for reopening, but the
+        // remembered request id still accepts the standalone screen's late
+        // result (the opaque settings activity stops us by design).
         self.chrome
             .osd
             .with_modal(|queue| self.flow.dialogs.on_suspended(queue));
