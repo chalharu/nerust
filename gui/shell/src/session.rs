@@ -192,7 +192,7 @@ impl InputDept {
     /// Powers dpad-neutral resolution for keyboards and physical controls.
     fn abstract_for(&self, attachment: &str, control: &str) -> Option<AbstractKey> {
         use nerust_input_traits::ControlId;
-        for (slot, profile) in self.current_assignments.slots() {
+        for (_slot, profile) in self.current_assignments.slots() {
             let Some(profile) = profile else {
                 continue;
             };
