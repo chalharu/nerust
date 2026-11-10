@@ -22,6 +22,7 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import org.json.JSONException
+import org.json.JSONArray
 import org.json.JSONObject
 
 private const val EXTRA_SCHEMA_VERSION = "nerust.extra.SCHEMA_VERSION"
@@ -145,8 +146,8 @@ class SettingsActivity :
      * the built-in row (device id 0) plus one row per external descriptor.
      * BT/USB are indistinguishable via public API so rows stay agnostic;
      * virtual devices are excluded; duplicate HID descriptors merge. */
-    internal fun enumerateKeyboards(): org.json.JSONArray {
-        val out = org.json.JSONArray()
+    internal fun enumerateKeyboards(): JSONArray {
+        val out = JSONArray()
         val seen = mutableSetOf<String>()
         val devices =
             InputDevice.getDeviceIds().mapNotNull { InputDevice.getDevice(it) }.filter {
@@ -164,7 +165,8 @@ class SettingsActivity :
         }
         for (device in devices) {
             if (device.id == 0) continue
-            @Suppress("DEPRECATION")
+            // isVirtual() is API 29+; guard it, falling back to the
+            // documented negative-id rule for virtual keyboards.
             val virtual =
                 device.id < 0 ||
                     (android.os.Build.VERSION.SDK_INT >= 29 && device.isVirtual)

@@ -69,6 +69,7 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import kotlin.math.roundToLong
+import org.json.JSONArray
 import org.json.JSONObject
 }
 
@@ -163,7 +164,7 @@ internal fun settingsCommandJson(
     index: Int,
     number: Long,
     op: String = "set",
-    payload: org.json.JSONArray? = null,
+    payload: JSONArray? = null,
 ): String {
     val doc =
         JSONObject()
@@ -372,7 +373,7 @@ internal fun NerustSettingsDialogCard(
         number: Long,
         op: String = "set",
         mutating: Boolean = true,
-        payload: org.json.JSONArray? = null,
+        payload: JSONArray? = null,
     ) {
         val raw =
             try {
