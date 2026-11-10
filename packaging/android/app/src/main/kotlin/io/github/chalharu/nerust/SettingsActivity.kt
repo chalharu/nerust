@@ -5,10 +5,13 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.hardware.input.InputManager
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.InputDevice
 import android.view.KeyEvent
+import android.window.OnBackInvokedCallback
+import android.window.OnBackInvokedDispatcher
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.lifecycle.Lifecycle
@@ -47,6 +50,10 @@ class SettingsActivity :
     private var navActions: SettingsNavActions? = null
     private var resultSent = false
     private var requestId: Long = -1L
+    // Predictive-back callback (API 33+): without it the gesture finishes
+    // the activity, bypassing the in-stack back handling below. Typed as
+    // Any so class verification never touches the API-33 type on old OS.
+    private var backDispatcherCallback: Any? = null
 
     override val lifecycle: Lifecycle
         get() = lifecycleRegistry
@@ -125,6 +132,20 @@ class SettingsActivity :
                     finish()
                 },
             )
+        }
+        // Gesture/hardware parity: the title-bar back and the OS back must
+        // run the same stack logic, so register the predictive-back path
+        // next to the deprecated onBackPressed override below (API 33+).
+        if (Build.VERSION.SDK_INT >= 33) {
+            val callback =
+                OnBackInvokedCallback {
+                    if (!handleSettingsBack()) dismissWithResult(dismissed = true)
+                }
+            onBackInvokedDispatcher.registerOnBackInvokedCallback(
+                OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+                callback,
+            )
+            backDispatcherCallback = callback
         }
     }
 
@@ -234,6 +255,12 @@ class SettingsActivity :
     }
 
     override fun onDestroy() {
+        if (Build.VERSION.SDK_INT >= 33) {
+            (backDispatcherCallback as? OnBackInvokedCallback)?.let {
+                onBackInvokedDispatcher.unregisterOnBackInvokedCallback(it)
+            }
+            backDispatcherCallback = null
+        }
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         if (this == activeActivityForTest) activeActivityForTest = null
         super.onDestroy()
