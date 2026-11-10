@@ -385,20 +385,7 @@ internal fun NerustSettingsDialogCard(
             }
         if (!applyPayloadJson(raw, mutating)) return
         if (!mutating) return
-        dirtyKeys =
-            when {
-                op == "reset_section" && key == "reset.all" ->
-                    sections.flatMap { section -> section.rows.map { it.key } }.toSet()
-                op == "reset_section" ->
-                    sections
-                        .find { it.id == key.removePrefix("reset.") }
-                        ?.rows
-                        ?.map { it.key }
-                        .orEmpty()
-                        .toSet() + dirtyKeys
-                key.isNotBlank() -> dirtyKeys + key
-                else -> dirtyKeys
-            }
+        dirtyKeys = resetDirtyKeys(sections, dirtyKeys, op, key)
     }
 
     val activeSection = sections.find { it.id == activeSectionId }
@@ -446,82 +433,84 @@ internal fun NerustSettingsDialogCard(
     }
 
     val screenTitle = activeRow?.label ?: activeSection?.label ?: stringResource(R.string.settings_title)
-    // Breadcrumb parent: a section's own sub (player name, controller root),
-    // falling back to the section label under a choice row and to nothing
-    // on the top level.
-    val screenSubtitle =
-        activeSection?.let { section ->
-            when {
-                section.sub.isNotBlank() -> section.sub
-                activeRow != null -> section.label
-                else -> null
-            }
-        }
+    val subtitle = screenSubtitle(activeSection, activeRow)
 
     // Child-section parent map, shared by search breadcrumbs and
     // unsaved-dot ancestor propagation.
     val parents = remember(sections) { parentMap(sections) }
-    // Dirty sections plus every ancestor up to the visible categories,
-    // so a deep edit still dots its top-level card.
     val dirtyVisibleSections =
-        remember(sections, dirtyKeys) {
-            val direct =
-                sections
-                    .filter { section ->
-                        section.rows.any { it.key in dirtyKeys }
-                    }.map { it.id }
-                    .toMutableSet()
-            val queue = ArrayDeque(direct)
-            while (queue.isNotEmpty()) {
-                parents[queue.removeFirst()]?.let { (parentId, _, _) ->
-                    if (direct.add(parentId)) queue.add(parentId)
+        remember(sections, dirtyKeys) { ancestorDirtySections(sections, dirtyKeys, parents) }
+    val actions =
+        SettingsRowActions(
+            onCancelCapture = { sendCommand("", 0, 0L, "cancel_capture", mutating = false) },
+            onSelectChoice = { row, choiceIndex ->
+                sendCommand(row.key, choiceIndex, 0L)
+                activeRowKey = null
+            },
+            onToggle = { row, checked ->
+                sendCommand(row.key, if (checked) 1 else 0, 0L)
+            },
+            onCommitNumber = { row, value ->
+                sendCommand(row.key, 0, value)
+            },
+            onRowClick = { row ->
+                when (row.kind) {
+                    "group" -> {
+                        if (sections.any { it.id == row.target }) {
+                            activeRowKey = null
+                            activeSectionId = row.target
+                        }
+                    }
+                    "capture" -> {
+                        sendCommand(row.key, 0, 0L, "start_capture", mutating = false)
+                    }
+                    "choice" -> activeRowKey = row.key
+                    // toggle/number/info act inline or are static;
+                    // never push a detail level.
+                    else -> Unit
                 }
-            }
-            direct
-        }
+            },
+            onClearCapture = { row ->
+                sendCommand(row.key, 0, 0L, "clear_binding")
+            },
+            onDetailClick = { row ->
+                if (row.detailTarget.isNotBlank() &&
+                    sections.any { it.id == row.detailTarget }
+                ) {
+                    activeRowKey = null
+                    activeSectionId = row.detailTarget
+                }
+            },
+            onSectionClick = { activeSectionId = it },
+            onResetRequest = { pendingResetKey = it },
+            onSearchNavigate = { sectionId, rowKey ->
+                activeSectionId = sectionId
+                activeRowKey = rowKey
+            },
+        )
+    val state =
+        SettingsScreenState(
+            sections = sections,
+            activeSection = activeSection,
+            activeRow = activeRow,
+            issues = issues,
+            capturePrompt = capturePrompt,
+            commandError = commandError,
+            parents = parents,
+            dirtySections = dirtyVisibleSections,
+        )
 
     NerustExpressiveHost {
         Scaffold(
             topBar = {
-                TopAppBar(
-                    title = {
-                        Column {
-                            Text(text = screenTitle)
-                            screenSubtitle?.let {
-                                Text(
-                                    text = it,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                    },
-                    navigationIcon = {
-                        if (canNavigateUp) {
-                            IconButton(onClick = ::navigateUp) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                    contentDescription = stringResource(R.string.settings_back),
-                                )
-                            }
-                        } else {
-                            IconButton(onClick = ::requestCancel) {
-                                Icon(
-                                    imageVector = Icons.Filled.Close,
-                                    contentDescription = stringResource(R.string.settings_close),
-                                )
-                            }
-                        }
-                    },
-                    actions = {
-                        FilledTonalButton(onClick = onSave, enabled = isDirty) {
-                            Text(stringResource(R.string.settings_save))
-                        }
-                    },
-                    colors =
-                        TopAppBarDefaults.topAppBarColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                        ),
+                SettingsTopBar(
+                    title = screenTitle,
+                    subtitle = subtitle,
+                    canNavigateUp = canNavigateUp,
+                    canSave = isDirty,
+                    onNavigateUp = ::navigateUp,
+                    onCancel = ::requestCancel,
+                    onSave = onSave,
                 )
             },
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -532,100 +521,120 @@ internal fun NerustSettingsDialogCard(
                         .fillMaxSize()
                         .padding(padding)
                         .padding(horizontal = 16.dp),
-                sections = sections,
-                activeSection = activeSection,
-                activeRow = activeRow,
-                issues = issues,
-                capturePrompt = capturePrompt,
-                commandError = commandError,
-                onCancelCapture = { sendCommand("", 0, 0L, "cancel_capture", mutating = false) },
-                onSelectChoice = { row, choiceIndex ->
-                    sendCommand(row.key, choiceIndex, 0L)
-                    activeRowKey = null
-                },
-                onToggle = { row, checked ->
-                    sendCommand(row.key, if (checked) 1 else 0, 0L)
-                },
-                onCommitNumber = { row, value ->
-                    sendCommand(row.key, 0, value)
-                },
-                onRowClick = { row ->
-                    when (row.kind) {
-                        "group" -> {
-                            if (sections.any { it.id == row.target }) {
-                                activeRowKey = null
-                                activeSectionId = row.target
-                            }
-                        }
-                        "capture" -> {
-                            sendCommand(row.key, 0, 0L, "start_capture", mutating = false)
-                        }
-                        "choice" -> activeRowKey = row.key
-                        // toggle/number/info act inline or are static;
-                        // never push a detail level.
-                        else -> Unit
-                    }
-                },
-                onClearCapture = { row ->
-                    sendCommand(row.key, 0, 0L, "clear_binding")
-                },
-                onDetailClick = { row ->
-                    if (row.detailTarget.isNotBlank() &&
-                        sections.any { it.id == row.detailTarget }
-                    ) {
-                        activeRowKey = null
-                        activeSectionId = row.detailTarget
-                    }
-                },
-                onSectionClick = { activeSectionId = it },
-                onResetRequest = { pendingResetKey = it },
-                parents = parents,
-                dirtySections = dirtyVisibleSections,
-                onSearchNavigate = { sectionId, rowKey ->
-                    activeSectionId = sectionId
-                    activeRowKey = rowKey
-                },
+                state = state,
+                actions = actions,
             )
         }
-        if (confirmDiscard) {
-            SettingsConfirmDialog(
-                title = stringResource(R.string.settings_discard_title),
-                text = stringResource(R.string.settings_discard_message),
-                confirmLabel = stringResource(R.string.settings_discard_confirm),
-                onConfirm = {
-                    confirmDiscard = false
-                    onDismissRequest()
-                },
-                onDismiss = { confirmDiscard = false },
-            )
-        }
-        pendingResetKey?.let { resetKey ->
-            val isAll = resetKey == "reset.all"
-            SettingsConfirmDialog(
-                title =
-                    stringResource(
-                        if (isAll) {
-                            R.string.settings_reset_all_title
-                        } else {
-                            R.string.settings_reset_screen_title
-                        },
-                    ),
-                text =
-                    stringResource(
-                        if (isAll) {
-                            R.string.settings_reset_all_message
-                        } else {
-                            R.string.settings_reset_screen_message
-                        },
-                    ),
-                confirmLabel = stringResource(R.string.settings_reset_confirm),
-                onConfirm = {
-                    pendingResetKey = null
-                    sendCommand(resetKey, 0, 0L, "reset_section")
-                },
-                onDismiss = { pendingResetKey = null },
-            )
-        }
+        SettingsExitDialogs(
+            confirmDiscard = confirmDiscard,
+            resetKey = pendingResetKey,
+            onConfirmDiscard = {
+                confirmDiscard = false
+                onDismissRequest()
+            },
+            onDismissDiscard = { confirmDiscard = false },
+            onConfirmReset = { key ->
+                pendingResetKey = null
+                sendCommand(key, 0, 0L, "reset_section")
+            },
+            onDismissReset = { pendingResetKey = null },
+        )
+    }
+}
+
+@Composable
+private fun SettingsTopBar(
+    title: String,
+    subtitle: String?,
+    canNavigateUp: Boolean,
+    canSave: Boolean,
+    onNavigateUp: () -> Unit,
+    onCancel: () -> Unit,
+    onSave: () -> Unit,
+) {
+    TopAppBar(
+        title = {
+            Column {
+                Text(text = title)
+                subtitle?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        },
+        navigationIcon = {
+            if (canNavigateUp) {
+                IconButton(onClick = onNavigateUp) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = stringResource(R.string.settings_back),
+                    )
+                }
+            } else {
+                IconButton(onClick = onCancel) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = stringResource(R.string.settings_close),
+                    )
+                }
+            }
+        },
+        actions = {
+            FilledTonalButton(onClick = onSave, enabled = canSave) {
+                Text(stringResource(R.string.settings_save))
+            }
+        },
+        colors =
+            TopAppBarDefaults.topAppBarColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            ),
+    )
+}
+
+@Composable
+private fun SettingsExitDialogs(
+    confirmDiscard: Boolean,
+    resetKey: String?,
+    onConfirmDiscard: () -> Unit,
+    onDismissDiscard: () -> Unit,
+    onConfirmReset: (String) -> Unit,
+    onDismissReset: () -> Unit,
+) {
+    if (confirmDiscard) {
+        SettingsConfirmDialog(
+            title = stringResource(R.string.settings_discard_title),
+            text = stringResource(R.string.settings_discard_message),
+            confirmLabel = stringResource(R.string.settings_discard_confirm),
+            onConfirm = onConfirmDiscard,
+            onDismiss = onDismissDiscard,
+        )
+    }
+    resetKey?.let { key ->
+        val isAll = key == "reset.all"
+        SettingsConfirmDialog(
+            title =
+                stringResource(
+                    if (isAll) {
+                        R.string.settings_reset_all_title
+                    } else {
+                        R.string.settings_reset_screen_title
+                    },
+                ),
+            text =
+                stringResource(
+                    if (isAll) {
+                        R.string.settings_reset_all_message
+                    } else {
+                        R.string.settings_reset_screen_message
+                    },
+                ),
+            confirmLabel = stringResource(R.string.settings_reset_confirm),
+            onConfirm = { onConfirmReset(key) },
+            onDismiss = onDismissReset,
+        )
     }
 }
 
@@ -858,70 +867,172 @@ private fun parentMap(sections: List<SettingsSection>): Map<String, Triple<Strin
         }
     }
 
+/** Screen data resolved by the dialog root: Rust sections plus derived
+ * navigation state. One object instead of N params (keeps S107 quiet). */
+private data class SettingsScreenState(
+    val sections: List<SettingsSection>,
+    val activeSection: SettingsSection?,
+    val activeRow: SettingsRow?,
+    val issues: List<String>,
+    val capturePrompt: String?,
+    val commandError: String?,
+    val parents: Map<String, Triple<String, String, String>>,
+    val dirtySections: Set<String>,
+)
+
+/** Every row-level action, threaded from the dialog root to each list
+ * level. One bundle instead of N callback params (keeps S107 quiet). */
+private data class SettingsRowActions(
+    val onCancelCapture: () -> Unit,
+    val onSelectChoice: (SettingsRow, Int) -> Unit,
+    val onToggle: (SettingsRow, Boolean) -> Unit,
+    val onCommitNumber: (SettingsRow, Long) -> Unit,
+    val onRowClick: (SettingsRow) -> Unit,
+    val onClearCapture: (SettingsRow) -> Unit,
+    val onDetailClick: (SettingsRow) -> Unit,
+    val onSectionClick: (String) -> Unit,
+    val onResetRequest: (String) -> Unit,
+    val onSearchNavigate: (String, String?) -> Unit,
+)
+
+/** Reset dirty-marking: reset-all marks every row key, a screen reset
+ * marks that screen's rows, a plain edit marks its own key. */
+private fun resetDirtyKeys(
+    sections: List<SettingsSection>,
+    dirtyKeys: Set<String>,
+    op: String,
+    key: String,
+): Set<String> =
+    when {
+        op == "reset_section" && key == "reset.all" ->
+            sections.flatMap { section -> section.rows.map { it.key } }.toSet()
+        op == "reset_section" ->
+            sections
+                .find { it.id == key.removePrefix("reset.") }
+                ?.rows
+                ?.map { it.key }
+                .orEmpty()
+                .toSet() + dirtyKeys
+        key.isNotBlank() -> dirtyKeys + key
+        else -> dirtyKeys
+    }
+
+/** Dirty sections plus every ancestor up to the visible categories,
+ * so a deep edit still dots its top-level card. */
+private fun ancestorDirtySections(
+    sections: List<SettingsSection>,
+    dirtyKeys: Set<String>,
+    parents: Map<String, Triple<String, String, String>>,
+): Set<String> {
+    val direct =
+        sections
+            .filter { section ->
+                section.rows.any { it.key in dirtyKeys }
+            }.map { it.id }
+            .toMutableSet()
+    val queue = ArrayDeque(direct)
+    while (queue.isNotEmpty()) {
+        parents[queue.removeFirst()]?.let { (parentId, _, _) ->
+            if (direct.add(parentId)) queue.add(parentId)
+        }
+    }
+    return direct
+}
+
+/** Breadcrumb parent: a section's own sub (player name, controller root),
+ * falling back to the section label under a choice row and to nothing
+ * on the top level. */
+private fun screenSubtitle(
+    activeSection: SettingsSection?,
+    activeRow: SettingsRow?,
+): String? =
+    activeSection?.let { section ->
+        when {
+            section.sub.isNotBlank() -> section.sub
+            activeRow != null -> section.label
+            else -> null
+        }
+    }
+
+/** Breadcrumb chain for a hidden section: parent labels up to the
+ * visible category, shared by search hits. */
+private fun breadcrumbTrail(
+    parents: Map<String, Triple<String, String, String>>,
+    sectionId: String,
+): String {
+    val chain = mutableListOf<String>()
+    var current: String? = sectionId
+    while (current != null) {
+        val parent = parents[current] ?: break
+        chain.add(0, parent.second)
+        current = parent.first
+    }
+    return chain.joinToString(" › ")
+}
+
+/** Search hits across every section (hidden ones included): label,
+ * description, section label, value, or current text match. */
+private fun searchHits(
+    sections: List<SettingsSection>,
+    query: String,
+    onLabel: String,
+    offLabel: String,
+): List<Pair<SettingsSection, SettingsRow>> {
+    if (query.isBlank()) return emptyList()
+    return sections.flatMap { section ->
+        section.rows
+            .filter { row ->
+                row.kind != "header" &&
+                    (
+                        row.label.contains(query, ignoreCase = true) ||
+                            row.description.contains(query, ignoreCase = true) ||
+                            section.label.contains(query, ignoreCase = true) ||
+                            row.text.contains(query, ignoreCase = true) ||
+                            settingsRowDisplayValue(row, onLabel, offLabel)
+                                .contains(query, ignoreCase = true)
+                    )
+            }.map { row -> section to row }
+    }
+}
+
 @Composable
 private fun SettingsScreenContent(
     modifier: Modifier,
-    sections: List<SettingsSection>,
-    activeSection: SettingsSection?,
-    activeRow: SettingsRow?,
-    issues: List<String>,
-    capturePrompt: String?,
-    commandError: String?,
-    onCancelCapture: () -> Unit,
-    onSelectChoice: (SettingsRow, Int) -> Unit,
-    onToggle: (SettingsRow, Boolean) -> Unit,
-    onCommitNumber: (SettingsRow, Long) -> Unit,
-    onRowClick: (SettingsRow) -> Unit,
-    onClearCapture: (SettingsRow) -> Unit,
-    onDetailClick: (SettingsRow) -> Unit,
-    onSectionClick: (String) -> Unit,
-    onResetRequest: (String) -> Unit,
-    parents: Map<String, Triple<String, String, String>>,
-    dirtySections: Set<String>,
-    onSearchNavigate: (String, String?) -> Unit,
+    state: SettingsScreenState,
+    actions: SettingsRowActions,
 ) {
     val banners =
-        remember(capturePrompt, issues, commandError) {
+        remember(state.capturePrompt, state.issues, state.commandError) {
             SettingsBanners(
-                capturePrompt = capturePrompt,
-                issues = issues,
-                commandError = commandError,
+                capturePrompt = state.capturePrompt,
+                issues = state.issues,
+                commandError = state.commandError,
             )
         }
     Box(modifier = modifier) {
         when {
-            activeRow != null && activeRow.kind == "choice" -> {
+            state.activeRow != null && state.activeRow.kind == "choice" -> {
                 SettingsChoiceList(
-                    row = activeRow,
+                    row = state.activeRow,
                     banners = banners,
-                    onCancelCapture = onCancelCapture,
-                    onSelect = { choiceIndex -> onSelectChoice(activeRow, choiceIndex) },
+                    onCancelCapture = actions.onCancelCapture,
+                    onSelect = { choiceIndex -> actions.onSelectChoice(state.activeRow, choiceIndex) },
                 )
             }
 
-            activeSection != null -> {
+            state.activeSection != null -> {
                 SettingsSectionList(
-                    section = activeSection,
+                    section = state.activeSection,
                     banners = banners,
-                    onCancelCapture = onCancelCapture,
-                    onToggle = onToggle,
-                    onCommitNumber = onCommitNumber,
-                    onRowClick = onRowClick,
-                    onClearCapture = onClearCapture,
-                    onDetailClick = onDetailClick,
-                    onResetRequest = onResetRequest,
+                    actions = actions,
                 )
             }
 
             else -> {
                 SettingsCategoryList(
-                    sections = sections,
+                    state = state,
                     banners = banners,
-                    dirtySections = dirtySections,
-                    parents = parents,
-                    onCancelCapture = onCancelCapture,
-                    onSectionClick = onSectionClick,
-                    onSearchNavigate = onSearchNavigate,
+                    actions = actions,
                 )
             }
         }
@@ -930,48 +1041,16 @@ private fun SettingsScreenContent(
 
 @Composable
 private fun SettingsCategoryList(
-    sections: List<SettingsSection>,
+    state: SettingsScreenState,
     banners: SettingsBanners,
-    dirtySections: Set<String>,
-    parents: Map<String, Triple<String, String, String>>,
-    onCancelCapture: () -> Unit,
-    onSectionClick: (String) -> Unit,
-    onSearchNavigate: (String, String?) -> Unit,
+    actions: SettingsRowActions,
 ) {
     var query by remember { mutableStateOf("") }
-    fun breadcrumb(sectionId: String): String {
-        val chain = mutableListOf<String>()
-        var current: String? = sectionId
-        while (current != null) {
-            val parent = parents[current] ?: break
-            chain.add(0, parent.second)
-            current = parent.first
-        }
-        return chain.joinToString(" › ")
-    }
     // Labels and hits resolve in composable context; the lazy content
     // below only consumes them through the plain list DSL.
     val onLabel = stringResource(R.string.settings_on)
     val offLabel = stringResource(R.string.settings_off)
-    val hits =
-        if (query.isBlank()) {
-            emptyList()
-        } else {
-            sections.flatMap { section ->
-                section.rows
-                    .filter { row ->
-                        row.kind != "header" &&
-                            (
-                                row.label.contains(query, ignoreCase = true) ||
-                                    row.description.contains(query, ignoreCase = true) ||
-                                    section.label.contains(query, ignoreCase = true) ||
-                                    row.text.contains(query, ignoreCase = true) ||
-                                    settingsRowDisplayValue(row, onLabel, offLabel)
-                                        .contains(query, ignoreCase = true)
-                            )
-                    }.map { row -> section to row }
-            }
-        }
+    val hits = searchHits(state.sections, query, onLabel, offLabel)
     val emptyText =
         if (query.isBlank()) "" else stringResource(R.string.settings_search_empty, query)
     LazyColumn(
@@ -979,7 +1058,7 @@ private fun SettingsCategoryList(
         verticalArrangement = Arrangement.spacedBy(12.dp),
         contentPadding = PaddingValues(vertical = 12.dp),
     ) {
-        settingsBannerItems(banners = banners, onCancelCapture = onCancelCapture)
+        settingsBannerItems(banners = banners, onCancelCapture = actions.onCancelCapture)
         item(key = "settings-search") {
             OutlinedTextField(
                 value = query,
@@ -1000,14 +1079,14 @@ private fun SettingsCategoryList(
             settingsSearchResults(
                 hits = hits,
                 emptyText = emptyText,
-                breadcrumbOf = ::breadcrumb,
-                onNavigate = onSearchNavigate,
+                breadcrumbOf = { sectionId -> breadcrumbTrail(state.parents, sectionId) },
+                onNavigate = actions.onSearchNavigate,
             )
             return@LazyColumn
         }
         // Cards show visible categories only; search above covers hidden
         // screens through the same `sections` list.
-        val visibleSections = sections.filter { it.visible }
+        val visibleSections = state.sections.filter { it.visible }
         itemsIndexed(visibleSections, key = { _, section -> section.id }) { _, section ->
             // Summaries show inline-editable rows plus group rows that carry
             // a value (player/device summaries); bare chevrons stay out.
@@ -1032,7 +1111,7 @@ private fun SettingsCategoryList(
             // entries count.
             val entryCount = section.rows.count { it.kind != "header" && it.kind != "button" }
             Card(
-                onClick = { onSectionClick(section.id) },
+                onClick = { actions.onSectionClick(section.id) },
                 shape = RoundedCornerShape(28.dp),
                 colors =
                     CardDefaults.cardColors(
@@ -1047,7 +1126,7 @@ private fun SettingsCategoryList(
                             style = MaterialTheme.typography.titleLarge,
                             modifier = Modifier.weight(1f),
                         )
-                        if (section.id in dirtySections) {
+                        if (section.id in state.dirtySections) {
                             Text(
                                 text = "•",
                                 style = MaterialTheme.typography.titleLarge,
@@ -1083,13 +1162,7 @@ private fun SettingsCategoryList(
 private fun SettingsSectionList(
     section: SettingsSection,
     banners: SettingsBanners,
-    onCancelCapture: () -> Unit,
-    onToggle: (SettingsRow, Boolean) -> Unit,
-    onCommitNumber: (SettingsRow, Long) -> Unit,
-    onRowClick: (SettingsRow) -> Unit,
-    onClearCapture: (SettingsRow) -> Unit,
-    onDetailClick: (SettingsRow) -> Unit,
-    onResetRequest: (String) -> Unit,
+    actions: SettingsRowActions,
 ) {
     // Split rows into groups at header rows; each group renders as one card.
     val groups = remember(section) { splitSectionGroups(section.rows) }
@@ -1098,7 +1171,7 @@ private fun SettingsSectionList(
         verticalArrangement = Arrangement.spacedBy(12.dp),
         contentPadding = PaddingValues(vertical = 12.dp),
     ) {
-        settingsBannerItems(banners = banners, onCancelCapture = onCancelCapture)
+        settingsBannerItems(banners = banners, onCancelCapture = actions.onCancelCapture)
         groups.forEach { group ->
             if (group.title.isNotBlank()) {
                 item(key = "${section.id}#${group.title}") {
@@ -1125,14 +1198,14 @@ private fun SettingsSectionList(
                                 "toggle" -> {
                                     SettingsToggleRow(
                                         row = row,
-                                        onToggle = { onToggle(row, it) },
-                                        onDetail = { onDetailClick(row) },
+                                        onToggle = { actions.onToggle(row, it) },
+                                        onDetail = { actions.onDetailClick(row) },
                                     )
                                 }
                                 "number" -> {
                                     SettingsSliderRow(
                                         row = row,
-                                        onCommit = { onCommitNumber(row, it) },
+                                        onCommit = { actions.onCommitNumber(row, it) },
                                     )
                                 }
                                 "choice" -> {
@@ -1141,7 +1214,7 @@ private fun SettingsSectionList(
                                         value = settingsRowDisplayValue(row),
                                         semanticsLabel = "${row.label}: ${settingsRowDisplayValue(row)}",
                                         supportingText = row.description,
-                                        onClick = { onRowClick(row) },
+                                        onClick = { actions.onRowClick(row) },
                                     )
                                 }
                                 "group" -> {
@@ -1151,20 +1224,20 @@ private fun SettingsSectionList(
                                         semanticsLabel = row.label,
                                         supportingText = row.description,
                                         showChevron = true,
-                                        onClick = { onRowClick(row) },
+                                        onClick = { actions.onRowClick(row) },
                                     )
                                 }
                                 "button" -> {
                                     SettingsButtonRow(
                                         row = row,
-                                        onRun = { onResetRequest(row.key) },
+                                        onRun = { actions.onResetRequest(row.key) },
                                     )
                                 }
                                 "capture" -> {
                                     SettingsCaptureRow(
                                         row = row,
-                                        onStart = { onRowClick(row) },
-                                        onClear = { onClearCapture(row) },
+                                        onStart = { actions.onRowClick(row) },
+                                        onClear = { actions.onClearCapture(row) },
                                     )
                                 }
                                 else -> {

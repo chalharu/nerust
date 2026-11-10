@@ -30,7 +30,6 @@ fn default_port_devices() -> PortDeviceSets {
 
 /// Application state not synced per ROM: window geometry, controller
 /// assignments, and global port device sets.
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct RememberedWindowSize {
