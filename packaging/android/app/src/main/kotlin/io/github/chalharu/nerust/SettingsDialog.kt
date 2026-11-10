@@ -825,7 +825,7 @@ private fun SettingsScreenContent(
 
             else -> {
                 SettingsCategoryList(
-                    sections = sections.filter { it.visible },
+                    sections = sections,
                     banners = banners,
                     dirtySections = dirtySections,
                     onCancelCapture = onCancelCapture,
@@ -935,7 +935,10 @@ private fun SettingsCategoryList(
                     }
                 }
             } else {
-                itemsIndexed(hits, key = { _, (section, row) -> "search:${section.id}:${row.key}" }) { _, (section, row) ->
+                val hitKey = { _: Int, hit: Pair<SettingsSection, SettingsRow> ->
+                    "search:${hit.first.id}:${hit.second.key}"
+                }
+                itemsIndexed(hits, key = hitKey) { _, (section, row) ->
                     val trail =
                         listOf(breadcrumb(section.id), section.label)
                             .filter { it.isNotBlank() }
@@ -976,7 +979,10 @@ private fun SettingsCategoryList(
             }
             return@LazyColumn
         }
-        itemsIndexed(sections, key = { _, section -> section.id }) { _, section ->
+        // Cards show visible categories only; search above covers hidden
+        // screens through the same `sections` list.
+        val visibleSections = sections.filter { it.visible }
+        itemsIndexed(visibleSections, key = { _, section -> section.id }) { _, section ->
             // Summaries show inline-editable rows plus group rows that carry
             // a value (player/device summaries); bare chevrons stay out.
             val onLabel = stringResource(R.string.settings_on)
