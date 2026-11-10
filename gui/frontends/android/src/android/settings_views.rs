@@ -2092,22 +2092,6 @@ fn slot_rows(
     view: &nerust_gui_viewmodel::settings::dto::InputTabView,
     language: AppLanguage,
 ) -> Vec<RowWire> {
-    // Profiles taken by another slot cannot be picked here; keep the
-    // owner slot label so Kotlin can explain the disabled choice.
-    let taken: std::collections::HashMap<String, String> = view
-        .slots
-        .iter()
-        .filter_map(|slot| {
-            slot.selected_profile_id
-                .clone()
-                .map(|profile| (profile, slot.slot_id.as_str().to_string()))
-        })
-        .collect();
-    let slot_labels: std::collections::HashMap<String, String> = view
-        .slots
-        .iter()
-        .map(|slot| (slot.slot_id.as_str().to_string(), slot.label.clone()))
-        .collect();
     view.slots
         .iter()
         .map(|slot| {
@@ -2132,6 +2116,10 @@ fn slot_rows(
             // pickable here until that slot releases it. The desktop
             // switch disables the whole row; the wire has no row switch,
             // so every concrete choice carries the owner instead.
+            // Anything else stays enabled: the same profile may drive two
+            // slots at once (NES standard pad on P1 and P2), and the
+            // editor clears obsoleted mates on pick — there is no
+            // taken-by-id suppression (it wrongly blocked that sharing).
             let covering_owner = slot.occupied_by_other_slot.then(|| {
                 view.slots
                     .iter()
@@ -2142,19 +2130,9 @@ fn slot_rows(
                     .unwrap_or_default()
             });
             for (wire, choice) in row.choices.iter_mut().zip(slot.choices.iter()) {
-                let owner = match &choice.value {
-                    None => None,
-                    Some(profile) => taken
-                        .get(profile)
-                        .filter(|owner| *owner != slot.slot_id.as_str()),
-                };
                 let covered = covering_owner.as_ref().filter(|_| choice.value.is_some());
-                wire.enabled = owner.is_none() && covered.is_none();
-                wire.reason = owner
-                    .and_then(|owner| slot_labels.get(owner))
-                    .cloned()
-                    .or_else(|| covered.cloned())
-                    .unwrap_or_default();
+                wire.enabled = covered.is_none();
+                wire.reason = covered.cloned().unwrap_or_default();
             }
             row
         })
@@ -3300,42 +3278,42 @@ mod tests {
         );
     }
     #[test]
-    fn taken_profiles_disable_in_other_slots() {
+    fn same_profile_drives_both_slots() {
         let (mut snapshot, payload) = test_payload();
-        // Give player1 its first concrete profile, then player2 must refuse it.
+        // The standard pad is one instance per slot: P1 taking it must not
+        // lock P2 out. (Profile-id suppression used to forbid exactly this
+        // sharing; multi-port coverage is the only real conflict.)
         let p1_key = "system.nes.slot.nes.attachment.player1";
         let p2_key = "system.nes.slot.nes.attachment.player2";
-        let p1_choices = &row(&payload, p1_key).choices;
-        let p2_values: Vec<_> = row(&payload, p2_key)
+        let pad = row(&payload, p1_key)
             .choices
             .iter()
+            .find(|choice| {
+                choice
+                    .value
+                    .as_str()
+                    .is_some_and(|value| value.contains("standard"))
+            })
             .map(|choice| choice.value.clone())
-            .collect();
-        let (first, profile) = p1_choices
+            .expect("standard pad listed for player1");
+        let index = row(&payload, p1_key)
+            .choices
             .iter()
-            .enumerate()
-            .find(|(_, choice)| !choice.value.is_null() && p2_values.contains(&choice.value))
-            .map(|(index, choice)| (index, choice.value.clone()))
-            .expect("shared concrete profile exists");
-        let next = set(&mut snapshot, p1_key, first, 0);
+            .position(|choice| choice.value == pad)
+            .expect("pad index resolves");
+        let next = set(&mut snapshot, p1_key, index, 0);
         let p2 = row(&next, p2_key);
-        let taken = p2
+        let shared = p2
             .choices
             .iter()
-            .find(|choice| choice.value == profile)
-            .expect("same profile listed for player2");
-        assert!(!taken.enabled, "taken profile disables elsewhere");
+            .find(|choice| choice.value == pad)
+            .expect("same pad listed for player2");
+        assert!(shared.enabled, "P2 keeps its own standard pad");
         assert!(
-            !taken.reason.is_empty(),
-            "disabled choice names its owner slot"
+            next.issues.is_empty(),
+            "shared single-port profiles stay saveable: {:?}",
+            next.issues
         );
-        // ...but stays enabled in its own slot.
-        let own = row(&next, p1_key)
-            .choices
-            .iter()
-            .find(|choice| choice.value == profile)
-            .expect("profile listed for player1");
-        assert!(own.enabled);
     }
 
     #[test]

@@ -3,18 +3,9 @@ use std::rc::Rc;
 use nerust_input_traits::{AttachmentId, ControllerProfile};
 
 use super::model::app_state::PortDeviceSets;
-
-/// Member-id prefixes for global port device sets. Keyboards ("kbd:")
-/// share ports; gamepads ("pad:") occupy exactly one port at a time.
-/// Touch is a global setting, never a port member.
-pub const KEYBOARD_MEMBER_PREFIX: &str = "kbd:";
-pub const GAMEPAD_MEMBER_PREFIX: &str = "pad";
-
-/// The built-in keyboard row (device id 0). Unlike external descriptors
-/// it is a capability flag, not a known device: terminals without one
-/// must never display or persist it (see `prune_missing_builtin` on the
-/// Android vault side).
-pub const BUILTIN_KEYBOARD_MEMBER: &str = "kbd:builtin";
+pub use super::model::app_state::{
+    BUILTIN_KEYBOARD_MEMBER, GAMEPAD_MEMBER_PREFIX, KEYBOARD_MEMBER_PREFIX,
+};
 
 /// Shareable members (keyboards) may sit in several ports at once.
 pub fn member_is_shareable(member: &str) -> bool {
