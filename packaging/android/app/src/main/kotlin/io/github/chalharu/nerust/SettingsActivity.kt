@@ -3,6 +3,7 @@ package io.github.chalharu.nerust
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.hardware.input.InputManager
 import android.os.Bundle
 import android.util.Log
 import android.view.InputDevice
@@ -36,7 +37,8 @@ class SettingsActivity :
     Activity(),
     LifecycleOwner,
     SavedStateRegistryOwner,
-    ViewModelStoreOwner {
+    ViewModelStoreOwner,
+    InputManager.InputDeviceListener {
     private val lifecycleRegistry = LifecycleRegistry(this)
     private val registryController = SavedStateRegistryController.create(this)
     private val store = ViewModelStore()
@@ -123,11 +125,76 @@ class SettingsActivity :
         super.onResume()
         activeActivityForTest = this
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+        (getSystemService(INPUT_SERVICE) as InputManager).registerInputDeviceListener(this, null)
+        pushKeyboardEnumeration()
     }
 
     override fun onPause() {
+        (getSystemService(INPUT_SERVICE) as InputManager).unregisterInputDeviceListener(this)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
         super.onPause()
+    }
+
+    override fun onInputDeviceAdded(deviceId: Int) = pushKeyboardEnumeration()
+
+    override fun onInputDeviceRemoved(deviceId: Int) = pushKeyboardEnumeration()
+
+    override fun onInputDeviceChanged(deviceId: Int) = pushKeyboardEnumeration()
+
+    /** Enumerate physical keyboards (Kotlin `InputDevice`, Rust owns labels):
+     * the built-in row (device id 0) plus one row per external descriptor.
+     * BT/USB are indistinguishable via public API so rows stay agnostic;
+     * virtual devices are excluded; duplicate HID descriptors merge. */
+    internal fun enumerateKeyboards(): org.json.JSONArray {
+        val out = org.json.JSONArray()
+        val seen = mutableSetOf<String>()
+        val devices =
+            InputDevice.getDeviceIds().mapNotNull { InputDevice.getDevice(it) }.filter {
+                it.sources and InputDevice.SOURCE_KEYBOARD == InputDevice.SOURCE_KEYBOARD
+            }
+        val builtin = devices.firstOrNull { it.id == 0 }
+        if (builtin != null) {
+            seen += "kbd:builtin"
+            out.put(
+                JSONObject()
+                    .put("member", "kbd:builtin")
+                    .put("name", builtin.name)
+                    .put("builtin", true),
+            )
+        }
+        for (device in devices) {
+            if (device.id == 0) continue
+            @Suppress("DEPRECATION")
+            val virtual =
+                device.id < 0 ||
+                    (android.os.Build.VERSION.SDK_INT >= 29 && device.isVirtual)
+            if (virtual) continue
+            val member = "kbd:${device.descriptor}"
+            if (!seen.add(member)) continue
+            out.put(
+                JSONObject()
+                    .put("member", member)
+                    .put("name", device.name)
+                    .put("builtin", false),
+            )
+        }
+        return out
+    }
+
+    /** Push the enumeration through the existing command pipe; Rust
+     * re-projects and the card applies it without marking the draft dirty. */
+    internal fun pushKeyboardEnumeration() {
+        val nav = navActions ?: return
+        val raw =
+            try {
+                nativeSettingsCommand(
+                    settingsCommandJson("keyboards", 0, 0, "keyboards", enumerateKeyboards()),
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "keyboard enumeration push failed", e)
+                return
+            }
+        raw?.let { nav.refreshPayload(it) }
     }
 
     override fun onDestroy() {

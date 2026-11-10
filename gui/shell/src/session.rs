@@ -3,6 +3,7 @@ pub(crate) mod command_exec;
 pub mod commands;
 pub(crate) mod debug_ops;
 pub mod error;
+pub(crate) mod field_press;
 pub mod fs;
 pub mod input;
 pub(crate) mod input_map;
@@ -25,7 +26,7 @@ pub(crate) mod settings_apply;
 pub(crate) mod title;
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
 };
 
@@ -37,7 +38,7 @@ use nerust_gui_runtime::settings::{
     manager::SettingsManager,
 };
 use nerust_input_traits::Key;
-use nerust_input_traits::{InputAssignments, UnifiedFieldMap};
+use nerust_input_traits::{AbstractKey, InputAssignments, UnifiedFieldMap};
 use nerust_persistence::error::PersistenceError;
 use nerust_render_traits::{FrameBuffer, VideoRenderProfile};
 use nerust_settings_core::factory::settings_view;
@@ -122,6 +123,10 @@ struct InputDept {
     /// Reverse map: keyboard key → field index, rebuilt on binding/controller change.
     key_field_map: HashMap<nerust_input_traits::Key, usize>,
     pressed_keys: std::collections::HashSet<Key>,
+    /// Key → (attachment, control) for dpad-neutral resolution.
+    key_source: HashMap<nerust_input_traits::Key, (String, String)>,
+    /// OR merge + neutral resolution across keyboards and controls.
+    press_state: field_press::FieldPressState,
     topology_epoch: u64,
     /// Last served overlay, keyed by caller revision and topology epoch.
     touch_cache: TouchCache,
@@ -133,7 +138,9 @@ impl InputDept {
         Self {
             current_assignments,
             key_field_map: HashMap::new(),
-            pressed_keys: std::collections::HashSet::new(),
+            pressed_keys: HashSet::new(),
+            key_source: HashMap::new(),
+            press_state: field_press::FieldPressState::default(),
             topology_epoch: 0,
             touch_cache: Default::default(),
         }
@@ -151,6 +158,19 @@ impl InputDept {
         field_map: Option<&UnifiedFieldMap>,
     ) {
         self.key_field_map.clear();
+        self.key_source.clear();
+        if let Some(bindings) = bindings {
+            for binding in bindings {
+                if let nerust_settings_core::model::input::PersistedControlId::Digital(control) =
+                    &binding.control
+                {
+                    self.key_source.insert(
+                        binding.key,
+                        (binding.attachment.as_str().to_string(), control.clone()),
+                    );
+                }
+            }
+        }
         if let Some(bindings) = bindings
             && let Some(field_map) = field_map
             && let Err(duplicate) = crate::session::input_map::rebuild_input_map(
@@ -165,6 +185,36 @@ impl InputDept {
                 control = duplicate.control,
             );
         }
+    }
+
+    /// Abstract button of an emulated control on an attachment, resolved
+    /// through the live assignments (same traversal as the overlay builder).
+    /// Powers dpad-neutral resolution for keyboards and physical controls.
+    fn abstract_for(&self, attachment: &str, control: &str) -> Option<AbstractKey> {
+        use nerust_input_traits::ControlId;
+        for (slot, profile) in self.current_assignments.slots() {
+            let Some(profile) = profile else {
+                continue;
+            };
+            for set in profile.port_sets() {
+                if !set.ports.iter().any(|port| port.as_str() == attachment) {
+                    continue;
+                }
+                for (port, group) in set.ports.iter().zip(profile.port_groups()) {
+                    if port.as_str() != attachment {
+                        continue;
+                    }
+                    for info in *group {
+                        if let ControlId::Digital(id) = info.id
+                            && id.as_str() == control
+                        {
+                            return info.abstract_key;
+                        }
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// Persistable projection of the live assignments: only slot and controller ids survive.
