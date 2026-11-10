@@ -175,6 +175,25 @@ internal fun settingsCommandJson(
     return doc.toString()
 }
 
+/** Object-payload variant for ops like `touch` whose payload is a JSON
+ * object, not an array. */
+internal fun settingsCommandJson(
+    key: String,
+    index: Int,
+    number: Long,
+    op: String,
+    payload: JSONObject,
+): String {
+    val doc =
+        JSONObject()
+            .put("key", key)
+            .put("index", index)
+            .put("number", number)
+            .put("op", op)
+            .put("payload", payload)
+    return doc.toString()
+}
+
 /** Cross-boundary navigation actions the activity needs for system back,
  * discard confirmation, hardware-key/capture payload delivery, and
  * out-of-band refreshes (hotplug) that must not mark the draft dirty. */

@@ -22,7 +22,7 @@ use nerust_settings_core::{
         UiText, port_count_line, port_summary, shortcut_row_description, slot_description,
         system_field_description, text as ui_text,
     },
-    input::{GAMEPAD_MEMBER_PREFIX, KEYBOARD_MEMBER_PREFIX},
+    input::{BUILTIN_KEYBOARD_MEMBER, GAMEPAD_MEMBER_PREFIX, KEYBOARD_MEMBER_PREFIX},
     model::{
         app_state::{DesktopAppState, PORT_PLAYER_1, PORT_PLAYER_2},
         input::{default_shortcut_bindings, ensure_default_shortcuts},
@@ -253,16 +253,18 @@ fn build_vm(snapshot: &SettingsSnapshot, deps: &VmDeps) -> Result<SettingsViewMo
 
 /// Open payload for Kotlin: schema version, sections, live issues from a
 /// non-fatal `finish` probe, and the pending key-capture state.
-/// `keyboards` is the vault's enumerated physical-keyboard list.
+/// `keyboards` is the vault's enumerated physical-keyboard list;
+/// `touch_capable` is `None` until Kotlin reports touch capability.
 pub(super) fn open_payload(
     snapshot: &SettingsSnapshot,
     keyboards: &[KeyboardInfo],
+    touch_capable: Option<bool>,
 ) -> Result<String, String> {
     with_vm_deps(|deps| {
         let vm = build_vm(snapshot, deps)?;
         let payload = ViewPayload {
             schema_version: SETTINGS_SCHEMA_VERSION,
-            sections: build_sections(&vm, snapshot, keyboards),
+            sections: build_sections(&vm, snapshot, keyboards, touch_capable),
             issues: draft_issues(&vm),
             capture: None,
         };
@@ -275,34 +277,47 @@ pub(super) type CaptureSlot = Option<(CaptureTarget, String)>;
 
 /// Apply one wire command to the draft snapshot in place, returning the
 /// refreshed payload. Stateless per call except for the passed draft,
-/// capture slot, and vault keyboard list (`keyboards` op upserts it).
+/// capture slot, vault keyboard list (`keyboards` op upserts it), and
+/// touch capability (`touch` op upserts it).
 pub(super) fn apply_command_to(
     snapshot: &mut SettingsSnapshot,
     command_json: &str,
     capture: &mut CaptureSlot,
     keyboards: &mut Vec<KeyboardInfo>,
+    touch_capable: &mut Option<bool>,
 ) -> Result<String, String> {
     let command: WireCommand =
         serde_json::from_str(command_json).map_err(|error| error.to_string())?;
     with_vm_deps(|deps| {
         match command.op.as_str() {
-            "keyboards" => apply_keyboards_command(keyboards, &command)?,
+            "keyboards" => {
+                apply_keyboards_command(keyboards, &command)?;
+                prune_missing_builtin(snapshot, keyboards);
+            }
+            "touch" => apply_touch_command(touch_capable, &command)?,
             "reset_section" => {
                 let vm = build_vm(snapshot, deps)?;
-                let sections = build_sections(&vm, snapshot, keyboards);
-                apply_reset_section(snapshot, deps, &sections, &command, keyboards)?;
+                let sections = build_sections(&vm, snapshot, keyboards, *touch_capable);
+                apply_reset_section(
+                    snapshot,
+                    deps,
+                    &sections,
+                    &command,
+                    keyboards,
+                    *touch_capable,
+                )?;
             }
             "cancel_capture" | "clear_binding" | "start_capture" => {
-                apply_capture_command(snapshot, deps, &command, capture, keyboards)?
+                apply_capture_command(snapshot, deps, &command, capture, keyboards, *touch_capable)?
             }
             "set" => {
                 let vm = build_vm(snapshot, deps)?;
-                let sections = build_sections(&vm, snapshot, keyboards);
+                let sections = build_sections(&vm, snapshot, keyboards, *touch_capable);
                 apply_set_command(snapshot, deps, &vm, &sections, &command)?;
             }
             op => return Err(format!("unknown command op: {op}")),
         }
-        refreshed_payload(snapshot, deps, capture, keyboards)
+        refreshed_payload(snapshot, deps, capture, keyboards, *touch_capable)
     })
 }
 
@@ -334,11 +349,12 @@ fn refreshed_payload(
     deps: &VmDeps,
     capture: &CaptureSlot,
     keyboards: &[KeyboardInfo],
+    touch_capable: Option<bool>,
 ) -> Result<String, String> {
     let vm = build_vm(snapshot, deps)?;
     let payload = ViewPayload {
         schema_version: SETTINGS_SCHEMA_VERSION,
-        sections: build_sections(&vm, snapshot, keyboards),
+        sections: build_sections(&vm, snapshot, keyboards, touch_capable),
         issues: draft_issues(&vm),
         capture: capture.as_ref().map(|(target, prompt)| CaptureWire {
             target: encode_target(target, &target_system(target, deps)),
@@ -359,6 +375,7 @@ pub(super) fn apply_hardware_key(
     snapshot: &mut SettingsSnapshot,
     capture: &mut CaptureSlot,
     keyboards: &[KeyboardInfo],
+    touch_capable: Option<bool>,
 ) -> Result<(String, bool), String> {
     with_vm_deps(|deps| {
         if pressed
@@ -372,10 +389,13 @@ pub(super) fn apply_hardware_key(
             vm.capture.apply_captured_key(key);
             *snapshot = vm.snapshot();
             *capture = None;
-            Ok((refreshed_payload(snapshot, deps, capture, keyboards)?, true))
+            Ok((
+                refreshed_payload(snapshot, deps, capture, keyboards, touch_capable)?,
+                true,
+            ))
         } else {
             Ok((
-                refreshed_payload(snapshot, deps, capture, keyboards)?,
+                refreshed_payload(snapshot, deps, capture, keyboards, touch_capable)?,
                 false,
             ))
         }
@@ -521,13 +541,14 @@ fn apply_capture_command(
     command: &WireCommand,
     capture: &mut CaptureSlot,
     keyboards: &[KeyboardInfo],
+    touch_capable: Option<bool>,
 ) -> Result<(), String> {
     if command.op == "cancel_capture" {
         *capture = None;
         return Ok(());
     }
     let vm = build_vm(snapshot, deps)?;
-    let sections = build_sections(&vm, snapshot, keyboards);
+    let sections = build_sections(&vm, snapshot, keyboards, touch_capable);
     let row = find_row(&sections, &command.key)?;
     if row.kind != RowKind::Capture {
         return Err(format!("{}: not a capture row", command.key));
@@ -552,6 +573,25 @@ fn apply_capture_command(
         }
         op => Err(format!("unknown command op: {op}")),
     }
+}
+
+/// Record whether the terminal has a touch screen (Kotlin
+/// `PackageManager`, re-pushed with the keyboard enumeration). `None`
+/// means unknown: rows behave as before, the runtime keeps showing.
+fn apply_touch_command(
+    touch_capable: &mut Option<bool>,
+    command: &WireCommand,
+) -> Result<(), String> {
+    let capable: bool = serde_json::from_value(
+        command
+            .payload
+            .get("capable")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null),
+    )
+    .map_err(|error| error.to_string())?;
+    *touch_capable = Some(capable);
+    Ok(())
 }
 
 /// Upsert the vault's enumerated physical-keyboard list (Kotlin
@@ -647,6 +687,7 @@ fn apply_reset_section(
     sections: &[SectionWire],
     command: &WireCommand,
     keyboards: &[KeyboardInfo],
+    touch_capable: Option<bool>,
 ) -> Result<(), String> {
     let scope = command
         .key
@@ -654,7 +695,7 @@ fn apply_reset_section(
         .ok_or_else(|| format!("malformed reset key: {}", command.key))?;
     let default = default_snapshot(deps);
     let default_vm = build_vm(&default, deps)?;
-    let default_sections = build_sections(&default_vm, &default, keyboards);
+    let default_sections = build_sections(&default_vm, &default, keyboards, touch_capable);
     let reset_all = scope == "all";
     if reset_all {
         // Membership rows only cover enumerated keyboards; stale members
@@ -1298,6 +1339,7 @@ fn build_sections(
     vm: &SettingsViewModel,
     snapshot: &SettingsSnapshot,
     keyboards: &[KeyboardInfo],
+    touch_capable: Option<bool>,
 ) -> Vec<SectionWire> {
     let language = snapshot.shared.general.language;
     let mut sections = vec![
@@ -1310,7 +1352,11 @@ fn build_sections(
         build_audio_detail_section(vm, language),
     ];
     sections.extend(build_controllers_sections(
-        vm, snapshot, language, keyboards,
+        vm,
+        snapshot,
+        language,
+        keyboards,
+        touch_capable,
     ));
     sections.extend(build_player_sections(vm, snapshot, language, keyboards));
     sections.extend(build_system_sections(vm, language));
@@ -1802,6 +1848,7 @@ fn build_controllers_sections(
     snapshot: &SettingsSnapshot,
     language: AppLanguage,
     keyboards: &[KeyboardInfo],
+    touch_capable: Option<bool>,
 ) -> Vec<SectionWire> {
     let overlay = &snapshot.local.touch_overlay;
     let t = |text: UiText| ui_text(language, text).to_string();
@@ -1817,28 +1864,40 @@ fn build_controllers_sections(
         let last = quick_rows.last_mut().expect("player row pushed");
         last.text = port_summary(language, &names);
     }
+    let mut visibility_row = choice_row(
+        "controls.overlay_visibility",
+        t(UiText::TouchOverlay),
+        t(UiText::DescOverlayVisibility),
+        &[
+            (
+                TouchOverlayVisibility::Always,
+                ui_text(language, UiText::Always).to_string(),
+            ),
+            (
+                TouchOverlayVisibility::Auto,
+                ui_text(language, UiText::Auto).to_string(),
+            ),
+            (
+                TouchOverlayVisibility::Hidden,
+                ui_text(language, UiText::Hidden).to_string(),
+            ),
+        ],
+        &overlay.visibility,
+    );
+    if touch_capable == Some(false) {
+        // Terminals without a touch screen can never show the overlay:
+        // disable Always/Auto with the reason instead of pretending the
+        // choice works and hiding at runtime. Order matches the literal
+        // above (Always, Auto, Hidden).
+        let reason = t(UiText::NoTouchScreen);
+        for choice in visibility_row.choices.iter_mut().take(2) {
+            choice.enabled = false;
+            choice.reason = reason.clone();
+        }
+    }
     quick_rows.extend([
         header_row(t(UiText::TouchOverlay)),
-        choice_row(
-            "controls.overlay_visibility",
-            t(UiText::TouchOverlay),
-            t(UiText::DescOverlayVisibility),
-            &[
-                (
-                    TouchOverlayVisibility::Always,
-                    ui_text(language, UiText::Always).to_string(),
-                ),
-                (
-                    TouchOverlayVisibility::Auto,
-                    ui_text(language, UiText::Auto).to_string(),
-                ),
-                (
-                    TouchOverlayVisibility::Hidden,
-                    ui_text(language, UiText::Hidden).to_string(),
-                ),
-            ],
-            &overlay.visibility,
-        ),
+        visibility_row,
         group_row(
             "controls.overlay_detail_link",
             t(UiText::OverlayDetail),
@@ -2068,6 +2127,20 @@ fn slot_rows(
                     .collect::<Vec<_>>(),
                 &serde_json::to_value(&slot.selected_profile_id).unwrap_or(serde_json::Value::Null),
             );
+            // A multi-port profile (NES famicom set) already covers this
+            // slot from another one: nothing but "not assigned" is
+            // pickable here until that slot releases it. The desktop
+            // switch disables the whole row; the wire has no row switch,
+            // so every concrete choice carries the owner instead.
+            let covering_owner = slot.occupied_by_other_slot.then(|| {
+                view.slots
+                    .iter()
+                    .find(|other| {
+                        other.slot_id != slot.slot_id && other.selected_profile_id.is_some()
+                    })
+                    .map(|other| other.label.clone())
+                    .unwrap_or_default()
+            });
             for (wire, choice) in row.choices.iter_mut().zip(slot.choices.iter()) {
                 let owner = match &choice.value {
                     None => None,
@@ -2075,10 +2148,12 @@ fn slot_rows(
                         .get(profile)
                         .filter(|owner| *owner != slot.slot_id.as_str()),
                 };
-                wire.enabled = owner.is_none();
+                let covered = covering_owner.as_ref().filter(|_| choice.value.is_some());
+                wire.enabled = owner.is_none() && covered.is_none();
                 wire.reason = owner
                     .and_then(|owner| slot_labels.get(owner))
                     .cloned()
+                    .or_else(|| covered.cloned())
                     .unwrap_or_default();
             }
             row
@@ -2217,6 +2292,14 @@ fn port_member_names(
     keyboards: &[KeyboardInfo],
     language: AppLanguage,
 ) -> Vec<String> {
+    // Effective members only: the built-in row renders solely while the
+    // terminal actually enumerates it. Otherwise phones and tablets
+    // without a hardware keyboard would show a phantom "Built-in
+    // Keyboard" from the shared default. Unplugged USB descriptors stay
+    // listed (reconnect restores them); gamepads always count.
+    let builtin_present = keyboards
+        .iter()
+        .any(|info| info.member == BUILTIN_KEYBOARD_MEMBER);
     snapshot
         .app_state
         .port_devices
@@ -2224,15 +2307,32 @@ fn port_member_names(
         .map(|members| {
             members
                 .iter()
+                .filter(|member| member.as_str() != BUILTIN_KEYBOARD_MEMBER || builtin_present)
                 .map(|member| keyboard_member_name(member, keyboards, language))
                 .collect()
         })
         .unwrap_or_default()
 }
 
+/// Drop the built-in membership when fresh enumeration reports no
+/// built-in keyboard: a capability flag, not a known device, so there is
+/// nothing to restore on reconnect. USB descriptors are never pruned
+/// here — unplug/replug cycles keep their assignment.
+fn prune_missing_builtin(snapshot: &mut SettingsSnapshot, keyboards: &[KeyboardInfo]) {
+    if keyboards
+        .iter()
+        .any(|info| info.member == BUILTIN_KEYBOARD_MEMBER)
+    {
+        return;
+    }
+    for members in snapshot.app_state.port_devices.values_mut() {
+        members.retain(|member| member != BUILTIN_KEYBOARD_MEMBER);
+    }
+}
+
 fn keyboard_member_name(member: &str, keyboards: &[KeyboardInfo], language: AppLanguage) -> String {
     let t = |text: UiText| ui_text(language, text).to_string();
-    if member == "kbd:builtin" {
+    if member == BUILTIN_KEYBOARD_MEMBER {
         t(UiText::BuiltInKeyboard)
     } else if let Some(info) = keyboards.iter().find(|info| info.member == member) {
         if info.name.trim().is_empty() {
@@ -2569,7 +2669,7 @@ mod tests {
     fn test_payload_with_keyboards(keyboards: &[KeyboardInfo]) -> (SettingsSnapshot, ViewPayload) {
         with_test_deps(|| {
             let snapshot = default_snapshot();
-            let json = open_payload(&snapshot, keyboards).expect("open payload builds");
+            let json = open_payload(&snapshot, keyboards, None).expect("open payload builds");
             let payload: ViewPayload = serde_json::from_str(&json).expect("payload parses");
             assert_eq!(payload.schema_version, SETTINGS_SCHEMA_VERSION);
             (snapshot, payload)
@@ -2603,7 +2703,7 @@ mod tests {
                 payload: serde_json::Value::Null,
             })
             .unwrap();
-            let out = apply_command_to(snapshot, &command_json, capture, keyboards)
+            let out = apply_command_to(snapshot, &command_json, capture, keyboards, &mut None)
                 .unwrap_or_else(|error| panic!("command failed: {error}"));
             serde_json::from_str(&out).unwrap()
         })
@@ -2981,6 +3081,90 @@ mod tests {
     }
 
     #[test]
+    fn phantom_builtin_never_surfaces_without_hardware() {
+        // Phones and tablets enumerate no built-in keyboard, yet the
+        // shared default drafts p1=[kbd:builtin]. Summaries and counts
+        // must read empty, and the first fresh enumeration prunes it.
+        let (mut snapshot, _) = test_payload_with_keyboards(&[]);
+        assert_eq!(
+            row(&test_payload_with_keyboards(&[]).1, "controllers.player.1").text,
+            "Not assigned",
+            "no hardware, no phantom controller name"
+        );
+        let mut keyboards = Vec::new();
+        let command_json = serde_json::to_string(&WireCommand {
+            key: "keyboards".to_string(),
+            index: 0,
+            number: 0,
+            op: "keyboards".to_string(),
+            payload: serde_json::to_value(vec![KeyboardInfo {
+                member: "kbd:usb-1".to_string(),
+                name: "USB Keyboard".to_string(),
+                builtin: false,
+            }])
+            .unwrap(),
+        })
+        .unwrap();
+        with_test_deps(|| {
+            apply_command_to(
+                &mut snapshot,
+                &command_json,
+                &mut None,
+                &mut keyboards,
+                &mut None,
+            )
+            .expect("keyboards op applies")
+        });
+        assert!(
+            snapshot
+                .app_state
+                .port_devices
+                .get("p1")
+                .is_none_or(|set| !set.iter().any(|member| member == "kbd:builtin")),
+            "builtin membership pruned without hardware"
+        );
+        // …while an unplugged USB descriptor keeps its assignment so a
+        // reconnect restores it without re-setup.
+        snapshot
+            .app_state
+            .port_devices
+            .entry("p1".to_string())
+            .or_default()
+            .push("kbd:usb-1".to_string());
+        let off = with_test_deps(|| {
+            apply_command_to(
+                &mut snapshot,
+                &serde_json::to_string(&WireCommand {
+                    key: "keyboards".to_string(),
+                    index: 0,
+                    number: 0,
+                    op: "keyboards".to_string(),
+                    payload: serde_json::Value::Array(vec![]),
+                })
+                .unwrap(),
+                &mut None,
+                &mut Vec::new(),
+                &mut None,
+            )
+            .expect("empty enumeration applies")
+        });
+        let payload: ViewPayload = serde_json::from_str(&off).unwrap();
+        assert!(
+            snapshot
+                .app_state
+                .port_devices
+                .get("p1")
+                .is_some_and(|set| set.iter().any(|member| member == "kbd:usb-1")),
+            "USB assignment survives unplug"
+        );
+        assert_eq!(
+            row(&payload, "controllers.player.1").text,
+            "External keyboard",
+            "unplugged USB still names its fallback"
+        );
+    }
+
+    #[test]
     fn keyboards_op_upserts_enumeration_without_mutating_draft() {
         let (mut snapshot, _) = test_payload_with_keyboards(&[]);
         let before = snapshot.clone();
@@ -2994,8 +3178,14 @@ mod tests {
         })
         .unwrap();
         let out = with_test_deps(|| {
-            apply_command_to(&mut snapshot, &command_json, &mut None, &mut keyboards)
-                .expect("keyboards op applies")
+            apply_command_to(
+                &mut snapshot,
+                &command_json,
+                &mut None,
+                &mut keyboards,
+                &mut None,
+            )
+            .expect("keyboards op applies")
         });
         assert_eq!(snapshot, before, "enumeration never touches the draft");
         assert_eq!(keyboards.len(), 2, "vault holds the enumerated keyboards");
@@ -3008,6 +3198,75 @@ mod tests {
                 .any(|row| row.key == "devices.p1.kbd:usb-1"),
             "refreshed payload lists the enumerated keyboard"
         );
+    }
+
+    fn touch_payload(capable: Option<bool>) -> ViewPayload {
+        let (mut snapshot, _) = test_payload();
+        if let Some(value) = capable {
+            let command_json = serde_json::to_string(&WireCommand {
+                key: "touch".to_string(),
+                index: 0,
+                number: 0,
+                op: "touch".to_string(),
+                payload: serde_json::json!({ "capable": value }),
+            })
+            .unwrap();
+            let mut touch = None;
+            let out = with_test_deps(|| {
+                apply_command_to(
+                    &mut snapshot,
+                    &command_json,
+                    &mut None,
+                    &mut test_keyboards(),
+                    &mut touch,
+                )
+                .expect("touch op applies")
+            });
+            assert_eq!(touch, capable, "vault records touch capability");
+            return serde_json::from_str(&out).unwrap();
+        }
+        // Unknown capability (old client, unit default): no push arrives,
+        // rows behave as before.
+        let touch = None;
+        with_test_deps(|| {
+            open_payload(&snapshot, &test_keyboards(), touch)
+                .map(|json| serde_json::from_str(&json).unwrap())
+                .expect("open payload builds")
+        })
+    }
+
+    #[test]
+    fn touchless_terminal_disables_overlay_choices() {
+        let payload = touch_payload(Some(false));
+        let visibility = row(&payload, "controls.overlay_visibility");
+        assert_eq!(
+            visibility.choices.len(),
+            3,
+            "Always/Auto/Hidden stay listed"
+        );
+        for choice in visibility.choices.iter().take(2) {
+            assert!(!choice.enabled, "Always/Auto are not enableable");
+            assert!(
+                !choice.reason.is_empty(),
+                "disabled choice explains the missing touch screen"
+            );
+        }
+        assert!(
+            visibility.choices[2].enabled,
+            "Hidden stays selectable as the only honest value"
+        );
+    }
+
+    #[test]
+    fn touch_capable_terminal_keeps_overlay_choices() {
+        for capable in [None, Some(true)] {
+            let payload = touch_payload(capable);
+            let visibility = row(&payload, "controls.overlay_visibility");
+            assert!(
+                visibility.choices.iter().all(|choice| choice.enabled),
+                "unknown/touch terminals keep every overlay choice"
+            );
+        }
     }
 
     #[test]
@@ -3026,7 +3285,7 @@ mod tests {
         })
         .unwrap();
         let out = with_test_deps(|| {
-            apply_command_to(&mut snapshot, &reset, &mut None, &mut keyboards)
+            apply_command_to(&mut snapshot, &reset, &mut None, &mut keyboards, &mut None)
                 .expect("reset applies")
         });
         let payload: ViewPayload = serde_json::from_str(&out).unwrap();
@@ -3080,13 +3339,72 @@ mod tests {
     }
 
     #[test]
+    fn covered_slot_disables_concrete_controllers() {
+        let (mut snapshot, payload) = test_payload();
+        let p1_key = "system.nes.slot.nes.attachment.player1";
+        let p2_key = "system.nes.slot.nes.attachment.player2";
+        // The famicom set physically covers both slots; P2 then offers
+        // nothing but "not assigned" until P1 releases it.
+        let famicom = row(&payload, p1_key)
+            .choices
+            .iter()
+            .find(|choice| {
+                choice
+                    .value
+                    .as_str()
+                    .is_some_and(|value| value.contains("famicom"))
+            })
+            .map(|choice| choice.value.clone())
+            .expect("famicom set listed for player1");
+        let index = row(&payload, p1_key)
+            .choices
+            .iter()
+            .position(|choice| choice.value == famicom)
+            .expect("famicom index resolves");
+        let next = set(&mut snapshot, p1_key, index, 0);
+        let covered = row(&next, p2_key);
+        for choice in &covered.choices {
+            if choice.value.is_null() {
+                assert!(choice.enabled, "not-assigned stays pickable");
+            } else {
+                assert!(!choice.enabled, "covered slot refuses controllers");
+                assert!(
+                    !choice.reason.is_empty(),
+                    "disabled choice names the covering slot"
+                );
+            }
+        }
+        // Drafting the impossible combo anyway (tampered client, old
+        // file) fails the finish probe loudly instead of saving silence.
+        let pad = covered
+            .choices
+            .iter()
+            .position(|choice| {
+                choice
+                    .value
+                    .as_str()
+                    .is_some_and(|value| value.contains("standard"))
+            })
+            .expect("standard pad listed for player2");
+        let conflicted = set(&mut snapshot, p2_key, pad, 0);
+        assert!(
+            conflicted
+                .issues
+                .iter()
+                .any(|issue| issue.contains("conflict")),
+            "finish probe reports the slot conflict: {:?}",
+            conflicted.issues
+        );
+    }
+
+    #[test]
     fn capture_round_trips_through_hardware_keys() {
         let (mut snapshot, _) = test_payload();
         let mut capture: CaptureSlot = None;
         // Find any binding capture row on the NES controller screen.
         let target_key = with_test_deps(|| {
             let vm = build_vm(&snapshot, &test_deps()).expect("vm builds");
-            let sections = build_sections(&vm, &snapshot, &test_keyboards());
+            let sections = build_sections(&vm, &snapshot, &test_keyboards(), None);
             sections
                 .iter()
                 .flat_map(|section| &section.rows)
@@ -3109,20 +3427,41 @@ mod tests {
         // Unmapped keycodes and releases must not consume: the platform
         // keeps handling them (volume, Back, ...) while capture stays open.
         let (_, consumed_release) = with_test_deps(|| {
-            apply_hardware_key(29, false, &mut snapshot, &mut capture, &test_keyboards())
-                .expect("hardware key release probes")
+            apply_hardware_key(
+                29,
+                false,
+                &mut snapshot,
+                &mut capture,
+                &test_keyboards(),
+                None,
+            )
+            .expect("hardware key release probes")
         });
         assert!(!consumed_release, "release is not consumed");
         assert!(capture.is_some(), "capture stays pending on release");
         let (_, consumed_unknown) = with_test_deps(|| {
-            apply_hardware_key(999, true, &mut snapshot, &mut capture, &test_keyboards())
-                .expect("unknown keycode probes")
+            apply_hardware_key(
+                999,
+                true,
+                &mut snapshot,
+                &mut capture,
+                &test_keyboards(),
+                None,
+            )
+            .expect("unknown keycode probes")
         });
         assert!(!consumed_unknown, "unmapped keycode is not consumed");
         assert!(capture.is_some(), "capture stays pending on unknown key");
         let (_, consumed) = with_test_deps(|| {
-            apply_hardware_key(29, true, &mut snapshot, &mut capture, &test_keyboards())
-                .expect("hardware key applies")
+            apply_hardware_key(
+                29,
+                true,
+                &mut snapshot,
+                &mut capture,
+                &test_keyboards(),
+                None,
+            )
+            .expect("hardware key applies")
         });
         assert!(consumed, "mapped press is consumed");
         assert!(capture.is_none(), "capture consumes after one key");
@@ -3134,7 +3473,7 @@ mod tests {
         let mut capture: CaptureSlot = None;
         let key = with_test_deps(|| {
             let vm = build_vm(&snapshot, &test_deps()).expect("vm builds");
-            let sections = build_sections(&vm, &snapshot, &test_keyboards());
+            let sections = build_sections(&vm, &snapshot, &test_keyboards(), None);
             sections
                 .iter()
                 .flat_map(|section| &section.rows)
@@ -3160,7 +3499,7 @@ mod tests {
         let (mut snapshot, _) = test_payload();
         let bounds: Vec<(String, i64, i64)> = with_test_deps(|| {
             let vm = build_vm(&snapshot, &test_deps()).expect("vm builds");
-            let sections = build_sections(&vm, &snapshot, &test_keyboards());
+            let sections = build_sections(&vm, &snapshot, &test_keyboards(), None);
             sections
                 .iter()
                 .flat_map(|section| &section.rows)
@@ -3304,8 +3643,14 @@ mod tests {
             })
             .unwrap();
             assert!(
-                apply_command_to(&mut snapshot, &bad_key, &mut None, &mut test_keyboards())
-                    .is_err()
+                apply_command_to(
+                    &mut snapshot,
+                    &bad_key,
+                    &mut None,
+                    &mut test_keyboards(),
+                    &mut None
+                )
+                .is_err()
             );
 
             let bad_index = serde_json::to_string(&WireCommand {
@@ -3317,8 +3662,14 @@ mod tests {
             })
             .unwrap();
             assert!(
-                apply_command_to(&mut snapshot, &bad_index, &mut None, &mut test_keyboards())
-                    .is_err()
+                apply_command_to(
+                    &mut snapshot,
+                    &bad_index,
+                    &mut None,
+                    &mut test_keyboards(),
+                    &mut None
+                )
+                .is_err()
             );
 
             let bad_op = serde_json::to_string(&WireCommand {
@@ -3330,7 +3681,14 @@ mod tests {
             })
             .unwrap();
             assert!(
-                apply_command_to(&mut snapshot, &bad_op, &mut None, &mut test_keyboards()).is_err()
+                apply_command_to(
+                    &mut snapshot,
+                    &bad_op,
+                    &mut None,
+                    &mut test_keyboards(),
+                    &mut None
+                )
+                .is_err()
             );
 
             let bad_port = serde_json::to_string(&WireCommand {
@@ -3342,8 +3700,14 @@ mod tests {
             })
             .unwrap();
             assert!(
-                apply_command_to(&mut snapshot, &bad_port, &mut None, &mut test_keyboards())
-                    .is_err(),
+                apply_command_to(
+                    &mut snapshot,
+                    &bad_port,
+                    &mut None,
+                    &mut test_keyboards(),
+                    &mut None
+                )
+                .is_err(),
                 "unknown ports never persist"
             );
 
@@ -3356,8 +3720,14 @@ mod tests {
             })
             .unwrap();
             assert!(
-                apply_command_to(&mut snapshot, &bad_scope, &mut None, &mut test_keyboards())
-                    .is_err(),
+                apply_command_to(
+                    &mut snapshot,
+                    &bad_scope,
+                    &mut None,
+                    &mut test_keyboards(),
+                    &mut None
+                )
+                .is_err(),
                 "unknown reset scopes never no-op silently"
             );
         });

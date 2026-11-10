@@ -8,7 +8,13 @@ use super::model::app_state::PortDeviceSets;
 /// share ports; gamepads ("pad:") occupy exactly one port at a time.
 /// Touch is a global setting, never a port member.
 pub const KEYBOARD_MEMBER_PREFIX: &str = "kbd:";
-pub const GAMEPAD_MEMBER_PREFIX: &str = "pad:";
+pub const GAMEPAD_MEMBER_PREFIX: &str = "pad";
+
+/// The built-in keyboard row (device id 0). Unlike external descriptors
+/// it is a capability flag, not a known device: terminals without one
+/// must never display or persist it (see `prune_missing_builtin` on the
+/// Android vault side).
+pub const BUILTIN_KEYBOARD_MEMBER: &str = "kbd:builtin";
 
 /// Shareable members (keyboards) may sit in several ports at once.
 pub fn member_is_shareable(member: &str) -> bool {

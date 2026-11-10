@@ -86,6 +86,10 @@ pub(super) struct SettingsSlot {
     /// Enumerated physical keyboards (Kotlin `InputDevice`, hotplug live).
     /// Ephemeral device truth: projected into sections, never persisted.
     pub(super) keyboards: Vec<super::settings_views::KeyboardInfo>,
+    /// Whether the terminal has a touch screen (Kotlin
+    /// `PackageManager`, re-pushed with the keyboard enumeration).
+    /// `None` until the first push: rows behave as before.
+    pub(super) touch_capable: Option<bool>,
 }
 
 impl SettingsSlot {
@@ -95,6 +99,7 @@ impl SettingsSlot {
             draft: None,
             capture: None,
             keyboards: Vec::new(),
+            touch_capable: None,
         }
     }
 }

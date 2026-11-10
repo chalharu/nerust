@@ -91,6 +91,12 @@ class ChromeManager(private val activity: MainActivity) {
     private var controlsOverlayView: View? = null
     private var controllerOverlayHiddenUntil = 0L
     private var controlsVisibility = "auto"
+    // Terminal capability, pushed from MainActivity device truth. Unknown
+    // starts capable: hiding by default would blank phones on day one.
+    private var touchCapable = true
+    // Auto hides while a keyboard or gamepad is connected; the post-press
+    // quiet window below still covers already-known devices transiently.
+    private var physicalInputConnected = false
     private var controlsOpacityPercent = 65
     private var controlsHaptics = true
     private var controlsPushedZones: List<PushedOverlayZone> = emptyList()
@@ -458,7 +464,12 @@ class ChromeManager(private val activity: MainActivity) {
     private fun ensureControlsOverlayPopup(anchor: View): Boolean {
         if (
             controlsVisibility == "hidden" ||
-            controlsVisibility == "auto" && SystemClock.elapsedRealtime() < controllerOverlayHiddenUntil
+            !touchCapable ||
+            controlsVisibility == "auto" &&
+            (
+                physicalInputConnected ||
+                    SystemClock.elapsedRealtime() < controllerOverlayHiddenUntil
+            )
         ) {
             return true
         }
@@ -509,6 +520,34 @@ class ChromeManager(private val activity: MainActivity) {
 
     fun noteControllerInput() {
         hideControlsForControllerInput()
+    }
+
+    /** Non-touch terminals never draw buttons; the settings row names the
+     * reason so the choice does not look broken. */
+    fun setTouchCapable(capable: Boolean) {
+        if (touchCapable == capable) return
+        touchCapable = capable
+        if (!capable) {
+            controlsOverlayPopup?.dismiss()
+            controlsOverlayPopup = null
+            controlsOverlayView = null
+        }
+        scheduleChromeAttach()
+    }
+
+    /** Auto hides while a keyboard or gamepad is connected and returns on
+     * disconnect; a press still triggers the short quiet window too. */
+    fun setPhysicalInputConnected(connected: Boolean) {
+        if (physicalInputConnected == connected) return
+        physicalInputConnected = connected
+        if (connected) {
+            activity.window.decorView.removeCallbacks(restoreControllerOverlayRunnable)
+            controllerOverlayHiddenUntil = 0L
+            controlsOverlayPopup?.dismiss()
+            controlsOverlayPopup = null
+            controlsOverlayView = null
+        }
+        scheduleChromeAttach()
     }
 
     private fun ensureDrawerChromePopup(anchor: View): Boolean {
