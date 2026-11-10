@@ -94,9 +94,9 @@ class ChromeManager(private val activity: MainActivity) {
     // Terminal capability, pushed from MainActivity device truth. Unknown
     // starts capable: hiding by default would blank phones on day one.
     private var touchCapable = true
-    // Auto hides while a keyboard or gamepad is connected; the post-press
-    // quiet window below still covers already-known devices transiently.
-    private var physicalInputConnected = false
+    // Auto hides while a gamepad is connected; the post-press quiet
+    // window below still covers already-known devices transiently.
+    private var controllerConnected = false
     private var controlsOpacityPercent = 65
     private var controlsHaptics = true
     private var controlsPushedZones: List<PushedOverlayZone> = emptyList()
@@ -467,7 +467,7 @@ class ChromeManager(private val activity: MainActivity) {
             !touchCapable ||
             controlsVisibility == "auto" &&
             (
-                physicalInputConnected ||
+                controllerConnected ||
                     SystemClock.elapsedRealtime() < controllerOverlayHiddenUntil
             )
         ) {
@@ -535,11 +535,11 @@ class ChromeManager(private val activity: MainActivity) {
         scheduleChromeAttach()
     }
 
-    /** Auto hides while a keyboard or gamepad is connected and returns on
-     * disconnect; a press still triggers the short quiet window too. */
-    fun setPhysicalInputConnected(connected: Boolean) {
-        if (physicalInputConnected == connected) return
-        physicalInputConnected = connected
+    /** Auto hides while a gamepad is connected and returns on disconnect;
+     * a press still triggers the short quiet window too. */
+    fun setControllerConnected(connected: Boolean) {
+        if (controllerConnected == connected) return
+        controllerConnected = connected
         if (connected) {
             activity.window.decorView.removeCallbacks(restoreControllerOverlayRunnable)
             controllerOverlayHiddenUntil = 0L

@@ -565,8 +565,8 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
             "同じ辺では通知の領域に従います",
         ),
         UiText::DescOverlayVisibility => (
-            "Auto hides the buttons while a keyboard or gamepad is connected. Terminals without a touch screen never show them.",
-            "自動はキーボードやゲームパッドの接続中は非表示。タッチ非対応端末は常に非表示",
+            "Auto hides the buttons while a gamepad is connected, and briefly after controller input. Terminals without a touch screen never show them.",
+            "自動はゲームパッド接続中や操作直後は非表示。タッチ非対応端末は常に非表示",
         ),
         UiText::DescOverlayOpacity => (
             "Transparency of the on-screen buttons.",
