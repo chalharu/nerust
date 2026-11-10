@@ -48,6 +48,7 @@ pub enum ValidationScope {
     Persistence,
     Audio,
     Notifications,
+    Controllers,
     Input(Box<dyn nerust_core_traits::identity::SystemId>),
     System(Box<dyn nerust_core_traits::identity::SystemId>),
 }

@@ -1,20 +1,40 @@
 //! Settings section taxonomy owned by the settings domain.
 //! Rust owns the id→label mapping; Kotlin renders the pushed label only.
+//!
+//! Top-level taxonomy is purpose-based (zero-based IA): machine sections
+//! hide under Advanced, controller screens hide behind player ports.
 
 use nerust_settings_core::i18n::{UiText, text as ui_text};
 use nerust_settings_core::model::language::AppLanguage;
 
-/// Canonical settings section ids in payload order.
+/// Canonical settings section ids in payload order: visible top-level
+/// first, hidden navigation targets after.
 pub(crate) const SETTINGS_SECTION_IDS: &[&str] = &[
-    "general",
-    "audio",
-    "video",
-    "controls",
-    "storage",
+    "play",
+    "controllers",
+    "saves",
     "notifications",
+    "app",
+    "advanced",
+    "player.1",
+    "player.2",
+    "types.1",
+    "types.2",
+    "devices.1",
+    "devices.2",
+    "controls.overlay_detail",
+    "controls.shortcuts",
+    "audio.detail",
+    "about",
     "system.nes",
     "system.gbc",
     "system.gba",
+    "input.nes",
+    "input.gbc",
+    "input.gba",
+    "keys.nes",
+    "keys.gbc",
+    "keys.gba",
 ];
 
 /// Canonical section id→label table, returned as static strings.
@@ -22,12 +42,12 @@ pub(crate) const SETTINGS_SECTION_IDS: &[&str] = &[
 /// System names are proper nouns, identical in both languages.
 pub(crate) fn section_label(id: &str, language: AppLanguage) -> &'static str {
     match id {
-        "audio" => ui_text(language, UiText::Audio),
-        "video" => ui_text(language, UiText::Video),
-        "controls" => ui_text(language, UiText::Controls),
-        "storage" => ui_text(language, UiText::Storage),
+        "play" => ui_text(language, UiText::SectionPlay),
+        "controllers" => ui_text(language, UiText::SectionControllers),
+        "saves" => ui_text(language, UiText::SectionSaves),
         "notifications" => ui_text(language, UiText::Notifications),
-        "general" => ui_text(language, UiText::General),
+        "app" => ui_text(language, UiText::SectionApp),
+        "advanced" => ui_text(language, UiText::SectionAdvanced),
         "system.nes" => "Nintendo Entertainment System",
         "system.gbc" => "Game Boy Color",
         "system.gba" => "Game Boy Advance",
@@ -50,21 +70,24 @@ mod tests {
                 assert!(!section_label(id, language).is_empty());
             }
             assert_ne!(
-                section_label("audio", AppLanguage::English),
-                section_label("audio", AppLanguage::Japanese)
+                section_label("play", AppLanguage::English),
+                section_label("play", AppLanguage::Japanese)
             );
             assert_eq!(section_label("system.gbc", language), "Game Boy Color");
             assert_eq!(section_label("foo_bar", AppLanguage::English), "Unknown");
         }
-        assert_eq!(section_label("audio", AppLanguage::English), "Audio");
-        assert_eq!(section_label("audio", AppLanguage::Japanese), "音声");
-        assert_eq!(section_label("controls", AppLanguage::Japanese), "操作");
+        assert_eq!(section_label("play", AppLanguage::English), "Play");
+        assert_eq!(section_label("play", AppLanguage::Japanese), "プレイ");
+        assert_eq!(
+            section_label("controllers", AppLanguage::Japanese),
+            "コントローラー"
+        );
         assert_eq!(
             section_label("notifications", AppLanguage::English),
             "Notifications"
         );
-        assert_eq!(section_label("general", AppLanguage::English), "General");
-        assert_eq!(section_label("general", AppLanguage::Japanese), "一般");
+        assert_eq!(section_label("app", AppLanguage::English), "App");
+        assert_eq!(section_label("app", AppLanguage::Japanese), "アプリ");
         assert_eq!(
             section_label("system.unknown", AppLanguage::English),
             "Unknown"

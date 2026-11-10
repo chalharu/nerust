@@ -83,6 +83,9 @@ pub(super) struct SettingsSlot {
     pub(super) flight: crate::settings_flight::SettingsFlight<SettingsDialogResult>,
     pub(super) draft: Option<nerust_gui_runtime::settings::SettingsSnapshot>,
     pub(super) capture: super::settings_views::CaptureSlot,
+    /// Enumerated physical keyboards (Kotlin `InputDevice`, hotplug live).
+    /// Ephemeral device truth: projected into sections, never persisted.
+    pub(super) keyboards: Vec<super::settings_views::KeyboardInfo>,
 }
 
 impl SettingsSlot {
@@ -91,6 +94,7 @@ impl SettingsSlot {
             flight: crate::settings_flight::SettingsFlight::new(),
             draft: None,
             capture: None,
+            keyboards: Vec::new(),
         }
     }
 }
