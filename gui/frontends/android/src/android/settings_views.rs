@@ -80,9 +80,8 @@ pub(super) struct SectionWire {
 /// drive slider rows; `text` drives read-only info rows and doubles as the
 /// trailing value for `group` rows (player/device summaries) and as nothing
 /// for `button` rows; `description` is the M3 supporting text shown under the
-/// label (IA principle 3: every non-header row explains itself, except info
-/// readouts whose label is self-evident and capture rows whose value line
-/// already serves as the副文); `detail_target` shows a trailing Details
+/// label, present only where it adds information (self-evident labels stay
+/// bare: no restatements, no choice listings, no misplaced instructions); `detail_target` shows a trailing Details
 /// button navigating to another section (device rows); `target` carries the
 /// opaque capture target for `capture` rows; `Header`/`Group` rows are
 /// non-editable navigation aids. `Button` rows ask Kotlin for confirmation
@@ -1428,18 +1427,14 @@ fn build_play_section(
             number_row(
                 "audio.volume",
                 t(UiText::MasterVolume),
-                t(UiText::DescVolume),
+                String::new(),
                 i64::from(audio.volume_percent),
                 1,
                 0,
                 100,
                 "%",
             ),
-            button_row(
-                "reset.play",
-                t(UiText::ResetScreen),
-                t(UiText::DescResetScreen),
-            ),
+            button_row("reset.play", t(UiText::ResetScreen), String::new()),
         ],
         visible: true,
     }
@@ -1470,14 +1465,14 @@ fn build_saves_section(vm: &SettingsViewModel, language: AppLanguage) -> Section
         rows.push(info_row(
             "general.storage_directory",
             t(UiText::SaveStorageDirectory),
-            t(UiText::DescStorageDirectory),
+            String::new(),
             general.storage_directory.clone(),
         ));
     }
     rows.push(button_row(
         "reset.saves",
         t(UiText::ResetScreen),
-        t(UiText::DescResetScreen),
+        String::new(),
     ));
     SectionWire {
         id: "saves".to_string(),
@@ -1510,17 +1505,8 @@ fn build_app_section(vm: &SettingsViewModel, language: AppLanguage) -> SectionWi
                 &selected,
             )
         },
-        group_row(
-            "app.about",
-            t(UiText::About),
-            t(UiText::DescLicense),
-            "about",
-        ),
-        button_row(
-            "reset.all",
-            t(UiText::ResetSettings),
-            t(UiText::DescResetSettings),
-        ),
+        group_row("app.about", t(UiText::About), String::new(), "about"),
+        button_row("reset.all", t(UiText::ResetSettings), String::new()),
     ];
     SectionWire {
         id: "app".to_string(),
@@ -1578,7 +1564,7 @@ fn build_advanced_section(
         group_row(
             "advanced.audio_detail",
             t(UiText::AudioDetail),
-            t(UiText::DescLatency),
+            t(UiText::DescAudioDetail),
             "audio.detail",
         ),
         toggle_row(
@@ -1598,7 +1584,7 @@ fn build_advanced_section(
         number_row(
             "controls.cartridge_rumble_strength",
             t(UiText::RumbleStrength),
-            t(UiText::DescRumbleStrength),
+            String::new(),
             i64::from(peripherals.rumble_strength_percent),
             1,
             0,
@@ -1608,7 +1594,7 @@ fn build_advanced_section(
         choice_row(
             "controls.cartridge_rumble_target",
             t(UiText::RumbleTarget),
-            t(UiText::DescRumbleTarget),
+            String::new(),
             &[
                 (
                     RumbleTarget::Auto,
@@ -1680,11 +1666,7 @@ fn build_audio_detail_section(vm: &SettingsViewModel, language: AppLanguage) -> 
                 200,
                 " ms",
             ),
-            button_row(
-                "reset.audio.detail",
-                t(UiText::ResetScreen),
-                t(UiText::DescResetScreen),
-            ),
+            button_row("reset.audio.detail", t(UiText::ResetScreen), String::new()),
         ],
         visible: false,
     }
@@ -1709,7 +1691,7 @@ fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) ->
             number_row(
                 "notifications.info_duration",
                 t(UiText::NotificationDuration),
-                t(UiText::DescNotifDuration),
+                String::new(),
                 i64::from(view.info_duration_ms),
                 500,
                 1000,
@@ -1719,7 +1701,7 @@ fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) ->
             choice_row(
                 "notifications.info_color",
                 t(UiText::NotificationInfo),
-                t(UiText::DescNotifColor),
+                String::new(),
                 &view
                     .color_choices
                     .iter()
@@ -1737,7 +1719,7 @@ fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) ->
             number_row(
                 "notifications.warning_duration",
                 t(UiText::NotificationDuration),
-                t(UiText::DescNotifDuration),
+                String::new(),
                 i64::from(view.warning_duration_ms),
                 500,
                 1000,
@@ -1747,7 +1729,7 @@ fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) ->
             choice_row(
                 "notifications.warning_color",
                 t(UiText::NotificationWarning),
-                t(UiText::DescNotifColor),
+                String::new(),
                 &view
                     .color_choices
                     .iter()
@@ -1772,7 +1754,7 @@ fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) ->
             choice_row(
                 "notifications.error_color",
                 t(UiText::NotificationError),
-                t(UiText::DescNotifColor),
+                String::new(),
                 &view
                     .color_choices
                     .iter()
@@ -1783,7 +1765,7 @@ fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) ->
             choice_row(
                 "notifications.position",
                 t(UiText::NotificationPosition),
-                t(UiText::DescNotifPosition),
+                String::new(),
                 &view
                     .position_choices
                     .iter()
@@ -1806,14 +1788,14 @@ fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) ->
             toggle_row(
                 "status.enabled",
                 t(UiText::NotificationStatus),
-                t(UiText::DescStatusDisplay),
+                String::new(),
                 language,
                 view.status_enabled,
             ),
             choice_row(
                 "status.position",
                 t(UiText::NotificationStatusPosition),
-                t(UiText::DescStatusPosition),
+                String::new(),
                 &view
                     .position_choices
                     .iter()
@@ -1838,11 +1820,7 @@ fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) ->
                 row.visible = view.position.is_top() != view.status_position.is_top();
                 row
             },
-            button_row(
-                "reset.notifications",
-                t(UiText::ResetScreen),
-                t(UiText::DescResetScreen),
-            ),
+            button_row("reset.notifications", t(UiText::ResetScreen), String::new()),
         ],
         visible: true,
     }
@@ -1918,7 +1896,7 @@ fn build_controllers_sections(
         toggle_row(
             "controls.overlay_haptics",
             t(UiText::OverlayHaptics),
-            t(UiText::DescOverlayHaptics),
+            String::new(),
             language,
             overlay.haptics,
         ),
@@ -1929,11 +1907,7 @@ fn build_controllers_sections(
             t(UiText::DescShortcutsLink),
             "controls.shortcuts",
         ),
-        button_row(
-            "reset.controllers",
-            t(UiText::ResetScreen),
-            t(UiText::DescResetScreen),
-        ),
+        button_row("reset.controllers", t(UiText::ResetScreen), String::new()),
     ]);
     let quick = SectionWire {
         id: "controllers".to_string(),
@@ -1949,10 +1923,10 @@ fn build_controllers_sections(
         rows: vec![
             info_row(
                 "controls.auto_hide_status",
-                t(UiText::AutoHideStatus),
-                t(UiText::DescAutoHideStatus),
+                t(UiText::AutoHideGamepads),
+                String::new(),
                 if gamepads.is_empty() {
-                    t(UiText::AutoHideNone)
+                    t(UiText::NotAssigned)
                 } else {
                     gamepads
                         .iter()
@@ -1964,7 +1938,7 @@ fn build_controllers_sections(
             number_row(
                 "controls.overlay_opacity",
                 t(UiText::OverlayOpacity),
-                t(UiText::DescOverlayOpacity),
+                String::new(),
                 i64::from(overlay.opacity_percent),
                 1,
                 0,
@@ -1974,7 +1948,7 @@ fn build_controllers_sections(
             number_row(
                 "controls.overlay_scale",
                 t(UiText::OverlayScale),
-                t(UiText::DescOverlayScale),
+                String::new(),
                 i64::from(overlay.scale_percent),
                 5,
                 50,
@@ -1984,7 +1958,7 @@ fn build_controllers_sections(
             number_row(
                 "controls.overlay_vertical_offset",
                 t(UiText::OverlayVerticalOffset),
-                t(UiText::DescOverlayOffset),
+                String::new(),
                 i64::from(overlay.vertical_offset_percent),
                 1,
                 -30,
@@ -1994,7 +1968,7 @@ fn build_controllers_sections(
             button_row(
                 "reset.controls.overlay_detail",
                 t(UiText::ResetScreen),
-                t(UiText::DescResetScreen),
+                String::new(),
             ),
         ],
         visible: false,
@@ -2026,7 +2000,7 @@ fn build_controllers_sections(
             .chain(std::iter::once(button_row(
                 "reset.controls.shortcuts",
                 t(UiText::ResetScreen),
-                t(UiText::DescResetScreen),
+                String::new(),
             )))
             .collect(),
         visible: false,
@@ -2072,7 +2046,7 @@ fn build_system_sections(vm: &SettingsViewModel, language: AppLanguage) -> Vec<S
             rows.push(button_row(
                 &format!("reset.system.{}", view.system_id),
                 t(UiText::ResetScreen),
-                t(UiText::DescResetScreen),
+                String::new(),
             ));
             SectionWire {
                 id: format!("system.{}", view.system_id),
@@ -2099,7 +2073,7 @@ fn build_input_sections(vm: &SettingsViewModel, language: AppLanguage) -> Vec<Se
             rows.push(button_row(
                 &format!("reset.input.{}", view.system_id),
                 t(UiText::ResetScreen),
-                t(UiText::DescResetScreen),
+                String::new(),
             ));
             SectionWire {
                 id: format!("input.{}", view.system_id),
@@ -2187,7 +2161,7 @@ fn build_player_sections(
                     let mut row = group_row(
                         &format!("{player_id}.devices"),
                         t(UiText::Devices),
-                        t(UiText::FollowsDevice),
+                        String::new(),
                         devices_id,
                     );
                     row.text = port_summary(language, &names);
@@ -2402,7 +2376,7 @@ fn build_devices_section(
     rows.push(button_row(
         &format!("reset.{devices_id}"),
         t(UiText::ResetScreen),
-        t(UiText::DescResetScreen),
+        String::new(),
     ));
     SectionWire {
         id: devices_id.to_string(),
@@ -2498,7 +2472,7 @@ fn build_keys_sections(vm: &SettingsViewModel, language: AppLanguage) -> Vec<Sec
             rows.push(button_row(
                 &format!("reset.keys.{}", view.system_id),
                 t(UiText::ResetScreen),
-                t(UiText::DescResetScreen),
+                String::new(),
             ));
             SectionWire {
                 id: format!("keys.{}", view.system_id),
@@ -2686,6 +2660,26 @@ mod tests {
             .flat_map(|section| &section.rows)
             .find(|row| row.key == key)
             .unwrap_or_else(|| panic!("row {key} exists"))
+    }
+
+    /// Keys of interactive rows without supporting text, for the policy test.
+    fn payload_bare_keys(payload: &ViewPayload) -> Vec<String> {
+        payload
+            .sections
+            .iter()
+            .flat_map(|section| &section.rows)
+            .filter(|row| {
+                matches!(
+                    row.kind,
+                    super::RowKind::Choice
+                        | super::RowKind::Toggle
+                        | super::RowKind::Number
+                        | super::RowKind::Group
+                        | super::RowKind::Button
+                ) && row.description.is_empty()
+            })
+            .map(|row| row.key.clone())
+            .collect()
     }
 
     fn apply(
@@ -2946,9 +2940,11 @@ mod tests {
                 .iter()
                 .find(|row| row.target == *devices_id)
                 .expect("devices row exists");
+            // The value line carries the port summary, so no supporting
+            // text is needed (bare-row policy: self-evident stays bare).
             assert!(
-                !devices_row.description.is_empty(),
-                "devices row explains itself"
+                !devices_row.text.is_empty(),
+                "devices row value carries the port summary"
             );
             let types_row = player
                 .rows
@@ -3300,7 +3296,7 @@ mod tests {
         let status = row(&payload, "controls.auto_hide_status");
         assert_eq!(
             status.text,
-            ui_text(AppLanguage::English, UiText::AutoHideNone).to_string(),
+            ui_text(AppLanguage::English, UiText::NotAssigned).to_string(),
             "empty gate says so"
         );
     }
@@ -3680,29 +3676,66 @@ mod tests {
     }
 
     #[test]
-    fn settable_rows_carry_descriptions() {
-        let (_snapshot, payload) = test_payload();
-        // IA principle 3: every interactive row explains itself. Headers
-        // carry no supporting text; info readouts stay bare when the label
-        // is self-evident (STATUS, version); capture rows show the value
-        // line instead (bound key name, or "Tap to assign").
-        let bare: Vec<String> = payload
-            .sections
-            .iter()
-            .flat_map(|section| &section.rows)
-            .filter(|row| {
-                matches!(
-                    row.kind,
-                    super::RowKind::Choice
-                        | super::RowKind::Toggle
-                        | super::RowKind::Number
-                        | super::RowKind::Group
-                        | super::RowKind::Button
-                ) && row.description.is_empty()
-            })
-            .map(|row| row.key.clone())
-            .collect();
-        assert!(bare.is_empty(), "rows without description: {bare:?}");
+    fn bare_rows_are_reviewed_allowlist() {
+        // Descriptions only where they add information: self-evident
+        // labels stay bare (no AI-slop restatements). This allowlist pins
+        // the policy; a new bare row fails here until it is reviewed.
+        // - reset.*: the label states the action, the confirm dialog states
+        //   the consequences.
+        // - sliders with inline values (volume, opacity, scale, offset,
+        //   rumble strength): the value line already says it.
+        // - color/position/target choice rows: the choices list the options.
+        // - haptics/status toggles: label plus on/off is the whole story.
+        // - app.about: standard About row pattern (version and license live
+        //   on the target screen).
+        // - player.*.devices: the value line carries the port summary.
+        let mut bare: Vec<String> = payload_bare_keys(&test_payload().1);
+        bare.sort();
+        let mut expected = vec![
+            "app.about",
+            "audio.volume",
+            "controls.cartridge_rumble_strength",
+            "controls.cartridge_rumble_target",
+            "controls.overlay_haptics",
+            "controls.overlay_opacity",
+            "controls.overlay_scale",
+            "controls.overlay_vertical_offset",
+            "notifications.error_color",
+            "notifications.info_color",
+            "notifications.info_duration",
+            "notifications.warning_color",
+            "notifications.position",
+            "notifications.warning_duration",
+            "player.1.devices",
+            "player.2.devices",
+            "status.enabled",
+            "status.position",
+        ];
+        for prefix in [
+            "reset.all",
+            "reset.audio.detail",
+            "reset.controllers",
+            "reset.controls.overlay_detail",
+            "reset.controls.shortcuts",
+            "reset.devices.1",
+            "reset.devices.2",
+            "reset.input.gba",
+            "reset.input.gbc",
+            "reset.input.nes",
+            "reset.keys.gba",
+            "reset.keys.gbc",
+            "reset.keys.nes",
+            "reset.notifications",
+            "reset.play",
+            "reset.saves",
+            "reset.system.gba",
+            "reset.system.gbc",
+            "reset.system.nes",
+        ] {
+            expected.push(prefix);
+        }
+        expected.sort_unstable();
+        assert_eq!(bare, expected, "bare rows changed: review the new policy");
     }
 
     #[test]
