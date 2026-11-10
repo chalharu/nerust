@@ -71,7 +71,6 @@ import androidx.compose.material.icons.filled.Search
 import kotlin.math.roundToLong
 import org.json.JSONArray
 import org.json.JSONObject
-}
 
 /** One pick-list entry: the value rides back to Rust by index, so Kotlin
  * only needs the label plus whether the choice is currently selectable. */
