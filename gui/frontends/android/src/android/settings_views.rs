@@ -40,9 +40,7 @@ use nerust_system_traits::factory::{
 };
 use serde::{Deserialize, Serialize};
 
-/// Wire contract version for the DTO-driven settings screen.
-/// 1 was the descriptor/codec dialog; 2 is the ViewModel projection.
-pub(super) const SETTINGS_SCHEMA_VERSION: u32 = 2;
+use crate::bridge_contract::SETTINGS_SCHEMA_VERSION;
 
 /// Full screen payload: schema version, sections Kotlin renders, live
 /// validation issues for the draft, and the pending key-capture state.

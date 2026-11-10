@@ -7,7 +7,8 @@ use jni::objects::{JObject, JString, JValue};
 use winit::platform::android::activity::AndroidApp;
 
 use super::bridge::{self, SettingsDialogResult};
-use super::settings_views::{self, SETTINGS_SCHEMA_VERSION};
+use super::settings_views;
+use crate::bridge_contract::SETTINGS_SCHEMA_VERSION;
 use crate::settings_flight::SettingsRequestId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_settings_core::model::local::ScreenOrientation;
