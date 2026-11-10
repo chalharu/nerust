@@ -596,15 +596,15 @@ class MainActivity :
             return
         }
         val requestId = document.getLong("requestId")
-        val payload =
-            try {
-                document.getJSONObject("payload")
-            } catch (e: JSONException) {
-                Log.e(TAG, "showSettingsDialog: malformed sections", e)
-                return
-            }
+        try {
+            document.getJSONObject("payload")
+        } catch (e: JSONException) {
+            Log.e(TAG, "showSettingsDialog: malformed sections", e)
+            return
+        }
         showSettingsDialogInternal(
-            payload = payload,
+            // SettingsActivity unwraps the same versioned envelope it validates.
+            envelope = document,
             requestId = requestId,
         )
     }
@@ -621,7 +621,7 @@ class MainActivity :
     }
 
     private fun showSettingsDialogInternal(
-        payload: JSONObject,
+        envelope: JSONObject,
         requestId: Long,
     ) {
         startActivity(
@@ -629,7 +629,7 @@ class MainActivity :
                 this,
                 SETTINGS_SCHEMA_VERSION,
                 requestId,
-                payload.toString(),
+                envelope.toString(),
             ),
         )
     }
