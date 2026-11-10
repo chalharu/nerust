@@ -262,9 +262,12 @@ class MainActivity :
             if (device.id < 0) continue
             if (Build.VERSION.SDK_INT >= 29 && device.isVirtual) continue
             val sources = device.sources
+            // A gamepad claims SOURCE_GAMEPAD (sticks add SOURCE_JOYSTICK).
+            // SOURCE_DPAD alone proves nothing: keyboards and remotes often
+            // carry the dpad bit, and counting them hides the overlay on
+            // terminals (and emulators) that only have a keyboard.
             if (sources and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
-                sources and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK ||
-                sources and InputDevice.SOURCE_DPAD == InputDevice.SOURCE_DPAD
+                sources and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
             ) {
                 connected = true
                 break
