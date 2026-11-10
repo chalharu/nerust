@@ -280,6 +280,8 @@ class MainActivity :
                     device.hasKeys(KeyEvent.KEYCODE_BUTTON_A)[0]
             if (gamepad || joystickWithButtons) {
                 connected = true
+                // Debug breadcrumb for Auto-hide reports: which device hid it.
+                Log.d(TAG, "overlay auto-hide counts gamepad: ${device.name} (id=${device.id})")
                 break
             }
         }
