@@ -54,7 +54,7 @@ internal fun connectedGamepadNames(): List<String> {
             sources and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
                 sources and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
         if (!stick) continue
-        if (!device.hasKeys(buttonCodes).any { it }) continue
+        if (!device.hasKeys(*buttonCodes).any { it }) continue
         names += device.name
     }
     return names.distinct()
