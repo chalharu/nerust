@@ -46,6 +46,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -59,21 +60,23 @@ internal const val FPS_OVERLAY_TAG = "nerust-fps-overlay"
 internal const val DRAWER_TITLE = "Nerust"
 
 private data class DrawerAction(
-    val label: String,
+    val labelRes: Int,
     val action: String,
 )
 
-/** Drawer actions resolve to the single-source [MenuAction] contract. */
+/** Drawer actions resolve to the single-source [MenuAction] contract.
+ * Labels are string resources (EN/JA); the e2e probe reads the resolved
+ * English text on the emulator locale. */
 private val DRAWER_ACTIONS =
     listOf(
-        DrawerAction("Open ROM", MenuAction.OPEN_ROM),
-        DrawerAction("Settings", MenuAction.OPEN_SETTINGS),
-        DrawerAction("Pause / Resume", MenuAction.TOGGLE_PAUSE),
-        DrawerAction("Save State", MenuAction.SAVE_STATE),
-        DrawerAction("Load State", MenuAction.LOAD_STATE),
-        DrawerAction("Reset", MenuAction.RESET),
-        DrawerAction("Unload ROM", MenuAction.UNLOAD),
-        DrawerAction("Exit", MenuAction.EXIT),
+        DrawerAction(R.string.drawer_open_rom, MenuAction.OPEN_ROM),
+        DrawerAction(R.string.drawer_settings, MenuAction.OPEN_SETTINGS),
+        DrawerAction(R.string.drawer_pause_resume, MenuAction.TOGGLE_PAUSE),
+        DrawerAction(R.string.drawer_save_state, MenuAction.SAVE_STATE),
+        DrawerAction(R.string.drawer_load_state, MenuAction.LOAD_STATE),
+        DrawerAction(R.string.drawer_reset, MenuAction.RESET),
+        DrawerAction(R.string.drawer_unload_rom, MenuAction.UNLOAD),
+        DrawerAction(R.string.drawer_exit, MenuAction.EXIT),
     )
 
 /** Non-dialog chrome: touch overlay, drawer, FPS label, and attach retries.
@@ -604,7 +607,7 @@ class ChromeManager(private val activity: MainActivity) {
     private fun createDrawerEdgeHandleOverlay(): View =
         DrawerEdgeSwipeHandleView(activity) { showDrawerOverlay() }.apply {
             tag = DRAWER_EDGE_HANDLE_TAG
-            contentDescription = "Open navigation drawer"
+            contentDescription = activity.getString(R.string.drawer_open_nav)
             layoutParams =
                 FrameLayout.LayoutParams(
                     dp(DRAWER_EDGE_HANDLE_WIDTH_DP),
@@ -702,7 +705,10 @@ class ChromeManager(private val activity: MainActivity) {
     private fun dp(value: Int): Int = (value * activity.resources.displayMetrics.density).toInt()
 
     private fun drawerContentDescription(): String =
-        (listOf(DRAWER_TITLE) + DRAWER_ACTIONS.map { it.label }).joinToString("\n")
+        (
+            listOf(DRAWER_TITLE) +
+                DRAWER_ACTIONS.map { activity.getString(it.labelRes) }
+        ).joinToString("\n")
 
     private fun View?.isShownInWindowForTest(): Boolean =
         this != null && visibility == View.VISIBLE && isAttachedToWindow && windowToken != null
@@ -765,13 +771,13 @@ private fun NerustDrawerOverlay(
                         modifier = Modifier.padding(start = 24.dp, top = 24.dp, end = 24.dp, bottom = 8.dp),
                     )
                     Text(
-                        text = "Open ROMs and control the current session.",
+                        text = stringResource(R.string.drawer_subtitle),
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 16.dp),
                     )
                     DRAWER_ACTIONS.forEachIndexed { index, action ->
                         DrawerActionItem(
-                            label = action.label,
+                            label = stringResource(action.labelRes),
                             onClick = {
                                 closeAndRun(action.action)
                             },

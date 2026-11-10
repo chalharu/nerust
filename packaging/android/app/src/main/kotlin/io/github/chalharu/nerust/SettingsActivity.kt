@@ -239,10 +239,11 @@ class SettingsActivity :
     }
 
     /** Push touch capability alongside the keyboards: Rust disables the
-     * Always/Auto overlay choices on terminals without a touch screen. */
+     * Always/Auto overlay choices on terminals without a touch screen.
+     * See [hasTouchscreen] for the flag-or-device rule. */
     internal fun pushTouchCapability() {
         val nav = navActions ?: return
-        val capable = packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN)
+        val capable = hasTouchscreen(packageManager)
         val raw =
             try {
                 nativeSettingsCommand(
