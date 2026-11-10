@@ -128,15 +128,19 @@ def _callback_symbols(callbacks):
 
 
 def _checked_native(entries, symbols):
-    """Registered names bound to matching Rust callbacks, per host class."""
+    """Registered names bound to matching Rust callbacks, per host class.
+
+    Names stay unique across host activities: a second host binding the same
+    name would make the Kotlin ABI ambiguous.
+    """
     native = {}
     for owner, name, signature, pointer in entries:
         symbol = pointer.split("::")[-1]
         require(symbol == "Java_" + owner.replace(".", "_") + "_" + name,
                 f"wrong registered function for {owner}#{name}: {pointer}")
         require(symbols.get(symbol) == signature, f"Rust callback ABI mismatch: {owner}#{name}")
-        require((owner, name) not in native, f"duplicate registration: {owner}#{name}")
-        native[(owner, name)] = signature
+        require(name not in native, f"duplicate registration across host activities: {name}")
+        native[name] = signature
     require(set(symbols) == {pointer.split("::")[-1] for _, _, _, pointer in entries},
             "unregistered Rust activity callback")
     return native
@@ -145,10 +149,9 @@ def _checked_native(entries, symbols):
 def _kotlin_methods(activity, call_names):
     """Kotlin bridge methods with the external native subset.
 
-    The activity source concatenates MainActivity and SettingsActivity;
-    externs are keyed by (class, name) to match per-class registration.
+    The activity source concatenates MainActivity and SettingsActivity; extern
+    names must stay unique across both so registration stays unambiguous.
     """
-    owners = [(match.start(), match[1]) for match in re.finditer(r'^class (\w+)', activity, re.M)]
     methods = {}
     kotlin_native = {}
     for match in re.finditer(r'\b(external\s+)?fun\s+(\w+)\s*\(([^()]*)\)\s*(?::\s*([\w?]+))?', activity):
@@ -157,13 +160,7 @@ def _kotlin_methods(activity, call_names):
             require(name not in methods, f"overloaded bridge method: {name}")
             methods[name] = kotlin_signature(args, result or "Unit")
             if external:
-                owner = "top-level"
-                for start, class_name in owners:
-                    if start < match.start():
-                        owner = class_name
-                key = (owner, name)
-                require(key not in kotlin_native, f"duplicate native declaration: {key}")
-                kotlin_native[key] = methods[name]
+                kotlin_native[name] = methods[name]
     return methods, kotlin_native
 
 
@@ -186,11 +183,8 @@ def validate_jni(registration, table, activity, callbacks):
     calls = re.findall(r'bridge_method!\(\s*\w+\s*,\s*"(\w+)"\s*,\s*"([^"]+)"\s*\)', table)
     require(calls and len(calls) == table.count("bridge_method!("), "unparsed Rust bridge table")
     methods, kotlin_native = _kotlin_methods(activity, {name for name, _ in calls})
-    # Registration is keyed by (fully-qualified class, name); Kotlin by
-    # (simple class name, name). Both sides must carry the same pairs.
-    simple_native = {(owner.split(".")[-1], name): sig for (owner, name), sig in native.items()}
-    require(kotlin_native == simple_native,
-            f"native registration/Kotlin ABI mismatch: {simple_native} != {kotlin_native}")
+    require(kotlin_native == native,
+            f"native registration/Kotlin ABI mismatch: {native} != {kotlin_native}")
     require(len(kotlin_native) == len(re.findall(r'\bexternal\s+fun\b', activity)),
             "unparsed Kotlin native declaration")
     outbound = _checked_outbound(calls, methods)

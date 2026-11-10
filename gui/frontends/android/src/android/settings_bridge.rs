@@ -148,7 +148,7 @@ pub extern "system" fn Java_io_github_chalharu_nerust_SettingsActivity_onSetting
 }
 
 fn on_settings_dialog_result(env: &mut jni::EnvUnowned<'_>, result: JString<'_>) {
-    match bridge::with_callback_env(&mut env, |env| -> jni::errors::Result<Option<String>> {
+    match bridge::with_callback_env(&mut *env, |env| -> jni::errors::Result<Option<String>> {
         if result.is_null() {
             Ok(None)
         } else {
@@ -218,7 +218,7 @@ fn hardware_key(
     keycode: jni::sys::jint,
     pressed: jni::sys::jboolean,
 ) -> jni::sys::jstring {
-    let parsed = bridge::with_callback_env(&mut env, |_env| -> jni::errors::Result<(i32, bool)> {
+    let parsed = bridge::with_callback_env(&mut *env, |_env| -> jni::errors::Result<(i32, bool)> {
         Ok((keycode, pressed))
     });
     let out = match parsed {
@@ -237,7 +237,7 @@ fn hardware_key(
         }),
         _ => serde_json::json!({"ok": false, "error": "jni decode failed"}).to_string(),
     };
-    match bridge::with_callback_env(&mut env, |env| -> jni::errors::Result<jni::sys::jstring> {
+    match bridge::with_callback_env(&mut *env, |env| -> jni::errors::Result<jni::sys::jstring> {
         Ok(env.new_string(out)?.into_raw())
     }) {
         jni::Outcome::Ok(ptr) => ptr,
@@ -258,7 +258,7 @@ pub extern "system" fn Java_io_github_chalharu_nerust_SettingsActivity_nativeSet
 }
 
 fn settings_command(env: &mut jni::EnvUnowned<'_>, command: JString<'_>) -> jni::sys::jstring {
-    let parsed = bridge::with_callback_env(&mut env, |env| -> jni::errors::Result<String> {
+    let parsed = bridge::with_callback_env(&mut *env, |env| -> jni::errors::Result<String> {
         command.try_to_string(env)
     });
     let out = match parsed {
@@ -273,7 +273,7 @@ fn settings_command(env: &mut jni::EnvUnowned<'_>, command: JString<'_>) -> jni:
         }),
         _ => serde_json::json!({"ok": false, "error": "jni decode failed"}).to_string(),
     };
-    match bridge::with_callback_env(&mut env, |env| -> jni::errors::Result<jni::sys::jstring> {
+    match bridge::with_callback_env(&mut *env, |env| -> jni::errors::Result<jni::sys::jstring> {
         Ok(env.new_string(out)?.into_raw())
     }) {
         jni::Outcome::Ok(ptr) => ptr,
