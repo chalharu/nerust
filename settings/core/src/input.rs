@@ -23,7 +23,10 @@ pub fn exclusive_member_conflicts(ports: &PortDeviceSets) -> Vec<(String, Vec<St
     for (port, members) in ports {
         for member in members {
             if !member_is_shareable(member) {
-                by_member.entry(member.as_str()).or_default().push(port.as_str());
+                by_member
+                    .entry(member.as_str())
+                    .or_default()
+                    .push(port.as_str());
             }
         }
     }
@@ -152,8 +155,14 @@ mod tests {
         assert!(member_is_shareable("kbd:05ac:024f"));
         assert!(!member_is_shareable("pad:deadbeef"));
         let ports: PortDeviceSets = [
-            ("p1".to_string(), vec!["kbd:builtin".to_string(), "pad:aa".to_string()]),
-            ("p2".to_string(), vec!["kbd:builtin".to_string(), "pad:aa".to_string()]),
+            (
+                "p1".to_string(),
+                vec!["kbd:builtin".to_string(), "pad:aa".to_string()],
+            ),
+            (
+                "p2".to_string(),
+                vec!["kbd:builtin".to_string(), "pad:aa".to_string()],
+            ),
         ]
         .into_iter()
         .collect();

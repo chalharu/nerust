@@ -90,8 +90,8 @@ class SettingsActivity :
         window.decorView.setTag(R.id.nerust_dialog_content_probe, contentDescription)
         window.decorView.setTag(
             R.id.nerust_settings_hierarchy_probe,
-            buildSettingsSections(sections).joinToString("\n") { section ->
-                val count = section.rows.count { it.kind != "header" }
+            sections.joinToString("\n") { section ->
+                val count = section.rows.count { it.kind != "header" && it.kind != "button" }
                 "${section.label}: ${resources.getQuantityString(R.plurals.settings_count, count, count)}"
             },
         )

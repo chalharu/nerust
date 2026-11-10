@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -69,30 +70,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import kotlin.math.roundToLong
 import org.json.JSONObject
-
-/** Settings section fallback labels: Rust pushes the label per section.
- * Used only for test-constructed content without a pushed label. */
-internal object SettingsSectionFallback {
-    const val AUDIO = "Audio"
-    const val VIDEO = "Video"
-    const val CONTROLS = "Controls"
-    const val STORAGE = "Storage"
-    const val NOTIFICATIONS = "Notifications"
-    const val GENERAL = "General"
-
-    fun labelFor(id: String): String =
-        when (id) {
-            "audio" -> AUDIO
-            "video" -> VIDEO
-            "controls" -> CONTROLS
-            "storage" -> STORAGE
-            "notifications" -> NOTIFICATIONS
-            "general" -> GENERAL
-            "system.nes" -> "Nintendo Entertainment System"
-            "system.gbc" -> "Game Boy Color"
-            "system.gba" -> "Game Boy Advance"
-            else -> id.substringAfterLast('.').replace('_', ' ').replaceFirstChar(Char::uppercase)
-        }
 }
 
 /** One pick-list entry: the value rides back to Rust by index, so Kotlin
@@ -173,7 +150,7 @@ internal fun parseSettingsSections(payload: JSONObject): List<SettingsSection> {
                 )
         }
         val id = section.getString("id")
-        val label = section.optString("label").ifBlank { SettingsSectionFallback.labelFor(id) }
+        val label = section.optString("label")
         val visible = section.optBoolean("visible", true)
         val sub = section.optString("sub", "")
         out += SettingsSection(id = id, label = label, rows = rows.filter { it.visible }, visible = visible, sub = sub)
@@ -316,7 +293,7 @@ internal fun settingsContentDescription(
         sections
             .filter { it.visible }
             .flatMap { it.rows }
-            .filter { it.kind != "header" }
+            .filter { it.kind != "header" && it.kind != "button" }
             .forEach { row ->
                 add("${row.label}: ${settingsRowDisplayValue(row, onLabel, offLabel)}")
             }
@@ -481,6 +458,28 @@ internal fun NerustSettingsDialogCard(
             }
         }
 
+    // Child-section parent map, shared by search breadcrumbs and
+    // unsaved-dot ancestor propagation.
+    val parents = remember(sections) { parentMap(sections) }
+    // Dirty sections plus every ancestor up to the visible categories,
+    // so a deep edit still dots its top-level card.
+    val dirtyVisibleSections =
+        remember(sections, dirtyKeys) {
+            val direct =
+                sections
+                    .filter { section ->
+                        section.rows.any { it.key in dirtyKeys }
+                    }.map { it.id }
+                    .toMutableSet()
+            val queue = ArrayDeque(direct)
+            while (queue.isNotEmpty()) {
+                parents[queue.removeFirst()]?.let { (parentId, _, _) ->
+                    if (direct.add(parentId)) queue.add(parentId)
+                }
+            }
+            direct
+        }
+
     NerustExpressiveHost {
         Scaffold(
             topBar = {
@@ -579,12 +578,8 @@ internal fun NerustSettingsDialogCard(
                     }
                 },
                 onSectionClick = { activeSectionId = it },
-                dirtySections =
-                    sections
-                        .filter { section ->
-                            section.rows.any { it.key in dirtyKeys }
-                        }.map { it.id }
-                        .toSet(),
+                parents = parents,
+                dirtySections = dirtyVisibleSections,
                 onSearchNavigate = { sectionId, rowKey ->
                     activeSectionId = sectionId
                     activeRowKey = rowKey
@@ -592,67 +587,68 @@ internal fun NerustSettingsDialogCard(
             )
         }
         if (confirmDiscard) {
-            androidx.compose.material3.AlertDialog(
-                onDismissRequest = { confirmDiscard = false },
-                title = { Text(stringResource(R.string.settings_discard_title)) },
-                text = { Text(stringResource(R.string.settings_discard_message)) },
-                confirmButton = {
-                    TextButton(
-                        onClick = {
-                            confirmDiscard = false
-                            onDismissRequest()
-                        },
-                    ) { Text(stringResource(R.string.settings_discard_confirm)) }
+            SettingsConfirmDialog(
+                title = stringResource(R.string.settings_discard_title),
+                text = stringResource(R.string.settings_discard_message),
+                confirmLabel = stringResource(R.string.settings_discard_confirm),
+                onConfirm = {
+                    confirmDiscard = false
+                    onDismissRequest()
                 },
-                dismissButton = {
-                    TextButton(onClick = { confirmDiscard = false }) {
-                        Text(stringResource(R.string.settings_keep_editing))
-                    }
-                },
+                onDismiss = { confirmDiscard = false },
             )
         }
         pendingResetKey?.let { resetKey ->
             val isAll = resetKey == "reset.all"
-            androidx.compose.material3.AlertDialog(
-                onDismissRequest = { pendingResetKey = null },
-                title = {
-                    Text(
-                        stringResource(
-                            if (isAll) {
-                                R.string.settings_reset_all_title
-                            } else {
-                                R.string.settings_reset_screen_title
-                            },
-                        ),
-                    )
-                },
-                text = {
-                    Text(
-                        stringResource(
-                            if (isAll) {
-                                R.string.settings_reset_all_message
-                            } else {
-                                R.string.settings_reset_screen_message
-                            },
-                        ),
-                    )
-                },
-                confirmButton = {
-                    TextButton(
-                        onClick = {
-                            pendingResetKey = null
-                            sendCommand(resetKey, 0, 0L, "reset_section")
+            SettingsConfirmDialog(
+                title =
+                    stringResource(
+                        if (isAll) {
+                            R.string.settings_reset_all_title
+                        } else {
+                            R.string.settings_reset_screen_title
                         },
-                    ) { Text(stringResource(R.string.settings_reset_confirm)) }
+                    ),
+                text =
+                    stringResource(
+                        if (isAll) {
+                            R.string.settings_reset_all_message
+                        } else {
+                            R.string.settings_reset_screen_message
+                        },
+                    ),
+                confirmLabel = stringResource(R.string.settings_reset_confirm),
+                onConfirm = {
+                    pendingResetKey = null
+                    sendCommand(resetKey, 0, 0L, "reset_section")
                 },
-                dismissButton = {
-                    TextButton(onClick = { pendingResetKey = null }) {
-                        Text(stringResource(R.string.settings_keep_editing))
-                    }
-                },
+                onDismiss = { pendingResetKey = null },
             )
         }
     }
+}
+
+@Composable
+private fun SettingsConfirmDialog(
+    title: String,
+    text: String,
+    confirmLabel: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = title) },
+        text = { Text(text = text) },
+        confirmButton = {
+            TextButton(onClick = onConfirm) { Text(text = confirmLabel) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.settings_keep_editing))
+            }
+        },
+    )
 }
 
 internal fun parseIssues(payload: JSONObject): List<String> {
@@ -772,6 +768,94 @@ private fun androidx.compose.foundation.lazy.LazyListScope.settingsBannerItems(
 }
 
 @Composable
+private fun LazyListScope.settingsSearchResults(
+    hits: List<Pair<SettingsSection, SettingsRow>>,
+    emptyText: String,
+    breadcrumbOf: (String) -> String,
+    onNavigate: (String, String?) -> Unit,
+) {
+    if (hits.isEmpty()) {
+        item(key = "settings-search-empty") {
+            Card(
+                shape = RoundedCornerShape(28.dp),
+                colors =
+                    CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    ),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    text = emptyText,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(20.dp),
+                )
+            }
+        }
+    } else {
+        val hitKey = { _: Int, hit: Pair<SettingsSection, SettingsRow> ->
+            "search:${hit.first.id}:${hit.second.key}"
+        }
+        itemsIndexed(hits, key = hitKey) { _, (section, row) ->
+            val trail =
+                listOf(breadcrumbOf(section.id), section.label)
+                    .filter { it.isNotBlank() }
+                    .joinToString(" › ")
+            Card(
+                onClick = {
+                    when {
+                        row.kind == "choice" -> onNavigate(section.id, row.key)
+                        row.kind == "group" && row.target.isNotBlank() ->
+                            onNavigate(row.target, null)
+                        row.detailTarget.isNotBlank() ->
+                            onNavigate(row.detailTarget, null)
+                        else -> onNavigate(section.id, null)
+                    }
+                },
+                shape = RoundedCornerShape(28.dp),
+                colors =
+                    CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    ),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(modifier = Modifier.padding(20.dp)) {
+                    Text(
+                        text = row.label,
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    if (trail.isNotBlank()) {
+                        Text(
+                            text = trail,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Child section id -> (parent section id, parent label, via row label).
+ * Group rows and device Details buttons both climb one level. Shared by
+ * search breadcrumbs and unsaved-dot ancestor propagation. */
+private fun parentMap(sections: List<SettingsSection>): Map<String, Triple<String, String, String>> =
+    buildMap {
+        for (section in sections) {
+            for (row in section.rows) {
+                val child =
+                    when {
+                        row.kind == "group" && row.target.isNotBlank() -> row.target
+                        row.detailTarget.isNotBlank() -> row.detailTarget
+                        else -> continue
+                    }
+                if (sections.any { it.id == child }) {
+                    put(child, Triple(section.id, section.label, row.label))
+                }
+            }
+        }
+    }
+
 private fun SettingsScreenContent(
     modifier: Modifier,
     sections: List<SettingsSection>,
@@ -788,6 +872,7 @@ private fun SettingsScreenContent(
     onClearCapture: (SettingsRow) -> Unit,
     onDetailClick: (SettingsRow) -> Unit,
     onSectionClick: (String) -> Unit,
+    parents: Map<String, Triple<String, String, String>>,
     dirtySections: Set<String>,
     onSearchNavigate: (String, String?) -> Unit,
 ) {
@@ -828,6 +913,7 @@ private fun SettingsScreenContent(
                     sections = sections,
                     banners = banners,
                     dirtySections = dirtySections,
+                    parents = parents,
                     onCancelCapture = onCancelCapture,
                     onSectionClick = onSectionClick,
                     onSearchNavigate = onSearchNavigate,
@@ -842,31 +928,12 @@ private fun SettingsCategoryList(
     sections: List<SettingsSection>,
     banners: SettingsBanners,
     dirtySections: Set<String>,
+    parents: Map<String, Triple<String, String, String>>,
     onCancelCapture: () -> Unit,
     onSectionClick: (String) -> Unit,
     onSearchNavigate: (String, String?) -> Unit,
 ) {
     var query by remember { mutableStateOf("") }
-    // Child section id -> (parent section id, parent label, via row label).
-    // Group rows and device Details buttons both climb one level.
-    val parents =
-        remember(sections) {
-            buildMap {
-                for (section in sections) {
-                    for (row in section.rows) {
-                        val child =
-                            when {
-                                row.kind == "group" && row.target.isNotBlank() -> row.target
-                                row.detailTarget.isNotBlank() -> row.detailTarget
-                                else -> continue
-                            }
-                        if (sections.any { it.id == child }) {
-                            put(child, Triple(section.id, section.label, row.label))
-                        }
-                    }
-                }
-            }
-        }
     fun breadcrumb(sectionId: String): String {
         val chain = mutableListOf<String>()
         var current: String? = sectionId
@@ -917,66 +984,12 @@ private fun SettingsCategoryList(
                                 )
                         }.map { row -> section to row }
                 }
-            if (hits.isEmpty()) {
-                item(key = "settings-search-empty") {
-                    Card(
-                        shape = RoundedCornerShape(28.dp),
-                        colors =
-                            CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                            ),
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(
-                            text = stringResource(R.string.settings_search_empty, query),
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.padding(20.dp),
-                        )
-                    }
-                }
-            } else {
-                val hitKey = { _: Int, hit: Pair<SettingsSection, SettingsRow> ->
-                    "search:${hit.first.id}:${hit.second.key}"
-                }
-                itemsIndexed(hits, key = hitKey) { _, (section, row) ->
-                    val trail =
-                        listOf(breadcrumb(section.id), section.label)
-                            .filter { it.isNotBlank() }
-                            .joinToString(" › ")
-                    Card(
-                        onClick = {
-                            when {
-                                row.kind == "choice" -> onSearchNavigate(section.id, row.key)
-                                row.kind == "group" && row.target.isNotBlank() ->
-                                    onSearchNavigate(row.target, null)
-                                row.detailTarget.isNotBlank() ->
-                                    onSearchNavigate(row.detailTarget, null)
-                                else -> onSearchNavigate(section.id, null)
-                            }
-                        },
-                        shape = RoundedCornerShape(28.dp),
-                        colors =
-                            CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                            ),
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Column(modifier = Modifier.padding(20.dp)) {
-                            Text(
-                                text = row.label,
-                                style = MaterialTheme.typography.titleMedium,
-                            )
-                            if (trail.isNotBlank()) {
-                                Text(
-                                    text = trail,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
+            settingsSearchResults(
+                hits = hits,
+                emptyText = stringResource(R.string.settings_search_empty, query),
+                breadcrumbOf = ::breadcrumb,
+                onNavigate = onSearchNavigate,
+            )
             return@LazyColumn
         }
         // Cards show visible categories only; search above covers hidden
@@ -1002,8 +1015,9 @@ private fun SettingsCategoryList(
                             }
                         "${row.label}: $value"
                     }
-            // Headers group rows visually; only real entries count.
-            val entryCount = section.rows.count { it.kind != "header" }
+            // Headers group rows visually and buttons act; only real
+            // entries count.
+            val entryCount = section.rows.count { it.kind != "header" && it.kind != "button" }
             Card(
                 onClick = { onSectionClick(section.id) },
                 shape = RoundedCornerShape(28.dp),
@@ -1515,6 +1529,4 @@ private fun SettingsInfoRow(
         Text(text = value, style = MaterialTheme.typography.bodyMedium)
     }
 }
-
-internal fun buildSettingsSections(sections: List<SettingsSection>): List<SettingsSection> = sections
 

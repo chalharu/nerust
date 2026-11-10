@@ -298,10 +298,7 @@ fn validator(state: &super::EditorState) -> super::ValidationState {
 
 /// Global port device sets: exclusive members (gamepads) must not sit in
 /// two ports at once. Keyboards share freely, so they never issue here.
-fn validate_port_devices(
-    state: &super::EditorState,
-    issues: &mut Vec<super::ValidationIssue>,
-) {
+fn validate_port_devices(state: &super::EditorState, issues: &mut Vec<super::ValidationIssue>) {
     for (member, ports) in
         nerust_settings_core::input::exclusive_member_conflicts(&state.draft.app_state.port_devices)
     {

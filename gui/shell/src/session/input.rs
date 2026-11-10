@@ -4,7 +4,10 @@ use nerust_input_traits::{AbstractKey, ControlId, DigitalInputEvent, InputValue}
 use nerust_settings_core::model::input::ShortcutAction;
 
 use crate::{
-    session::{KeyboardShortcut, SessionHandle},
+    session::{
+        KeyboardShortcut, SessionHandle,
+        field_press::{FieldSource, dpad_axis_of},
+    },
     settings::bindings::events::shortcut::shortcut_action_for_key,
 };
 
@@ -115,10 +118,8 @@ impl SessionHandle {
         let dpad = self
             .input
             .abstract_for(&attachment, &control)
-            .and_then(|abs| {
-                super::field_press::dpad_axis_of(abs).map(|_| (attachment, control, abs))
-            });
-        let source = super::field_press::FieldSource::Control(event.attachment, event.control);
+            .and_then(|abs| dpad_axis_of(abs).map(|_| (attachment, control, abs)));
+        let source = FieldSource::Control(event.attachment, event.control);
         let updates = if event.is_pressed() {
             self.input.press_state.press(field, source, dpad)
         } else {
@@ -147,11 +148,9 @@ impl SessionHandle {
             let dpad = source_info.and_then(|(attachment, control)| {
                 self.input
                     .abstract_for(&attachment, &control)
-                    .and_then(|abs| {
-                        super::field_press::dpad_axis_of(abs).map(|_| (attachment, control, abs))
-                    })
+                    .and_then(|abs| dpad_axis_of(abs).map(|_| (attachment, control, abs)))
             });
-            let source = super::field_press::FieldSource::Key(key);
+            let source = FieldSource::Key(key);
             let updates = if pressed {
                 self.input.press_state.press(field, source, dpad)
             } else {
