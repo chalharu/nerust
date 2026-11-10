@@ -289,10 +289,30 @@ fn validator(state: &super::EditorState) -> super::ValidationState {
     validate_storage_policy(state, &mut issues);
     validate_audio_settings(state, &mut issues);
     validate_notification_settings(state, &mut issues);
+    validate_port_devices(state, &mut issues);
     for factory in state.catalog.all() {
         validate_factory_settings(state, factory, &mut issues);
     }
     super::ValidationState { issues }
+}
+
+/// Global port device sets: exclusive members (gamepads) must not sit in
+/// two ports at once. Keyboards share freely, so they never issue here.
+fn validate_port_devices(
+    state: &super::EditorState,
+    issues: &mut Vec<super::ValidationIssue>,
+) {
+    for (member, ports) in
+        nerust_settings_core::input::exclusive_member_conflicts(&state.draft.app_state.port_devices)
+    {
+        issues.push(super::ValidationIssue {
+            scope: super::ValidationScope::Controllers,
+            message: format!(
+                "{member} is assigned to multiple ports ({})",
+                ports.join(", ")
+            ),
+        });
+    }
 }
 
 #[cfg(test)]

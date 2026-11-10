@@ -30,7 +30,10 @@ pub(super) fn request_show_settings_dialog(
     snapshot: &SettingsSnapshot,
 ) -> Result<bool, String> {
     // Project before taking the flight: a projection failure must not wedge it.
-    let payload = settings_views::open_payload(snapshot)?;
+    let payload = bridge::with_settings(|state| {
+        settings_views::open_payload(snapshot, &state.keyboards)
+    })
+    .map_err(|error| error.to_string())??;
     let payload = bridge::with_settings(|state| {
         let request_id = state.flight.begin()?;
         state.draft = Some(snapshot.clone());
@@ -229,7 +232,13 @@ fn hardware_key(
             if state.capture.is_none() {
                 return serde_json::json!({"ok": true, "consumed": false}).to_string();
             }
-            match settings_views::apply_hardware_key(keycode, pressed, draft, &mut state.capture)
+            match settings_views::apply_hardware_key(
+                keycode,
+                pressed,
+                draft,
+                &mut state.capture,
+                &state.keyboards,
+            )
             {
                 Ok((payload, consumed)) => serde_json::json!({"ok": true, "consumed": consumed, "payload": serde_json::from_str::<serde_json::Value>(&payload).unwrap_or(serde_json::Value::Null)}).to_string(),
                 Err(error) => serde_json::json!({"ok": false, "error": error}).to_string(),
@@ -266,7 +275,12 @@ fn settings_command(env: &mut jni::EnvUnowned<'_>, command: JString<'_>) -> jni:
             let Some(draft) = state.draft.as_mut() else {
                 return serde_json::json!({"ok": false, "error": "no settings draft"}).to_string();
             };
-            match settings_views::apply_command_to(draft, &command_json, &mut state.capture) {
+            match settings_views::apply_command_to(
+                draft,
+                &command_json,
+                &mut state.capture,
+                &mut state.keyboards,
+            ) {
                 Ok(sections) => serde_json::json!({"ok": true, "payload": serde_json::from_str::<serde_json::Value>(&sections).unwrap_or(serde_json::Value::Null)}).to_string(),
                 Err(error) => serde_json::json!({"ok": false, "error": error}).to_string(),
             }

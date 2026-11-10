@@ -218,6 +218,35 @@ pub enum UiText {
     DescStoragePolicy,
     DescStorageDirectory,
     DescSystemControllers,
+    SectionPlay,
+    SectionControllers,
+    SectionSaves,
+    SectionApp,
+    SectionAdvanced,
+    Devices,
+    ControllerType,
+    FollowsDevice,
+    NoKeyboards,
+    DescNoKeyboards,
+    ResetSettings,
+    ResetScreen,
+    Version,
+    License,
+    BuiltInKeyboard,
+    ExternalKeyboard,
+    GamepadDevice,
+    AlwaysAvailable,
+    Connected,
+    SharesAcrossPlayers,
+    Keyboard,
+    AudioDetail,
+    KeyMapping,
+    DescResetSettings,
+    DescResetScreen,
+    DescLicense,
+    Connection,
+    Capabilities,
+    KeyMappingDesc,
 }
 
 pub fn resolve_language(language: AppLanguage) -> AppLanguage {
@@ -582,6 +611,53 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
             "Open the controller screen for this system.",
             "この機種のコントローラー画面を開きます",
         ),
+        UiText::SectionPlay => ("Play", "プレイ"),
+        UiText::SectionControllers => ("Controllers", "コントローラー"),
+        UiText::SectionSaves => ("Saves", "保存データ"),
+        UiText::SectionApp => ("App", "アプリ"),
+        UiText::SectionAdvanced => ("Advanced", "詳細"),
+        UiText::Devices => ("Devices", "デバイス"),
+        UiText::ControllerType => ("Controller type", "コントローラーの種類"),
+        UiText::FollowsDevice => ("Follows the device", "接続しているデバイスに追従"),
+        UiText::NoKeyboards => ("No keyboards connected", "接続中のキーボードはありません"),
+        UiText::DescNoKeyboards => (
+            "Connect a USB or Bluetooth keyboard to assign it to a player.",
+            "USBやBluetoothキーボードを接続するとプレイヤーに割り当てられます",
+        ),
+        UiText::ResetSettings => ("Reset settings", "設定を初期化"),
+        UiText::ResetScreen => ("Reset this screen", "この画面を初期化"),
+        UiText::Version => ("Version", "バージョン"),
+        UiText::License => ("License", "ライセンス"),
+        UiText::BuiltInKeyboard => ("Built-in Keyboard", "内蔵キーボード"),
+        UiText::ExternalKeyboard => ("External keyboard", "外付けキーボード"),
+        UiText::GamepadDevice => ("Gamepad", "ゲームパッド"),
+        UiText::AlwaysAvailable => ("Always available", "常に利用可能"),
+        UiText::Connected => ("Connected", "接続中"),
+        UiText::SharesAcrossPlayers => (
+            "Shares across players",
+            "複数プレイヤーで共有可",
+        ),
+        UiText::Keyboard => ("Keyboard", "キーボード"),
+        UiText::AudioDetail => ("Audio details", "音声の詳細"),
+        UiText::KeyMapping => ("Key mapping", "キー割り当て"),
+        UiText::DescResetSettings => (
+            "Restore every setting to its default.",
+            "すべての設定を既定に戻します",
+        ),
+        UiText::DescResetScreen => (
+            "Restore this screen to its defaults.",
+            "この画面を既定に戻します",
+        ),
+        UiText::DescLicense => (
+            "Licensed under the Mozilla Public License 2.0.",
+            "Mozilla Public License 2.0 でライセンスされています",
+        ),
+        UiText::Connection => ("Connection", "接続"),
+        UiText::Capabilities => ("Capabilities", "対応機能"),
+        UiText::KeyMappingDesc => (
+            "Keyboard keys for this system. Tap a row to reassign.",
+            "この機種のキー割り当て。行タップで変更",
+        ),
     }
 }
 
@@ -634,6 +710,42 @@ pub fn slot_description(language: AppLanguage) -> String {
         "Choose the controller for this port.".to_string(),
         "このポートで使うコントローラーを選びます".to_string()
     )
+}
+
+/// Player/device-row summary: "Not assigned" when empty, otherwise
+/// "Name" or "Name +N" (short form is banned: the full first name reads).
+pub fn port_summary(language: AppLanguage, names: &[String]) -> String {
+    match names {
+        [] => text(language, UiText::NotAssigned).to_string(),
+        [first] => first.clone(),
+        [first, rest @ ..] => localized!(
+            language,
+            format!("{first} +{}", rest.len()),
+            format!("{first} +{}", rest.len())
+        ),
+    }
+}
+
+/// Player/device-row count line: "No devices assigned" / "1 device
+/// assigned" / "N devices assigned" (singular/plural distinguished).
+pub fn port_count_line(language: AppLanguage, count: usize) -> String {
+    match count {
+        0 => localized!(
+            language,
+            "No devices assigned".to_string(),
+            "割り当てデバイスなし".to_string()
+        ),
+        1 => localized!(
+            language,
+            "1 device assigned".to_string(),
+            "1台のデバイスを割り当て".to_string()
+        ),
+        n => localized!(
+            language,
+            format!("{n} devices assigned"),
+            format!("{n}台のデバイスを割り当て")
+        ),
+    }
 }
 
 /// Description for a machine-specific core setting row. The row label comes
@@ -933,6 +1045,35 @@ mod tests {
             DescStoragePolicy,
             DescStorageDirectory,
             DescSystemControllers,
+            SectionPlay,
+            SectionControllers,
+            SectionSaves,
+            SectionApp,
+            SectionAdvanced,
+            Devices,
+            ControllerType,
+            FollowsDevice,
+            NoKeyboards,
+            DescNoKeyboards,
+            ResetSettings,
+            ResetScreen,
+            Version,
+            License,
+            BuiltInKeyboard,
+            ExternalKeyboard,
+            GamepadDevice,
+            AlwaysAvailable,
+            Connected,
+            SharesAcrossPlayers,
+            Keyboard,
+            AudioDetail,
+            KeyMapping,
+            DescResetSettings,
+            DescResetScreen,
+            DescLicense,
+            Connection,
+            Capabilities,
+            KeyMappingDesc,
         ] {
             assert!(!text(en(), key).is_empty());
             assert!(!text(ja(), key).is_empty());
