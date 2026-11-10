@@ -155,7 +155,7 @@ class SettingsActivity :
         val out = JSONArray()
         val seen = mutableSetOf<String>()
         val devices =
-            InputDevice.getDeviceIds().mapNotNull { InputDevice.getDevice(it) }.filter {
+            InputDevice.getDeviceIds().toList().mapNotNull { InputDevice.getDevice(it) }.filter {
                 it.sources and InputDevice.SOURCE_KEYBOARD == InputDevice.SOURCE_KEYBOARD
             }
         val builtin = devices.firstOrNull { it.id == 0 }
