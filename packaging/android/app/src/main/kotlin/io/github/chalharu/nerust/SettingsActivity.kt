@@ -177,7 +177,6 @@ class SettingsActivity :
      * sensors) also expose SOURCE_KEYBOARD, so externals must additionally
      * carry letter keys to count as keyboards. */
     internal fun enumerateKeyboards(): JSONArray {
-    internal fun enumerateKeyboards(): JSONArray {
         val out = JSONArray()
         val seen = mutableSetOf<String>()
         val devices =
