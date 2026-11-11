@@ -1471,7 +1471,7 @@ fn build_sections(
         build_play_section(vm, snapshot, i18n),
         build_saves_section(vm, i18n),
         build_notifications_section(vm, i18n),
-        build_app_section(vm, i18n),
+        build_app_section(vm, snapshot, i18n),
         build_advanced_section(vm, snapshot, i18n),
         build_about_section(i18n),
         build_audio_detail_section(vm, i18n),
@@ -1600,7 +1600,11 @@ fn build_saves_section(vm: &SettingsViewModel, i18n: I18n) -> SectionWire {
 
 /// App: language, about, global reset. The reset button confirms in
 /// Kotlin first (`reset.all`), then restores every setting to default.
-fn build_app_section(vm: &SettingsViewModel, i18n: I18n) -> SectionWire {
+fn build_app_section(
+    vm: &SettingsViewModel,
+    snapshot: &SettingsSnapshot,
+    i18n: I18n,
+) -> SectionWire {
     let view = vm.general.view.get();
     let rows = vec![
         {
@@ -1609,7 +1613,10 @@ fn build_app_section(vm: &SettingsViewModel, i18n: I18n) -> SectionWire {
                     .iter()
                     .map(|choice| (choice.value, choice.label.clone()))
                     .collect::<Vec<_>>(),
-                view.language,
+                // Draft choice, not the view's concretized display copy:
+                // with SystemDefault the view reads back the resolved
+                // locale, which would highlight the wrong row.
+                snapshot.shared.general.language,
             );
             choice_row(
                 "general.language",
@@ -2955,6 +2962,38 @@ mod tests {
             I18n::resolve(AppLanguage::English, None).language(),
             AppLanguage::English
         );
+    }
+
+    #[test]
+    fn language_row_selects_the_draft_choice_not_the_display_copy() {
+        // SystemDefault under a `ja` system projects Japanese labels, but
+        // the language row must highlight SystemDefault: the VM works on
+        // the concretized copy, which would otherwise pin Japanese.
+        let snapshot = default_snapshot();
+        assert_eq!(
+            snapshot.shared.general.language,
+            AppLanguage::SystemDefault,
+            "default draft leaves the choice to the system"
+        );
+        let payload: ViewPayload = with_test_deps(|| {
+            let json = open_payload(
+                &snapshot,
+                &test_keyboards(),
+                None,
+                &[],
+                Some(AppLanguage::Japanese),
+            )
+            .expect("open payload builds");
+            serde_json::from_str(&json).unwrap()
+        });
+        let row = row(&payload, "general.language");
+        let selected = row.choices[row.selected].value.clone();
+        assert_eq!(
+            selected,
+            serde_json::json!("system_default"),
+            "row highlights the draft choice, labels stay resolved: {selected}"
+        );
+        assert_eq!(row.label, "UI 言語", "labels still resolve to Japanese");
     }
 
     #[test]
