@@ -483,6 +483,16 @@ fn apply_set_command(
     command: &WireCommand,
     i18n: I18n,
 ) -> Result<(), String> {
+    // Language bypasses the VM round-trip: the VM works on the concretized
+    // display copy, so an explicit choice equal to the resolved locale
+    // (SystemDefault under `ja` system + explicit Japanese) reads back as
+    // "untouched" and the pin-back in `sync_snapshot_from_vm` silently
+    // discards it. Writing the draft directly keeps the explicit choice.
+    if command.key.as_str() == "general.language" {
+        let row = find_row(sections, &command.key)?;
+        snapshot.shared.general.language = choice(row, command.index)?;
+        return Ok(());
+    }
     if apply_android_local(snapshot, sections, command)? {
         return Ok(());
     }
@@ -2994,6 +3004,59 @@ mod tests {
             "row highlights the draft choice, labels stay resolved: {selected}"
         );
         assert_eq!(row.label, "UI 言語", "labels still resolve to Japanese");
+    }
+
+    #[test]
+    fn explicit_japanese_under_ja_system_persists_as_japanese() {
+        // SystemDefault under a `ja` system resolves to Japanese, so an
+        // explicit Japanese choice reads back identical to "untouched".
+        // The old pin-back compared values and discarded it as no-change.
+        let mut snapshot = default_snapshot();
+        let mut keyboards = test_keyboards();
+        let mut locale = Some(AppLanguage::Japanese);
+        let payload: ViewPayload = with_test_deps(|| {
+            let json = open_payload(&snapshot, &keyboards, None, &[], locale)
+                .expect("open payload builds");
+            serde_json::from_str(&json).unwrap()
+        });
+        let language = row(&payload, "general.language");
+        let japanese = language
+            .choices
+            .iter()
+            .position(|choice| choice.value == serde_json::json!("japanese"))
+            .expect("japanese choice exists");
+        let next: ViewPayload = with_test_deps(|| {
+            let out = apply_command_to(
+                &mut snapshot,
+                &serde_json::to_string(&WireCommand {
+                    key: "general.language".to_string(),
+                    index: japanese,
+                    number: 0,
+                    op: "set".to_string(),
+                    payload: serde_json::Value::Null,
+                })
+                .unwrap(),
+                &mut None,
+                &mut keyboards,
+                &mut None,
+                &mut Vec::new(),
+                &mut locale,
+            )
+            .expect("language set applies");
+            serde_json::from_str(&out).unwrap()
+        });
+        assert_eq!(
+            snapshot.shared.general.language,
+            AppLanguage::Japanese,
+            "explicit choice survives even when it equals the resolved locale"
+        );
+        let selected_row = row(&next, "general.language");
+        let selected = selected_row.choices[selected_row.selected].value.clone();
+        assert_eq!(
+            selected,
+            serde_json::json!("japanese"),
+            "row highlights the explicit choice: {selected}"
+        );
     }
 
     #[test]
