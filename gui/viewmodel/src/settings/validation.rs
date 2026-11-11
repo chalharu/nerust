@@ -1,33 +1,14 @@
+use nerust_settings_core::{i18n::resolve_language, model::language::AppLanguage};
+
 /// Overall validation state for the settings view model.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidationState {
     pub issues: Vec<ValidationIssue>,
 }
 
-/// Shared validation banner policy: the headline is the first issue,
-/// storage shows the first persistence-scope issue, submit is allowed
-/// only when clean. Both frontends render this identically.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ValidationBanner {
-    pub can_submit: bool,
-    pub headline: Option<String>,
-    pub storage: Option<String>,
-}
-
 impl ValidationState {
     pub fn can_submit(&self) -> bool {
         self.issues.is_empty()
-    }
-
-    pub fn banner(&self) -> ValidationBanner {
-        ValidationBanner {
-            can_submit: self.can_submit(),
-            headline: self.issues.first().map(|issue| issue.message.clone()),
-            storage: self
-                .for_scope(&ValidationScope::Persistence)
-                .next()
-                .map(|issue| issue.message.clone()),
-        }
     }
 
     pub fn for_scope(&self, scope: &ValidationScope) -> impl Iterator<Item = &ValidationIssue> {
@@ -37,10 +18,130 @@ impl ValidationState {
     }
 }
 
+/// One draft problem: where it blocks, plus structured data for the
+/// message. The view model never renders text; both frontends format
+/// through [`ValidationIssueKind::message`] with their display language.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidationIssue {
     pub scope: ValidationScope,
-    pub message: String,
+    pub kind: ValidationIssueKind,
+}
+
+impl ValidationIssue {
+    pub fn message(&self, language: AppLanguage) -> String {
+        self.kind.message(language)
+    }
+}
+
+/// Machine-readable validation failure. Opaque platform details
+/// (`Storage`, `Placement`, key/conflict symbols) pass through
+/// untranslated; only the template sentence localizes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ValidationIssueKind {
+    /// Platform storage detail (path validator, URI rules): no template.
+    Storage(String),
+    VolumeOutOfRange,
+    SampleRateOutOfRange,
+    LatencyOutOfRange,
+    InfoDurationOutOfRange,
+    WarningDurationOutOfRange,
+    UnknownSlots {
+        system: String,
+        count: u32,
+    },
+    UnknownProfiles {
+        system: String,
+        count: u32,
+    },
+    NoController {
+        system: String,
+    },
+    /// Input-layer placement rejection: detail is the opaque rule text.
+    Placement {
+        system: String,
+        detail: String,
+    },
+    /// Duplicate physical key: key label plus the joined control labels.
+    KeyConflict {
+        key: String,
+        labels: String,
+    },
+    ExclusiveMember {
+        member: String,
+        ports: String,
+    },
+}
+
+impl ValidationIssueKind {
+    pub fn message(&self, language: AppLanguage) -> String {
+        let japanese = matches!(resolve_language(language), AppLanguage::Japanese);
+        match self {
+            Self::Storage(detail) => detail.clone(),
+            Self::VolumeOutOfRange => pick(
+                japanese,
+                "Master volume must be between 0 and 100",
+                "主音量は0から100の範囲で指定してください",
+            ),
+            Self::SampleRateOutOfRange => pick(
+                japanese,
+                "Sample rate must be between 1 and 192000",
+                "サンプルレートは1から192000の範囲で指定してください",
+            ),
+            Self::LatencyOutOfRange => pick(
+                japanese,
+                "Audio latency must be between 10 and 200 ms",
+                "音声遅延は10から200 msの範囲で指定してください",
+            ),
+            Self::InfoDurationOutOfRange => pick(
+                japanese,
+                "Info notification duration must be between 1000 and 30000 ms",
+                "情報通知の表示時間は1000から30000 msの範囲で指定してください",
+            ),
+            Self::WarningDurationOutOfRange => pick(
+                japanese,
+                "Warning notification duration must be between 1000 and 30000 ms",
+                "警告通知の表示時間は1000から30000 msの範囲で指定してください",
+            ),
+            Self::UnknownSlots { system, count } => {
+                if japanese {
+                    format!("{system}: 不明なスロットIDが{count}件あります")
+                } else {
+                    format!("{system}: {count} unknown slot ID(s)")
+                }
+            }
+            Self::UnknownProfiles { system, count } => {
+                if japanese {
+                    format!("{system}: 不明なコントローラープロファイルIDが{count}件あります")
+                } else {
+                    format!("{system}: {count} unknown controller profile ID(s)")
+                }
+            }
+            Self::NoController { system } => {
+                if japanese {
+                    format!("{system}: コントローラーを1つ以上割り当ててください")
+                } else {
+                    format!("{system}: At least one controller must be assigned")
+                }
+            }
+            Self::Placement { system, detail } => format!("{system}: {detail}"),
+            Self::KeyConflict { key, labels } => format!("{key}: {labels}"),
+            Self::ExclusiveMember { member, ports } => {
+                if japanese {
+                    format!("{member}は複数のポートに割り当てられています ({ports})")
+                } else {
+                    format!("{member} is assigned to multiple ports ({ports})")
+                }
+            }
+        }
+    }
+}
+
+fn pick(japanese: bool, english: &str, translated: &str) -> String {
+    if japanese {
+        translated.to_string()
+    } else {
+        english.to_string()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,7 +169,7 @@ mod tests {
         let state = ValidationState {
             issues: vec![ValidationIssue {
                 scope: ValidationScope::Persistence,
-                message: "error".into(),
+                kind: ValidationIssueKind::Storage("error".into()),
             }],
         };
         assert!(!state.can_submit());
@@ -80,49 +181,52 @@ mod tests {
             issues: vec![
                 ValidationIssue {
                     scope: ValidationScope::Persistence,
-                    message: "persistence error".into(),
+                    kind: ValidationIssueKind::Storage("persistence error".into()),
                 },
                 ValidationIssue {
                     scope: ValidationScope::Audio,
-                    message: "audio error".into(),
+                    kind: ValidationIssueKind::VolumeOutOfRange,
                 },
             ],
         };
         let persistence: Vec<_> = state.for_scope(&ValidationScope::Persistence).collect();
         assert_eq!(persistence.len(), 1);
-        assert_eq!(persistence[0].message, "persistence error");
+        assert_eq!(
+            persistence[0].kind,
+            ValidationIssueKind::Storage("persistence error".into())
+        );
     }
-}
-
-#[cfg(test)]
-mod banner_tests {
-    use super::*;
 
     #[test]
-    fn banner_headlines_first_issue_and_flags_storage() {
-        let state = ValidationState {
-            issues: vec![
-                ValidationIssue {
-                    scope: ValidationScope::Audio,
-                    message: "audio".into(),
-                },
-                ValidationIssue {
-                    scope: ValidationScope::Persistence,
-                    message: "storage".into(),
-                },
-            ],
+    fn messages_localize_templates_and_pass_opaque_details_through() {
+        let kind = ValidationIssueKind::VolumeOutOfRange;
+        assert_eq!(
+            kind.message(AppLanguage::English),
+            "Master volume must be between 0 and 100"
+        );
+        assert_eq!(
+            kind.message(AppLanguage::Japanese),
+            "主音量は0から100の範囲で指定してください"
+        );
+        let opaque = ValidationIssueKind::Storage("custom detail".into());
+        assert_eq!(
+            opaque.message(AppLanguage::Japanese),
+            "custom detail",
+            "platform details have no translation"
+        );
+        let conflict = ValidationIssueKind::ExclusiveMember {
+            member: "pad:0".into(),
+            ports: "p1, p2".into(),
         };
-        let banner = state.banner();
-        assert!(!banner.can_submit);
-        assert_eq!(banner.headline.as_deref(), Some("audio"));
-        assert_eq!(banner.storage.as_deref(), Some("storage"));
-    }
-
-    #[test]
-    fn banner_clean_when_no_issues() {
-        let banner = ValidationState { issues: vec![] }.banner();
-        assert!(banner.can_submit);
-        assert!(banner.headline.is_none());
-        assert!(banner.storage.is_none());
+        assert!(
+            conflict
+                .message(AppLanguage::Japanese)
+                .contains("複数のポート")
+        );
+        assert!(
+            conflict
+                .message(AppLanguage::English)
+                .contains("multiple ports")
+        );
     }
 }
