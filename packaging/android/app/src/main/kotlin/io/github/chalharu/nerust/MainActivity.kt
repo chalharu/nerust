@@ -696,7 +696,13 @@ class MainActivity :
 
     private external fun pushSystemLocale(tag: String)
 
-    internal external fun nativeIsEmulationPaused(): Boolean
+    /** Pause truth for the drawer (vault, published after every session
+     * command). Plain wrapper: `internal external` would mangle the JVM
+     * name (`$app` suffix) and break native registration, so the external
+     * stays private like every other query. */
+    internal fun isEmulationPaused(): Boolean = nativeIsEmulationPaused()
+
+    private external fun nativeIsEmulationPaused(): Boolean
 
     private external fun onFilePickerResult(uri: String?)
 
