@@ -26,14 +26,38 @@ internal fun hasTouchscreen(packageManager: PackageManager): Boolean {
  * One function so the two can never disagree about what "connected" means.
  * Sources alone prove nothing: button clusters (power keys, headset jacks,
  * fingerprint sensors, touch panels) can expose gamepad or joystick bits.
- * A counted device must expose the joystick class with a gamepad source
- * or a non-alphabetic keyboard (proven uinput-fpc filter, libgdx #5007),
- * hold a controller number (zero means the platform itself does not
- * consider it a game controller), carry a gamepad button, and drive a
- * game axis: without axes it is not usable alternative input, and hiding
- * touch controls for one strands the user with no way back. All four err
- * toward showing the overlay, never stranding. */
+ * See [isCountedGamepad] for the per-device verdict; every layer errs
+ * toward showing the overlay, never stranding the user with no input. */
 internal fun connectedGamepadNames(): List<String> {
+    val names = mutableListOf<String>()
+    for (id in InputDevice.getDeviceIds()) {
+        val device = InputDevice.getDevice(id) ?: continue
+        if (isCountedGamepad(device)) names += device.name
+    }
+    return names.distinct()
+}
+
+/** One-device verdict for the Auto gate. A counted device must expose the
+ * joystick class with a gamepad source or a non-alphabetic keyboard
+ * (proven uinput-fpc filter, libgdx #5007), hold a controller number
+ * (zero means the platform itself does not consider it a game controller),
+ * carry a gamepad button, and drive a game axis: without axes it is not
+ * usable alternative input, and hiding touch controls for one strands the
+ * user with no way back. */
+private fun isCountedGamepad(device: InputDevice): Boolean {
+    if (device.id < 0) return false
+    if (Build.VERSION.SDK_INT >= 29 && device.isVirtual) return false
+    // Canonical "is a game controller" verdict: fingerprint sensors
+    // and other button clusters never hold a controller number.
+    if (device.controllerNumber == 0) return false
+    val sources = device.sources
+    val joystickClass =
+        sources and InputDevice.SOURCE_CLASS_JOYSTICK == InputDevice.SOURCE_CLASS_JOYSTICK
+    val gamepadSource =
+        sources and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD
+    val nonAlphaKeyboard =
+        device.keyboardType != InputDevice.KEYBOARD_TYPE_ALPHABETIC
+    if (!joystickClass || !(gamepadSource || nonAlphaKeyboard)) return false
     // Canonical gamepad buttons; any one proves a real controller.
     // All exist since API 1, so no version guard is needed.
     val buttonCodes =
@@ -49,6 +73,7 @@ internal fun connectedGamepadNames(): List<String> {
             KeyEvent.KEYCODE_BUTTON_START,
             KeyEvent.KEYCODE_BUTTON_SELECT,
         )
+    if (!device.hasKeys(*buttonCodes).any { it }) return false
     // Game axes a real controller drives; button clusters expose none.
     val gameAxes =
         intArrayOf(
@@ -63,28 +88,5 @@ internal fun connectedGamepadNames(): List<String> {
             MotionEvent.AXIS_LTRIGGER,
             MotionEvent.AXIS_RTRIGGER,
         )
-    val names = mutableListOf<String>()
-    for (id in InputDevice.getDeviceIds()) {
-        val device = InputDevice.getDevice(id) ?: continue
-        if (device.id < 0) continue
-        if (Build.VERSION.SDK_INT >= 29 && device.isVirtual) continue
-        // Canonical "is a game controller" verdict: fingerprint sensors
-        // and other button clusters never hold a controller number.
-        if (device.controllerNumber == 0) continue
-        val sources = device.sources
-        // Proven uinput-fpc filter (libgdx #5007): the fingerprint sensor
-        // exposes joystick class bits with an alphabetic keyboard and no
-        // gamepad source, so it fails the second clause.
-        val joystickClass =
-            sources and InputDevice.SOURCE_CLASS_JOYSTICK == InputDevice.SOURCE_CLASS_JOYSTICK
-        val gamepadSource =
-            sources and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD
-        val nonAlphaKeyboard =
-            device.keyboardType != InputDevice.KEYBOARD_TYPE_ALPHABETIC
-        if (!joystickClass || !(gamepadSource || nonAlphaKeyboard)) continue
-        if (!device.hasKeys(*buttonCodes).any { it }) continue
-        if (gameAxes.none { device.getMotionRange(it) != null }) continue
-        names += device.name
-    }
-    return names.distinct()
+    return gameAxes.any { device.getMotionRange(it) != null }
 }
