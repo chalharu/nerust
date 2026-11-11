@@ -291,7 +291,7 @@ class ChromeManager(private val activity: MainActivity) {
         // No subscription needed — toggling closes the drawer immediately.
         val emulationPaused =
             try {
-                activity.nativeIsEmulationPaused()
+                activity.isEmulationPaused()
             } catch (e: Exception) {
                 Log.e(TAG, "pause query failed, assuming running", e)
                 false
