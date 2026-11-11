@@ -1188,6 +1188,10 @@ where
             reason: String::new(),
         })
         .collect();
+    debug_assert!(
+        wires.iter().any(|wire| wire.value == selected_value),
+        "choice value missing from choices for row {key}"
+    );
     let selected = wires
         .iter()
         .position(|wire| wire.value == selected_value)
@@ -2553,9 +2557,12 @@ fn decode_target(encoded: &str, deps: &VmDeps) -> Result<CaptureTarget, String> 
             })
         }
         Some("shortcut") => {
+            let raw = value
+                .get("action")
+                .cloned()
+                .ok_or_else(|| "capture target misses action".to_string())?;
             let action: nerust_settings_core::model::input::ShortcutAction =
-                serde_json::from_value(value.get("action").cloned().unwrap_or_default())
-                    .map_err(|error| error.to_string())?;
+                serde_json::from_value(raw).map_err(|error| error.to_string())?;
             Ok(CaptureTarget::Shortcut(action))
         }
         _ => Err("unknown capture target".to_string()),

@@ -130,11 +130,15 @@ internal fun parseSettingsSections(payload: JSONObject): List<SettingsSection> {
                         )
                 }
             }
+            val kind = row.optString("kind", "info")
+            if (kind !in setOf("choice", "toggle", "number", "info", "header", "group", "capture", "button")) {
+                Log.w(TAG, "unknown settings row kind: $kind (key=${row.getString("key")})")
+            }
             rows +=
                 SettingsRow(
                     key = row.getString("key"),
                     label = row.optString("label", ""),
-                    kind = row.optString("kind", "info"),
+                    kind = kind,
                     choices = choices,
                     selected = row.optInt("selected", 0),
                     number = row.optLong("number", 0L),

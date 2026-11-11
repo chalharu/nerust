@@ -16,6 +16,14 @@
     <string name="settings_discard_confirm">破棄する</string>
     <string name="settings_keep_editing">編集を続ける</string>
     <string name="settings_tap_to_assign">タップして割り当て</string>
+    <string name="settings_details">詳細</string>
+    <string name="settings_search_hint">設定を検索</string>
+    <string name="settings_search_empty">「%1$s」の結果がありません</string>
+    <string name="settings_reset_all_title">すべての設定を初期化しますか？</string>
+    <string name="settings_reset_all_message">すべての設定が既定値に戻ります。元に戻せません。</string>
+    <string name="settings_reset_screen_title">この画面を初期化しますか？</string>
+    <string name="settings_reset_screen_message">この画面が既定値に戻ります。他の画面は変更されません。</string>
+    <string name="settings_reset_confirm">初期化</string>
     <string name="settings_used_in">%1$sで使用中</string>
     <string name="settings_used_elsewhere">他のスロットで使用中</string>
     <string name="settings_needs_attention">保存前に確認が必要です</string>
