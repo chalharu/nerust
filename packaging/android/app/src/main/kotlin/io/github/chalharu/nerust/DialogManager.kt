@@ -5,7 +5,6 @@ import android.content.Context
 import android.graphics.drawable.ColorDrawable
 import android.graphics.Color
 import android.util.Log
-import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -65,7 +64,6 @@ class DialogManager(private val activity: MainActivity) {
         presentation: String,
         onDismiss: () -> Unit,
         ownedByTest: Boolean = false,
-        onBackPressed: (() -> Boolean)? = null,
         content: @Composable (dismiss: () -> Unit) -> Unit,
     ) {
         dismiss(notifyDismiss = !this.ownedByTest)
@@ -99,11 +97,6 @@ class DialogManager(private val activity: MainActivity) {
                 window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
                 setCancelable(true)
                 setCanceledOnTouchOutside(true)
-                setOnKeyListener { _, keyCode, event ->
-                    keyCode == KeyEvent.KEYCODE_BACK &&
-                        event.action == KeyEvent.ACTION_UP &&
-                        onBackPressed?.invoke() == true
-                }
             }
 
         // No theme wrapper here: every host (settings, error) brings its
