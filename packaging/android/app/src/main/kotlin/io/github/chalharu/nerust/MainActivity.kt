@@ -615,12 +615,15 @@ class MainActivity :
         }
         val requestId = document.getLong("requestId")
         // SettingsActivity unwraps and validates the same versioned envelope.
+        // Pass the live orientation lock so the settings screen opens in the
+        // same orientation as the game screen (see onCreate).
         startActivity(
             SettingsActivity.createIntent(
                 this,
                 SETTINGS_SCHEMA_VERSION,
                 requestId,
                 document.toString(),
+                requestedOrientation,
             ),
         )
     }

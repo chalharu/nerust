@@ -3,6 +3,7 @@ package io.github.chalharu.nerust
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.hardware.input.InputManager
 import android.os.Build
@@ -32,6 +33,7 @@ import org.json.JSONObject
 private const val EXTRA_SCHEMA_VERSION = "nerust.extra.SCHEMA_VERSION"
 private const val EXTRA_REQUEST_ID = "nerust.extra.REQUEST_ID"
 private const val EXTRA_PAYLOAD = "nerust.extra.PAYLOAD"
+private const val EXTRA_ORIENTATION = "nerust.extra.ORIENTATION"
 
 /** Standalone settings screen. MainActivity pushes one versioned payload per
  * open (see `request_show_settings_dialog`); edits ride synchronous per-row
@@ -73,6 +75,17 @@ class SettingsActivity :
         registryController.performRestore(savedInstanceState)
         super.onCreate(savedInstanceState)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
+        // Follow the game screen: without this an unspecified activity falls
+        // back to the system default (portrait with auto-rotate off) even
+        // while the game is locked landscape, so the setting screen would
+        // rotate away from the screen that opened it. MainActivity passes its
+        // live requestedOrientation in the envelope; Auto stays unspecified
+        // so both follow the sensor together.
+        val extraOrientation =
+            intent.getIntExtra(EXTRA_ORIENTATION, ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED)
+        if (requestedOrientation != extraOrientation) {
+            requestedOrientation = extraOrientation
+        }
         requestId = intent.getLongExtra(EXTRA_REQUEST_ID, -1L)
         if (intent.getIntExtra(EXTRA_SCHEMA_VERSION, -1) != SETTINGS_SCHEMA_VERSION) {
             Log.e(TAG, "SettingsActivity: unsupported schemaVersion")
@@ -446,11 +459,13 @@ class SettingsActivity :
             schemaVersion: Int,
             requestId: Long,
             payload: String,
+            orientation: Int = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED,
         ): Intent =
             Intent(context, SettingsActivity::class.java).apply {
                 putExtra(EXTRA_SCHEMA_VERSION, schemaVersion)
                 putExtra(EXTRA_REQUEST_ID, requestId)
                 putExtra(EXTRA_PAYLOAD, payload)
+                putExtra(EXTRA_ORIENTATION, orientation)
             }
 
         fun currentActivityForTest(): SettingsActivity? =
