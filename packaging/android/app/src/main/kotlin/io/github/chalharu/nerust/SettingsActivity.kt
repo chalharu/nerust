@@ -64,6 +64,10 @@ class SettingsActivity :
     override val viewModelStore: ViewModelStore
         get() = store
 
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLocale.wrap(newBase))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         registryController.performAttach()
         registryController.performRestore(savedInstanceState)
@@ -229,6 +233,7 @@ class SettingsActivity :
         pushKeyboardEnumeration()
         pushTouchCapability()
         pushGamepads()
+        pushSystemLocale()
     }
 
     internal fun pushKeyboardEnumeration() {
@@ -272,6 +277,23 @@ class SettingsActivity :
     /** Push the devices the Auto gate counts (see [connectedGamepadNames]):
      * Rust shows them in the overlay detail screen so users can see why
      * Auto currently hides, without logcat. Non-mutating like the rest. */
+    /** Push the terminal locale tag so SystemDefault resolves to the
+     * language the user actually sees (Android never sets LANG). */
+    internal fun pushSystemLocale() {
+        val nav = navActions ?: return
+        val tag = AppLocale.currentTag(this) ?: return
+        val raw =
+            try {
+                nativeSettingsCommand(
+                    settingsCommandJson("locale", 0, 0, "locale", JSONObject().put("lang", tag)),
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "locale push failed", e)
+                return
+            }
+        raw?.let { nav.refreshPayload(it) }
+    }
+
     internal fun pushGamepads() {
         val nav = navActions ?: return
         val names = JSONArray()

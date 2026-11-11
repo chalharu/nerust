@@ -241,6 +241,32 @@ fn on_settings_dialog_result(env: &mut jni::EnvUnowned<'_>, result: JString<'_>)
     }
 }
 
+/// Vault push for the terminal locale tag (MainActivity onResume):
+/// resolves SystemDefault for display, never persisted. Empty tags are
+/// ignored so a transient unknown never wipes a known locale.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_pushSystemLocale(
+    mut env: jni::EnvUnowned<'_>,
+    _activity: JObject<'_>,
+    tag: JString<'_>,
+) {
+    let parsed = bridge::with_callback_env(&mut env, |env| -> jni::errors::Result<String> {
+        tag.try_to_string(env)
+    });
+    let tag = match parsed {
+        jni::Outcome::Ok(tag) if !tag.is_empty() => tag,
+        _ => return,
+    };
+    let locale = if tag.starts_with("ja") {
+        AppLanguage::Japanese
+    } else {
+        AppLanguage::English
+    };
+    bridge::with_settings(|state| {
+        state.system_locale = Some(locale);
+    });
+}
+
 /// Hardware key routing for capture: consumes the key when a capture is
 /// pending and returns the refreshed payload (or an error envelope).
 /// Non-capture keys pass through untouched (null payload marker).
