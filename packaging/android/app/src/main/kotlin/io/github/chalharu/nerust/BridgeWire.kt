@@ -17,6 +17,7 @@ internal object MenuAction {
     const val TOGGLE_PAUSE = "toggle_pause"
     const val UNLOAD = "unload"
     const val CONTROLLER = "controller"
+    const val TOUCH_GATE = "touch_gate"
 
     val ALL: Set<String> = setOf(
         EXIT,
@@ -29,6 +30,7 @@ internal object MenuAction {
         TOGGLE_PAUSE,
         UNLOAD,
         CONTROLLER,
+        TOUCH_GATE,
     )
 }
 

@@ -621,6 +621,11 @@ impl AndroidFrontend {
                         pressed,
                     );
                 }
+                MenuAction::TouchGate { respond } => {
+                    self.chrome
+                        .input
+                        .set_touch_respond(&mut self.core.session, &self.app, respond);
+                }
                 MenuAction::Exit => {
                     self.unload_for_exit();
                     self.core.session.flush_before_exit();

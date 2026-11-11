@@ -4,6 +4,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.view.InputDevice
 import android.view.KeyEvent
+import android.view.MotionEvent
 
 /** Touchscreen truth shared by the runtime overlay gate (MainActivity) and
  * the settings capability push (SettingsActivity): the feature flag, or a
@@ -26,9 +27,10 @@ internal fun hasTouchscreen(packageManager: PackageManager): Boolean {
  * Sources alone prove nothing: button clusters (power keys, headset jacks,
  * fingerprint sensors, touch panels) can expose gamepad or joystick bits.
  * A counted device must also hold a controller number (zero means the
- * platform itself does not consider it a game controller) and carry a
- * gamepad button: without buttons it is not usable alternative input,
- * and hiding touch controls for one strands the user with no way back. */
+ * platform itself does not consider it a game controller), carry a gamepad
+ * button, and drive a game axis: without axes it is not usable alternative
+ * input, and hiding touch controls for one strands the user with no way
+ * back. All three err toward showing the overlay, never stranding. */
 internal fun connectedGamepadNames(): List<String> {
     // Canonical gamepad buttons; any one proves a real controller.
     // All exist since API 1, so no version guard is needed.
@@ -45,6 +47,20 @@ internal fun connectedGamepadNames(): List<String> {
             KeyEvent.KEYCODE_BUTTON_START,
             KeyEvent.KEYCODE_BUTTON_SELECT,
         )
+    // Game axes a real controller drives; button clusters expose none.
+    val gameAxes =
+        intArrayOf(
+            MotionEvent.AXIS_X,
+            MotionEvent.AXIS_Y,
+            MotionEvent.AXIS_Z,
+            MotionEvent.AXIS_RX,
+            MotionEvent.AXIS_RY,
+            MotionEvent.AXIS_RZ,
+            MotionEvent.AXIS_HAT_X,
+            MotionEvent.AXIS_HAT_Y,
+            MotionEvent.AXIS_LTRIGGER,
+            MotionEvent.AXIS_RTRIGGER,
+        )
     val names = mutableListOf<String>()
     for (id in InputDevice.getDeviceIds()) {
         val device = InputDevice.getDevice(id) ?: continue
@@ -59,6 +75,7 @@ internal fun connectedGamepadNames(): List<String> {
                 sources and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
         if (!stick) continue
         if (!device.hasKeys(*buttonCodes).any { it }) continue
+        if (gameAxes.none { device.getMotionRange(it) != null }) continue
         names += device.name
     }
     return names.distinct()

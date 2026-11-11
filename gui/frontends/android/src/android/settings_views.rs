@@ -2383,11 +2383,12 @@ fn port_member_names(
     keyboards: &[KeyboardInfo],
     i18n: I18n,
 ) -> Vec<String> {
-    // Effective members only: the built-in row renders solely while the
-    // terminal actually enumerates it. Otherwise phones and tablets
-    // without a hardware keyboard would show a phantom "Built-in
-    // Keyboard" from the shared default. Unplugged USB descriptors stay
-    // listed (reconnect restores them); gamepads always count.
+    // Effective members only: rows render solely while the terminal
+    // enumerates them, so every screen shares one enumeration truth.
+    // Otherwise a reconnectable USB keyboard would read as assigned on
+    // the player screens while the device list reports none connected.
+    // Unplugged USB descriptors stay assigned (reconnect restores them);
+    // gamepads always count (no enumeration to check against yet).
     let builtin_present = keyboards
         .iter()
         .any(|info| info.member == BUILTIN_KEYBOARD_MEMBER);
@@ -2398,7 +2399,15 @@ fn port_member_names(
         .map(|members| {
             members
                 .iter()
-                .filter(|member| member.as_str() != BUILTIN_KEYBOARD_MEMBER || builtin_present)
+                .filter(|member| {
+                    if member.as_str() == BUILTIN_KEYBOARD_MEMBER {
+                        builtin_present
+                    } else if member.starts_with(KEYBOARD_MEMBER_PREFIX) {
+                        keyboards.iter().any(|info| info.member == **member)
+                    } else {
+                        true
+                    }
+                })
                 .map(|member| keyboard_member_name(member, keyboards, i18n))
                 .collect()
         })
@@ -3531,8 +3540,8 @@ mod tests {
         );
         assert_eq!(
             row(&payload, "controllers.player.1").text,
-            "External keyboard",
-            "unplugged USB still names its fallback"
+            "Not assigned",
+            "unplugged USB reads empty like the device list, assignment kept"
         );
     }
 
