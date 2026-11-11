@@ -31,9 +31,8 @@ import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import org.json.JSONException
 import org.json.JSONObject
 
-private const val SETTINGS_DIALOG_TAG = "nerust-settings-dialog"
+private const val SETTINGS_SCREEN_TAG = "nerust-settings-screen"
 private const val ERROR_DIALOG_TAG = "nerust-error-dialog"
-private const val DIALOG_PRESENTATION_FULL_SCREEN = "full_screen"
 
 internal fun screenOrientationRequest(value: Int): Int? =
     when (value) {
@@ -532,7 +531,7 @@ class MainActivity :
 
     fun isChromeViewShowingForTest(tag: String): Boolean =
         chromeManager.isViewShowingForTest(tag) ?: when (tag) {
-            SETTINGS_DIALOG_TAG -> {
+            SETTINGS_SCREEN_TAG -> {
                 val settings = SettingsActivity.currentActivityForTest()
                 settings != null && !settings.isFinishing && !settings.isDestroyed
             }
@@ -544,7 +543,7 @@ class MainActivity :
 
     fun findChromeViewForTest(tag: String): View? =
         chromeManager.findViewForTest(tag) ?: when (tag) {
-            SETTINGS_DIALOG_TAG -> {
+            SETTINGS_SCREEN_TAG -> {
                 SettingsActivity.currentActivityForTest()?.window?.decorView
             }
 
@@ -590,19 +589,6 @@ class MainActivity :
         chromeManager.removeDrawerOverlay()
     }
 
-    internal fun showSettingsDialogForTest(sections: List<SettingsSection>) {
-        // Mirror the production envelope: SettingsActivity unwraps "payload".
-        val envelope = JSONObject().put("payload", sectionsToJson(sections))
-        startActivity(
-            SettingsActivity.createIntent(
-                this,
-                SETTINGS_SCHEMA_VERSION,
-                -1L,
-                envelope.toString(),
-            ),
-        )
-    }
-
     /** Show a DTO-driven Android settings screen. Presents the versioned sections from Rust.
      * Save and dismiss return request-scoped JSON; edits ride synchronous per-row commands. */
     fun showSettingsDialog(payload: String) {
@@ -622,16 +608,14 @@ class MainActivity :
             return
         }
         val requestId = document.getLong("requestId")
-        try {
-            document.getJSONObject("payload")
-        } catch (e: JSONException) {
-            Log.e(TAG, "showSettingsDialog: malformed sections", e)
-            return
-        }
-        showSettingsDialogInternal(
-            // SettingsActivity unwraps the same versioned envelope it validates.
-            envelope = document,
-            requestId = requestId,
+        // SettingsActivity unwraps and validates the same versioned envelope.
+        startActivity(
+            SettingsActivity.createIntent(
+                this,
+                SETTINGS_SCHEMA_VERSION,
+                requestId,
+                document.toString(),
+            ),
         )
     }
 
@@ -646,70 +630,6 @@ class MainActivity :
         }
     }
 
-    private fun showSettingsDialogInternal(
-        envelope: JSONObject,
-        requestId: Long,
-    ) {
-        startActivity(
-            SettingsActivity.createIntent(
-                this,
-                SETTINGS_SCHEMA_VERSION,
-                requestId,
-                envelope.toString(),
-            ),
-        )
-    }
-
-    internal fun sectionsToJson(sections: List<SettingsSection>): JSONObject {
-        val rowsOf = { rows: List<SettingsRow> ->
-            val array = org.json.JSONArray()
-            rows.forEach { row ->
-                val choices = org.json.JSONArray()
-                row.choices.forEach { choice ->
-                    choices.put(
-                        JSONObject()
-                            .put("label", choice.label)
-                            .put("enabled", choice.enabled)
-                            .put("reason", choice.reason),
-                    )
-                }
-                array.put(
-                    JSONObject()
-                        .put("key", row.key)
-                        .put("label", row.label)
-                        .put("kind", row.kind)
-                        .put("choices", choices)
-                        .put("selected", row.selected)
-                        .put("number", row.number)
-                        .put("step", row.step)
-                        .put("min", row.min)
-                        .put("max", row.max)
-                        .put("unit", row.unit)
-                        .put("text", row.text)
-                        .put("target", row.target)
-                        .put("description", row.description)
-                        .put("detail_target", row.detailTarget)
-                        .put("visible", row.visible),
-                )
-            }
-            array
-        }
-        val array = org.json.JSONArray()
-        sections.forEach { section ->
-            array.put(
-                JSONObject()
-                    .put("id", section.id)
-                    .put("label", section.label)
-                    .put("rows", rowsOf(section.rows))
-                    .put("visible", section.visible)
-                    .put("sub", section.sub),
-            )
-        }
-        return JSONObject()
-            .put("sections", array)
-            .put("issues", org.json.JSONArray())
-    }
-
     /** Dumb host for the Rust dialog gate: always present what Rust requests.
      * A showing settings screen finishes with its own dismissal result so
      * Rust resolves it before the error shows. */
@@ -718,7 +638,6 @@ class MainActivity :
         dialogManager.show(
             dialogTag = ERROR_DIALOG_TAG,
             contentDescription = message,
-            presentation = DIALOG_PRESENTATION_FULL_SCREEN,
             ownedByTest = false,
             onDismiss = { onErrorDialogDismissed(requestId) },
         ) { dismiss ->

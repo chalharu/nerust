@@ -11,7 +11,7 @@
 
 use std::{
     rc::Rc,
-    sync::{Arc, Mutex},
+    sync::{Arc, OnceLock},
 };
 
 use nerust_gui_runtime::settings::SettingsSnapshot;
@@ -223,25 +223,17 @@ pub(super) struct VmDeps {
     pub rates: Arc<[u32]>,
 }
 
-static VM_DEPS: Mutex<Option<VmDeps>> = Mutex::new(None);
+static VM_DEPS: OnceLock<VmDeps> = OnceLock::new();
 
 /// Publish the factories and probed sample rates once at startup.
-/// Called from the event thread; JNI commands only read through the lock.
+/// Called from the event thread; JNI commands only read. Later installs
+/// are ignored: every caller publishes the same registry and rates.
 pub(super) fn install_vm_deps(factories: Vec<Arc<dyn CoreFactory>>, rates: Arc<[u32]>) {
-    match VM_DEPS.lock() {
-        Ok(mut slot) => *slot = Some(VmDeps { factories, rates }),
-        Err(poison) => {
-            log::error!("android settings vm deps lock poisoned; recovering state");
-            *poison.into_inner() = Some(VmDeps { factories, rates });
-        }
-    }
+    let _ = VM_DEPS.set(VmDeps { factories, rates });
 }
 
 fn with_vm_deps<T>(operation: impl FnOnce(&VmDeps) -> Result<T, String>) -> Result<T, String> {
-    let guard = VM_DEPS
-        .lock()
-        .map_err(|_| "android settings vm deps lock poisoned".to_string())?;
-    let Some(deps) = guard.as_ref() else {
+    let Some(deps) = VM_DEPS.get() else {
         return Err("android settings not initialized".to_string());
     };
     operation(deps)
@@ -366,9 +358,10 @@ fn apply_set_command(
     sections: &[SectionWire],
     command: &WireCommand,
 ) -> Result<(), String> {
-    if is_android_local_key(&command.key) {
-        apply_android_local(snapshot, sections, command)
-    } else if is_device_key(&command.key) {
+    if apply_android_local(snapshot, sections, command)? {
+        return Ok(());
+    }
+    if is_device_key(&command.key) {
         apply_device_command(snapshot, sections, command)
     } else {
         apply_view_model_command(vm, deps, sections, command)?;
@@ -629,14 +622,12 @@ fn apply_touch_command(
     touch_capable: &mut Option<bool>,
     command: &WireCommand,
 ) -> Result<(), String> {
-    let capable: bool = serde_json::from_value(
-        command
-            .payload
-            .get("capable")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null),
-    )
-    .map_err(|error| error.to_string())?;
+    let raw = command
+        .payload
+        .get("capable")
+        .cloned()
+        .ok_or_else(|| "touch op misses capable".to_string())?;
+    let capable: bool = serde_json::from_value(raw).map_err(|error| error.to_string())?;
     *touch_capable = Some(capable);
     Ok(())
 }
@@ -703,7 +694,7 @@ fn apply_device_command(
         .split('.')
         .nth(1)
         .ok_or_else(|| format!("malformed device key: {}", command.key))?;
-    if !PLAYER_PORTS.iter().any(|(known, ..)| *known == port) {
+    if !PLAYER_PORTS.contains(&port) {
         return Err(format!("unknown port: {port}"));
     }
     let members = snapshot
@@ -875,22 +866,6 @@ pub(super) fn finish_snapshot(
             .map(|issue| issue.message.clone())
             .collect()
     })
-}
-
-fn is_android_local_key(key: &str) -> bool {
-    matches!(
-        key,
-        "video.orientation"
-            | "controls.overlay_visibility"
-            | "controls.overlay_opacity"
-            | "controls.overlay_scale"
-            | "controls.overlay_vertical_offset"
-            | "controls.overlay_haptics"
-            | "controls.cartridge_motion"
-            | "controls.cartridge_rumble"
-            | "controls.cartridge_rumble_strength"
-            | "controls.cartridge_rumble_target"
-    )
 }
 
 fn choice<T: serde::de::DeserializeOwned>(row: &RowWire, index: usize) -> Result<T, String> {
@@ -1121,12 +1096,17 @@ fn apply_slot_command(
         .map_err(|error| error.to_string())
 }
 
+/// Returns true when the key is Android-local (handled here); false
+/// falls through to device/view-model routing, which fails loud on typos.
 fn apply_android_local(
     snapshot: &mut SettingsSnapshot,
     sections: &[SectionWire],
     command: &WireCommand,
-) -> Result<(), String> {
-    let row = find_row(sections, &command.key)?;
+) -> Result<bool, String> {
+    let row = match find_row(sections, &command.key) {
+        Ok(row) => row,
+        Err(_) => return Ok(false),
+    };
     let local = &mut snapshot.local;
     match command.key.as_str() {
         "video.orientation" => {
@@ -1161,9 +1141,9 @@ fn apply_android_local(
         "controls.cartridge_rumble_target" => {
             local.cartridge_peripherals.rumble_target = choice(row, command.index)?;
         }
-        key => return Err(format!("unknown settings key: {key}")),
+        _ => return Ok(false),
     }
-    Ok(())
+    Ok(true)
 }
 
 // ── Section builders ────────────────────────────────────────────────
@@ -1214,28 +1194,18 @@ fn toggle_row(
     language: AppLanguage,
     value: bool,
 ) -> RowWire {
-    RowWire {
-        key: key.to_string(),
+    let mut row = choice_row(
+        key,
         label,
         description,
-        kind: RowKind::Toggle,
-        choices: vec![
-            ChoiceWire {
-                value: serde_json::to_value(false).unwrap_or(serde_json::Value::Null),
-                label: ui_text(language, UiText::Off).to_string(),
-                enabled: true,
-                reason: String::new(),
-            },
-            ChoiceWire {
-                value: serde_json::to_value(true).unwrap_or(serde_json::Value::Null),
-                label: ui_text(language, UiText::On).to_string(),
-                enabled: true,
-                reason: String::new(),
-            },
+        &[
+            (false, ui_text(language, UiText::Off).to_string()),
+            (true, ui_text(language, UiText::On).to_string()),
         ],
-        selected: usize::from(value),
-        ..RowWire::new(RowKind::Toggle)
-    }
+        &value,
+    );
+    row.kind = RowKind::Toggle;
+    row
 }
 
 #[allow(
@@ -1328,13 +1298,22 @@ fn button_row(key: &str, label: String, description: String) -> RowWire {
     }
 }
 
-/// Global player ports: port id, player screen, device picker, type screen.
-/// Ports are global (not per machine): every system's player-N slot fans
-/// out from the same port set.
-const PLAYER_PORTS: [(&str, &str, &str, &str); 2] = [
-    (PORT_PLAYER_1, "player.1", "devices.1", "types.1"),
-    (PORT_PLAYER_2, "player.2", "devices.2", "types.2"),
-];
+/// Global player ports (not per machine): every system's player-N slot
+/// fans out from the same port set. Screen ids derive from the port index,
+/// so the table holds port ids only.
+const PLAYER_PORTS: [&str; 2] = [PORT_PLAYER_1, PORT_PLAYER_2];
+
+fn player_id(index: usize) -> String {
+    format!("player.{}", index + 1)
+}
+
+fn devices_id(index: usize) -> String {
+    format!("devices.{}", index + 1)
+}
+
+fn types_id(index: usize) -> String {
+    format!("types.{}", index + 1)
+}
 
 fn player_label(index: usize, language: AppLanguage) -> String {
     ui_text(
@@ -1681,6 +1660,16 @@ fn build_audio_detail_section(vm: &SettingsViewModel, language: AppLanguage) -> 
 fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) -> SectionWire {
     let view = vm.notifications.view.get();
     let t = |text: UiText| ui_text(language, text).to_string();
+    let colors: Vec<(NotificationColor, String)> = view
+        .color_choices
+        .iter()
+        .map(|choice| (choice.value, choice.label.clone()))
+        .collect();
+    let positions: Vec<(NotificationPosition, String)> = view
+        .position_choices
+        .iter()
+        .map(|choice| (choice.value, choice.label.clone()))
+        .collect();
     SectionWire {
         id: "notifications".to_string(),
         label: crate::settings_sections::section_label("notifications", language).to_string(),
@@ -1708,11 +1697,7 @@ fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) ->
                 "notifications.info_color",
                 t(UiText::NotificationInfo),
                 String::new(),
-                &view
-                    .color_choices
-                    .iter()
-                    .map(|choice| (choice.value, choice.label.clone()))
-                    .collect::<Vec<_>>(),
+                &colors,
                 &view.info_color,
             ),
             toggle_row(
@@ -1736,11 +1721,7 @@ fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) ->
                 "notifications.warning_color",
                 t(UiText::NotificationWarning),
                 String::new(),
-                &view
-                    .color_choices
-                    .iter()
-                    .map(|choice| (choice.value, choice.label.clone()))
-                    .collect::<Vec<_>>(),
+                &colors,
                 &view.warning_color,
             ),
             toggle_row(
@@ -1761,22 +1742,14 @@ fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) ->
                 "notifications.error_color",
                 t(UiText::NotificationError),
                 String::new(),
-                &view
-                    .color_choices
-                    .iter()
-                    .map(|choice| (choice.value, choice.label.clone()))
-                    .collect::<Vec<_>>(),
+                &colors,
                 &view.error_color,
             ),
             choice_row(
                 "notifications.position",
                 t(UiText::NotificationPosition),
                 String::new(),
-                &view
-                    .position_choices
-                    .iter()
-                    .map(|choice| (choice.value, choice.label.clone()))
-                    .collect::<Vec<_>>(),
+                &positions,
                 &view.position,
             ),
             choice_row(
@@ -1802,11 +1775,7 @@ fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) ->
                 "status.position",
                 t(UiText::NotificationStatusPosition),
                 String::new(),
-                &view
-                    .position_choices
-                    .iter()
-                    .map(|choice| (choice.value, choice.label.clone()))
-                    .collect::<Vec<_>>(),
+                &positions,
                 &view.status_position,
             ),
             {
@@ -1848,13 +1817,14 @@ fn build_controllers_sections(
     let overlay = &snapshot.local.touch_overlay;
     let t = |text: UiText| ui_text(language, text).to_string();
     let mut quick_rows = Vec::new();
-    for (index, (port, player_id, _, _)) in PLAYER_PORTS.iter().enumerate() {
+    for (index, port) in PLAYER_PORTS.iter().enumerate() {
+        let player_id = player_id(index);
         let names = port_member_names(port, snapshot, keyboards, language);
         quick_rows.push(group_row(
             &format!("controllers.{player_id}"),
             player_label(index, language),
             port_count_line(language, names.len()),
-            player_id,
+            &player_id,
         ));
         let last = quick_rows.last_mut().expect("player row pushed");
         last.text = port_summary(language, &names);
@@ -2152,11 +2122,14 @@ fn build_player_sections(
 ) -> Vec<SectionWire> {
     let t = |text: UiText| ui_text(language, text).to_string();
     let mut sections = Vec::new();
-    for (index, (port, player_id, devices_id, types_id)) in PLAYER_PORTS.iter().enumerate() {
+    for (index, port) in PLAYER_PORTS.iter().enumerate() {
+        let player_id = player_id(index);
+        let devices_id = devices_id(index);
+        let types_id = types_id(index);
         let label = player_label(index, language);
         let names = port_member_names(port, snapshot, keyboards, language);
         sections.push(SectionWire {
-            id: player_id.to_string(),
+            id: player_id.clone(),
             label: label.clone(),
             sub: t(UiText::SectionControllers),
             rows: vec![
@@ -2165,7 +2138,7 @@ fn build_player_sections(
                         &format!("{player_id}.devices"),
                         t(UiText::Devices),
                         String::new(),
-                        devices_id,
+                        &devices_id,
                     );
                     row.text = port_summary(language, &names);
                     row
@@ -2174,7 +2147,7 @@ fn build_player_sections(
                     &format!("{player_id}.type"),
                     t(UiText::ControllerType),
                     String::new(),
-                    types_id,
+                    &types_id,
                 ),
             ],
             visible: false,
@@ -2217,14 +2190,19 @@ fn build_player_sections(
             })
             .collect();
         sections.push(SectionWire {
-            id: types_id.to_string(),
+            id: types_id.clone(),
             label: t(UiText::ControllerType),
             sub: label.clone(),
             rows: type_rows,
             visible: false,
         });
         sections.push(build_devices_section(
-            port, devices_id, &label, snapshot, keyboards, language,
+            port,
+            &devices_id,
+            &label,
+            snapshot,
+            keyboards,
+            language,
         ));
     }
     sections.extend(build_device_sections(vm, keyboards, language));
@@ -2625,7 +2603,7 @@ mod tests {
 
     fn with_test_deps<T>(operation: impl FnOnce() -> T) -> T {
         // Never reset: tests share the process-wide slot and run in parallel.
-        // Installs are equivalent, so a concurrent overwrite is benign.
+        // Installs are equivalent, so first-wins is benign.
         install_vm_deps(test_deps().factories, test_deps().rates);
         operation()
     }
