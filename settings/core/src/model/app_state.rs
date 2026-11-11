@@ -20,7 +20,7 @@ pub type PortDeviceSets = BTreeMap<String, Vec<String>>;
 /// share ports; gamepads ("pad:") occupy exactly one port at a time.
 /// Touch is a global setting, never a port member.
 pub const KEYBOARD_MEMBER_PREFIX: &str = "kbd:";
-pub const GAMEPAD_MEMBER_PREFIX: &str = "pad";
+pub const GAMEPAD_MEMBER_PREFIX: &str = "pad:";
 
 /// The built-in keyboard row (device id 0). Unlike external descriptors
 /// it is a capability flag, not a known device: terminals without one

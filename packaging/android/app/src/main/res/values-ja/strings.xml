@@ -27,7 +27,6 @@
     <string name="settings_used_in">%1$s使用中</string>
     <string name="settings_used_elsewhere">他のスロット使用中</string>
     <string name="settings_needs_attention">保存前確認が必要</string>
-    <string name="settings_update_failed">設定更新に失敗</string>
     <plurals name="settings_count">
         <item quantity="other">%d件の設定</item>
     </plurals>

@@ -71,17 +71,8 @@ impl super::AndroidFrontend {
             return;
         };
         log::info!("handle_settings_result: validating Android settings");
-        let factories = self.core.session.factories().to_vec();
-        let rates: std::sync::Arc<[u32]> = self
-            .core
-            .session
-            .audio_registry()
-            .supported_rates()
-            .iter()
-            .copied()
-            .collect();
         let system_locale = bridge::with_settings(|state| state.system_locale);
-        match settings::finish_snapshot(&next, &factories, rates, system_locale) {
+        match settings::finish_snapshot(&next, system_locale) {
             Ok(validated) => {
                 // The drawer and every Android string follow the saved
                 // choice: push the validated language, never a rejected

@@ -303,7 +303,13 @@ def _check_producer_event(name, puts, arg_types, definitions):
     menu = definitions["menu"]
     required = set(menu["required"])
     if name == "controllerEventJson":
-        required |= set(menu["then"]["required"])
+        gates = menu.get("allOf", [])
+        if "then" in menu:
+            gates = [{"if": menu["if"], "then": menu["then"]}]
+        for gate in gates:
+            condition = gate.get("if", {}).get("properties", {}).get("action", {})
+            if condition.get("const") == "controller":
+                required |= set(gate["then"]["required"])
     require(required <= fields.keys() <= menu["properties"].keys(), "producer fields differ from schema")
     require(all(GEN.field_type(menu["properties"][key]) == kind for key, kind in fields.items()),
             "producer field type differs from schema")
@@ -332,6 +338,8 @@ def verify(schema, source):
         validate_producer(definitions, source["producer"])
         require("register_native_methods(class, &methods)" in source["registration"],
                 "registration table is not registered")
+        require("register_native_methods(settings_class, &settings_methods)" in source["registration"],
+                "settings registration table is not registered")
         return {"jni": validate_jni(source["registration"], source["table"], source["activity"], source["callbacks"])}
     except (AssertionError, KeyError, TypeError, IndexError) as error:
         raise ContractError(f"unsupported bridge schema/source: {error}") from error

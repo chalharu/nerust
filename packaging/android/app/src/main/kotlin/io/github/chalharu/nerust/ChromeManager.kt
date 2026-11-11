@@ -46,11 +46,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 
@@ -187,20 +185,23 @@ class ChromeManager(private val activity: MainActivity) {
         scheduleChromeAttach()
     }
 
+    /** Single drawing/response truth: invisible buttons never respond.
+     * Both the popup gate and the Rust `touch_gate` push read this. */
+    private fun isOverlayHidden(): Boolean =
+        controlsVisibility == "hidden" || !touchCapable ||
+            (
+                controlsVisibility == "auto" &&
+                    (
+                        controllerConnected ||
+                            SystemClock.elapsedRealtime() < controllerOverlayHiddenUntil
+                    )
+            )
+
     /** Touch-response gate for Rust: mirrors the drawing rule so invisible
      * buttons never respond. Rust releases in-flight presses on close.
      * Sent on every transition; deduped here. */
     private fun pushTouchGate() {
-        val hidden =
-            controlsVisibility == "hidden" || !touchCapable ||
-                (
-                    controlsVisibility == "auto" &&
-                        (
-                            controllerConnected ||
-                                SystemClock.elapsedRealtime() < controllerOverlayHiddenUntil
-                        )
-                )
-        val respond = !hidden
+        val respond = !isOverlayHidden()
         if (lastTouchGatePushed == respond) return
         lastTouchGatePushed = respond
         activity.sendMenuAction(menuEventJson(MenuAction.TOUCH_GATE, respond))
@@ -514,15 +515,7 @@ class ChromeManager(private val activity: MainActivity) {
     }
 
     private fun ensureControlsOverlayPopup(anchor: View): Boolean {
-        if (
-            controlsVisibility == "hidden" ||
-            !touchCapable ||
-            controlsVisibility == "auto" &&
-            (
-                controllerConnected ||
-                    SystemClock.elapsedRealtime() < controllerOverlayHiddenUntil
-            )
-        ) {
+        if (isOverlayHidden()) {
             return true
         }
         val existing = controlsOverlayPopup
@@ -858,15 +851,14 @@ private fun DrawerActionItem(
     iconRes: Int,
     onClick: () -> Unit,
 ) {
+    // No extra semantics: NavigationDrawerItem already exposes the label,
+    // and doubling it makes TalkBack hear the row twice.
     NavigationDrawerItem(
         // Icon is decorative: the item already carries the label for TalkBack.
         icon = { Icon(painter = painterResource(id = iconRes), contentDescription = null) },
         label = { Text(label) },
         selected = false,
         onClick = onClick,
-        modifier =
-            Modifier
-                .semantics { contentDescription = label }
-                .padding(NavigationDrawerItemDefaults.ItemPadding),
+        modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
     )
 }
