@@ -980,7 +980,9 @@ impl ApplicationHandler for AndroidFrontend {
         // One snapshot borrow per pass: poll and the dialog gate share it.
         // The `Arc` outlives the session borrow, so no field clone is needed.
         let snapshot = self.core.session.settings_arc();
-        let language = snapshot.shared.general.language;
+        // Raw choice would leave SystemDefault to the env fallback
+        // (English on Android): resolve through the vault like settings.
+        let language = settings::display_language(snapshot.shared.general.language);
         if self.chrome.osd.poll(
             &mut self.core.session,
             &snapshot.local.notifications,

@@ -11,6 +11,7 @@ use super::settings_views;
 use crate::bridge_contract::SETTINGS_SCHEMA_VERSION;
 use crate::settings_flight::SettingsRequestId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
+use nerust_settings_core::model::language::AppLanguage;
 use nerust_settings_core::model::local::ScreenOrientation;
 
 /// Versioned JNI screen result: dismissal only. The accepted draft travels
@@ -71,6 +72,16 @@ pub(super) fn request_show_settings_dialog(
         })),
     );
     Ok(true)
+}
+
+/// Display language for live surfaces (OSD notifications, error queue):
+/// the saved choice, with SystemDefault following the vault-pushed
+/// terminal locale. Settings projections resolve per call through `I18n`;
+/// this is the same rule for surfaces that never open the screen.
+/// The resolved value is never persisted; the draft keeps the choice.
+pub(super) fn display_language(choice: AppLanguage) -> AppLanguage {
+    let system = bridge::with_settings(|state| state.system_locale);
+    settings_views::I18n::resolve(choice, system).language()
 }
 
 /// Publish the saved in-app language without opening the screen.
