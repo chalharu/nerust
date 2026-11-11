@@ -61,7 +61,6 @@ class DialogManager(private val activity: MainActivity) {
     fun show(
         dialogTag: String,
         contentDescription: String,
-        presentation: String,
         onDismiss: () -> Unit,
         ownedByTest: Boolean = false,
         content: @Composable (dismiss: () -> Unit) -> Unit,
@@ -75,7 +74,6 @@ class DialogManager(private val activity: MainActivity) {
             }.apply {
                 tag = dialogTag
                 setTag(R.id.nerust_dialog_content_probe, contentDescription)
-                setTag(R.id.nerust_dialog_presentation_probe, presentation)
                 layoutParams =
                     FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,

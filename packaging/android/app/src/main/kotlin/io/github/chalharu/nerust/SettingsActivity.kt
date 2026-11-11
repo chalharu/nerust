@@ -85,7 +85,14 @@ class SettingsActivity :
                 finish()
                 return
             }
-        val sections = parseSettingsSections(payload)
+        val sections =
+            try {
+                parseSettingsSections(payload)
+            } catch (e: JSONException) {
+                Log.e(TAG, "SettingsActivity: malformed sections", e)
+                finish()
+                return
+            }
         val issues = parseIssues(payload)
         val capture = parseCapture(payload)
         val contentDescription =
@@ -95,8 +102,7 @@ class SettingsActivity :
                 getString(R.string.settings_on),
                 getString(R.string.settings_off),
             )
-        // Same probe IDs the dialog era used, so E2E keeps reading them.
-        window.decorView.setTag(R.id.nerust_dialog_content_probe, contentDescription)
+        window.decorView.setTag(R.id.nerust_settings_content_probe, contentDescription)
         window.decorView.setTag(
             R.id.nerust_settings_hierarchy_probe,
             sections.joinToString("\n") { section ->

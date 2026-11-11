@@ -118,45 +118,43 @@ internal fun parseSettingsSections(payload: JSONObject): List<SettingsSection> {
         for (j in 0 until fields.length()) {
             val row = fields.getJSONObject(j)
             val choices = mutableListOf<SettingsChoice>()
-            val options = row.optJSONArray("choices")
-            if (options != null) {
-                for (k in 0 until options.length()) {
-                    val option = options.getJSONObject(k)
-                    choices +=
-                        SettingsChoice(
-                            label = option.getString("label"),
-                            enabled = option.optBoolean("enabled", true),
-                            reason = option.optString("reason", ""),
-                        )
-                }
+            val options = row.getJSONArray("choices")
+            for (k in 0 until options.length()) {
+                val option = options.getJSONObject(k)
+                choices +=
+                    SettingsChoice(
+                        label = option.getString("label"),
+                        enabled = option.getBoolean("enabled"),
+                        reason = option.getString("reason"),
+                    )
             }
-            val kind = row.optString("kind", "info")
+            val kind = row.getString("kind")
             if (kind !in setOf("choice", "toggle", "number", "info", "header", "group", "capture", "button")) {
                 Log.w(TAG, "unknown settings row kind: $kind (key=${row.getString("key")})")
             }
             rows +=
                 SettingsRow(
                     key = row.getString("key"),
-                    label = row.optString("label", ""),
+                    label = row.getString("label"),
                     kind = kind,
                     choices = choices,
-                    selected = row.optInt("selected", 0),
-                    number = row.optLong("number", 0L),
-                    step = row.optLong("step", 1L).coerceAtLeast(1L),
-                    min = row.optLong("min", 0L),
-                    max = row.optLong("max", 0L),
-                    unit = row.optString("unit", ""),
-                    text = row.optString("text", ""),
-                    target = row.optString("target", ""),
-                    visible = row.optBoolean("visible", true),
-                    description = row.optString("description", ""),
-                    detailTarget = row.optString("detail_target", ""),
+                    selected = row.getInt("selected"),
+                    number = row.getLong("number"),
+                    step = row.getLong("step").coerceAtLeast(1L),
+                    min = row.getLong("min"),
+                    max = row.getLong("max"),
+                    unit = row.getString("unit"),
+                    text = row.getString("text"),
+                    target = row.getString("target"),
+                    visible = row.getBoolean("visible"),
+                    description = row.getString("description"),
+                    detailTarget = row.getString("detail_target"),
                 )
         }
         val id = section.getString("id")
-        val label = section.optString("label")
-        val visible = section.optBoolean("visible", true)
-        val sub = section.optString("sub", "")
+        val label = section.getString("label")
+        val visible = section.getBoolean("visible")
+        val sub = section.getString("sub")
         out += SettingsSection(id = id, label = label, rows = rows.filter { it.visible }, visible = visible, sub = sub)
     }
     return out

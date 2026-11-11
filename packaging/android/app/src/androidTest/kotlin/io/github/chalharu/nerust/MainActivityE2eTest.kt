@@ -8,6 +8,8 @@ import android.os.Build
 import android.os.SystemClock
 import android.util.Log
 import androidx.test.core.app.ApplicationProvider
+import org.json.JSONArray
+import org.json.JSONObject
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -69,7 +71,6 @@ class MainActivityE2eTest {
             manager.show(
                 dialogTag = "audit-first",
                 contentDescription = "first",
-                presentation = DIALOG_PRESENTATION_FULL_SCREEN,
                 onDismiss = { oldAcks++ },
             ) { dismiss -> firstDismiss.set(dismiss) }
         }
@@ -82,7 +83,6 @@ class MainActivityE2eTest {
                 manager.show(
                     dialogTag = "audit-replacement",
                     contentDescription = "replacement",
-                    presentation = DIALOG_PRESENTATION_FULL_SCREEN,
                     onDismiss = { newAcks++ },
                 ) { _ -> }
             }
@@ -170,7 +170,7 @@ class MainActivityE2eTest {
 
         runOnActivityThread(activity) {
             require(!activity.isDestroyed) { "MainActivity should remain alive before opening Settings" }
-            activity.showSettingsDialogForTest(
+            launchSettingsForTest(
                 listOf(
                     SettingsSection(
                         id = "video",
@@ -219,7 +219,7 @@ class MainActivityE2eTest {
 
         runOnActivityThread(activity) {
             val settingsRoot =
-                requireNotNull(activity.findChromeViewForTest(SETTINGS_DIALOG_TAG)) {
+                requireNotNull(activity.findChromeViewForTest(SETTINGS_SCREEN_TAG)) {
                     "SettingsActivity decor should be available"
                 }
             assertTrue(
@@ -228,7 +228,7 @@ class MainActivityE2eTest {
             )
             assertEquals(
                 "Settings\nVideo Filter: LCD\nTouch Overlay: On",
-                settingsRoot.getTag(R.id.nerust_dialog_content_probe),
+                settingsRoot.getTag(R.id.nerust_settings_content_probe),
             )
             assertEquals(
                 "Video: 1 setting\nControls: 1 setting",
@@ -268,6 +268,67 @@ class MainActivityE2eTest {
             waitUntil(DIALOG_TIMEOUT_MS) { MainActivity.currentActivityForTest() == null },
         )
         SystemClock.sleep(LIFECYCLE_SAVE_DELAY_MS)
+    }
+
+    /** Launch the standalone settings screen with canned sections. */
+    private fun launchSettingsForTest(sections: List<SettingsSection>) {
+        // Mirror the production envelope: SettingsActivity unwraps "payload".
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val envelope = JSONObject().put("payload", sectionsToJson(sections))
+        context.startActivity(
+            SettingsActivity.createIntent(context, SETTINGS_SCHEMA_VERSION, -1L, envelope.toString())
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+    }
+
+    private fun sectionsToJson(sections: List<SettingsSection>): JSONObject {
+        val rowsOf = { rows: List<SettingsRow> ->
+            val array = JSONArray()
+            rows.forEach { row ->
+                val choices = JSONArray()
+                row.choices.forEach { choice ->
+                    choices.put(
+                        JSONObject()
+                            .put("label", choice.label)
+                            .put("enabled", choice.enabled)
+                            .put("reason", choice.reason),
+                    )
+                }
+                array.put(
+                    JSONObject()
+                        .put("key", row.key)
+                        .put("label", row.label)
+                        .put("kind", row.kind)
+                        .put("choices", choices)
+                        .put("selected", row.selected)
+                        .put("number", row.number)
+                        .put("step", row.step)
+                        .put("min", row.min)
+                        .put("max", row.max)
+                        .put("unit", row.unit)
+                        .put("text", row.text)
+                        .put("target", row.target)
+                        .put("description", row.description)
+                        .put("detail_target", row.detailTarget)
+                        .put("visible", row.visible),
+                )
+            }
+            array
+        }
+        val array = JSONArray()
+        sections.forEach { section ->
+            array.put(
+                JSONObject()
+                    .put("id", section.id)
+                    .put("label", section.label)
+                    .put("rows", rowsOf(section.rows))
+                    .put("visible", section.visible)
+                    .put("sub", section.sub),
+            )
+        }
+        return JSONObject()
+            .put("sections", array)
+            .put("issues", JSONArray())
     }
 
     @Test(timeout = TEST_TIMEOUT_MS)
@@ -560,7 +621,6 @@ class MainActivityE2eTest {
 
     private companion object {
         const val DIALOG_TIMEOUT_MS = 5_000L
-        const val DIALOG_PRESENTATION_FULL_SCREEN = "full_screen"
         const val DRAWER_COMPOSE_TAG = "nerust-drawer-compose"
         const val DRAWER_EDGE_HANDLE_TAG = "nerust-drawer-edge-handle"
         const val DRAWER_OVERLAY_TAG = "nerust-drawer-overlay"
@@ -576,7 +636,7 @@ class MainActivityE2eTest {
             Intent.FLAG_GRANT_READ_URI_PERMISSION or
                 Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
                 Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
-        const val SETTINGS_DIALOG_TAG = "nerust-settings-dialog"
+        const val SETTINGS_SCREEN_TAG = "nerust-settings-screen"
         const val SHUTDOWN_WATCHDOG_MS = 30_000L
         const val TAG = "MainActivityE2eTest"
         const val STARTUP_STABILITY_DELAY_MS = 2_000L
