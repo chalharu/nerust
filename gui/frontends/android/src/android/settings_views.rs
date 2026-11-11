@@ -863,13 +863,11 @@ pub(super) fn finish_snapshot(
     factories: &[Arc<dyn CoreFactory>],
     rates: Arc<[u32]>,
 ) -> Result<SettingsSnapshot, Vec<String>> {
-    let vm = SettingsViewModel::new(
-        snapshot.clone(),
-        factories.to_vec(),
+    let deps = VmDeps {
+        factories: factories.to_vec(),
         rates,
-        Rc::new(SafStorageValidator),
-    )
-    .map_err(|error| vec![error.to_string()])?;
+    };
+    let vm = build_vm(snapshot, &deps).map_err(|error| vec![error])?;
     vm.finish().map_err(|state| {
         state
             .issues
@@ -924,7 +922,7 @@ fn find_row<'a>(sections: &'a [SectionWire], key: &str) -> Result<&'a RowWire, S
     sections
         .iter()
         .flat_map(|section| &section.rows)
-        .find(|row| row.key == key)
+        .find(|row| !row.key.is_empty() && row.key == key)
         .ok_or_else(|| format!("unknown settings key: {key}"))
 }
 
@@ -1212,19 +1210,28 @@ fn toggle_row(
     language: AppLanguage,
     value: bool,
 ) -> RowWire {
-    let mut row = choice_row(
-        key,
+    RowWire {
+        key: key.to_string(),
         label,
         description,
-        &[
-            (false, ui_text(language, UiText::Off).to_string()),
-            (true, ui_text(language, UiText::On).to_string()),
+        kind: RowKind::Toggle,
+        choices: vec![
+            ChoiceWire {
+                value: serde_json::to_value(false).unwrap_or(serde_json::Value::Null),
+                label: ui_text(language, UiText::Off).to_string(),
+                enabled: true,
+                reason: String::new(),
+            },
+            ChoiceWire {
+                value: serde_json::to_value(true).unwrap_or(serde_json::Value::Null),
+                label: ui_text(language, UiText::On).to_string(),
+                enabled: true,
+                reason: String::new(),
+            },
         ],
-        &value,
-    );
-    row.selected = usize::from(value);
-    row.kind = RowKind::Toggle;
-    row
+        selected: usize::from(value),
+        ..RowWire::new(RowKind::Toggle)
+    }
 }
 
 #[allow(
@@ -1285,10 +1292,8 @@ fn group_row(key: &str, label: String, description: String, target: &str) -> Row
     }
 }
 
-/// Key-capture row: tap starts capture against the opaque target, Clear
-/// unbinds, Cancel aborts. `text` shows the current binding label.
-/// `description` stays empty: the value line already serves as the副文
-/// (bound key name, or "Tap to assign").
+/// Key-capture row: tap starts capture, Clear unbinds, Cancel aborts.
+/// `description` stays empty: the value line already names the binding.
 fn capture_row(
     key: &str,
     label: String,
@@ -2005,12 +2010,9 @@ fn build_controllers_sections(
     vec![quick, overlay_detail, shortcuts]
 }
 
-/// One section per machine: its settings fields plus its controller slot
-/// assignment. Keyboard bindings and shortcuts need a physical keyboard, so
-/// Android shows neither; binding conflicts vanish with them.
 /// One section per machine: settings fields plus a navigation row into the
-/// machine's controller screen (`input.<system>`). Keyboard bindings live on
-/// the controller screen, one drill-down away from the machine settings.
+/// machine's controller screen (`input.<system>`). Keyboard bindings live in
+/// `keys.*`, one drill-down from each device detail screen.
 fn build_system_sections(vm: &SettingsViewModel, language: AppLanguage) -> Vec<SectionWire> {
     let t = |text: UiText| ui_text(language, text).to_string();
     vm.systems()
@@ -2037,7 +2039,7 @@ fn build_system_sections(vm: &SettingsViewModel, language: AppLanguage) -> Vec<S
             rows.push(group_row(
                 &format!("system.{}.controllers", view.system_id),
                 ui_text(language, UiText::Controller).to_string(),
-                ui_text(language, UiText::DescSystemControllers).to_string(),
+                String::new(),
                 &format!("input.{}", view.system_id),
             ));
             rows.push(button_row(
@@ -2536,18 +2538,18 @@ fn decode_target(encoded: &str, deps: &VmDeps) -> Result<CaptureTarget, String> 
                 .iter()
                 .find(|factory| factory.system_id().to_string() == system)
                 .ok_or_else(|| format!("unknown system: {system}"))?;
+            let attachment = value
+                .get("attachment")
+                .and_then(|attachment| attachment.as_str())
+                .ok_or_else(|| "capture target misses attachment".to_string())?;
+            let control = value
+                .get("control")
+                .and_then(|control| control.as_str())
+                .ok_or_else(|| "capture target misses control".to_string())?;
             Ok(CaptureTarget::Binding {
                 system: factory.system_id(),
-                attachment: value
-                    .get("attachment")
-                    .and_then(|attachment| attachment.as_str())
-                    .unwrap_or_default()
-                    .to_string(),
-                control: value
-                    .get("control")
-                    .and_then(|control| control.as_str())
-                    .unwrap_or_default()
-                    .to_string(),
+                attachment: attachment.to_string(),
+                control: control.to_string(),
             })
         }
         Some("shortcut") => {
@@ -2741,9 +2743,9 @@ mod tests {
     }
 
     #[test]
-    fn open_payload_covers_legacy_items() {
+    fn open_payload_covers_core_items() {
         let (_snapshot, payload) = test_payload();
-        // Every row the old descriptor dialog exposed must exist.
+        // Every core row the screen exposes must exist.
         for key in [
             "audio.muted",
             "audio.volume",
@@ -3686,8 +3688,9 @@ mod tests {
         // - app.about, machine drill-down rows (advanced.*), controller-type
         //   rows (player.*.type): standard navigation pattern, the label
         //   plus chevron says where it goes.
-        // - per-machine settings (system.*): label plus choice value is
-        //   self-contained; the screen context already scopes the machine.
+        // - per-machine settings (system.*) and the controller links
+        //   (system.*.controllers): label plus choice value, or label plus
+        //   chevron in machine context, is self-contained.
         // - player.*.devices: the value line carries the port summary.
         let mut bare: Vec<String> = payload_bare_keys(&test_payload().1);
         bare.sort();
@@ -3716,9 +3719,12 @@ mod tests {
             "player.2.type",
             "status.enabled",
             "status.position",
+            "system.gba.controllers",
             "system.gba.peripheral.solar_light",
+            "system.gbc.controllers",
             "system.gbc.system.hardware_model",
             "system.gbc.system.rtc_sync",
+            "system.nes.controllers",
             "system.nes.core.mmc3_irq_variant",
             "system.nes.video.filter",
         ];
