@@ -204,7 +204,9 @@ impl RenderSync {
         let profile = profile.map(|p| p.physical_size);
         let snapshot = session.settings_snapshot();
         let notifications = &snapshot.local.notifications;
-        let language = snapshot.shared.general.language;
+        // Same vault resolution as the OSD poll: a saved SystemDefault
+        // must follow the terminal locale, never the env fallback.
+        let language = super::settings::display_language(snapshot.shared.general.language);
         FrameInput {
             tick,
             notifications,
