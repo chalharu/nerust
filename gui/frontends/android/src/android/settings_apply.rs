@@ -80,15 +80,18 @@ impl super::AndroidFrontend {
             .iter()
             .copied()
             .collect();
-        // The drawer and every Android string follow the saved choice:
-        // push the language even when storage defers the rest.
-        settings::apply_app_language(
-            &self.app,
-            settings::app_language_tag(next.shared.general.language),
-        );
         let system_locale = bridge::with_settings(|state| state.system_locale);
         match settings::finish_snapshot(&next, &factories, rates, system_locale) {
-            Ok(validated) => self.plan_storage_apply(validated),
+            Ok(validated) => {
+                // The drawer and every Android string follow the saved
+                // choice: push the validated language, never a rejected
+                // draft's.
+                settings::apply_app_language(
+                    &self.app,
+                    settings::app_language_tag(validated.shared.general.language),
+                );
+                self.plan_storage_apply(validated)
+            }
             Err(issues) => {
                 let reason = format!(
                     "Android settings rejected by validation: {}",

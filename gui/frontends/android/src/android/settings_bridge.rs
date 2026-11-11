@@ -74,17 +74,6 @@ pub(super) fn request_show_settings_dialog(
     Ok(true)
 }
 
-/// BCP-47 tag for the in-app language (`AppLanguage` mapped at the call
-/// site; empty means the system locale). Kotlin persists it and recreates
-/// so the drawer and every Android string follow the saved choice.
-pub(super) fn app_language_tag(language: AppLanguage) -> &'static str {
-    match language {
-        AppLanguage::Japanese => "ja",
-        AppLanguage::English => "en",
-        AppLanguage::SystemDefault => "",
-    }
-}
-
 /// Publish the saved in-app language without opening the screen.
 pub(super) fn apply_app_language(app: &AndroidApp, tag: &str) {
     let tag = tag.to_string();
@@ -257,13 +246,8 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_pushSystemLoc
         jni::Outcome::Ok(tag) if !tag.is_empty() => tag,
         _ => return,
     };
-    let locale = if tag.starts_with("ja") {
-        AppLanguage::Japanese
-    } else {
-        AppLanguage::English
-    };
     bridge::with_settings(|state| {
-        state.system_locale = Some(locale);
+        state.system_locale = Some(settings_views::system_language_from_tag(&tag));
     });
 }
 
