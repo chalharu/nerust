@@ -118,6 +118,12 @@ pub(super) fn register_main_activity_natives(
                     as *mut c_void,
             ),
             jni::NativeMethod::from_raw_parts(
+                jni_str!("nativeIsEmulationPaused"),
+                jni_str!("()Z"),
+                menu::Java_io_github_chalharu_nerust_MainActivity_nativeIsEmulationPaused
+                    as *mut c_void,
+            ),
+            jni::NativeMethod::from_raw_parts(
                 jni_str!("onSystemInsetsChanged"),
                 jni_str!("([I)V"),
                 bridge::Java_io_github_chalharu_nerust_MainActivity_onSystemInsetsChanged
@@ -754,6 +760,12 @@ impl AndroidFrontend {
                 if o.needs_redraw {
                     self.flow.render_sync.request_redraw(&mut self.core.shell);
                 }
+                // Single choke point for every pause mutation (drawer toggle,
+                // shortcuts, auto-pause, error dialogs): republish so the
+                // drawer query below never reads stale truth.
+                bridge::with_settings(|state| {
+                    state.emulation_paused = self.core.session.tick_metrics().paused;
+                });
                 Some(o)
             }
             Err(error) => {
