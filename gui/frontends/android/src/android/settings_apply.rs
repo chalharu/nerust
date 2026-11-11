@@ -7,7 +7,7 @@ use nerust_gui_shell::session::{notification::FailureOrigin, osd::TickMetrics};
 use nerust_settings_core::model::shared::StoragePolicy;
 
 use super::{
-    error_dialog, picker,
+    bridge, error_dialog, picker,
     settings::{self, SettingsDialogResult},
 };
 
@@ -80,7 +80,14 @@ impl super::AndroidFrontend {
             .iter()
             .copied()
             .collect();
-        match settings::finish_snapshot(&next, &factories, rates) {
+        // The drawer and every Android string follow the saved choice:
+        // push the language even when storage defers the rest.
+        settings::apply_app_language(
+            &self.app,
+            settings::app_language_tag(next.shared.general.language),
+        );
+        let system_locale = bridge::with_settings(|state| state.system_locale);
+        match settings::finish_snapshot(&next, &factories, rates, system_locale) {
             Ok(validated) => self.plan_storage_apply(validated),
             Err(issues) => {
                 let reason = format!(

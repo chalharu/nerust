@@ -257,9 +257,19 @@ impl StoragePathValidator for SafStorageValidator {
     }
 }
 
-fn build_vm(snapshot: &SettingsSnapshot, deps: &VmDeps) -> Result<SettingsViewModel, String> {
+fn build_vm(
+    snapshot: &SettingsSnapshot,
+    deps: &VmDeps,
+    i18n: I18n,
+) -> Result<SettingsViewModel, String> {
+    // Display copy only: the VM resolves every label through the snapshot
+    // language, so SystemDefault is concretized here (Android never sets
+    // the LANG env the shared resolver reads). The draft keeps the user's
+    // choice; writebacks restore it via `sync_snapshot_from_vm`.
+    let mut resolved = snapshot.clone();
+    resolved.shared.general.language = i18n.language();
     SettingsViewModel::new(
-        snapshot.clone(),
+        resolved,
         deps.factories.clone(),
         Arc::clone(&deps.rates),
         Rc::new(SafStorageValidator),
@@ -267,21 +277,94 @@ fn build_vm(snapshot: &SettingsSnapshot, deps: &VmDeps) -> Result<SettingsViewMo
     .map_err(|error| error.to_string())
 }
 
+/// Resolved display language plus text accessors: constructed once per
+/// projection from the draft choice and the vault system `Locale`, then
+/// threaded through every builder instead of a bare locale or language.
+/// The VM working copy is normalized with the same value, so labels from
+/// both layers agree.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct I18n {
+    language: AppLanguage,
+}
+
+impl I18n {
+    /// Resolve the display language: an explicit choice wins, SystemDefault
+    /// follows the vault-pushed `Locale` (`None` until pushed keeps the
+    /// choice for the host fallback).
+    pub(super) fn resolve(setting: AppLanguage, system: Option<AppLanguage>) -> Self {
+        let language = match (setting, system) {
+            (AppLanguage::SystemDefault, Some(system)) => system,
+            _ => setting,
+        };
+        Self { language }
+    }
+
+    pub(super) fn language(self) -> AppLanguage {
+        self.language
+    }
+
+    pub(super) fn text(self, key: UiText) -> String {
+        ui_text(self.language, key).to_string()
+    }
+
+    pub(super) fn port_summary(self, names: &[String]) -> String {
+        port_summary(self.language, names)
+    }
+
+    pub(super) fn port_count_line(self, count: usize) -> String {
+        port_count_line(self.language, count)
+    }
+
+    pub(super) fn slot_description(self) -> String {
+        slot_description(self.language)
+    }
+}
+
+/// Vault device truth for one projection: enumerated keyboards, touch
+/// capability, counted gamepads, and the resolved display language. One
+/// `Copy` struct instead of four parallel params (keeps every wire fn
+/// under the argument cap).
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Projection<'a> {
+    pub keyboards: &'a [KeyboardInfo],
+    pub touch_capable: Option<bool>,
+    pub gamepads: &'a [GamepadInfo],
+    pub i18n: I18n,
+}
+
+/// Write the VM working copy back. The VM works on the resolved display
+/// copy, so an untouched language reads back as the resolved locale: pin
+/// the user's choice in that case, keeping an explicit change (which reads
+/// back as something else) as-is.
+fn sync_snapshot_from_vm(snapshot: &mut SettingsSnapshot, vm: &SettingsViewModel, i18n: I18n) {
+    let original = snapshot.shared.general.language;
+    let resolved = i18n.language();
+    let updated = vm.snapshot();
+    let touched = updated.shared.general.language != resolved;
+    *snapshot = updated;
+    if !touched {
+        snapshot.shared.general.language = original;
+    }
+}
+
 /// Open payload for Kotlin: schema version, sections, live issues from a
 /// non-fatal `finish` probe, and the pending key-capture state.
 /// `keyboards` is the vault's enumerated physical-keyboard list;
-/// `touch_capable` is `None` until Kotlin reports touch capability.
+/// `touch_capable` is `None` until Kotlin reports touch capability;
+/// `system_locale` is the vault-pushed system `Locale` (`None` until pushed).
 pub(super) fn open_payload(
     snapshot: &SettingsSnapshot,
     keyboards: &[KeyboardInfo],
     touch_capable: Option<bool>,
     gamepads: &[GamepadInfo],
+    system_locale: Option<AppLanguage>,
 ) -> Result<String, String> {
     with_vm_deps(|deps| {
-        let vm = build_vm(snapshot, deps)?;
+        let i18n = I18n::resolve(snapshot.shared.general.language, system_locale);
+        let vm = build_vm(snapshot, deps, i18n)?;
         let payload = ViewPayload {
             schema_version: SETTINGS_SCHEMA_VERSION,
-            sections: build_sections(&vm, snapshot, keyboards, touch_capable, gamepads),
+            sections: build_sections(&vm, snapshot, keyboards, touch_capable, gamepads, i18n),
             issues: draft_issues(&vm),
             capture: None,
         };
@@ -304,10 +387,12 @@ pub(super) fn apply_command_to(
     keyboards: &mut Vec<KeyboardInfo>,
     touch_capable: &mut Option<bool>,
     gamepads: &mut Vec<GamepadInfo>,
+    system_locale: &mut Option<AppLanguage>,
 ) -> Result<String, String> {
     let command: WireCommand =
         serde_json::from_str(command_json).map_err(|error| error.to_string())?;
     with_vm_deps(|deps| {
+        let i18n = I18n::resolve(snapshot.shared.general.language, *system_locale);
         match command.op.as_str() {
             "keyboards" => {
                 apply_keyboards_command(keyboards, &command)?;
@@ -315,36 +400,51 @@ pub(super) fn apply_command_to(
             }
             "touch" => apply_touch_command(touch_capable, &command)?,
             "gamepads" => apply_gamepads_command(gamepads, &command)?,
+            "locale" => apply_locale_command(system_locale, &command)?,
             "reset_section" => {
-                let vm = build_vm(snapshot, deps)?;
-                let sections = build_sections(&vm, snapshot, keyboards, *touch_capable, gamepads);
-                apply_reset_section(
-                    snapshot,
-                    deps,
-                    &sections,
-                    &command,
+                let vm = build_vm(snapshot, deps, i18n)?;
+                let truth = Projection {
                     keyboards,
-                    *touch_capable,
+                    touch_capable: *touch_capable,
                     gamepads,
-                )?;
+                    i18n,
+                };
+                let sections = build_sections(
+                    &vm,
+                    snapshot,
+                    truth.keyboards,
+                    truth.touch_capable,
+                    truth.gamepads,
+                    truth.i18n,
+                );
+                apply_reset_section(snapshot, deps, &sections, &command, truth)?;
             }
-            "cancel_capture" | "clear_binding" | "start_capture" => apply_capture_command(
-                snapshot,
-                deps,
-                &command,
-                capture,
-                keyboards,
-                *touch_capable,
-                gamepads,
-            )?,
+            "cancel_capture" | "clear_binding" | "start_capture" => {
+                let truth = Projection {
+                    keyboards,
+                    touch_capable: *touch_capable,
+                    gamepads,
+                    i18n,
+                };
+                apply_capture_command(snapshot, deps, &command, capture, truth)?
+            }
             "set" => {
-                let vm = build_vm(snapshot, deps)?;
-                let sections = build_sections(&vm, snapshot, keyboards, *touch_capable, gamepads);
-                apply_set_command(snapshot, deps, &vm, &sections, &command)?;
+                let vm = build_vm(snapshot, deps, i18n)?;
+                let sections =
+                    build_sections(&vm, snapshot, keyboards, *touch_capable, gamepads, i18n);
+                apply_set_command(snapshot, deps, &vm, &sections, &command, i18n)?;
             }
             op => return Err(format!("unknown command op: {op}")),
         }
-        refreshed_payload(snapshot, deps, capture, keyboards, *touch_capable, gamepads)
+        // Re-resolve: the command may have changed the language choice.
+        let i18n = I18n::resolve(snapshot.shared.general.language, *system_locale);
+        let truth = Projection {
+            keyboards,
+            touch_capable: *touch_capable,
+            gamepads,
+            i18n,
+        };
+        refreshed_payload(snapshot, deps, capture, truth)
     })
 }
 
@@ -357,6 +457,7 @@ fn apply_set_command(
     vm: &SettingsViewModel,
     sections: &[SectionWire],
     command: &WireCommand,
+    i18n: I18n,
 ) -> Result<(), String> {
     if apply_android_local(snapshot, sections, command)? {
         return Ok(());
@@ -365,7 +466,7 @@ fn apply_set_command(
         apply_device_command(snapshot, sections, command)
     } else {
         apply_view_model_command(vm, deps, sections, command)?;
-        *snapshot = vm.snapshot();
+        sync_snapshot_from_vm(snapshot, vm, i18n);
         Ok(())
     }
 }
@@ -376,14 +477,19 @@ fn refreshed_payload(
     snapshot: &SettingsSnapshot,
     deps: &VmDeps,
     capture: &CaptureSlot,
-    keyboards: &[KeyboardInfo],
-    touch_capable: Option<bool>,
-    gamepads: &[GamepadInfo],
+    truth: Projection,
 ) -> Result<String, String> {
-    let vm = build_vm(snapshot, deps)?;
+    let vm = build_vm(snapshot, deps, truth.i18n)?;
     let payload = ViewPayload {
         schema_version: SETTINGS_SCHEMA_VERSION,
-        sections: build_sections(&vm, snapshot, keyboards, touch_capable, gamepads),
+        sections: build_sections(
+            &vm,
+            snapshot,
+            truth.keyboards,
+            truth.touch_capable,
+            truth.gamepads,
+            truth.i18n,
+        ),
         issues: draft_issues(&vm),
         capture: capture.as_ref().map(|(target, prompt)| CaptureWire {
             target: encode_target(target, &target_system(target, deps)),
@@ -403,31 +509,24 @@ pub(super) fn apply_hardware_key(
     pressed: bool,
     snapshot: &mut SettingsSnapshot,
     capture: &mut CaptureSlot,
-    keyboards: &[KeyboardInfo],
-    touch_capable: Option<bool>,
-    gamepads: &[GamepadInfo],
+    truth: Projection,
 ) -> Result<(String, bool), String> {
     with_vm_deps(|deps| {
+        let i18n = truth.i18n;
         if pressed
             && let Some((target, _)) = capture.clone()
             && let Some(key) = android_keycode_to_key(keycode)
         {
-            let vm = build_vm(snapshot, deps)?;
+            let vm = build_vm(snapshot, deps, i18n)?;
             vm.capture
                 .start_capture(target)
                 .map_err(|error| error.to_string())?;
             vm.capture.apply_captured_key(key);
-            *snapshot = vm.snapshot();
+            sync_snapshot_from_vm(snapshot, &vm, i18n);
             *capture = None;
-            Ok((
-                refreshed_payload(snapshot, deps, capture, keyboards, touch_capable, gamepads)?,
-                true,
-            ))
+            Ok((refreshed_payload(snapshot, deps, capture, truth)?, true))
         } else {
-            Ok((
-                refreshed_payload(snapshot, deps, capture, keyboards, touch_capable, gamepads)?,
-                false,
-            ))
+            Ok((refreshed_payload(snapshot, deps, capture, truth)?, false))
         }
     })
 }
@@ -579,16 +678,21 @@ fn apply_capture_command(
     deps: &VmDeps,
     command: &WireCommand,
     capture: &mut CaptureSlot,
-    keyboards: &[KeyboardInfo],
-    touch_capable: Option<bool>,
-    gamepads: &[GamepadInfo],
+    truth: Projection,
 ) -> Result<(), String> {
     if command.op == "cancel_capture" {
         *capture = None;
         return Ok(());
     }
-    let vm = build_vm(snapshot, deps)?;
-    let sections = build_sections(&vm, snapshot, keyboards, touch_capable, gamepads);
+    let vm = build_vm(snapshot, deps, truth.i18n)?;
+    let sections = build_sections(
+        &vm,
+        snapshot,
+        truth.keyboards,
+        truth.touch_capable,
+        truth.gamepads,
+        truth.i18n,
+    );
     let row = find_row(&sections, &command.key)?;
     if row.kind != RowKind::Capture {
         return Err(format!("{}: not a capture row", command.key));
@@ -599,7 +703,7 @@ fn apply_capture_command(
             vm.capture
                 .clear_binding(&target)
                 .map_err(|error| error.to_string())?;
-            *snapshot = vm.snapshot();
+            sync_snapshot_from_vm(snapshot, &vm, truth.i18n);
             *capture = None;
             Ok(())
         }
@@ -647,6 +751,30 @@ fn apply_keyboards_command(
         }
     }
     *keyboards = list;
+    Ok(())
+}
+
+/// Upsert the vault's system locale (Kotlin `configuration`, re-pushed
+/// with the keyboard enumeration). The tag resolves to the supported set
+/// once, here at the boundary; projections pass the `Locale` around, never
+/// the raw string.
+fn apply_locale_command(
+    system_locale: &mut Option<AppLanguage>,
+    command: &WireCommand,
+) -> Result<(), String> {
+    let raw = command
+        .payload
+        .get("lang")
+        .and_then(|lang| lang.as_str())
+        .ok_or_else(|| "locale op misses lang".to_string())?;
+    if raw.is_empty() {
+        return Err("locale lang must not be empty".to_string());
+    }
+    *system_locale = Some(if raw.starts_with("ja") {
+        AppLanguage::Japanese
+    } else {
+        AppLanguage::English
+    });
     Ok(())
 }
 
@@ -742,18 +870,22 @@ fn apply_reset_section(
     deps: &VmDeps,
     sections: &[SectionWire],
     command: &WireCommand,
-    keyboards: &[KeyboardInfo],
-    touch_capable: Option<bool>,
-    gamepads: &[GamepadInfo],
+    truth: Projection,
 ) -> Result<(), String> {
     let scope = command
         .key
         .strip_prefix("reset.")
         .ok_or_else(|| format!("malformed reset key: {}", command.key))?;
     let default = default_snapshot(deps);
-    let default_vm = build_vm(&default, deps)?;
-    let default_sections =
-        build_sections(&default_vm, &default, keyboards, touch_capable, gamepads);
+    let default_vm = build_vm(&default, deps, truth.i18n)?;
+    let default_sections = build_sections(
+        &default_vm,
+        &default,
+        truth.keyboards,
+        truth.touch_capable,
+        truth.gamepads,
+        truth.i18n,
+    );
     let reset_all = scope == "all";
     if reset_all {
         // Membership rows only cover enumerated keyboards; stale members
@@ -778,7 +910,7 @@ fn apply_reset_section(
                 // enumerated keyboards) are left alone.
                 None => continue,
             };
-            reset_row(snapshot, deps, sections, row, default_row)?;
+            reset_row(snapshot, deps, sections, row, default_row, truth.i18n)?;
         }
     }
     Ok(())
@@ -790,6 +922,7 @@ fn reset_row(
     sections: &[SectionWire],
     row: &RowWire,
     default_row: &RowWire,
+    i18n: I18n,
 ) -> Result<(), String> {
     debug_assert_eq!(row.key, default_row.key);
     match row.kind {
@@ -807,14 +940,14 @@ fn reset_row(
                     op: "set".to_string(),
                     payload: serde_json::Value::Null,
                 };
-                let vm = build_vm(snapshot, deps)?;
-                apply_set_command(snapshot, deps, &vm, sections, &reset)?;
+                let vm = build_vm(snapshot, deps, i18n)?;
+                apply_set_command(snapshot, deps, &vm, sections, &reset, i18n)?;
             }
             Ok(())
         }
         RowKind::Capture => {
             if row.text != default_row.text {
-                let vm = build_vm(snapshot, deps)?;
+                let vm = build_vm(snapshot, deps, i18n)?;
                 let target = decode_target(&row.target, deps)?;
                 match &target {
                     CaptureTarget::Shortcut(action) => {
@@ -831,14 +964,14 @@ fn reset_row(
                                 .map_err(|error| error.to_string())?;
                             vm.capture.apply_captured_key(key);
                         }
-                        *snapshot = vm.snapshot();
+                        sync_snapshot_from_vm(snapshot, &vm, i18n);
                     }
                     CaptureTarget::Binding { .. } => {
                         // Default profiles bind nothing: clear suffices.
                         vm.capture
                             .clear_binding(&target)
                             .map_err(|error| error.to_string())?;
-                        *snapshot = vm.snapshot();
+                        sync_snapshot_from_vm(snapshot, &vm, i18n);
                     }
                 }
             }
@@ -853,19 +986,30 @@ pub(super) fn finish_snapshot(
     snapshot: &SettingsSnapshot,
     factories: &[Arc<dyn CoreFactory>],
     rates: Arc<[u32]>,
+    system_locale: Option<AppLanguage>,
 ) -> Result<SettingsSnapshot, Vec<String>> {
     let deps = VmDeps {
         factories: factories.to_vec(),
         rates,
     };
-    let vm = build_vm(snapshot, &deps).map_err(|error| vec![error])?;
-    vm.finish().map_err(|state| {
-        state
-            .issues
-            .iter()
-            .map(|issue| issue.message.clone())
-            .collect()
-    })
+    let i18n = I18n::resolve(snapshot.shared.general.language, system_locale);
+    let vm = build_vm(snapshot, &deps, i18n).map_err(|error| vec![error])?;
+    vm.finish()
+        .map(|mut done| {
+            // The VM validated the display copy; the saved file keeps the
+            // user's choice, never the resolved display value.
+            if done.shared.general.language == i18n.language() {
+                done.shared.general.language = snapshot.shared.general.language;
+            }
+            done
+        })
+        .map_err(|state| {
+            state
+                .issues
+                .iter()
+                .map(|issue| issue.message.clone())
+                .collect()
+        })
 }
 
 fn choice<T: serde::de::DeserializeOwned>(row: &RowWire, index: usize) -> Result<T, String> {
@@ -1187,20 +1331,14 @@ where
     }
 }
 
-fn toggle_row(
-    key: &str,
-    label: String,
-    description: String,
-    language: AppLanguage,
-    value: bool,
-) -> RowWire {
+fn toggle_row(key: &str, label: String, description: String, i18n: I18n, value: bool) -> RowWire {
     let mut row = choice_row(
         key,
         label,
         description,
         &[
-            (false, ui_text(language, UiText::Off).to_string()),
-            (true, ui_text(language, UiText::On).to_string()),
+            (false, i18n.text(UiText::Off).to_string()),
+            (true, i18n.text(UiText::On).to_string()),
         ],
         &value,
     );
@@ -1315,16 +1453,12 @@ fn types_id(index: usize) -> String {
     format!("types.{}", index + 1)
 }
 
-fn player_label(index: usize, language: AppLanguage) -> String {
-    ui_text(
-        language,
-        if index == 0 {
-            UiText::PlayerOne
-        } else {
-            UiText::PlayerTwo
-        },
-    )
-    .to_string()
+fn player_label(index: usize, i18n: I18n) -> String {
+    i18n.text(if index == 0 {
+        UiText::PlayerOne
+    } else {
+        UiText::PlayerTwo
+    })
 }
 
 fn build_sections(
@@ -1333,29 +1467,29 @@ fn build_sections(
     keyboards: &[KeyboardInfo],
     touch_capable: Option<bool>,
     gamepads: &[GamepadInfo],
+    i18n: I18n,
 ) -> Vec<SectionWire> {
-    let language = snapshot.shared.general.language;
     let mut sections = vec![
-        build_play_section(vm, snapshot, language),
-        build_saves_section(vm, language),
-        build_notifications_section(vm, language),
-        build_app_section(vm, language),
-        build_advanced_section(vm, snapshot, language),
-        build_about_section(language),
-        build_audio_detail_section(vm, language),
+        build_play_section(vm, snapshot, i18n),
+        build_saves_section(vm, i18n),
+        build_notifications_section(vm, i18n),
+        build_app_section(vm, i18n),
+        build_advanced_section(vm, snapshot, i18n),
+        build_about_section(i18n),
+        build_audio_detail_section(vm, i18n),
     ];
     sections.extend(build_controllers_sections(
         vm,
         snapshot,
-        language,
+        i18n,
         keyboards,
         touch_capable,
         gamepads,
     ));
-    sections.extend(build_player_sections(vm, snapshot, language, keyboards));
-    sections.extend(build_system_sections(vm, language));
-    sections.extend(build_input_sections(vm, language));
-    sections.extend(build_keys_sections(vm, language));
+    sections.extend(build_player_sections(vm, snapshot, i18n, keyboards));
+    sections.extend(build_system_sections(vm, i18n));
+    sections.extend(build_input_sections(vm, i18n));
+    sections.extend(build_keys_sections(vm, i18n));
     // Canonical order owned by Rust; dynamic device sections (device.*)
     // keep build order after the known taxonomy.
     sections.sort_by_key(|section| {
@@ -1372,46 +1506,45 @@ fn build_sections(
 fn build_play_section(
     vm: &SettingsViewModel,
     snapshot: &SettingsSnapshot,
-    language: AppLanguage,
+    i18n: I18n,
 ) -> SectionWire {
     let audio = vm.audio.view.get();
     let orientation = snapshot.local.screen_orientation;
-    let t = |text: UiText| ui_text(language, text).to_string();
     SectionWire {
         id: "play".to_string(),
-        label: crate::settings_sections::section_label("play", language).to_string(),
+        label: crate::settings_sections::section_label("play", i18n.language()).to_string(),
         sub: String::new(),
         rows: vec![
             choice_row(
                 "video.orientation",
-                t(UiText::ScreenOrientation),
-                t(UiText::DescOrientation),
+                i18n.text(UiText::ScreenOrientation),
+                i18n.text(UiText::DescOrientation),
                 &[
                     (
                         ScreenOrientation::Auto,
-                        ui_text(language, UiText::AutoRotate).to_string(),
+                        i18n.text(UiText::AutoRotate).to_string(),
                     ),
                     (
                         ScreenOrientation::Portrait,
-                        ui_text(language, UiText::Portrait).to_string(),
+                        i18n.text(UiText::Portrait).to_string(),
                     ),
                     (
                         ScreenOrientation::Landscape,
-                        ui_text(language, UiText::Landscape).to_string(),
+                        i18n.text(UiText::Landscape).to_string(),
                     ),
                 ],
                 &orientation,
             ),
             toggle_row(
                 "audio.muted",
-                t(UiText::Mute),
-                t(UiText::DescMute),
-                language,
+                i18n.text(UiText::Mute),
+                i18n.text(UiText::DescMute),
+                i18n,
                 audio.muted,
             ),
             number_row(
                 "audio.volume",
-                t(UiText::MasterVolume),
+                i18n.text(UiText::MasterVolume),
                 String::new(),
                 i64::from(audio.volume_percent),
                 1,
@@ -1419,16 +1552,15 @@ fn build_play_section(
                 100,
                 "%",
             ),
-            button_row("reset.play", t(UiText::ResetScreen), String::new()),
+            button_row("reset.play", i18n.text(UiText::ResetScreen), String::new()),
         ],
         visible: true,
     }
 }
 
 /// Saves: where save data lives (storage policy section rehoused).
-fn build_saves_section(vm: &SettingsViewModel, language: AppLanguage) -> SectionWire {
+fn build_saves_section(vm: &SettingsViewModel, i18n: I18n) -> SectionWire {
     let general = vm.general.view.get();
-    let t = |text: UiText| ui_text(language, text).to_string();
     let mut rows = vec![{
         let (choices, selected) = (
             general
@@ -1440,8 +1572,8 @@ fn build_saves_section(vm: &SettingsViewModel, language: AppLanguage) -> Section
         );
         choice_row(
             "general.storage_policy",
-            t(UiText::SaveStoragePolicy),
-            t(UiText::DescStoragePolicy),
+            i18n.text(UiText::SaveStoragePolicy),
+            i18n.text(UiText::DescStoragePolicy),
             &choices,
             &selected,
         )
@@ -1449,19 +1581,19 @@ fn build_saves_section(vm: &SettingsViewModel, language: AppLanguage) -> Section
     if general.show_storage_directory {
         rows.push(info_row(
             "general.storage_directory",
-            t(UiText::SaveStorageDirectory),
+            i18n.text(UiText::SaveStorageDirectory),
             String::new(),
             general.storage_directory.clone(),
         ));
     }
     rows.push(button_row(
         "reset.saves",
-        t(UiText::ResetScreen),
+        i18n.text(UiText::ResetScreen),
         String::new(),
     ));
     SectionWire {
         id: "saves".to_string(),
-        label: crate::settings_sections::section_label("saves", language).to_string(),
+        label: crate::settings_sections::section_label("saves", i18n.language()).to_string(),
         sub: String::new(),
         rows,
         visible: true,
@@ -1470,9 +1602,8 @@ fn build_saves_section(vm: &SettingsViewModel, language: AppLanguage) -> Section
 
 /// App: language, about, global reset. The reset button confirms in
 /// Kotlin first (`reset.all`), then restores every setting to default.
-fn build_app_section(vm: &SettingsViewModel, language: AppLanguage) -> SectionWire {
+fn build_app_section(vm: &SettingsViewModel, i18n: I18n) -> SectionWire {
     let view = vm.general.view.get();
-    let t = |text: UiText| ui_text(language, text).to_string();
     let rows = vec![
         {
             let (choices, selected) = (
@@ -1484,18 +1615,23 @@ fn build_app_section(vm: &SettingsViewModel, language: AppLanguage) -> SectionWi
             );
             choice_row(
                 "general.language",
-                t(UiText::Language),
+                i18n.text(UiText::Language),
                 String::new(),
                 &choices,
                 &selected,
             )
         },
-        group_row("app.about", t(UiText::About), String::new(), "about"),
-        button_row("reset.all", t(UiText::ResetSettings), String::new()),
+        group_row(
+            "app.about",
+            i18n.text(UiText::About),
+            String::new(),
+            "about",
+        ),
+        button_row("reset.all", i18n.text(UiText::ResetSettings), String::new()),
     ];
     SectionWire {
         id: "app".to_string(),
-        label: crate::settings_sections::section_label("app", language).to_string(),
+        label: crate::settings_sections::section_label("app", i18n.language()).to_string(),
         sub: String::new(),
         rows,
         visible: true,
@@ -1504,22 +1640,21 @@ fn build_app_section(vm: &SettingsViewModel, language: AppLanguage) -> SectionWi
 
 /// About: version and license readouts (info rows need no description:
 /// the label is self-evident).
-fn build_about_section(language: AppLanguage) -> SectionWire {
-    let t = |text: UiText| ui_text(language, text).to_string();
+fn build_about_section(i18n: I18n) -> SectionWire {
     SectionWire {
         id: "about".to_string(),
-        label: t(UiText::About),
-        sub: t(UiText::SectionApp),
+        label: i18n.text(UiText::About),
+        sub: i18n.text(UiText::SectionApp),
         rows: vec![
             info_row(
                 "about.version",
-                t(UiText::Version),
+                i18n.text(UiText::Version),
                 String::new(),
                 format!("nerust {}", env!("CARGO_PKG_VERSION")),
             ),
             info_row(
                 "about.license",
-                t(UiText::License),
+                i18n.text(UiText::License),
                 String::new(),
                 "MPL-2.0".to_string(),
             ),
@@ -1533,42 +1668,41 @@ fn build_about_section(language: AppLanguage) -> SectionWire {
 fn build_advanced_section(
     vm: &SettingsViewModel,
     snapshot: &SettingsSnapshot,
-    language: AppLanguage,
+    i18n: I18n,
 ) -> SectionWire {
     let video = vm.video.view.get();
     let peripherals = &snapshot.local.cartridge_peripherals;
-    let t = |text: UiText| ui_text(language, text).to_string();
     let mut rows = vec![
         toggle_row(
             "video.vsync",
-            t(UiText::Vsync),
-            t(UiText::DescVsync),
-            language,
+            i18n.text(UiText::Vsync),
+            i18n.text(UiText::DescVsync),
+            i18n,
             video.vsync,
         ),
         group_row(
             "advanced.audio_detail",
-            t(UiText::AudioDetail),
-            t(UiText::DescAudioDetail),
+            i18n.text(UiText::AudioDetail),
+            i18n.text(UiText::DescAudioDetail),
             "audio.detail",
         ),
         toggle_row(
             "controls.cartridge_motion",
-            t(UiText::CartridgeMotion),
-            t(UiText::DescCartridgeMotion),
-            language,
+            i18n.text(UiText::CartridgeMotion),
+            i18n.text(UiText::DescCartridgeMotion),
+            i18n,
             peripherals.motion_enabled,
         ),
         toggle_row(
             "controls.cartridge_rumble",
-            t(UiText::CartridgeRumble),
-            t(UiText::DescCartridgeRumble),
-            language,
+            i18n.text(UiText::CartridgeRumble),
+            i18n.text(UiText::DescCartridgeRumble),
+            i18n,
             peripherals.rumble_enabled,
         ),
         number_row(
             "controls.cartridge_rumble_strength",
-            t(UiText::RumbleStrength),
+            i18n.text(UiText::RumbleStrength),
             String::new(),
             i64::from(peripherals.rumble_strength_percent),
             1,
@@ -1578,20 +1712,17 @@ fn build_advanced_section(
         ),
         choice_row(
             "controls.cartridge_rumble_target",
-            t(UiText::RumbleTarget),
+            i18n.text(UiText::RumbleTarget),
             String::new(),
             &[
-                (
-                    RumbleTarget::Auto,
-                    ui_text(language, UiText::Auto).to_string(),
-                ),
+                (RumbleTarget::Auto, i18n.text(UiText::Auto).to_string()),
                 (
                     RumbleTarget::Handset,
-                    ui_text(language, UiText::Handset).to_string(),
+                    i18n.text(UiText::Handset).to_string(),
                 ),
                 (
                     RumbleTarget::Controller,
-                    ui_text(language, UiText::Controller).to_string(),
+                    i18n.text(UiText::Controller).to_string(),
                 ),
             ],
             &peripherals.rumble_target,
@@ -1608,7 +1739,7 @@ fn build_advanced_section(
     }
     SectionWire {
         id: "advanced".to_string(),
-        label: crate::settings_sections::section_label("advanced", language).to_string(),
+        label: crate::settings_sections::section_label("advanced", i18n.language()).to_string(),
         sub: String::new(),
         rows,
         visible: true,
@@ -1617,13 +1748,12 @@ fn build_advanced_section(
 
 /// Audio detail: sample rate and latency for crackle troubleshooting.
 /// Reached from Advanced; everyday volume lives on Play.
-fn build_audio_detail_section(vm: &SettingsViewModel, language: AppLanguage) -> SectionWire {
+fn build_audio_detail_section(vm: &SettingsViewModel, i18n: I18n) -> SectionWire {
     let view = vm.audio.view.get();
-    let t = |text: UiText| ui_text(language, text).to_string();
     SectionWire {
         id: "audio.detail".to_string(),
-        label: t(UiText::AudioDetail),
-        sub: t(UiText::SectionAdvanced),
+        label: i18n.text(UiText::AudioDetail),
+        sub: i18n.text(UiText::SectionAdvanced),
         rows: vec![
             {
                 let (choices, selected) = (
@@ -1635,31 +1765,34 @@ fn build_audio_detail_section(vm: &SettingsViewModel, language: AppLanguage) -> 
                 );
                 choice_row(
                     "audio.sample_rate",
-                    t(UiText::SampleRate),
-                    t(UiText::DescSampleRate),
+                    i18n.text(UiText::SampleRate),
+                    i18n.text(UiText::DescSampleRate),
                     &choices,
                     &selected,
                 )
             },
             number_row(
                 "audio.latency",
-                t(UiText::AudioLatency),
-                t(UiText::DescLatency),
+                i18n.text(UiText::AudioLatency),
+                i18n.text(UiText::DescLatency),
                 i64::from(view.latency_ms),
                 5,
                 10,
                 200,
                 " ms",
             ),
-            button_row("reset.audio.detail", t(UiText::ResetScreen), String::new()),
+            button_row(
+                "reset.audio.detail",
+                i18n.text(UiText::ResetScreen),
+                String::new(),
+            ),
         ],
         visible: false,
     }
 }
 
-fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) -> SectionWire {
+fn build_notifications_section(vm: &SettingsViewModel, i18n: I18n) -> SectionWire {
     let view = vm.notifications.view.get();
-    let t = |text: UiText| ui_text(language, text).to_string();
     let colors: Vec<(NotificationColor, String)> = view
         .color_choices
         .iter()
@@ -1672,20 +1805,21 @@ fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) ->
         .collect();
     SectionWire {
         id: "notifications".to_string(),
-        label: crate::settings_sections::section_label("notifications", language).to_string(),
+        label: crate::settings_sections::section_label("notifications", i18n.language())
+            .to_string(),
         sub: String::new(),
         rows: vec![
-            header_row(t(UiText::NotificationSectionDisplay)),
+            header_row(i18n.text(UiText::NotificationSectionDisplay)),
             toggle_row(
                 "notifications.info_enabled",
-                t(UiText::NotificationInfo),
-                t(UiText::DescNotifInfo),
-                language,
+                i18n.text(UiText::NotificationInfo),
+                i18n.text(UiText::DescNotifInfo),
+                i18n,
                 view.info_enabled,
             ),
             number_row(
                 "notifications.info_duration",
-                t(UiText::NotificationDuration),
+                i18n.text(UiText::NotificationDuration),
                 String::new(),
                 i64::from(view.info_duration_ms),
                 500,
@@ -1695,21 +1829,21 @@ fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) ->
             ),
             choice_row(
                 "notifications.info_color",
-                t(UiText::NotificationInfo),
+                i18n.text(UiText::NotificationInfo),
                 String::new(),
                 &colors,
                 &view.info_color,
             ),
             toggle_row(
                 "notifications.warning_enabled",
-                t(UiText::NotificationWarning),
-                t(UiText::DescNotifWarning),
-                language,
+                i18n.text(UiText::NotificationWarning),
+                i18n.text(UiText::DescNotifWarning),
+                i18n,
                 view.warning_enabled,
             ),
             number_row(
                 "notifications.warning_duration",
-                t(UiText::NotificationDuration),
+                i18n.text(UiText::NotificationDuration),
                 String::new(),
                 i64::from(view.warning_duration_ms),
                 500,
@@ -1719,43 +1853,43 @@ fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) ->
             ),
             choice_row(
                 "notifications.warning_color",
-                t(UiText::NotificationWarning),
+                i18n.text(UiText::NotificationWarning),
                 String::new(),
                 &colors,
                 &view.warning_color,
             ),
             toggle_row(
                 "notifications.error_enabled",
-                t(UiText::NotificationError),
-                t(UiText::DescNotifError),
-                language,
+                i18n.text(UiText::NotificationError),
+                i18n.text(UiText::DescNotifError),
+                i18n,
                 view.error_enabled,
             ),
             toggle_row(
                 "notifications.error_modal",
-                t(UiText::NotificationErrorModal),
-                t(UiText::DescNotifErrorModal),
-                language,
+                i18n.text(UiText::NotificationErrorModal),
+                i18n.text(UiText::DescNotifErrorModal),
+                i18n,
                 view.error_modal,
             ),
             choice_row(
                 "notifications.error_color",
-                t(UiText::NotificationError),
+                i18n.text(UiText::NotificationError),
                 String::new(),
                 &colors,
                 &view.error_color,
             ),
             choice_row(
                 "notifications.position",
-                t(UiText::NotificationPosition),
+                i18n.text(UiText::NotificationPosition),
                 String::new(),
                 &positions,
                 &view.position,
             ),
             choice_row(
                 "notifications.area_mode",
-                t(UiText::NotificationAreaMode),
-                t(UiText::DescNotifArea),
+                i18n.text(UiText::NotificationAreaMode),
+                i18n.text(UiText::DescNotifArea),
                 &view
                     .area_mode_choices
                     .iter()
@@ -1763,17 +1897,17 @@ fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) ->
                     .collect::<Vec<_>>(),
                 &view.area_mode,
             ),
-            header_row(t(UiText::NotificationSectionStatus)),
+            header_row(i18n.text(UiText::NotificationSectionStatus)),
             toggle_row(
                 "status.enabled",
-                t(UiText::NotificationStatus),
+                i18n.text(UiText::NotificationStatus),
                 String::new(),
-                language,
+                i18n,
                 view.status_enabled,
             ),
             choice_row(
                 "status.position",
-                t(UiText::NotificationStatusPosition),
+                i18n.text(UiText::NotificationStatusPosition),
                 String::new(),
                 &positions,
                 &view.status_position,
@@ -1781,8 +1915,8 @@ fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) ->
             {
                 let mut row = choice_row(
                     "status.area_mode",
-                    t(UiText::NotificationStatusAreaMode),
-                    t(UiText::DescStatusArea),
+                    i18n.text(UiText::NotificationStatusAreaMode),
+                    i18n.text(UiText::DescStatusArea),
                     &view
                         .area_mode_choices
                         .iter()
@@ -1795,7 +1929,11 @@ fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) ->
                 row.visible = view.position.is_top() != view.status_position.is_top();
                 row
             },
-            button_row("reset.notifications", t(UiText::ResetScreen), String::new()),
+            button_row(
+                "reset.notifications",
+                i18n.text(UiText::ResetScreen),
+                String::new(),
+            ),
         ],
         visible: true,
     }
@@ -1809,42 +1947,41 @@ fn build_notifications_section(vm: &SettingsViewModel, language: AppLanguage) ->
 fn build_controllers_sections(
     vm: &SettingsViewModel,
     snapshot: &SettingsSnapshot,
-    language: AppLanguage,
+    i18n: I18n,
     keyboards: &[KeyboardInfo],
     touch_capable: Option<bool>,
     gamepads: &[GamepadInfo],
 ) -> Vec<SectionWire> {
     let overlay = &snapshot.local.touch_overlay;
-    let t = |text: UiText| ui_text(language, text).to_string();
     let mut quick_rows = Vec::new();
     for (index, port) in PLAYER_PORTS.iter().enumerate() {
         let player_id = player_id(index);
-        let names = port_member_names(port, snapshot, keyboards, language);
+        let names = port_member_names(port, snapshot, keyboards, i18n);
         quick_rows.push(group_row(
             &format!("controllers.{player_id}"),
-            player_label(index, language),
-            port_count_line(language, names.len()),
+            player_label(index, i18n),
+            i18n.port_count_line(names.len()),
             &player_id,
         ));
         let last = quick_rows.last_mut().expect("player row pushed");
-        last.text = port_summary(language, &names);
+        last.text = i18n.port_summary(&names);
     }
     let mut visibility_row = choice_row(
         "controls.overlay_visibility",
-        t(UiText::TouchOverlay),
-        t(UiText::DescOverlayVisibility),
+        i18n.text(UiText::TouchOverlay),
+        i18n.text(UiText::DescOverlayVisibility),
         &[
             (
                 TouchOverlayVisibility::Always,
-                ui_text(language, UiText::Always).to_string(),
+                i18n.text(UiText::Always).to_string(),
             ),
             (
                 TouchOverlayVisibility::Auto,
-                ui_text(language, UiText::Auto).to_string(),
+                i18n.text(UiText::Auto).to_string(),
             ),
             (
                 TouchOverlayVisibility::Hidden,
-                ui_text(language, UiText::Hidden).to_string(),
+                i18n.text(UiText::Hidden).to_string(),
             ),
         ],
         &overlay.visibility,
@@ -1854,55 +1991,59 @@ fn build_controllers_sections(
         // disable Always/Auto with the reason instead of pretending the
         // choice works and hiding at runtime. Order matches the literal
         // above (Always, Auto, Hidden).
-        let reason = t(UiText::NoTouchScreen);
+        let reason = i18n.text(UiText::NoTouchScreen);
         for choice in visibility_row.choices.iter_mut().take(2) {
             choice.enabled = false;
             choice.reason = reason.clone();
         }
     }
     quick_rows.extend([
-        header_row(t(UiText::TouchOverlay)),
+        header_row(i18n.text(UiText::TouchOverlay)),
         visibility_row,
         group_row(
             "controls.overlay_detail_link",
-            t(UiText::OverlayDetail),
-            t(UiText::DescOverlayDetail),
+            i18n.text(UiText::OverlayDetail),
+            i18n.text(UiText::DescOverlayDetail),
             "controls.overlay_detail",
         ),
         toggle_row(
             "controls.overlay_haptics",
-            t(UiText::OverlayHaptics),
+            i18n.text(UiText::OverlayHaptics),
             String::new(),
-            language,
+            i18n,
             overlay.haptics,
         ),
-        header_row(t(UiText::Shortcuts)),
+        header_row(i18n.text(UiText::Shortcuts)),
         group_row(
             "controls.shortcuts_link",
-            t(UiText::Shortcuts),
-            t(UiText::DescShortcutsLink),
+            i18n.text(UiText::Shortcuts),
+            i18n.text(UiText::DescShortcutsLink),
             "controls.shortcuts",
         ),
-        button_row("reset.controllers", t(UiText::ResetScreen), String::new()),
+        button_row(
+            "reset.controllers",
+            i18n.text(UiText::ResetScreen),
+            String::new(),
+        ),
     ]);
     let quick = SectionWire {
         id: "controllers".to_string(),
-        label: crate::settings_sections::section_label("controllers", language).to_string(),
+        label: crate::settings_sections::section_label("controllers", i18n.language()).to_string(),
         sub: String::new(),
         rows: quick_rows,
         visible: true,
     };
     let overlay_detail = SectionWire {
         id: "controls.overlay_detail".to_string(),
-        label: t(UiText::TouchOverlay),
-        sub: t(UiText::SectionControllers),
+        label: i18n.text(UiText::TouchOverlay),
+        sub: i18n.text(UiText::SectionControllers),
         rows: vec![
             info_row(
                 "controls.auto_hide_status",
-                t(UiText::AutoHideGamepads),
+                i18n.text(UiText::AutoHideGamepads),
                 String::new(),
                 if gamepads.is_empty() {
-                    t(UiText::NotAssigned)
+                    i18n.text(UiText::NotAssigned)
                 } else {
                     gamepads
                         .iter()
@@ -1913,7 +2054,7 @@ fn build_controllers_sections(
             ),
             number_row(
                 "controls.overlay_opacity",
-                t(UiText::OverlayOpacity),
+                i18n.text(UiText::OverlayOpacity),
                 String::new(),
                 i64::from(overlay.opacity_percent),
                 1,
@@ -1923,7 +2064,7 @@ fn build_controllers_sections(
             ),
             number_row(
                 "controls.overlay_scale",
-                t(UiText::OverlayScale),
+                i18n.text(UiText::OverlayScale),
                 String::new(),
                 i64::from(overlay.scale_percent),
                 5,
@@ -1933,7 +2074,7 @@ fn build_controllers_sections(
             ),
             number_row(
                 "controls.overlay_vertical_offset",
-                t(UiText::OverlayVerticalOffset),
+                i18n.text(UiText::OverlayVerticalOffset),
                 String::new(),
                 i64::from(overlay.vertical_offset_percent),
                 1,
@@ -1943,7 +2084,7 @@ fn build_controllers_sections(
             ),
             button_row(
                 "reset.controls.overlay_detail",
-                t(UiText::ResetScreen),
+                i18n.text(UiText::ResetScreen),
                 String::new(),
             ),
         ],
@@ -1959,8 +2100,8 @@ fn build_controllers_sections(
         .unwrap_or_default();
     let shortcuts = SectionWire {
         id: "controls.shortcuts".to_string(),
-        label: t(UiText::Shortcuts),
-        sub: t(UiText::SectionControllers),
+        label: i18n.text(UiText::Shortcuts),
+        sub: i18n.text(UiText::SectionControllers),
         rows: shortcuts_view
             .rows
             .iter()
@@ -1975,7 +2116,7 @@ fn build_controllers_sections(
             })
             .chain(std::iter::once(button_row(
                 "reset.controls.shortcuts",
-                t(UiText::ResetScreen),
+                i18n.text(UiText::ResetScreen),
                 String::new(),
             )))
             .collect(),
@@ -1987,8 +2128,7 @@ fn build_controllers_sections(
 /// One section per machine: settings fields plus a navigation row into the
 /// machine's controller screen (`input.<system>`). Keyboard bindings live in
 /// `keys.*`, one drill-down from each device detail screen.
-fn build_system_sections(vm: &SettingsViewModel, language: AppLanguage) -> Vec<SectionWire> {
-    let t = |text: UiText| ui_text(language, text).to_string();
+fn build_system_sections(vm: &SettingsViewModel, i18n: I18n) -> Vec<SectionWire> {
     vm.systems()
         .iter()
         .map(|system| {
@@ -2012,19 +2152,19 @@ fn build_system_sections(vm: &SettingsViewModel, language: AppLanguage) -> Vec<S
                 .collect();
             rows.push(group_row(
                 &format!("system.{}.controllers", view.system_id),
-                ui_text(language, UiText::Controller).to_string(),
+                i18n.text(UiText::Controller).to_string(),
                 String::new(),
                 &format!("input.{}", view.system_id),
             ));
             rows.push(button_row(
                 &format!("reset.system.{}", view.system_id),
-                t(UiText::ResetScreen),
+                i18n.text(UiText::ResetScreen),
                 String::new(),
             ));
             SectionWire {
                 id: format!("system.{}", view.system_id),
                 label: view.label.clone(),
-                sub: t(UiText::SectionAdvanced),
+                sub: i18n.text(UiText::SectionAdvanced),
                 rows,
                 visible: false,
             }
@@ -2036,22 +2176,21 @@ fn build_system_sections(vm: &SettingsViewModel, language: AppLanguage) -> Vec<S
 /// slot (IA "controller type is per machine port"). Hidden from the
 /// category list; reached from the player type screens and from the
 /// machine screen under Advanced. Keyboard bindings moved to `keys.*`.
-fn build_input_sections(vm: &SettingsViewModel, language: AppLanguage) -> Vec<SectionWire> {
-    let t = |text: UiText| ui_text(language, text).to_string();
+fn build_input_sections(vm: &SettingsViewModel, i18n: I18n) -> Vec<SectionWire> {
     vm.inputs()
         .iter()
         .map(|input| {
             let view = input.view.get();
-            let mut rows = slot_rows(&view, language);
+            let mut rows = slot_rows(&view, i18n);
             rows.push(button_row(
                 &format!("reset.input.{}", view.system_id),
-                t(UiText::ResetScreen),
+                i18n.text(UiText::ResetScreen),
                 String::new(),
             ));
             SectionWire {
                 id: format!("input.{}", view.system_id),
                 label: view.label.clone(),
-                sub: t(UiText::ControllerType),
+                sub: i18n.text(UiText::ControllerType),
                 rows,
                 visible: false,
             }
@@ -2060,17 +2199,14 @@ fn build_input_sections(vm: &SettingsViewModel, language: AppLanguage) -> Vec<Se
 }
 
 /// Slot assignment rows shared by the machine controller screens.
-fn slot_rows(
-    view: &nerust_gui_viewmodel::settings::dto::InputTabView,
-    language: AppLanguage,
-) -> Vec<RowWire> {
+fn slot_rows(view: &nerust_gui_viewmodel::settings::dto::InputTabView, i18n: I18n) -> Vec<RowWire> {
     view.slots
         .iter()
         .map(|slot| {
             let mut row = choice_row(
                 &format!("system.{}.slot.{}", view.system_id, slot.slot_id.as_str()),
                 slot.label.clone(),
-                slot_description(language),
+                i18n.slot_description(),
                 &slot
                     .choices
                     .iter()
@@ -2117,35 +2253,34 @@ fn slot_rows(
 fn build_player_sections(
     vm: &SettingsViewModel,
     snapshot: &SettingsSnapshot,
-    language: AppLanguage,
+    i18n: I18n,
     keyboards: &[KeyboardInfo],
 ) -> Vec<SectionWire> {
-    let t = |text: UiText| ui_text(language, text).to_string();
     let mut sections = Vec::new();
     for (index, port) in PLAYER_PORTS.iter().enumerate() {
         let player_id = player_id(index);
         let devices_id = devices_id(index);
         let types_id = types_id(index);
-        let label = player_label(index, language);
-        let names = port_member_names(port, snapshot, keyboards, language);
+        let label = player_label(index, i18n);
+        let names = port_member_names(port, snapshot, keyboards, i18n);
         sections.push(SectionWire {
             id: player_id.clone(),
             label: label.clone(),
-            sub: t(UiText::SectionControllers),
+            sub: i18n.text(UiText::SectionControllers),
             rows: vec![
                 {
                     let mut row = group_row(
                         &format!("{player_id}.devices"),
-                        t(UiText::Devices),
+                        i18n.text(UiText::Devices),
                         String::new(),
                         &devices_id,
                     );
-                    row.text = port_summary(language, &names);
+                    row.text = i18n.port_summary(&names);
                     row
                 },
                 group_row(
                     &format!("{player_id}.type"),
-                    t(UiText::ControllerType),
+                    i18n.text(UiText::ControllerType),
                     String::new(),
                     &types_id,
                 ),
@@ -2184,14 +2319,14 @@ fn build_player_sections(
                 group_row(
                     &format!("{types_id}.{}", view.system_id),
                     view.label.clone(),
-                    type_profile_summary(&view, index, language),
+                    type_profile_summary(&view, index, i18n),
                     &format!("input.{}", view.system_id),
                 )
             })
             .collect();
         sections.push(SectionWire {
             id: types_id.clone(),
-            label: t(UiText::ControllerType),
+            label: i18n.text(UiText::ControllerType),
             sub: label.clone(),
             rows: type_rows,
             visible: false,
@@ -2202,10 +2337,10 @@ fn build_player_sections(
             &label,
             snapshot,
             keyboards,
-            language,
+            i18n,
         ));
     }
-    sections.extend(build_device_sections(vm, keyboards, language));
+    sections.extend(build_device_sections(vm, keyboards, i18n));
     sections
 }
 
@@ -2226,7 +2361,7 @@ fn slot_port_index(slot_id: &str) -> Option<usize> {
 fn type_profile_summary(
     view: &nerust_gui_viewmodel::settings::dto::InputTabView,
     port_index: usize,
-    language: AppLanguage,
+    i18n: I18n,
 ) -> String {
     view.slots
         .iter()
@@ -2239,7 +2374,7 @@ fn type_profile_summary(
                 })
             })
         })
-        .unwrap_or_else(|| ui_text(language, UiText::NotAssigned).to_string())
+        .unwrap_or_else(|| i18n.text(UiText::NotAssigned).to_string())
 }
 
 /// Display names for a port's member ids in set order. Unknown members
@@ -2248,7 +2383,7 @@ fn port_member_names(
     port: &str,
     snapshot: &SettingsSnapshot,
     keyboards: &[KeyboardInfo],
-    language: AppLanguage,
+    i18n: I18n,
 ) -> Vec<String> {
     // Effective members only: the built-in row renders solely while the
     // terminal actually enumerates it. Otherwise phones and tablets
@@ -2266,7 +2401,7 @@ fn port_member_names(
             members
                 .iter()
                 .filter(|member| member.as_str() != BUILTIN_KEYBOARD_MEMBER || builtin_present)
-                .map(|member| keyboard_member_name(member, keyboards, language))
+                .map(|member| keyboard_member_name(member, keyboards, i18n))
                 .collect()
         })
         .unwrap_or_default()
@@ -2288,21 +2423,20 @@ fn prune_missing_builtin(snapshot: &mut SettingsSnapshot, keyboards: &[KeyboardI
     }
 }
 
-fn keyboard_member_name(member: &str, keyboards: &[KeyboardInfo], language: AppLanguage) -> String {
-    let t = |text: UiText| ui_text(language, text).to_string();
+fn keyboard_member_name(member: &str, keyboards: &[KeyboardInfo], i18n: I18n) -> String {
     if member == BUILTIN_KEYBOARD_MEMBER {
-        t(UiText::BuiltInKeyboard)
+        i18n.text(UiText::BuiltInKeyboard)
     } else if let Some(info) = keyboards.iter().find(|info| info.member == member) {
         if info.name.trim().is_empty() {
             // OS gave no name: fall back instead of rendering blank.
-            t(UiText::ExternalKeyboard)
+            i18n.text(UiText::ExternalKeyboard)
         } else {
             info.name.clone()
         }
     } else if member.starts_with(KEYBOARD_MEMBER_PREFIX) {
-        t(UiText::ExternalKeyboard)
+        i18n.text(UiText::ExternalKeyboard)
     } else if member.starts_with(GAMEPAD_MEMBER_PREFIX) {
-        t(UiText::GamepadDevice)
+        i18n.text(UiText::GamepadDevice)
     } else {
         member.to_string()
     }
@@ -2319,34 +2453,33 @@ fn build_devices_section(
     player: &str,
     snapshot: &SettingsSnapshot,
     keyboards: &[KeyboardInfo],
-    language: AppLanguage,
+    i18n: I18n,
 ) -> SectionWire {
-    let t = |text: UiText| ui_text(language, text).to_string();
     let members = snapshot.app_state.port_devices.get(port);
     let is_member = |member: &str| {
         members
             .map(|set| set.iter().any(|entry| entry == member))
             .unwrap_or(false)
     };
-    let mut rows = vec![header_row(t(UiText::Keyboard))];
+    let mut rows = vec![header_row(i18n.text(UiText::Keyboard))];
     if keyboards.is_empty() {
         rows.push(info_row(
             &format!("{devices_id}.none"),
-            t(UiText::NoKeyboards),
-            t(UiText::DescNoKeyboards),
+            i18n.text(UiText::NoKeyboards),
+            i18n.text(UiText::DescNoKeyboards),
             String::new(),
         ));
     }
     for info in keyboards {
         let mut row = toggle_row(
             &format!("devices.{port}.{}", info.member),
-            keyboard_member_name(&info.member, keyboards, language),
+            keyboard_member_name(&info.member, keyboards, i18n),
             if info.builtin {
-                t(UiText::AlwaysAvailable)
+                i18n.text(UiText::AlwaysAvailable)
             } else {
-                t(UiText::Connected)
+                i18n.text(UiText::Connected)
             },
-            language,
+            i18n,
             is_member(&info.member),
         );
         // The opaque member id rides the target; the port comes from the key.
@@ -2356,12 +2489,12 @@ fn build_devices_section(
     }
     rows.push(button_row(
         &format!("reset.{devices_id}"),
-        t(UiText::ResetScreen),
+        i18n.text(UiText::ResetScreen),
         String::new(),
     ));
     SectionWire {
         id: devices_id.to_string(),
-        label: t(UiText::Devices),
+        label: i18n.text(UiText::Devices),
         sub: player.to_string(),
         rows,
         visible: false,
@@ -2374,50 +2507,49 @@ fn build_devices_section(
 fn build_device_sections(
     vm: &SettingsViewModel,
     keyboards: &[KeyboardInfo],
-    language: AppLanguage,
+    i18n: I18n,
 ) -> Vec<SectionWire> {
-    let t = |text: UiText| ui_text(language, text).to_string();
     keyboards
         .iter()
         .map(|info| {
             let mut rows = vec![
                 info_row(
                     &format!("device.{}.connection", info.member),
-                    t(UiText::Connection),
+                    i18n.text(UiText::Connection),
                     String::new(),
                     if info.builtin {
-                        t(UiText::AlwaysAvailable)
+                        i18n.text(UiText::AlwaysAvailable)
                     } else {
-                        t(UiText::Connected)
+                        i18n.text(UiText::Connected)
                     },
                 ),
                 info_row(
                     &format!("device.{}.capabilities", info.member),
-                    t(UiText::Capabilities),
+                    i18n.text(UiText::Capabilities),
                     String::new(),
-                    t(UiText::SharesAcrossPlayers),
+                    i18n.text(UiText::SharesAcrossPlayers),
                 ),
-                header_row(t(UiText::KeyMapping)),
+                header_row(i18n.text(UiText::KeyMapping)),
             ];
             for system in vm.systems() {
                 let sid = system.system_id().to_string();
                 rows.push(group_row(
                     &format!("device.{}.keys.{sid}", info.member),
                     system.display_name().to_string(),
-                    t(UiText::KeyMappingDesc),
+                    i18n.text(UiText::KeyMappingDesc),
                     &format!("keys.{sid}"),
                 ));
             }
             SectionWire {
                 id: format!("device.{}", info.member),
                 label: if info.builtin {
-                    t(UiText::BuiltInKeyboard)
+                    i18n.text(UiText::BuiltInKeyboard)
                 } else if info.name.trim().is_empty() {
-                    t(UiText::ExternalKeyboard)
+                    i18n.text(UiText::ExternalKeyboard)
                 } else {
                     info.name.clone()
                 },
-                sub: t(UiText::Devices),
+                sub: i18n.text(UiText::Devices),
                 rows,
                 visible: false,
             }
@@ -2427,8 +2559,7 @@ fn build_device_sections(
 /// One key-mapping screen per machine: the shared single keyboard table
 /// (per-device split is future work). Reached from each keyboard device
 /// detail screen; the controller screens hold slots only.
-fn build_keys_sections(vm: &SettingsViewModel, language: AppLanguage) -> Vec<SectionWire> {
-    let t = |text: UiText| ui_text(language, text).to_string();
+fn build_keys_sections(vm: &SettingsViewModel, i18n: I18n) -> Vec<SectionWire> {
     vm.inputs()
         .iter()
         .map(|input| {
@@ -2452,13 +2583,13 @@ fn build_keys_sections(vm: &SettingsViewModel, language: AppLanguage) -> Vec<Sec
             }
             rows.push(button_row(
                 &format!("reset.keys.{}", view.system_id),
-                t(UiText::ResetScreen),
+                i18n.text(UiText::ResetScreen),
                 String::new(),
             ));
             SectionWire {
                 id: format!("keys.{}", view.system_id),
                 label: view.label.clone(),
-                sub: t(UiText::KeyMapping),
+                sub: i18n.text(UiText::KeyMapping),
                 rows,
                 visible: false,
             }
@@ -2630,7 +2761,8 @@ mod tests {
     fn test_payload_with_keyboards(keyboards: &[KeyboardInfo]) -> (SettingsSnapshot, ViewPayload) {
         with_test_deps(|| {
             let snapshot = default_snapshot();
-            let json = open_payload(&snapshot, keyboards, None, &[]).expect("open payload builds");
+            let json =
+                open_payload(&snapshot, keyboards, None, &[], None).expect("open payload builds");
             let payload: ViewPayload = serde_json::from_str(&json).expect("payload parses");
             assert_eq!(payload.schema_version, SETTINGS_SCHEMA_VERSION);
             (snapshot, payload)
@@ -2691,6 +2823,7 @@ mod tests {
                 keyboards,
                 &mut None,
                 &mut Vec::new(),
+                &mut None,
             )
             .unwrap_or_else(|error| panic!("command failed: {error}"));
             serde_json::from_str(&out).unwrap()
@@ -2718,7 +2851,7 @@ mod tests {
         let next = set(&mut snapshot, "controls.overlay_visibility", 0, 0);
         assert_eq!(row(&next, "controls.overlay_visibility").selected, 0);
         let deps = test_deps();
-        match super::finish_snapshot(&snapshot, &deps.factories, deps.rates.clone()) {
+        match super::finish_snapshot(&snapshot, &deps.factories, deps.rates.clone(), None) {
             Ok(done) => assert_eq!(
                 done.local.touch_overlay.visibility,
                 TouchOverlayVisibility::Always
@@ -2767,6 +2900,210 @@ mod tests {
                 .any(|row| row.key.starts_with("system.") && row.key.ends_with("video.filter")),
             "system filter rows exist"
         );
+    }
+
+    #[test]
+    fn system_locale_resolves_system_default_for_display() {
+        // Android never sets LANG, so the vault-pushed tag decides: the
+        // same SystemDefault draft projects Japanese with `ja`, English
+        // otherwise, and English before the first push.
+        for system in [
+            Some(AppLanguage::Japanese),
+            Some(AppLanguage::English),
+            None,
+        ] {
+            let snapshot = default_snapshot();
+            let label = with_test_deps(|| {
+                let json = open_payload(&snapshot, &test_keyboards(), None, &[], system)
+                    .expect("open payload builds");
+                let payload: ViewPayload = serde_json::from_str(&json).unwrap();
+                payload
+                    .sections
+                    .iter()
+                    .find(|section| section.id == "play")
+                    .expect("play section exists")
+                    .label
+                    .clone()
+            });
+            let want = if system == Some(AppLanguage::Japanese) {
+                "プレイ"
+            } else {
+                "Play"
+            };
+            assert_eq!(label, want, "locale {system:?} resolves the display");
+        }
+        assert_eq!(
+            I18n::resolve(AppLanguage::SystemDefault, Some(AppLanguage::Japanese)).language(),
+            AppLanguage::Japanese
+        );
+        assert_eq!(
+            I18n::resolve(AppLanguage::SystemDefault, Some(AppLanguage::English)).language(),
+            AppLanguage::English
+        );
+        assert_eq!(
+            I18n::resolve(AppLanguage::English, Some(AppLanguage::Japanese)).language(),
+            AppLanguage::English
+        );
+        assert_eq!(
+            I18n::resolve(AppLanguage::English, None).language(),
+            AppLanguage::English
+        );
+    }
+
+    #[test]
+    fn display_resolution_never_concretes_the_draft() {
+        // Projecting and editing under a `ja` system keeps SystemDefault in
+        // the draft (saving must not rewrite the user's choice); an
+        // explicit change still persists as-is.
+        let (mut snapshot, _) = test_payload();
+        let mut keyboards = test_keyboards();
+        let mut locale = Some(AppLanguage::Japanese);
+        let out = with_test_deps(|| {
+            apply_command_to(
+                &mut snapshot,
+                &serde_json::to_string(&WireCommand {
+                    key: "audio.volume".to_string(),
+                    index: 0,
+                    number: 42,
+                    op: "set".to_string(),
+                    payload: serde_json::Value::Null,
+                })
+                .unwrap(),
+                &mut None,
+                &mut keyboards,
+                &mut None,
+                &mut Vec::new(),
+                &mut locale,
+            )
+            .expect("volume set applies")
+        });
+        let payload: ViewPayload = serde_json::from_str(&out).unwrap();
+        assert_eq!(
+            payload
+                .sections
+                .iter()
+                .find(|section| section.id == "play")
+                .expect("play exists")
+                .label,
+            "プレイ",
+            "projection speaks Japanese"
+        );
+        assert_eq!(
+            snapshot.shared.general.language,
+            AppLanguage::SystemDefault,
+            "draft keeps the choice"
+        );
+        // Explicit English under a `ja` system persists as English.
+        let english = with_test_deps(|| {
+            let json = open_payload(
+                &snapshot,
+                &test_keyboards(),
+                None,
+                &[],
+                Some(AppLanguage::Japanese),
+            )
+            .expect("open payload builds");
+            let probe: ViewPayload = serde_json::from_str(&json).unwrap();
+            probe
+                .sections
+                .iter()
+                .flat_map(|section| &section.rows)
+                .find(|row| row.key == "general.language")
+                .expect("language row exists")
+                .choices
+                .iter()
+                .position(|choice| choice.value == serde_json::json!("english"))
+                .expect("english choice exists")
+        });
+        let out = with_test_deps(|| {
+            apply_command_to(
+                &mut snapshot,
+                &serde_json::to_string(&WireCommand {
+                    key: "general.language".to_string(),
+                    index: english,
+                    number: 0,
+                    op: "set".to_string(),
+                    payload: serde_json::Value::Null,
+                })
+                .unwrap(),
+                &mut None,
+                &mut keyboards,
+                &mut None,
+                &mut Vec::new(),
+                &mut locale,
+            )
+            .expect("language set applies")
+        });
+        let _payload: ViewPayload = serde_json::from_str(&out).unwrap();
+        assert_eq!(snapshot.shared.general.language, AppLanguage::English);
+    }
+
+    #[test]
+    fn locale_op_upserts_without_mutating_draft() {
+        let (mut snapshot, _) = test_payload();
+        let before = snapshot.clone();
+        let mut locale: Option<AppLanguage> = None;
+        let command_json = serde_json::to_string(&WireCommand {
+            key: "locale".to_string(),
+            index: 0,
+            number: 0,
+            op: "locale".to_string(),
+            payload: serde_json::json!({ "lang": "ja" }),
+        })
+        .unwrap();
+        let out = with_test_deps(|| {
+            let mut keyboards = test_keyboards();
+            apply_command_to(
+                &mut snapshot,
+                &command_json,
+                &mut None,
+                &mut keyboards,
+                &mut None,
+                &mut Vec::new(),
+                &mut locale,
+            )
+            .expect("locale op applies")
+        });
+        assert_eq!(snapshot, before, "enumeration never touches the draft");
+        assert_eq!(locale, Some(AppLanguage::Japanese));
+        let payload: ViewPayload = serde_json::from_str(&out).unwrap();
+        assert_eq!(
+            payload
+                .sections
+                .iter()
+                .find(|section| section.id == "play")
+                .expect("play exists")
+                .label,
+            "プレイ",
+            "fresh locale re-projects immediately"
+        );
+        // Empty and missing tags fail loud instead of clearing silently.
+        for bad in [serde_json::json!({ "lang": "" }), serde_json::json!({})] {
+            let bad_json = serde_json::to_string(&WireCommand {
+                key: "locale".to_string(),
+                index: 0,
+                number: 0,
+                op: "locale".to_string(),
+                payload: bad,
+            })
+            .unwrap();
+            with_test_deps(|| {
+                let mut keyboards = test_keyboards();
+                assert!(
+                    apply_command_to(
+                        &mut snapshot,
+                        &bad_json,
+                        &mut None,
+                        &mut keyboards,
+                        &mut None,
+                        &mut Vec::new(),
+                        &mut locale,
+                    )
+                    .is_err(),
+                    "bad locale never persists"
+                );
+            });
+        }
     }
 
     #[test]
@@ -3121,6 +3458,7 @@ mod tests {
                 &mut keyboards,
                 &mut None,
                 &mut Vec::new(),
+                &mut None,
             )
             .expect("keyboards op applies")
         });
@@ -3155,6 +3493,7 @@ mod tests {
                 &mut Vec::new(),
                 &mut None,
                 &mut Vec::new(),
+                &mut None,
             )
             .expect("empty enumeration applies")
         });
@@ -3195,6 +3534,7 @@ mod tests {
                 &mut keyboards,
                 &mut None,
                 &mut Vec::new(),
+                &mut None,
             )
             .expect("keyboards op applies")
         });
@@ -3238,6 +3578,7 @@ mod tests {
                 &mut test_keyboards(),
                 &mut None,
                 &mut gamepads,
+                &mut None,
             )
             .expect("gamepads op applies")
         });
@@ -3267,6 +3608,7 @@ mod tests {
                     &mut test_keyboards(),
                     &mut None,
                     &mut gamepads,
+                    &mut None,
                 )
                 .is_err(),
                 "nameless gamepads never persist"
@@ -3305,6 +3647,7 @@ mod tests {
                     &mut test_keyboards(),
                     &mut touch,
                     &mut Vec::new(),
+                    &mut None,
                 )
                 .expect("touch op applies")
             });
@@ -3315,7 +3658,7 @@ mod tests {
         // rows behave as before.
         let touch = None;
         with_test_deps(|| {
-            open_payload(&snapshot, &test_keyboards(), touch, &[])
+            open_payload(&snapshot, &test_keyboards(), touch, &[], None)
                 .map(|json| serde_json::from_str(&json).unwrap())
                 .expect("open payload builds")
         })
@@ -3378,6 +3721,7 @@ mod tests {
                 &mut keyboards,
                 &mut None,
                 &mut Vec::new(),
+                &mut None,
             )
             .expect("reset applies")
         });
@@ -3496,8 +3840,14 @@ mod tests {
         let mut capture: CaptureSlot = None;
         // Find any binding capture row on the NES controller screen.
         let target_key = with_test_deps(|| {
-            let vm = build_vm(&snapshot, &test_deps()).expect("vm builds");
-            let sections = build_sections(&vm, &snapshot, &test_keyboards(), None, &[]);
+            let vm = build_vm(
+                &snapshot,
+                &test_deps(),
+                I18n::resolve(AppLanguage::SystemDefault, None),
+            )
+            .expect("vm builds");
+            let i18n = I18n::resolve(AppLanguage::SystemDefault, None);
+            let sections = build_sections(&vm, &snapshot, &test_keyboards(), None, &[], i18n);
             sections
                 .iter()
                 .flat_map(|section| &section.rows)
@@ -3525,9 +3875,12 @@ mod tests {
                 false,
                 &mut snapshot,
                 &mut capture,
-                &test_keyboards(),
-                None,
-                &[],
+                Projection {
+                    keyboards: &test_keyboards(),
+                    touch_capable: None,
+                    gamepads: &[],
+                    i18n: I18n::resolve(AppLanguage::SystemDefault, None),
+                },
             )
             .expect("hardware key release probes")
         });
@@ -3539,9 +3892,12 @@ mod tests {
                 true,
                 &mut snapshot,
                 &mut capture,
-                &test_keyboards(),
-                None,
-                &[],
+                Projection {
+                    keyboards: &test_keyboards(),
+                    touch_capable: None,
+                    gamepads: &[],
+                    i18n: I18n::resolve(AppLanguage::SystemDefault, None),
+                },
             )
             .expect("unknown keycode probes")
         });
@@ -3553,9 +3909,12 @@ mod tests {
                 true,
                 &mut snapshot,
                 &mut capture,
-                &test_keyboards(),
-                None,
-                &[],
+                Projection {
+                    keyboards: &test_keyboards(),
+                    touch_capable: None,
+                    gamepads: &[],
+                    i18n: I18n::resolve(AppLanguage::SystemDefault, None),
+                },
             )
             .expect("hardware key applies")
         });
@@ -3568,8 +3927,14 @@ mod tests {
         let (mut snapshot, _) = test_payload();
         let mut capture: CaptureSlot = None;
         let key = with_test_deps(|| {
-            let vm = build_vm(&snapshot, &test_deps()).expect("vm builds");
-            let sections = build_sections(&vm, &snapshot, &test_keyboards(), None, &[]);
+            let vm = build_vm(
+                &snapshot,
+                &test_deps(),
+                I18n::resolve(AppLanguage::SystemDefault, None),
+            )
+            .expect("vm builds");
+            let i18n = I18n::resolve(AppLanguage::SystemDefault, None);
+            let sections = build_sections(&vm, &snapshot, &test_keyboards(), None, &[], i18n);
             sections
                 .iter()
                 .flat_map(|section| &section.rows)
@@ -3594,8 +3959,14 @@ mod tests {
     fn number_rows_advertise_vm_accepted_bounds() {
         let (mut snapshot, _) = test_payload();
         let bounds: Vec<(String, i64, i64)> = with_test_deps(|| {
-            let vm = build_vm(&snapshot, &test_deps()).expect("vm builds");
-            let sections = build_sections(&vm, &snapshot, &test_keyboards(), None, &[]);
+            let vm = build_vm(
+                &snapshot,
+                &test_deps(),
+                I18n::resolve(AppLanguage::SystemDefault, None),
+            )
+            .expect("vm builds");
+            let i18n = I18n::resolve(AppLanguage::SystemDefault, None);
+            let sections = build_sections(&vm, &snapshot, &test_keyboards(), None, &[], i18n);
             sections
                 .iter()
                 .flat_map(|section| &section.rows)
@@ -3626,7 +3997,12 @@ mod tests {
             set(&mut snapshot, slot, none, 0);
         }
         let probed = with_test_deps(|| {
-            let vm = build_vm(&snapshot, &test_deps()).expect("vm builds");
+            let vm = build_vm(
+                &snapshot,
+                &test_deps(),
+                I18n::resolve(AppLanguage::SystemDefault, None),
+            )
+            .expect("vm builds");
             draft_issues(&vm)
         });
         assert!(
@@ -3800,7 +4176,8 @@ mod tests {
                     &mut None,
                     &mut test_keyboards(),
                     &mut None,
-                    &mut Vec::new()
+                    &mut Vec::new(),
+                    &mut None
                 )
                 .is_err()
             );
@@ -3820,7 +4197,8 @@ mod tests {
                     &mut None,
                     &mut test_keyboards(),
                     &mut None,
-                    &mut Vec::new()
+                    &mut Vec::new(),
+                    &mut None
                 )
                 .is_err()
             );
@@ -3840,7 +4218,8 @@ mod tests {
                     &mut None,
                     &mut test_keyboards(),
                     &mut None,
-                    &mut Vec::new()
+                    &mut Vec::new(),
+                    &mut None
                 )
                 .is_err()
             );
@@ -3860,7 +4239,8 @@ mod tests {
                     &mut None,
                     &mut test_keyboards(),
                     &mut None,
-                    &mut Vec::new()
+                    &mut Vec::new(),
+                    &mut None
                 )
                 .is_err(),
                 "unknown ports never persist"
@@ -3881,7 +4261,8 @@ mod tests {
                     &mut None,
                     &mut test_keyboards(),
                     &mut None,
-                    &mut Vec::new()
+                    &mut Vec::new(),
+                    &mut None
                 )
                 .is_err(),
                 "unknown reset scopes never no-op silently"
@@ -3896,8 +4277,10 @@ mod tests {
         let mut snapshot = default_snapshot();
         snapshot.local.audio.master_volume_percent = 100;
         let deps = test_deps();
-        assert!(finish_snapshot(&snapshot, &deps.factories, Arc::clone(&deps.rates)).is_ok());
+        assert!(finish_snapshot(&snapshot, &deps.factories, Arc::clone(&deps.rates), None).is_ok());
         snapshot.local.audio.latency_ms = 5;
-        assert!(finish_snapshot(&snapshot, &deps.factories, Arc::clone(&deps.rates)).is_err());
+        assert!(
+            finish_snapshot(&snapshot, &deps.factories, Arc::clone(&deps.rates), None).is_err()
+        );
     }
 }
