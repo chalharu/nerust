@@ -52,11 +52,22 @@
         "pressed": { "type": "boolean" }
       },
       "additionalProperties": false,
-      "if": {
-        "properties": { "action": { "const": "controller" } },
-        "required": ["action"]
-      },
-      "then": { "required": ["device_id", "key", "pressed"] }
+      "allOf": [
+        {
+          "if": {
+            "properties": { "action": { "const": "controller" } },
+            "required": ["action"]
+          },
+          "then": { "required": ["device_id", "key", "pressed"] }
+        },
+        {
+          "if": {
+            "properties": { "action": { "const": "touch_gate" } },
+            "required": ["action"]
+          },
+          "then": { "required": ["pressed"] }
+        }
+      ]
     },
     "errorDialogDismissedEvent": {
       "type": "object",
@@ -83,7 +94,7 @@
     "touch_gate": "MenuAction::TouchGate{pressed}"
   },
   "x-kotlin-constants": {
-    "note": "Kotlin senders MUST use the single-source BridgeContract MenuAction/ControllerKey objects; the Rust decoder in gui/frontends/android/src/bridge_events.rs accepts v1 JSON only. A Rust unit test pins this schema version, action table, and key set.",
+    "note": "Kotlin senders MUST use the single-source BridgeContract MenuAction/ControllerKey objects; the Rust bridge decoder accepts v1 event JSON only (the settings projection schema is x-settings-schema-version, independent of the event envelope). A Rust unit test pins this schema version, action table, and key set.",
     "file": "packaging/android/app/src/main/kotlin/io/github/chalharu/nerust/BridgeWire.kt"
   }
 }

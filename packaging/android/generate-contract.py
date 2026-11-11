@@ -31,7 +31,7 @@ def _require_top_level_schema(schema):
 
 def _definition_props(definition):
     """Single event definition shape with its properties and required names."""
-    require(set(definition) <= {"type", "required", "properties", "additionalProperties", "if", "then"})
+    require(set(definition) <= {"type", "required", "properties", "additionalProperties", "if", "then", "allOf"})
     require(definition["type"] == "object" and definition["additionalProperties"] is False)
     props, required = definition["properties"], definition["required"]
     require(type(props) is dict and type(required) is list)
@@ -75,12 +75,10 @@ def _require_prop(prop):
     require(not ({"minimum", "maximum"} & prop.keys()) or kind == "integer")
 
 
-def _require_conditional(definition, props):
-    """Optional gate requiring extra fields for one enum value."""
-    if "if" not in definition and "then" not in definition:
-        return
-    require("if" in definition and "then" in definition)
-    condition, consequence = definition["if"], definition["then"]
+def _require_gate(gate, props):
+    """One enum value requiring extra fields."""
+    require(set(gate) == {"if", "then"})
+    condition, consequence = gate["if"], gate["then"]
     require(set(condition) == {"properties", "required"})
     require(set(consequence) == {"required"})
     require(len(condition["properties"]) == 1)
@@ -91,6 +89,17 @@ def _require_conditional(definition, props):
     require(type(consequence["required"]) is list
             and len(consequence["required"]) == len(set(consequence["required"]))
             and set(consequence["required"]) <= props.keys())
+
+
+def _require_conditional(definition, props):
+    """Optional gates requiring extra fields for enum values."""
+    gates = definition.get("allOf", [])
+    require(type(gates) is list)
+    if "if" in definition or "then" in definition:
+        require("if" in definition and "then" in definition and not gates)
+        gates = [{"if": definition["if"], "then": definition["then"]}]
+    for gate in gates:
+        _require_gate(gate, props)
 
 
 def _envelope_event(props, seen):
@@ -176,10 +185,13 @@ def rust_validator(definitions):
         required = ", ".join(json.dumps(name) for name in definition["required"])
         lines += [f'            for name in [{required}] {{',
                   "                object.get(name)?;", "            }"]
+        gates = definition.get("allOf", [])
         if "if" in definition:
-            key, condition = next(iter(definition["if"]["properties"].items()))
+            gates = [{"if": definition["if"], "then": definition["then"]}]
+        for gate in gates:
+            key, condition = next(iter(gate["if"]["properties"].items()))
             lines += [f'            if object.get({json.dumps(key)})?.as_str() == Some({json.dumps(condition["const"])}) {{']
-            for name in definition["then"]["required"]:
+            for name in gate["then"]["required"]:
                 lines += [f'                object.get({json.dumps(name)})?;']
             lines += ["            }"]
         lines += ["            Some(())", "        }"]

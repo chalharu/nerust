@@ -27,7 +27,6 @@
     <string name="settings_used_in">Used in %1$s</string>
     <string name="settings_used_elsewhere">Used in another slot</string>
     <string name="settings_needs_attention">Needs attention before saving</string>
-    <string name="settings_update_failed">Couldn\'t update setting</string>
     <plurals name="settings_count">
         <item quantity="one">%d setting</item>
         <item quantity="other">%d settings</item>

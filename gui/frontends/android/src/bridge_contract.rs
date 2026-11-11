@@ -84,6 +84,9 @@ pub(crate) fn validate_bridge_event(value: &mut serde_json::Value) -> Option<()>
                 object.get("key")?;
                 object.get("pressed")?;
             }
+            if object.get("action")?.as_str() == Some("touch_gate") {
+                object.get("pressed")?;
+            }
             Some(())
         }
         "error_dialog_dismissed" => {

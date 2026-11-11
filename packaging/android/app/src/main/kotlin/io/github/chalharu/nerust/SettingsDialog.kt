@@ -63,11 +63,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.ui.res.painterResource
 import kotlin.math.roundToLong
 import org.json.JSONArray
 import org.json.JSONObject
@@ -604,14 +600,14 @@ private fun SettingsTopBar(
             if (canNavigateUp) {
                 IconButton(onClick = onNavigateUp) {
                     Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        painter = painterResource(id = R.drawable.ic_settings_back),
                         contentDescription = stringResource(R.string.settings_back),
                     )
                 }
             } else {
                 IconButton(onClick = onCancel) {
                     Icon(
-                        imageVector = Icons.Filled.Close,
+                        painter = painterResource(id = R.drawable.ic_settings_close),
                         contentDescription = stringResource(R.string.settings_close),
                     )
                 }
@@ -774,10 +770,10 @@ private fun IssuesBanner(issues: List<String>) {
 }
 
 @Composable
-private fun CommandErrorBanner() {
+private fun CommandErrorBanner(message: String) {
     Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
         Text(
-            text = stringResource(R.string.settings_update_failed),
+            text = message,
             style = MaterialTheme.typography.titleSmall,
             color = MaterialTheme.colorScheme.error,
         )
@@ -807,7 +803,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.settingsBannerItems(
     }
     if (banners.commandError != null) {
         item(key = "banner-error") {
-            CommandErrorBanner()
+            CommandErrorBanner(message = banners.commandError)
         }
     }
 }
@@ -1102,7 +1098,7 @@ private fun SettingsCategoryList(
                 placeholder = { Text(stringResource(R.string.settings_search_hint)) },
                 leadingIcon = {
                     Icon(
-                        imageVector = Icons.Filled.Search,
+                        painter = painterResource(id = R.drawable.ic_settings_search),
                         contentDescription = null,
                     )
                 },
@@ -1479,13 +1475,13 @@ private fun SettingsCaptureRow(
 ) {
     // Tap targets are siblings, not nested: the label column starts
     // capture, the trailing button clears. Nested clickables would let a
-    // Clear tap also start a capture.
+    // Clear tap also start a capture. No container label: each sibling
+    // speaks for itself, so TalkBack never hears the row twice.
     Row(
         modifier =
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 12.dp)
-                .semantics { contentDescription = row.label },
+                .padding(horizontal = 24.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -1544,7 +1540,9 @@ private fun SettingsChoiceList(
                                         onClick = { onSelect(choiceIndex) },
                                     )
                                     .padding(vertical = 12.dp, horizontal = 20.dp)
-                                    .semantics { contentDescription = choice.label },
+                                    .semantics(mergeDescendants = true) {
+                                        contentDescription = choice.label
+                                    },
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
@@ -1597,7 +1595,7 @@ private fun SettingsNavigationRow(
                 .fillMaxWidth()
                 .clickable(onClick = onClick)
                 .padding(horizontal = 24.dp, vertical = 18.dp)
-                .semantics { contentDescription = semanticsLabel },
+                .semantics(mergeDescendants = true) { contentDescription = semanticsLabel },
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -1616,7 +1614,7 @@ private fun SettingsNavigationRow(
         }
         if (showChevron) {
             Icon(
-                imageVector = Icons.Filled.KeyboardArrowRight,
+                painter = painterResource(id = R.drawable.ic_settings_chevron),
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -1638,7 +1636,7 @@ private fun SettingsInfoRow(
             Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 24.dp, vertical = 18.dp)
-                .semantics { contentDescription = semanticsLabel },
+                .semantics(mergeDescendants = true) { contentDescription = semanticsLabel },
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {

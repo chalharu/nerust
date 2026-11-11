@@ -352,19 +352,26 @@ pub(super) struct Projection<'a> {
     pub i18n: I18n,
 }
 
-/// Write the VM working copy back. The VM works on the resolved display
-/// copy, so an untouched language reads back as the resolved locale: pin
-/// the user's choice in that case, keeping an explicit change (which reads
-/// back as something else) as-is.
+/// Display copies concretize SystemDefault, so a resolved language readback
+/// is ambiguous: restore the draft choice when the value matches the
+/// resolved locale (untouched), keeping a genuine explicit change.
+fn pin_draft_language(draft: AppLanguage, resolved: AppLanguage, target: &mut AppLanguage) {
+    if *target == resolved {
+        *target = draft;
+    }
+}
+
+/// Write the VM working copy back, keeping the draft language choice
+/// (the VM works on the concretized display copy).
 fn sync_snapshot_from_vm(snapshot: &mut SettingsSnapshot, vm: &SettingsViewModel, i18n: I18n) {
     let original = snapshot.shared.general.language;
-    let resolved = i18n.language();
     let updated = vm.snapshot();
-    let touched = updated.shared.general.language != resolved;
     *snapshot = updated;
-    if !touched {
-        snapshot.shared.general.language = original;
-    }
+    pin_draft_language(
+        original,
+        i18n.language(),
+        &mut snapshot.shared.general.language,
+    );
 }
 
 /// Open payload for Kotlin: schema version, sections, live issues from a
@@ -553,7 +560,9 @@ pub(super) fn apply_hardware_key(
             *capture = None;
             Ok((refreshed_payload(snapshot, deps, capture, truth)?, true))
         } else {
-            Ok((refreshed_payload(snapshot, deps, capture, truth)?, false))
+            // No-op: Kotlin only reads the payload when consumed is true,
+            // so skip the full re-projection (releases arrive per key).
+            Ok((String::new(), false))
         }
     })
 }
@@ -992,34 +1001,35 @@ fn reset_row(
 }
 
 /// Validate the draft through the view model. Conflicts and factory rules run here.
+/// Factories come from the installed process-wide deps (same registry the
+/// screen projects with), so there is exactly one deps path.
 pub(super) fn finish_snapshot(
     snapshot: &SettingsSnapshot,
-    factories: &[Arc<dyn CoreFactory>],
-    rates: Arc<[u32]>,
     system_locale: Option<AppLanguage>,
 ) -> Result<SettingsSnapshot, Vec<String>> {
-    let deps = VmDeps {
-        factories: factories.to_vec(),
-        rates,
-    };
-    let i18n = I18n::resolve(snapshot.shared.general.language, system_locale);
-    let vm = build_vm(snapshot, &deps, i18n).map_err(|error| vec![error])?;
-    vm.finish()
-        .map(|mut done| {
-            // The VM validated the display copy; the saved file keeps the
-            // user's choice, never the resolved display value.
-            if done.shared.general.language == i18n.language() {
-                done.shared.general.language = snapshot.shared.general.language;
-            }
-            done
-        })
-        .map_err(|state| {
-            state
-                .issues
-                .iter()
-                .map(|issue| issue.message(i18n.language()))
-                .collect()
-        })
+    with_vm_deps(|deps| {
+        let i18n = I18n::resolve(snapshot.shared.general.language, system_locale);
+        let vm = build_vm(snapshot, deps, i18n)?;
+        vm.finish()
+            .map(|mut done| {
+                // The VM validated the display copy; the saved file keeps the
+                // user's choice, never the resolved display value.
+                pin_draft_language(
+                    snapshot.shared.general.language,
+                    i18n.language(),
+                    &mut done.shared.general.language,
+                );
+                done
+            })
+            .map_err(|state| {
+                state
+                    .issues
+                    .iter()
+                    .map(|issue| issue.message(i18n.language()))
+                    .collect()
+            })
+    })
+    .map_err(|error| vec![error])
 }
 
 fn choice<T: serde::de::DeserializeOwned>(row: &RowWire, index: usize) -> Result<T, String> {
@@ -1063,12 +1073,9 @@ fn apply_view_model_command(
 ) -> Result<(), String> {
     let row = find_row(sections, &command.key)?;
     match command.key.as_str() {
-        "general.language" => {
-            let value: AppLanguage = choice(row, command.index)?;
-            vm.general
-                .set_language(value)
-                .map_err(|error| error.to_string())
-        }
+        // Language bypasses here: `apply_set_command` writes the draft
+        // directly so an explicit choice equal to the resolved locale
+        // survives (the VM works on the concretized display copy).
         "general.storage_policy" => {
             let value: StoragePolicy = choice(row, command.index)?;
             vm.general
@@ -1313,28 +1320,30 @@ where
     T: Serialize + PartialEq,
 {
     let selected_value = serde_json::to_value(selected).unwrap_or(serde_json::Value::Null);
+    let mut selected = 0;
+    let mut found = false;
     let wires: Vec<ChoiceWire> = choices
         .iter()
-        .map(|(value, label)| ChoiceWire {
-            value: serde_json::to_value(value).unwrap_or(serde_json::Value::Null),
-            label: label.clone(),
-            enabled: true,
-            reason: String::new(),
+        .enumerate()
+        .map(|(index, (value, label))| {
+            let wire_value = serde_json::to_value(value).unwrap_or(serde_json::Value::Null);
+            if wire_value == selected_value {
+                selected = index;
+                found = true;
+            }
+            ChoiceWire {
+                value: wire_value,
+                label: label.clone(),
+                enabled: true,
+                reason: String::new(),
+            }
         })
         .collect();
-    debug_assert!(
-        wires.iter().any(|wire| wire.value == selected_value),
-        "choice value missing from choices for row {key}"
-    );
-    let selected = wires
-        .iter()
-        .position(|wire| wire.value == selected_value)
-        .unwrap_or_default();
+    debug_assert!(found, "choice value missing from choices for row {key}");
     RowWire {
         key: key.to_string(),
         label,
         description,
-        kind: RowKind::Choice,
         choices: wires,
         selected,
         ..RowWire::new(RowKind::Choice)
@@ -2874,8 +2883,7 @@ mod tests {
         let (mut snapshot, _) = test_payload();
         let next = set(&mut snapshot, "controls.overlay_visibility", 0, 0);
         assert_eq!(row(&next, "controls.overlay_visibility").selected, 0);
-        let deps = test_deps();
-        match super::finish_snapshot(&snapshot, &deps.factories, deps.rates.clone(), None) {
+        match super::finish_snapshot(&snapshot, None) {
             Ok(done) => assert_eq!(
                 done.local.touch_overlay.visibility,
                 TouchOverlayVisibility::Always
@@ -4439,11 +4447,8 @@ mod tests {
         // `finish` gates on the shared validator: an invalid draft fails.
         let mut snapshot = default_snapshot();
         snapshot.local.audio.master_volume_percent = 100;
-        let deps = test_deps();
-        assert!(finish_snapshot(&snapshot, &deps.factories, Arc::clone(&deps.rates), None).is_ok());
+        assert!(finish_snapshot(&snapshot, None).is_ok());
         snapshot.local.audio.latency_ms = 5;
-        assert!(
-            finish_snapshot(&snapshot, &deps.factories, Arc::clone(&deps.rates), None).is_err()
-        );
+        assert!(finish_snapshot(&snapshot, None).is_err());
     }
 }
