@@ -14,6 +14,7 @@ pub(crate) const ACTION_SAVE_STATE: &str = "save_state";
 pub(crate) const ACTION_TOGGLE_PAUSE: &str = "toggle_pause";
 pub(crate) const ACTION_UNLOAD: &str = "unload";
 pub(crate) const ACTION_CONTROLLER: &str = "controller";
+pub(crate) const ACTION_TOUCH_GATE: &str = "touch_gate";
 
 /// Schema-derived validation before typed dispatch. Missing is not JSON null.
 pub(crate) fn validate_bridge_event(value: &mut serde_json::Value) -> Option<()> {
@@ -41,6 +42,7 @@ pub(crate) fn validate_bridge_event(value: &mut serde_json::Value) -> Option<()>
                                     | "toggle_pause"
                                     | "unload"
                                     | "controller"
+                                    | "touch_gate"
                             )
                         )
                     }

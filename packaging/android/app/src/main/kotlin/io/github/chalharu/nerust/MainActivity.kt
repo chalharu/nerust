@@ -157,7 +157,7 @@ class MainActivity :
         chromeManager.onConfigurationChanged()
         // Tell Rust to rebuild its touch overlay even if no winit Resized event arrives.
         // The Rust re-push converges with the re-attach above.
-        sendMenuAction(menuEventJson(MenuAction.ORIENTATION_CHANGED))
+        sendMenuAction(menuEventJson(MenuAction.ORIENTATION_CHANGED, false))
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {

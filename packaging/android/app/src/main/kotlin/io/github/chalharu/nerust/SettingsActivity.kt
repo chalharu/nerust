@@ -179,13 +179,14 @@ class SettingsActivity :
 
     override fun onInputDeviceChanged(deviceId: Int) = pushDeviceTruth()
 
-    /** Enumerate physical keyboards (Kotlin `InputDevice`, Rust owns labels):
-     * the built-in row (device id 0) plus one row per external descriptor.
-     * BT/USB are indistinguishable via public API so rows stay agnostic;
-     * virtual devices are excluded; duplicate HID descriptors merge.
-     * Button clusters (power keys, headset jacks, touch panels, fingerprint
-     * sensors) also expose SOURCE_KEYBOARD, so externals must additionally
-     * carry letter keys to count as keyboards. */
+    /** Enumerate physical keyboards (Kotlin `InputDevice`): the built-in
+     * row (device id 0 with letter keys) plus one row per external
+     * descriptor. BT/USB are indistinguishable via public API so rows stay
+     * agnostic; virtual devices are excluded; duplicate HID descriptors
+     * merge. Button clusters (power keys, headset jacks, touch panels,
+     * fingerprint sensors) also expose SOURCE_KEYBOARD, and id 0 is no
+     * safer than any other id, so every row must carry letter keys to
+     * count as a keyboard — built-in and external share one rule. */
     internal fun enumerateKeyboards(): JSONArray {
         val out = JSONArray()
         val seen = mutableSetOf<String>()
@@ -193,7 +194,10 @@ class SettingsActivity :
             InputDevice.getDeviceIds().toList().mapNotNull { InputDevice.getDevice(it) }.filter {
                 it.sources and InputDevice.SOURCE_KEYBOARD == InputDevice.SOURCE_KEYBOARD
             }
-        val builtin = devices.firstOrNull { it.id == 0 }
+        val builtin =
+            devices.firstOrNull {
+                it.id == 0 && it.hasKeys(KeyEvent.KEYCODE_A)[0]
+            }
         if (builtin != null) {
             seen += "kbd:builtin"
             out.put(

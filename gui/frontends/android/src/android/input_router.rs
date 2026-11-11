@@ -28,6 +28,10 @@ pub(super) struct InputRouter {
     keys: PhysicalKeyTracker,
     overlay_revision: u64,
     pushed: Option<PushedOverlay>,
+    /// Live touch-response gate from Kotlin: drawing and responding share
+    /// one rule, but only Kotlin knows the live half (gamepad presence,
+    /// post-press quiet window). Closed on transitions; releases in flight.
+    touch_respond: bool,
 }
 
 impl InputRouter {
@@ -38,6 +42,7 @@ impl InputRouter {
             keys: PhysicalKeyTracker::new(),
             overlay_revision: 0,
             pushed: None,
+            touch_respond: true,
         }
     }
 
@@ -166,12 +171,32 @@ impl InputRouter {
         self.pushed = Some(pushed);
     }
 
+    /// Live response gate: invisible buttons never respond. Closing
+    /// releases in-flight presses first so no bit strands held.
+    pub(super) fn set_touch_respond(
+        &mut self,
+        session: &mut SessionHandle,
+        app: &AndroidApp,
+        respond: bool,
+    ) {
+        if self.touch_respond == respond {
+            return;
+        }
+        self.touch_respond = respond;
+        if !respond {
+            self.tracker.reset(session, app);
+        }
+    }
+
     pub(super) fn handle_touch(
         &mut self,
         session: &mut SessionHandle,
         app: &AndroidApp,
         touch: Touch,
     ) {
+        if !self.touch_respond {
+            return;
+        }
         let haptics = session.settings_snapshot().local.touch_overlay.haptics;
         self.tracker
             .handle(session, app, self.overlay.as_ref(), haptics, touch);

@@ -29,7 +29,8 @@
             "save_state",
             "toggle_pause",
             "unload",
-            "controller"
+            "controller",
+            "touch_gate"
           ]
         },
         "device_id": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
@@ -78,7 +79,8 @@
     "save_state": "MenuAction::SaveState",
     "toggle_pause": "MenuAction::TogglePause",
     "unload": "MenuAction::Unload",
-    "controller": "MenuAction::ControllerInput{device_id,key,pressed}"
+    "controller": "MenuAction::ControllerInput{device_id,key,pressed}",
+    "touch_gate": "MenuAction::TouchGate{pressed}"
   },
   "x-kotlin-constants": {
     "note": "Kotlin senders MUST use the single-source BridgeContract MenuAction/ControllerKey objects; the Rust decoder in gui/frontends/android/src/bridge_events.rs accepts v1 JSON only. A Rust unit test pins this schema version, action table, and key set.",

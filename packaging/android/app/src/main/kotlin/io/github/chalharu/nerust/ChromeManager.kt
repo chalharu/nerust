@@ -86,6 +86,7 @@ class ChromeManager(private val activity: MainActivity) {
     private val restoreControllerOverlayRunnable =
         Runnable {
             controllerOverlayHiddenUntil = 0L
+            pushTouchGate()
             scheduleChromeAttach()
         }
     private var chromeAttachAttempts = 0
@@ -94,6 +95,9 @@ class ChromeManager(private val activity: MainActivity) {
     private var controlsOverlayView: View? = null
     private var controllerOverlayHiddenUntil = 0L
     private var controlsVisibility = "auto"
+    // Last pushed touch-response gate; dedupes so transitions only cross
+    // JNI on change. Unknown starts open like the drawing default.
+    private var lastTouchGatePushed: Boolean? = null
     // Terminal capability, pushed from MainActivity device truth. Unknown
     // starts capable: hiding by default would blank phones on day one.
     private var touchCapable = true
@@ -122,6 +126,9 @@ class ChromeManager(private val activity: MainActivity) {
 
     fun onResume() {
         chromeAttachEnabled = true
+        // The quiet window may have expired while suspended: re-converge
+        // the response gate with the drawing rule before touches resume.
+        pushTouchGate()
         scheduleChromeAttach()
     }
 
@@ -170,6 +177,25 @@ class ChromeManager(private val activity: MainActivity) {
         scheduleChromeAttach()
     }
 
+    /** Touch-response gate for Rust: mirrors the drawing rule so invisible
+     * buttons never respond. Rust releases in-flight presses on close.
+     * Sent on every transition; deduped here. */
+    private fun pushTouchGate() {
+        val hidden =
+            controlsVisibility == "hidden" || !touchCapable ||
+                (
+                    controlsVisibility == "auto" &&
+                        (
+                            controllerConnected ||
+                                SystemClock.elapsedRealtime() < controllerOverlayHiddenUntil
+                        )
+                )
+        val respond = !hidden
+        if (lastTouchGatePushed == respond) return
+        lastTouchGatePushed = respond
+        activity.sendMenuAction(menuEventJson(MenuAction.TOUCH_GATE, respond))
+    }
+
     fun configureControlsOverlay(
         visibility: String,
         opacityPercent: Int,
@@ -185,6 +211,7 @@ class ChromeManager(private val activity: MainActivity) {
         controlsOverlayPopup?.dismiss()
         controlsOverlayPopup = null
         controlsOverlayView = null
+        pushTouchGate()
         scheduleChromeAttach()
     }
 
@@ -338,7 +365,7 @@ class ChromeManager(private val activity: MainActivity) {
     fun dispatchMenuAction(action: String) {
         removeDrawerOverlay()
         // Kotlin builds the v1 envelope; Rust decodes JSON only.
-        activity.sendMenuAction(menuEventJson(action))
+        activity.sendMenuAction(menuEventJson(action, false))
     }
 
     fun dismissChromePopups() {
@@ -514,6 +541,7 @@ class ChromeManager(private val activity: MainActivity) {
         controlsOverlayPopup?.dismiss()
         controlsOverlayPopup = null
         controlsOverlayView = null
+        pushTouchGate()
         activity.window.decorView.removeCallbacks(restoreControllerOverlayRunnable)
         activity.window.decorView.postDelayed(
             restoreControllerOverlayRunnable,
@@ -535,6 +563,7 @@ class ChromeManager(private val activity: MainActivity) {
             controlsOverlayPopup = null
             controlsOverlayView = null
         }
+        pushTouchGate()
         scheduleChromeAttach()
     }
 
@@ -550,6 +579,7 @@ class ChromeManager(private val activity: MainActivity) {
             controlsOverlayPopup = null
             controlsOverlayView = null
         }
+        pushTouchGate()
         scheduleChromeAttach()
     }
 

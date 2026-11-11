@@ -19,6 +19,9 @@ pub(crate) enum MenuAction {
     Reset,
     SaveState,
     TogglePause,
+    TouchGate {
+        respond: bool,
+    },
     Unload,
 }
 
@@ -32,7 +35,7 @@ pub(crate) enum FrontendEvent {
 use crate::bridge_contract::{
     ACTION_CONTROLLER, ACTION_EXIT, ACTION_LOAD_STATE, ACTION_OPEN_ROM, ACTION_OPEN_SETTINGS,
     ACTION_ORIENTATION_CHANGED, ACTION_RESET, ACTION_SAVE_STATE, ACTION_TOGGLE_PAUSE,
-    ACTION_UNLOAD, BRIDGE_EVENT_VERSION, validate_bridge_event,
+    ACTION_TOUCH_GATE, ACTION_UNLOAD, BRIDGE_EVENT_VERSION, validate_bridge_event,
 };
 
 /// Typed controller-key mapping, checked against the shared JSON schema.
@@ -113,6 +116,15 @@ fn decode_json_menu_action(
         };
         return decode_controller_parts(device_id, key, pressed).map(FrontendEvent::Menu);
     }
+    if action == ACTION_TOUCH_GATE {
+        return match pressed {
+            Some(respond) => Some(FrontendEvent::Menu(MenuAction::TouchGate { respond })),
+            None => {
+                log::warn!("ignoring touch gate bridge event with missing pressed");
+                None
+            }
+        };
+    }
     match action {
         ACTION_EXIT => Some(FrontendEvent::Menu(MenuAction::Exit)),
         ACTION_LOAD_STATE => Some(FrontendEvent::Menu(MenuAction::LoadState)),
@@ -173,7 +185,7 @@ mod tests {
     use super::{
         ACTION_EXIT, ACTION_LOAD_STATE, ACTION_OPEN_ROM, ACTION_OPEN_SETTINGS,
         ACTION_ORIENTATION_CHANGED, ACTION_RESET, ACTION_SAVE_STATE, ACTION_TOGGLE_PAUSE,
-        ACTION_UNLOAD, FrontendEvent, MenuAction, decode_frontend_event,
+        ACTION_TOUCH_GATE, ACTION_UNLOAD, FrontendEvent, MenuAction, decode_frontend_event,
     };
     use crate::bridge_contract::BRIDGE_EVENT_VERSION;
 
@@ -198,6 +210,23 @@ mod tests {
                 "action {action}"
             );
         }
+        // The touch gate carries its respond flag in `pressed`; a missing
+        // flag fails loud instead of guessing a default.
+        for respond in [true, false] {
+            let raw = format!(
+                r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"{ACTION_TOUCH_GATE}","pressed":{respond}}}"#
+            );
+            assert_eq!(
+                decode_frontend_event(&raw),
+                Some(FrontendEvent::Menu(MenuAction::TouchGate { respond })),
+                "touch gate {respond}"
+            );
+        }
+        assert_eq!(
+            decode_frontend_event(r#"{"v":1,"type":"menu","action":"touch_gate"}"#),
+            None,
+            "touch gate without pressed never defaults"
+        );
     }
 
     #[test]
@@ -286,7 +315,7 @@ mod tests {
             .collect();
         assert_eq!(
             names.len(),
-            10,
+            11,
             "new actions must also be handled by the decoder"
         );
         for action in [
@@ -298,6 +327,7 @@ mod tests {
             ACTION_RESET,
             ACTION_SAVE_STATE,
             ACTION_TOGGLE_PAUSE,
+            ACTION_TOUCH_GATE,
             ACTION_UNLOAD,
             "controller",
         ] {
