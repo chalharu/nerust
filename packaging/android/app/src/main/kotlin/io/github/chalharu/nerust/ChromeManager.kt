@@ -67,18 +67,21 @@ private data class DrawerAction(
     val iconRes: Int,
 )
 
-/** Drawer actions resolve to the single-source [MenuAction] contract.
- * Labels are string resources (EN/JA); the e2e probe reads the resolved
- * English text on the emulator locale. Icons are Material Symbols (rounded)
- * bundled as drawables: the deprecated icons library is out, an extended
- * dependency would bloat the APK, so the 8 used glyphs ride as ~7KB of
- * vectors. The label stays static per row (Pause / Resume never toggles),
- * so the icon stays static too. */
+/** Pause row follows the vault truth read once per drawer open: paused
+ * shows Resume + play, running shows Pause + pause. One place so the
+ * Compose row and the e2e content probe can never disagree. */
+private fun isPauseRow(action: DrawerAction): Boolean = action.action == MenuAction.TOGGLE_PAUSE
+
+private fun pauseLabelRes(action: DrawerAction, emulationPaused: Boolean): Int =
+    if (isPauseRow(action) && emulationPaused) R.string.drawer_resume else action.labelRes
+
+private fun pauseIconRes(action: DrawerAction, emulationPaused: Boolean): Int =
+    if (isPauseRow(action) && emulationPaused) R.drawable.ic_drawer_resume else action.iconRes
 private val DRAWER_ACTIONS =
     listOf(
         DrawerAction(R.string.drawer_open_rom, MenuAction.OPEN_ROM, R.drawable.ic_drawer_open_rom),
         DrawerAction(R.string.drawer_settings, MenuAction.OPEN_SETTINGS, R.drawable.ic_drawer_settings),
-        DrawerAction(R.string.drawer_pause_resume, MenuAction.TOGGLE_PAUSE, R.drawable.ic_drawer_pause),
+        DrawerAction(R.string.drawer_pause, MenuAction.TOGGLE_PAUSE, R.drawable.ic_drawer_pause),
         DrawerAction(R.string.drawer_save_state, MenuAction.SAVE_STATE, R.drawable.ic_drawer_save_state),
         DrawerAction(R.string.drawer_load_state, MenuAction.LOAD_STATE, R.drawable.ic_drawer_load_state),
         DrawerAction(R.string.drawer_reset, MenuAction.RESET, R.drawable.ic_drawer_reset),
@@ -283,6 +286,17 @@ class ChromeManager(private val activity: MainActivity) {
         lastDrawerStateForTest = "creating"
         Log.i(TAG, "showDrawerOverlay: creating")
 
+        // Pause truth once per open (vault, published after every session
+        // command): the row below follows reality, and the probe with it.
+        // No subscription needed — toggling closes the drawer immediately.
+        val emulationPaused =
+            try {
+                activity.nativeIsEmulationPaused()
+            } catch (e: Exception) {
+                Log.e(TAG, "pause query failed, assuming running", e)
+                false
+            }
+
         // Hide the edge-handle popup while the drawer is open.
         drawerChromePopup?.dismiss()
 
@@ -291,7 +305,7 @@ class ChromeManager(private val activity: MainActivity) {
                 activity.installComposeOwners(view)
             }.apply {
                 tag = DRAWER_OVERLAY_TAG
-                setTag(R.id.nerust_drawer_content_probe, drawerContentDescription())
+                setTag(R.id.nerust_drawer_content_probe, drawerContentDescription(emulationPaused))
                 layoutParams =
                     FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
@@ -310,6 +324,7 @@ class ChromeManager(private val activity: MainActivity) {
                 setContent {
                     MaterialTheme {
                         NerustDrawerOverlay(
+                            emulationPaused = emulationPaused,
                             onDismissRequest = { removeDrawerOverlay() },
                             onMenuAction = ::dispatchMenuAction,
                             onScrollState = { drawerScrollState = it },
@@ -741,11 +756,13 @@ class ChromeManager(private val activity: MainActivity) {
 
     private fun dp(value: Int): Int = (value * activity.resources.displayMetrics.density).toInt()
 
-    private fun drawerContentDescription(): String {
+    private fun drawerContentDescription(emulationPaused: Boolean): String {
         val strings = AppLocale.wrap(activity)
         return (
             listOf(DRAWER_TITLE) +
-                DRAWER_ACTIONS.map { strings.getString(it.labelRes) }
+                DRAWER_ACTIONS.map { action ->
+                    strings.getString(pauseLabelRes(action, emulationPaused))
+                }
         ).joinToString("\n")
     }
 
@@ -772,6 +789,7 @@ class ChromeManager(private val activity: MainActivity) {
 
 @Composable
 private fun NerustDrawerOverlay(
+    emulationPaused: Boolean,
     onDismissRequest: () -> Unit,
     onMenuAction: (String) -> Unit,
     onScrollState: (ScrollState?) -> Unit = {},
@@ -811,8 +829,8 @@ private fun NerustDrawerOverlay(
                     )
                     DRAWER_ACTIONS.forEachIndexed { index, action ->
                         DrawerActionItem(
-                            label = stringResource(action.labelRes),
-                            iconRes = action.iconRes,
+                            label = stringResource(pauseLabelRes(action, emulationPaused)),
+                            iconRes = pauseIconRes(action, emulationPaused),
                             onClick = {
                                 closeAndRun(action.action)
                             },

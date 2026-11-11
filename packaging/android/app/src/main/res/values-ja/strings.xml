@@ -33,7 +33,8 @@
     </plurals>
     <string name="drawer_open_rom">ROMを開く</string>
     <string name="drawer_settings">設定</string>
-    <string name="drawer_pause_resume">一時停止／再開</string>
+    <string name="drawer_pause">一時停止</string>
+    <string name="drawer_resume">再開</string>
     <string name="drawer_save_state">セーブステート保存</string>
     <string name="drawer_load_state">セーブステート読み込み</string>
     <string name="drawer_reset">リセット</string>

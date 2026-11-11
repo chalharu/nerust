@@ -34,7 +34,8 @@
     </plurals>
     <string name="drawer_open_rom">Open ROM</string>
     <string name="drawer_settings">Settings</string>
-    <string name="drawer_pause_resume">Pause / Resume</string>
+    <string name="drawer_pause">Pause</string>
+    <string name="drawer_resume">Resume</string>
     <string name="drawer_save_state">Save State</string>
     <string name="drawer_load_state">Load State</string>
     <string name="drawer_reset">Reset</string>

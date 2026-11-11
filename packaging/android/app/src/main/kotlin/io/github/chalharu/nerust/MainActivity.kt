@@ -696,6 +696,8 @@ class MainActivity :
 
     private external fun pushSystemLocale(tag: String)
 
+    internal external fun nativeIsEmulationPaused(): Boolean
+
     private external fun onFilePickerResult(uri: String?)
 
     private external fun onMenuAction(action: String)

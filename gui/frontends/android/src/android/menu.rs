@@ -39,6 +39,17 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onMenuAction(
     }
 }
 
+/// Synchronous pause query for the drawer: vault truth published by
+/// `AndroidFrontend::exec`, never the live session (this runs on the Java
+/// main thread). The drawer reads it once per open for Pause/Resume.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_nativeIsEmulationPaused(
+    _env: jni::EnvUnowned<'_>,
+    _activity: JObject<'_>,
+) -> jni::sys::jboolean {
+    bridge::with_settings(|state| state.emulation_paused) as jni::sys::jboolean
+}
+
 /// Dedicated error-dialog dismiss entry point.
 /// Every Kotlin sender calls this; no menu-string fallback remains.
 #[unsafe(no_mangle)]

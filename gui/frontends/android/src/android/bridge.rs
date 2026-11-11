@@ -98,6 +98,10 @@ pub(super) struct SettingsSlot {
     /// app's supported set at ingestion: never SystemDefault, `None` until
     /// the first push. Ephemeral device truth, never persisted.
     pub(super) system_locale: Option<AppLanguage>,
+    /// Emulation pause flag (Rust event loop, republished after every
+    /// session command). The drawer reads it once per open for the dynamic
+    /// Pause/Resume row; synchronous vault read, never the live session.
+    pub(super) emulation_paused: bool,
 }
 
 impl SettingsSlot {
@@ -110,6 +114,7 @@ impl SettingsSlot {
             touch_capable: None,
             gamepads: Vec::new(),
             system_locale: None,
+            emulation_paused: false,
         }
     }
 }
