@@ -507,10 +507,7 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::DescNotifInfo => ("Such as save confirmations.", "保存完了など"),
         UiText::DescNotifWarning => ("Slowdown or missing files.", "遅延・ファイル不足"),
         UiText::DescNotifError => ("Halted actions.", "操作停止"),
-        UiText::DescNotifErrorModal => (
-            "Separately from the overlay.",
-            "オーバーレイと別に表示",
-        ),
+        UiText::DescNotifErrorModal => ("Separately from the overlay.", "オーバーレイと別に表示"),
         UiText::DescNotifArea => ("Overlay or reserved strip.", "重ね表示か専用帯"),
         UiText::DescStatusArea => (
             "A shared edge follows the message area.",
