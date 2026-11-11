@@ -22,7 +22,7 @@
     <string name="settings_reset_all_title">Reset all settings?</string>
     <string name="settings_reset_all_message">Every setting returns to its default. This cannot be undone.</string>
     <string name="settings_reset_screen_title">Reset this screen?</string>
-    <string name="settings_reset_screen_message">This screen returns to its defaults. Other screens are untouched.</string>
+    <string name="settings_reset_screen_message">Only this screen returns to its defaults.</string>
     <string name="settings_reset_confirm">Reset</string>
     <string name="settings_used_in">Used in %1$s</string>
     <string name="settings_used_elsewhere">Used in another slot</string>

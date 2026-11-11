@@ -80,56 +80,56 @@ impl ValidationIssueKind {
             Self::VolumeOutOfRange => pick(
                 japanese,
                 "Master volume must be between 0 and 100",
-                "主音量は0から100の範囲で指定してください",
+                "主音量は0～100で指定してください",
             ),
             Self::SampleRateOutOfRange => pick(
                 japanese,
                 "Sample rate must be between 1 and 192000",
-                "サンプルレートは1から192000の範囲で指定してください",
+                "サンプルレートは1～192000で指定してください",
             ),
             Self::LatencyOutOfRange => pick(
                 japanese,
                 "Audio latency must be between 10 and 200 ms",
-                "音声遅延は10から200 msの範囲で指定してください",
+                "音声遅延は10～200 msで指定してください",
             ),
             Self::InfoDurationOutOfRange => pick(
                 japanese,
                 "Info notification duration must be between 1000 and 30000 ms",
-                "情報通知の表示時間は1000から30000 msの範囲で指定してください",
+                "情報通知表示時間は1000～30000 msで指定してください",
             ),
             Self::WarningDurationOutOfRange => pick(
                 japanese,
                 "Warning notification duration must be between 1000 and 30000 ms",
-                "警告通知の表示時間は1000から30000 msの範囲で指定してください",
+                "警告通知表示時間は1000～30000 msで指定してください",
             ),
             Self::UnknownSlots { system, count } => {
                 if japanese {
-                    format!("{system}: 不明なスロットIDが{count}件あります")
+                    format!("{system}: 不明スロットID{count}件")
                 } else {
                     format!("{system}: {count} unknown slot ID(s)")
                 }
             }
             Self::UnknownProfiles { system, count } => {
                 if japanese {
-                    format!("{system}: 不明なコントローラープロファイルIDが{count}件あります")
+                    format!("{system}: 不明コントローラープロファイルID{count}件")
                 } else {
                     format!("{system}: {count} unknown controller profile ID(s)")
                 }
             }
             Self::NoController { system } => {
                 if japanese {
-                    format!("{system}: コントローラーを1つ以上割り当ててください")
+                    format!("{system}: コントローラー未割当")
                 } else {
-                    format!("{system}: At least one controller must be assigned")
+                    format!("{system}: No controller assigned")
                 }
             }
             Self::Placement { system, detail } => format!("{system}: {detail}"),
             Self::KeyConflict { key, labels } => format!("{key}: {labels}"),
             Self::ExclusiveMember { member, ports } => {
                 if japanese {
-                    format!("{member}は複数のポートに割り当てられています ({ports})")
+                    format!("{member}は複数ポートに割当済み ({ports})")
                 } else {
-                    format!("{member} is assigned to multiple ports ({ports})")
+                    format!("{member} is on multiple ports ({ports})")
                 }
             }
         }
@@ -206,7 +206,7 @@ mod tests {
         );
         assert_eq!(
             kind.message(AppLanguage::Japanese),
-            "主音量は0から100の範囲で指定してください"
+            "主音量は0～100で指定してください"
         );
         let opaque = ValidationIssueKind::Storage("custom detail".into());
         assert_eq!(
@@ -218,11 +218,7 @@ mod tests {
             member: "pad:0".into(),
             ports: "p1, p2".into(),
         };
-        assert!(
-            conflict
-                .message(AppLanguage::Japanese)
-                .contains("複数のポート")
-        );
+        assert!(conflict.message(AppLanguage::Japanese).contains("複数ポート"));
         assert!(
             conflict
                 .message(AppLanguage::English)
