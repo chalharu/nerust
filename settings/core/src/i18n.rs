@@ -512,10 +512,7 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
             "Slowdown or missing files, for example.",
             "遅延やファイル不足など",
         ),
-        UiText::DescNotifError => (
-            "When an action stops or gets blocked.",
-            "操作を止めるエラー",
-        ),
+        UiText::DescNotifError => ("When an action stops or gets blocked.", "操作の中断・停止"),
         UiText::DescNotifErrorModal => (
             "Shows separately from the overlay.",
             "オーバーレイとは別に表示",
