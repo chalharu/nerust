@@ -19,8 +19,8 @@ use nerust_gui_viewmodel::settings::{SettingsViewModel, StoragePathError, Storag
 use nerust_settings_core::{
     editor::CaptureTarget,
     i18n::{
-        UiText, port_count_line, port_summary, shortcut_row_description, slot_description,
-        system_field_description, text as ui_text,
+        UiText, port_count_line, port_summary, slot_description, system_field_description,
+        text as ui_text,
     },
     input::{BUILTIN_KEYBOARD_MEMBER, GAMEPAD_MEMBER_PREFIX, KEYBOARD_MEMBER_PREFIX},
     model::{
@@ -1992,7 +1992,7 @@ fn build_controllers_sections(
                 capture_row(
                     &format!("controls.{}", binding_key(&binding.target)),
                     binding.label.clone(),
-                    shortcut_row_description(language),
+                    String::new(),
                     binding_value_text(binding),
                     &encode_target(&binding.target, &shortcut_system),
                 )

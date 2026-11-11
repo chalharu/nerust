@@ -27,8 +27,8 @@
     <string name="drawer_open_rom">ROMを開く</string>
     <string name="drawer_settings">設定</string>
     <string name="drawer_pause_resume">一時停止／再開</string>
-    <string name="drawer_save_state">ステートを保存</string>
-    <string name="drawer_load_state">ステートを読み込み</string>
+    <string name="drawer_save_state">セーブステートを保存</string>
+    <string name="drawer_load_state">セーブステートを読み込み</string>
     <string name="drawer_reset">リセット</string>
     <string name="drawer_unload_rom">ROMを閉じる</string>
     <string name="drawer_exit">終了</string>
