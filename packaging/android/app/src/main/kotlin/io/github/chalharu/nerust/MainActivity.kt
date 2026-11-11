@@ -687,6 +687,8 @@ class MainActivity :
                         .put("unit", row.unit)
                         .put("text", row.text)
                         .put("target", row.target)
+                        .put("description", row.description)
+                        .put("detail_target", row.detailTarget)
                         .put("visible", row.visible),
                 )
             }
@@ -699,7 +701,8 @@ class MainActivity :
                     .put("id", section.id)
                     .put("label", section.label)
                     .put("rows", rowsOf(section.rows))
-                    .put("visible", section.visible),
+                    .put("visible", section.visible)
+                    .put("sub", section.sub),
             )
         }
         return JSONObject()
