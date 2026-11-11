@@ -2038,7 +2038,7 @@ fn build_controllers_sections(
         rows: vec![
             info_row(
                 "controls.auto_hide_status",
-                i18n.text(UiText::AutoHideGamepads),
+                i18n.text(UiText::ConnectedGamepads),
                 String::new(),
                 if gamepads.is_empty() {
                     i18n.text(UiText::NotAssigned)

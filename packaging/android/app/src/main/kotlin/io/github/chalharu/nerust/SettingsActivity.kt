@@ -281,7 +281,7 @@ class SettingsActivity :
      * language the user actually sees (Android never sets LANG). */
     internal fun pushSystemLocale() {
         val nav = navActions ?: return
-        val tag = AppLocale.currentTag(this) ?: return
+        val tag = AppLocale.currentTag() ?: return
         val raw =
             try {
                 nativeSettingsCommand(

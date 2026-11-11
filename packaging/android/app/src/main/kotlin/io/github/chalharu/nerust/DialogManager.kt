@@ -81,7 +81,7 @@ class DialogManager(private val activity: MainActivity) {
                     )
             }
         val composeView =
-            ComposeView(activity).apply {
+            ComposeView(AppLocale.wrap(activity)).apply {
                 tag = "$dialogTag-compose"
                 layoutParams =
                     FrameLayout.LayoutParams(

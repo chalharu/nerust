@@ -625,17 +625,18 @@ class MainActivity :
         )
     }
 
-    /** Persist the saved in-app language and recreate so the drawer and
-     * every Android string follow the choice in real time. Rust pushes
-     * this after a successful settings save; no-op when unchanged. */
+    /** Persist the saved in-app language. No recreate: drawer, dialogs
+     * and the edge handle inflate from the wrapped context on every show,
+     * so they follow the choice live. Recreating the NativeActivity would
+     * destroy the Rust event loop and freeze the app. */
     fun applyAppLanguage(tag: String) {
-        if (AppLocale.setSavedTag(this, tag)) recreate()
+        AppLocale.setSavedTag(this, tag)
     }
 
     /** Push the terminal locale tag into the Rust vault so SystemDefault
      * resolves without the LANG env Android never sets. */
     private fun pushSystemLocaleToVault() {
-        val tag = AppLocale.currentTag(this) ?: return
+        val tag = AppLocale.currentTag() ?: return
         try {
             pushSystemLocale(tag)
         } catch (e: Exception) {
