@@ -320,6 +320,26 @@ impl I18n {
     }
 }
 
+/// Terminal locale tag to the supported set. Both directions of the
+/// tag mapping live here so ingestion and the save push cannot drift.
+pub(super) fn system_language_from_tag(tag: &str) -> AppLanguage {
+    if tag.starts_with("ja") {
+        AppLanguage::Japanese
+    } else {
+        AppLanguage::English
+    }
+}
+
+/// Supported set back to a BCP-47 tag for the save push (empty means
+/// the terminal locale). Inverse of `system_language_from_tag`.
+pub(super) fn app_language_tag(language: AppLanguage) -> &'static str {
+    match language {
+        AppLanguage::Japanese => "ja",
+        AppLanguage::English => "en",
+        AppLanguage::SystemDefault => "",
+    }
+}
+
 /// Vault device truth for one projection: enumerated keyboards, touch
 /// capability, counted gamepads, and the resolved display language. One
 /// `Copy` struct instead of four parallel params (keeps every wire fn
@@ -361,10 +381,16 @@ pub(super) fn open_payload(
 ) -> Result<String, String> {
     with_vm_deps(|deps| {
         let i18n = I18n::resolve(snapshot.shared.general.language, system_locale);
+        let truth = Projection {
+            keyboards,
+            touch_capable,
+            gamepads,
+            i18n,
+        };
         let vm = build_vm(snapshot, deps, i18n)?;
         let payload = ViewPayload {
             schema_version: SETTINGS_SCHEMA_VERSION,
-            sections: build_sections(&vm, snapshot, keyboards, touch_capable, gamepads, i18n),
+            sections: build_sections(&vm, snapshot, truth),
             issues: draft_issues(&vm),
             capture: None,
         };
@@ -409,14 +435,7 @@ pub(super) fn apply_command_to(
                     gamepads,
                     i18n,
                 };
-                let sections = build_sections(
-                    &vm,
-                    snapshot,
-                    truth.keyboards,
-                    truth.touch_capable,
-                    truth.gamepads,
-                    truth.i18n,
-                );
+                let sections = build_sections(&vm, snapshot, truth);
                 apply_reset_section(snapshot, deps, &sections, &command, truth)?;
             }
             "cancel_capture" | "clear_binding" | "start_capture" => {
@@ -430,8 +449,13 @@ pub(super) fn apply_command_to(
             }
             "set" => {
                 let vm = build_vm(snapshot, deps, i18n)?;
-                let sections =
-                    build_sections(&vm, snapshot, keyboards, *touch_capable, gamepads, i18n);
+                let truth = Projection {
+                    keyboards,
+                    touch_capable: *touch_capable,
+                    gamepads,
+                    i18n,
+                };
+                let sections = build_sections(&vm, snapshot, truth);
                 apply_set_command(snapshot, deps, &vm, &sections, &command, i18n)?;
             }
             op => return Err(format!("unknown command op: {op}")),
@@ -482,14 +506,7 @@ fn refreshed_payload(
     let vm = build_vm(snapshot, deps, truth.i18n)?;
     let payload = ViewPayload {
         schema_version: SETTINGS_SCHEMA_VERSION,
-        sections: build_sections(
-            &vm,
-            snapshot,
-            truth.keyboards,
-            truth.touch_capable,
-            truth.gamepads,
-            truth.i18n,
-        ),
+        sections: build_sections(&vm, snapshot, truth),
         issues: draft_issues(&vm),
         capture: capture.as_ref().map(|(target, prompt)| CaptureWire {
             target: encode_target(target, &target_system(target, deps)),
@@ -685,14 +702,7 @@ fn apply_capture_command(
         return Ok(());
     }
     let vm = build_vm(snapshot, deps, truth.i18n)?;
-    let sections = build_sections(
-        &vm,
-        snapshot,
-        truth.keyboards,
-        truth.touch_capable,
-        truth.gamepads,
-        truth.i18n,
-    );
+    let sections = build_sections(&vm, snapshot, truth);
     let row = find_row(&sections, &command.key)?;
     if row.kind != RowKind::Capture {
         return Err(format!("{}: not a capture row", command.key));
@@ -770,11 +780,7 @@ fn apply_locale_command(
     if raw.is_empty() {
         return Err("locale lang must not be empty".to_string());
     }
-    *system_locale = Some(if raw.starts_with("ja") {
-        AppLanguage::Japanese
-    } else {
-        AppLanguage::English
-    });
+    *system_locale = Some(system_language_from_tag(raw));
     Ok(())
 }
 
@@ -878,14 +884,7 @@ fn apply_reset_section(
         .ok_or_else(|| format!("malformed reset key: {}", command.key))?;
     let default = default_snapshot(deps);
     let default_vm = build_vm(&default, deps, truth.i18n)?;
-    let default_sections = build_sections(
-        &default_vm,
-        &default,
-        truth.keyboards,
-        truth.touch_capable,
-        truth.gamepads,
-        truth.i18n,
-    );
+    let default_sections = build_sections(&default_vm, &default, truth);
     let reset_all = scope == "all";
     if reset_all {
         // Membership rows only cover enumerated keyboards; stale members
@@ -1464,11 +1463,9 @@ fn player_label(index: usize, i18n: I18n) -> String {
 fn build_sections(
     vm: &SettingsViewModel,
     snapshot: &SettingsSnapshot,
-    keyboards: &[KeyboardInfo],
-    touch_capable: Option<bool>,
-    gamepads: &[GamepadInfo],
-    i18n: I18n,
+    truth: Projection,
 ) -> Vec<SectionWire> {
+    let i18n = truth.i18n;
     let mut sections = vec![
         build_play_section(vm, snapshot, i18n),
         build_saves_section(vm, i18n),
@@ -1482,11 +1479,11 @@ fn build_sections(
         vm,
         snapshot,
         i18n,
-        keyboards,
-        touch_capable,
-        gamepads,
+        truth.keyboards,
+        truth.touch_capable,
+        truth.gamepads,
     ));
-    sections.extend(build_player_sections(vm, snapshot, i18n, keyboards));
+    sections.extend(build_player_sections(vm, snapshot, i18n, truth.keyboards));
     sections.extend(build_system_sections(vm, i18n));
     sections.extend(build_input_sections(vm, i18n));
     sections.extend(build_keys_sections(vm, i18n));
@@ -3107,6 +3104,31 @@ mod tests {
     }
 
     #[test]
+    fn locale_tag_mapping_round_trips() {
+        // Ingestion and the save push share one mapping: `ja*` selects
+        // Japanese, everything else falls back to English (the app only
+        // ships the two).
+        for (tag, want) in [
+            ("ja", AppLanguage::Japanese),
+            ("ja-JP", AppLanguage::Japanese),
+            ("en", AppLanguage::English),
+            ("en-US", AppLanguage::English),
+            ("fr", AppLanguage::English),
+        ] {
+            let mapped = super::system_language_from_tag(tag);
+            assert_eq!(mapped, want, "tag {tag} maps");
+            assert_eq!(
+                I18n::resolve(AppLanguage::SystemDefault, Some(mapped)).language(),
+                want,
+                "tag {tag} resolves for display"
+            );
+        }
+        assert_eq!(super::app_language_tag(AppLanguage::Japanese), "ja");
+        assert_eq!(super::app_language_tag(AppLanguage::English), "en");
+        assert_eq!(super::app_language_tag(AppLanguage::SystemDefault), "");
+    }
+
+    #[test]
     fn zero_based_top_level_hides_machine_names() {
         let (_snapshot, payload) = test_payload();
         // Top-level taxonomy is purpose-based: no machine names on top.
@@ -3846,8 +3868,13 @@ mod tests {
                 I18n::resolve(AppLanguage::SystemDefault, None),
             )
             .expect("vm builds");
-            let i18n = I18n::resolve(AppLanguage::SystemDefault, None);
-            let sections = build_sections(&vm, &snapshot, &test_keyboards(), None, &[], i18n);
+            let truth = Projection {
+                keyboards: &test_keyboards(),
+                touch_capable: None,
+                gamepads: &[],
+                i18n: I18n::resolve(AppLanguage::SystemDefault, None),
+            };
+            let sections = build_sections(&vm, &snapshot, truth);
             sections
                 .iter()
                 .flat_map(|section| &section.rows)
@@ -3933,8 +3960,13 @@ mod tests {
                 I18n::resolve(AppLanguage::SystemDefault, None),
             )
             .expect("vm builds");
-            let i18n = I18n::resolve(AppLanguage::SystemDefault, None);
-            let sections = build_sections(&vm, &snapshot, &test_keyboards(), None, &[], i18n);
+            let truth = Projection {
+                keyboards: &test_keyboards(),
+                touch_capable: None,
+                gamepads: &[],
+                i18n: I18n::resolve(AppLanguage::SystemDefault, None),
+            };
+            let sections = build_sections(&vm, &snapshot, truth);
             sections
                 .iter()
                 .flat_map(|section| &section.rows)
@@ -3965,8 +3997,13 @@ mod tests {
                 I18n::resolve(AppLanguage::SystemDefault, None),
             )
             .expect("vm builds");
-            let i18n = I18n::resolve(AppLanguage::SystemDefault, None);
-            let sections = build_sections(&vm, &snapshot, &test_keyboards(), None, &[], i18n);
+            let truth = Projection {
+                keyboards: &test_keyboards(),
+                touch_capable: None,
+                gamepads: &[],
+                i18n: I18n::resolve(AppLanguage::SystemDefault, None),
+            };
+            let sections = build_sections(&vm, &snapshot, truth);
             sections
                 .iter()
                 .flat_map(|section| &section.rows)
