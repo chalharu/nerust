@@ -18,10 +18,7 @@ use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_viewmodel::settings::{SettingsViewModel, StoragePathError, StoragePathValidator};
 use nerust_settings_core::{
     editor::CaptureTarget,
-    i18n::{
-        UiText, port_count_line, port_summary, slot_description, system_field_description,
-        text as ui_text,
-    },
+    i18n::{UiText, port_count_line, port_summary, slot_description, text as ui_text},
     input::{BUILTIN_KEYBOARD_MEMBER, GAMEPAD_MEMBER_PREFIX, KEYBOARD_MEMBER_PREFIX},
     model::{
         app_state::{DesktopAppState, PORT_PLAYER_1, PORT_PLAYER_2},
@@ -1617,7 +1614,7 @@ fn build_advanced_section(
         rows.push(group_row(
             &format!("advanced.{sid}"),
             system.display_name().to_string(),
-            system_field_description(language),
+            String::new(),
             &format!("system.{sid}"),
         ));
     }
@@ -2027,7 +2024,7 @@ fn build_system_sections(vm: &SettingsViewModel, language: AppLanguage) -> Vec<S
                     choice_row(
                         &format!("system.{}.{}", view.system_id, field.id.as_str()),
                         field.label.clone(),
-                        system_field_description(language),
+                        String::new(),
                         &field
                             .choices
                             .iter()
@@ -2170,7 +2167,7 @@ fn build_player_sections(
                 group_row(
                     &format!("{player_id}.type"),
                     t(UiText::ControllerType),
-                    system_field_description(language),
+                    String::new(),
                     types_id,
                 ),
             ],
@@ -3686,12 +3683,18 @@ mod tests {
         //   rumble strength): the value line already says it.
         // - color/position/target choice rows: the choices list the options.
         // - haptics/status toggles: label plus on/off is the whole story.
-        // - app.about: standard About row pattern (version and license live
-        //   on the target screen).
+        // - app.about, machine drill-down rows (advanced.*), controller-type
+        //   rows (player.*.type): standard navigation pattern, the label
+        //   plus chevron says where it goes.
+        // - per-machine settings (system.*): label plus choice value is
+        //   self-contained; the screen context already scopes the machine.
         // - player.*.devices: the value line carries the port summary.
         let mut bare: Vec<String> = payload_bare_keys(&test_payload().1);
         bare.sort();
         let mut expected = vec![
+            "advanced.gba",
+            "advanced.gbc",
+            "advanced.nes",
             "app.about",
             "audio.volume",
             "controls.cartridge_rumble_strength",
@@ -3707,9 +3710,16 @@ mod tests {
             "notifications.position",
             "notifications.warning_duration",
             "player.1.devices",
+            "player.1.type",
             "player.2.devices",
+            "player.2.type",
             "status.enabled",
             "status.position",
+            "system.gba.peripheral.solar_light",
+            "system.gbc.system.hardware_model",
+            "system.gbc.system.rtc_sync",
+            "system.nes.core.mmc3_irq_variant",
+            "system.nes.video.filter",
         ];
         for prefix in [
             "reset.all",

@@ -23,7 +23,6 @@
     <plurals name="settings_count">
         <item quantity="other">%d件の設定</item>
     </plurals>
-    <string name="drawer_subtitle">ROMを開き、セッションを操作します。</string>
     <string name="drawer_open_rom">ROMを開く</string>
     <string name="drawer_settings">設定</string>
     <string name="drawer_pause_resume">一時停止／再開</string>

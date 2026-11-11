@@ -768,12 +768,7 @@ private fun NerustDrawerOverlay(
                     androidx.compose.material3.Text(
                         text = DRAWER_TITLE,
                         style = MaterialTheme.typography.titleLarge,
-                        modifier = Modifier.padding(start = 24.dp, top = 24.dp, end = 24.dp, bottom = 8.dp),
-                    )
-                    Text(
-                        text = stringResource(R.string.drawer_subtitle),
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 16.dp),
+                        modifier = Modifier.padding(start = 24.dp, top = 24.dp, end = 24.dp, bottom = 16.dp),
                     )
                     DRAWER_ACTIONS.forEachIndexed { index, action ->
                         DrawerActionItem(

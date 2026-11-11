@@ -499,10 +499,7 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
             "Display language. You can also follow the system.",
             "表示言語。システム既定にもできます",
         ),
-        UiText::DescVsync => (
-            "Keeps the picture tear-free. Usually best left on.",
-            "画面のちらつきを抑えます。通常はオンのままに",
-        ),
+        UiText::DescVsync => ("Reduces screen tearing.", "ティアリングを抑えます"),
         UiText::DescOrientation => (
             "Applies immediately, even mid-game.",
             "ゲーム中も即時反映されます",
@@ -514,8 +511,8 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
             "大きくすると途切れにくくなりますが遅延が増えます",
         ),
         UiText::DescNotifInfo => (
-            "Game messages such as save-state confirmations.",
-            "セーブステート保存などのお知らせ",
+            "Game messages such as save confirmations.",
+            "保存完了などのお知らせ",
         ),
         UiText::DescNotifWarning => (
             "Warnings such as slowdown or missing files.",
@@ -683,16 +680,6 @@ pub fn port_count_line(language: AppLanguage, count: usize) -> String {
             format!("{n}台のデバイスを割り当て")
         ),
     }
-}
-
-/// Description for a machine-specific core setting row. The row label comes
-/// from the core descriptor, so the description only states when to touch it.
-pub fn system_field_description(language: AppLanguage) -> String {
-    localized!(
-        language,
-        "Applies to this system only.".to_string(),
-        "この機種のみに適用されます".to_string()
-    )
 }
 
 /// Selected dump row (`was ??` when the old byte is unreadable).
