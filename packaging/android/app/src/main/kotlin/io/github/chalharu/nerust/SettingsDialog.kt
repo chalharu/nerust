@@ -80,6 +80,22 @@ internal data class SettingsChoice(
     val reason: String = "",
 )
 
+/** Mirror the draft orientation choice onto the host activity: every
+ * refreshed payload carries the live draft, so each tap rotates immediately
+ * without waiting for save. Unknown indices are ignored (Rust owns 0/1/2). */
+internal fun previewOrientation(
+    sections: List<SettingsSection>,
+    onOrientationChanged: (Int) -> Unit,
+) {
+    val row =
+        sections
+            .asSequence()
+            .flatMap { it.rows }
+            .firstOrNull { it.key == "video.orientation" } ?: return
+    val orientation = screenOrientationRequest(row.selected) ?: return
+    onOrientationChanged(orientation)
+}
+
 /** One settings row as projected by Rust (`settings_views::RowWire`). */
 internal data class SettingsRow(
     val key: String,
@@ -332,6 +348,12 @@ internal fun NerustSettingsDialogCard(
     onNavStateChanged: (SettingsNavActions) -> Unit,
     initialIssues: List<String> = emptyList(),
     initialCapture: String? = null,
+    // Live orientation preview: the draft's video.orientation choice (0/1/2
+    // in Rust build_play_section order) rides every refreshed payload, so
+    // the screen rotates on tap like the language text switches on tap.
+    // Save persists through the existing validated path; dismiss touches
+    // nothing so the game screen keeps its saved lock.
+    onOrientationChanged: (Int) -> Unit = {},
 ) {
     var sections by remember(initialSections) { mutableStateOf(initialSections) }
     var issues by remember(initialIssues) { mutableStateOf(initialIssues) }
@@ -365,6 +387,7 @@ internal fun NerustSettingsDialogCard(
             sections = parseSettingsSections(payload)
             issues = parseIssues(payload)
             capturePrompt = parseCapture(payload)
+            previewOrientation(sections, onOrientationChanged)
             if (mutating) isDirty = true
             return true
         } catch (e: Exception) {

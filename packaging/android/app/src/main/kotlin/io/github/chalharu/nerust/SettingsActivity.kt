@@ -144,6 +144,13 @@ class SettingsActivity :
                 initialCapture = capture,
                 onDismissRequest = { dismissWithResult(dismissed = true) },
                 onCommand = { command -> nativeSettingsCommand(command) },
+                // Live preview (see previewOrientation): rotate this screen on
+                // every draft change; save/dismiss semantics stay in Rust.
+                onOrientationChanged = { orientation ->
+                    if (requestedOrientation != orientation) {
+                        requestedOrientation = orientation
+                    }
+                },
                 onNavStateChanged = { actions ->
                     navActions = actions
                     // First publish lands after composition; hotplug and
