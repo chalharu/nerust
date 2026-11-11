@@ -4445,10 +4445,15 @@ mod tests {
     #[test]
     fn finish_rejects_conflicting_bindings() {
         // `finish` gates on the shared validator: an invalid draft fails.
-        let mut snapshot = default_snapshot();
-        snapshot.local.audio.master_volume_percent = 100;
-        assert!(finish_snapshot(&snapshot, None).is_ok());
-        snapshot.local.audio.latency_ms = 5;
-        assert!(finish_snapshot(&snapshot, None).is_err());
+        // Install the process-wide deps explicitly: `finish_snapshot` reads
+        // them instead of taking per-call copies, so this test must not
+        // rely on another test's installation.
+        with_test_deps(|| {
+            let mut snapshot = default_snapshot();
+            snapshot.local.audio.master_volume_percent = 100;
+            assert!(finish_snapshot(&snapshot, None).is_ok());
+            snapshot.local.audio.latency_ms = 5;
+            assert!(finish_snapshot(&snapshot, None).is_err());
+        });
     }
 }

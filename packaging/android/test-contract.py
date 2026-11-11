@@ -165,7 +165,12 @@ class StructureTests(unittest.TestCase):
                 elif mutation in {"minimum", "maximum"}:
                     menu["properties"]["device_id"][mutation] += 1
                 else:
-                    menu["then"]["required"].remove("pressed")
+                    gates = menu["allOf"] if "allOf" in menu else [{"if": menu["if"], "then": menu["then"]}]
+                    touch = next(
+                        gate for gate in gates
+                        if gate["if"]["properties"]["action"]["const"] == "touch_gate"
+                    )
+                    touch["then"]["required"].remove("pressed")
                 with self.assertRaises(VERIFY.ContractError):
                     self.verify()
 
@@ -184,7 +189,12 @@ class StructureTests(unittest.TestCase):
                 elif mutation == "enum":
                     menu["properties"]["key"]["enum"].append("probe")
                 else:
-                    menu["then"]["required"].remove("pressed")
+                    gates = menu["allOf"] if "allOf" in menu else [{"if": menu["if"], "then": menu["then"]}]
+                    touch = next(
+                        gate for gate in gates
+                        if gate["if"]["properties"]["action"]["const"] == "touch_gate"
+                    )
+                    touch["then"]["required"].remove("pressed")
                 self.assertNotEqual(CONTRACT.outputs(changed)[path], baseline)
 
     def test_modified_generated_validation_is_rejected(self):
