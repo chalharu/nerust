@@ -704,11 +704,13 @@ class ChromeManager(private val activity: MainActivity) {
 
     private fun dp(value: Int): Int = (value * activity.resources.displayMetrics.density).toInt()
 
-    private fun drawerContentDescription(): String =
-        (
+    private fun drawerContentDescription(): String {
+        val strings = AppLocale.wrap(activity)
+        return (
             listOf(DRAWER_TITLE) +
-                DRAWER_ACTIONS.map { AppLocale.wrap(activity).getString(it.labelRes) }
+                DRAWER_ACTIONS.map { strings.getString(it.labelRes) }
         ).joinToString("\n")
+    }
 
     private fun View?.isShownInWindowForTest(): Boolean =
         this != null && visibility == View.VISIBLE && isAttachedToWindow && windowToken != null

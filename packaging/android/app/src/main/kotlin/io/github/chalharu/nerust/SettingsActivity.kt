@@ -274,9 +274,6 @@ class SettingsActivity :
         raw?.let { nav.refreshPayload(it) }
     }
 
-    /** Push the devices the Auto gate counts (see [connectedGamepadNames]):
-     * Rust shows them in the overlay detail screen so users can see why
-     * Auto currently hides, without logcat. Non-mutating like the rest. */
     /** Push the terminal locale tag so SystemDefault resolves to the
      * language the user actually sees (Android never sets LANG). */
     internal fun pushSystemLocale() {
@@ -294,6 +291,9 @@ class SettingsActivity :
         raw?.let { nav.refreshPayload(it) }
     }
 
+    /** Push the devices the Auto gate counts (see [connectedGamepadNames]):
+     * Rust shows them in the overlay detail screen so users can see why
+     * Auto currently hides, without logcat. Non-mutating like the rest. */
     internal fun pushGamepads() {
         val nav = navActions ?: return
         val names = JSONArray()

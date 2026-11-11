@@ -19,12 +19,11 @@ internal object AppLocale {
     internal fun savedTag(context: Context): String =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, "") ?: ""
 
-    /** Persists the tag; returns true when the value changed. */
-    internal fun setSavedTag(context: Context, tag: String): Boolean {
+    /** Persists the tag. */
+    internal fun setSavedTag(context: Context, tag: String) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        if ((prefs.getString(KEY, "") ?: "") == tag) return false
+        if ((prefs.getString(KEY, "") ?: "") == tag) return
         prefs.edit().putString(KEY, tag).apply()
-        return true
     }
 
     /** Wraps the base context with the saved locale (no-op for system). */
