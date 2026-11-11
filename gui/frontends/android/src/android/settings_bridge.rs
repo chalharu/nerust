@@ -11,7 +11,6 @@ use super::settings_views;
 use crate::bridge_contract::SETTINGS_SCHEMA_VERSION;
 use crate::settings_flight::SettingsRequestId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_settings_core::model::language::AppLanguage;
 use nerust_settings_core::model::local::ScreenOrientation;
 
 /// Versioned JNI screen result: dismissal only. The accepted draft travels
