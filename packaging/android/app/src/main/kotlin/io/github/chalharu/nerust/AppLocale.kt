@@ -2,13 +2,15 @@ package io.github.chalharu.nerust
 
 import android.content.Context
 import android.content.res.Configuration
+import android.content.res.Resources
 import java.util.Locale
 
 /** In-app language persistence and locale wrapping. Android resources
  * (drawer, dialogs) resolve through the wrapped context, so they follow
- * the saved settings choice after a recreate; empty means the terminal
- * locale. Rust-rendered strings resolve separately through the vault
- * locale push (see `pushSystemLocale`). */
+ * the saved settings choice without recreating the NativeActivity
+ * (a recreate would destroy the native event loop and freeze the app).
+ * Empty means the terminal locale. Rust-rendered strings resolve
+ * separately through the vault locale push (see `pushSystemLocale`). */
 internal object AppLocale {
     private const val PREFS = "nerust_app"
     private const val KEY = "app_locale"
@@ -34,9 +36,11 @@ internal object AppLocale {
         return base.createConfigurationContext(config)
     }
 
-    /** Terminal locale tag for the Rust vault (`null` when unknown). */
-    internal fun currentTag(context: Context): String? {
-        val locales = context.resources.configuration.locales
+    /** Terminal locale tag for the Rust vault (`null` when unknown).
+     * Reads the system resources, never an activity context: activities
+     * carry our own override after [wrap], which is not the terminal. */
+    internal fun currentTag(): String? {
+        val locales = Resources.getSystem().configuration.locales
         if (locales.isEmpty) return null
         return locales[0].language.takeIf { it.isNotEmpty() }
     }

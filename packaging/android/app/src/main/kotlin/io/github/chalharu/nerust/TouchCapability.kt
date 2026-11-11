@@ -25,9 +25,10 @@ internal fun hasTouchscreen(packageManager: PackageManager): Boolean {
  * One function so the two can never disagree about what "connected" means.
  * Sources alone prove nothing: button clusters (power keys, headset jacks,
  * fingerprint sensors, touch panels) can expose gamepad or joystick bits.
- * A counted device must also carry a gamepad button: without buttons it is
- * not usable alternative input, and hiding touch controls for one strands
- * the user with no way back. */
+ * A counted device must also hold a controller number (zero means the
+ * platform itself does not consider it a game controller) and carry a
+ * gamepad button: without buttons it is not usable alternative input,
+ * and hiding touch controls for one strands the user with no way back. */
 internal fun connectedGamepadNames(): List<String> {
     // Canonical gamepad buttons; any one proves a real controller.
     // All exist since API 1, so no version guard is needed.
@@ -49,6 +50,9 @@ internal fun connectedGamepadNames(): List<String> {
         val device = InputDevice.getDevice(id) ?: continue
         if (device.id < 0) continue
         if (Build.VERSION.SDK_INT >= 29 && device.isVirtual) continue
+        // Canonical "is a game controller" verdict: fingerprint sensors
+        // and other button clusters never hold a controller number.
+        if (device.controllerNumber == 0) continue
         val sources = device.sources
         val stick =
             sources and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||

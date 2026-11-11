@@ -265,7 +265,7 @@ class ChromeManager(private val activity: MainActivity) {
                     )
             }
         val drawerContent =
-            ComposeView(activity).apply {
+            ComposeView(AppLocale.wrap(activity)).apply {
                 tag = DRAWER_COMPOSE_TAG
                 layoutParams =
                     FrameLayout.LayoutParams(
@@ -607,7 +607,7 @@ class ChromeManager(private val activity: MainActivity) {
     private fun createDrawerEdgeHandleOverlay(): View =
         DrawerEdgeSwipeHandleView(activity) { showDrawerOverlay() }.apply {
             tag = DRAWER_EDGE_HANDLE_TAG
-            contentDescription = activity.getString(R.string.drawer_open_nav)
+            contentDescription = AppLocale.wrap(activity).getString(R.string.drawer_open_nav)
             layoutParams =
                 FrameLayout.LayoutParams(
                     dp(DRAWER_EDGE_HANDLE_WIDTH_DP),
@@ -707,7 +707,7 @@ class ChromeManager(private val activity: MainActivity) {
     private fun drawerContentDescription(): String =
         (
             listOf(DRAWER_TITLE) +
-                DRAWER_ACTIONS.map { activity.getString(it.labelRes) }
+                DRAWER_ACTIONS.map { AppLocale.wrap(activity).getString(it.labelRes) }
         ).joinToString("\n")
 
     private fun View?.isShownInWindowForTest(): Boolean =
