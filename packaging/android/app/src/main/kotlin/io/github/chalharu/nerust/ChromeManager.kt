@@ -26,8 +26,18 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Eject
+import androidx.compose.material.icons.filled.ExitToApp
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
@@ -44,6 +54,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.res.stringResource
@@ -62,21 +73,24 @@ internal const val DRAWER_TITLE = "Nerust"
 private data class DrawerAction(
     val labelRes: Int,
     val action: String,
+    val icon: ImageVector,
 )
 
 /** Drawer actions resolve to the single-source [MenuAction] contract.
  * Labels are string resources (EN/JA); the e2e probe reads the resolved
- * English text on the emulator locale. */
+ * English text on the emulator locale. Icons are core-only (no extended
+ * library): the label stays static per row (Pause / Resume never toggles),
+ * so the icon stays static too. */
 private val DRAWER_ACTIONS =
     listOf(
-        DrawerAction(R.string.drawer_open_rom, MenuAction.OPEN_ROM),
-        DrawerAction(R.string.drawer_settings, MenuAction.OPEN_SETTINGS),
-        DrawerAction(R.string.drawer_pause_resume, MenuAction.TOGGLE_PAUSE),
-        DrawerAction(R.string.drawer_save_state, MenuAction.SAVE_STATE),
-        DrawerAction(R.string.drawer_load_state, MenuAction.LOAD_STATE),
-        DrawerAction(R.string.drawer_reset, MenuAction.RESET),
-        DrawerAction(R.string.drawer_unload_rom, MenuAction.UNLOAD),
-        DrawerAction(R.string.drawer_exit, MenuAction.EXIT),
+        DrawerAction(R.string.drawer_open_rom, MenuAction.OPEN_ROM, Icons.Filled.FolderOpen),
+        DrawerAction(R.string.drawer_settings, MenuAction.OPEN_SETTINGS, Icons.Filled.Settings),
+        DrawerAction(R.string.drawer_pause_resume, MenuAction.TOGGLE_PAUSE, Icons.Filled.Pause),
+        DrawerAction(R.string.drawer_save_state, MenuAction.SAVE_STATE, Icons.Filled.Save),
+        DrawerAction(R.string.drawer_load_state, MenuAction.LOAD_STATE, Icons.Filled.Restore),
+        DrawerAction(R.string.drawer_reset, MenuAction.RESET, Icons.Filled.Refresh),
+        DrawerAction(R.string.drawer_unload_rom, MenuAction.UNLOAD, Icons.Filled.Eject),
+        DrawerAction(R.string.drawer_exit, MenuAction.EXIT, Icons.Filled.ExitToApp),
     )
 
 /** Non-dialog chrome: touch overlay, drawer, FPS label, and attach retries.
@@ -805,6 +819,7 @@ private fun NerustDrawerOverlay(
                     DRAWER_ACTIONS.forEachIndexed { index, action ->
                         DrawerActionItem(
                             label = stringResource(action.labelRes),
+                            icon = action.icon,
                             onClick = {
                                 closeAndRun(action.action)
                             },
@@ -829,9 +844,12 @@ private fun NerustDrawerOverlay(
 @Composable
 private fun DrawerActionItem(
     label: String,
+    icon: ImageVector,
     onClick: () -> Unit,
 ) {
     NavigationDrawerItem(
+        // Icon is decorative: the item already carries the label for TalkBack.
+        icon = { Icon(imageVector = icon, contentDescription = null) },
         label = { Text(label) },
         selected = false,
         onClick = onClick,
