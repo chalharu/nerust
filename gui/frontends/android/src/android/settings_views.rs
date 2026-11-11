@@ -391,7 +391,7 @@ pub(super) fn open_payload(
         let payload = ViewPayload {
             schema_version: SETTINGS_SCHEMA_VERSION,
             sections: build_sections(&vm, snapshot, truth),
-            issues: draft_issues(&vm),
+            issues: draft_issues(&vm, truth.i18n),
             capture: None,
         };
         serde_json::to_string(&payload).map_err(|error| error.to_string())
@@ -507,7 +507,7 @@ fn refreshed_payload(
     let payload = ViewPayload {
         schema_version: SETTINGS_SCHEMA_VERSION,
         sections: build_sections(&vm, snapshot, truth),
-        issues: draft_issues(&vm),
+        issues: draft_issues(&vm, truth.i18n),
         capture: capture.as_ref().map(|(target, prompt)| CaptureWire {
             target: encode_target(target, &target_system(target, deps)),
             prompt: prompt.clone(),
@@ -675,13 +675,14 @@ fn target_system(target: &CaptureTarget, deps: &VmDeps) -> String {
 
 /// Non-fatal validation probe: the same gate `finish` enforces at save,
 /// surfaced live so the UI can explain disabled/unappliable states.
-fn draft_issues(vm: &SettingsViewModel) -> Vec<String> {
+/// Text resolves in the display language; the view model only carries kinds.
+fn draft_issues(vm: &SettingsViewModel, i18n: I18n) -> Vec<String> {
     match vm.finish() {
         Ok(_) => Vec::new(),
         Err(state) => state
             .issues
             .iter()
-            .map(|issue| issue.message.clone())
+            .map(|issue| issue.message(i18n.language()))
             .collect(),
     }
 }
@@ -1006,7 +1007,7 @@ pub(super) fn finish_snapshot(
             state
                 .issues
                 .iter()
-                .map(|issue| issue.message.clone())
+                .map(|issue| issue.message(i18n.language()))
                 .collect()
         })
 }
@@ -4040,13 +4041,27 @@ mod tests {
                 I18n::resolve(AppLanguage::SystemDefault, None),
             )
             .expect("vm builds");
-            draft_issues(&vm)
+            draft_issues(&vm, I18n::resolve(AppLanguage::SystemDefault, None))
         });
         assert!(
-            probed
-                .iter()
-                .any(|issue| issue.contains("At least one controller")),
+            probed.iter().any(|issue| issue.contains("controller")),
             "all-None slots explain themselves: {probed:?}"
+        );
+        // Japanese resolves the same kind through the localized template.
+        let japanese = with_test_deps(|| {
+            let vm = build_vm(
+                &snapshot,
+                &test_deps(),
+                I18n::resolve(AppLanguage::Japanese, None),
+            )
+            .expect("vm builds");
+            draft_issues(&vm, I18n::resolve(AppLanguage::Japanese, None))
+        });
+        assert!(
+            japanese
+                .iter()
+                .any(|issue| issue.contains("コントローラー")),
+            "no-controller explains itself in Japanese: {japanese:?}"
         );
     }
 

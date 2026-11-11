@@ -263,7 +263,7 @@ mod tests {
         editor.current.borrow_mut().validation = ValidationState {
             issues: vec![super::super::ValidationIssue {
                 scope: super::super::ValidationScope::Persistence,
-                message: "test error".into(),
+                kind: super::super::ValidationIssueKind::Storage("test error".into()),
             }],
         };
         assert!(editor.finish().is_err());
@@ -275,7 +275,7 @@ mod tests {
         editor.current.borrow_mut().validation = ValidationState {
             issues: vec![super::super::ValidationIssue {
                 scope: super::super::ValidationScope::Persistence,
-                message: "test".into(),
+                kind: super::super::ValidationIssueKind::Storage("test".into()),
             }],
         };
         let result: Result<(), ViewModelError> = editor.transact(|_| Ok(()));
@@ -292,7 +292,7 @@ mod tests {
                 ValidationState {
                     issues: vec![super::super::ValidationIssue {
                         scope: super::super::ValidationScope::Persistence,
-                        message: "no storage dir".into(),
+                        kind: super::super::ValidationIssueKind::Storage("no storage dir".into()),
                     }],
                 }
             } else {
