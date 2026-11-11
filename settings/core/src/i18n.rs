@@ -205,7 +205,6 @@ pub enum UiText {
     DescAudioDetail,
     DescShortcutsLink,
     DescStoragePolicy,
-    DescSystemControllers,
     SectionPlay,
     SectionControllers,
     SectionSaves,
@@ -499,8 +498,8 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
             "Applies immediately, even mid-game.",
             "ゲーム中も即時反映されます",
         ),
-        UiText::DescMute => ("Volume setting is kept.", "音量設定は保持されます"),
-        UiText::DescSampleRate => ("Adjust if audio crackles.", "音が途切れる場合に調整します"),
+        UiText::DescMute => ("Keeps the volume.", "音量を保持"),
+        UiText::DescSampleRate => ("Adjust if audio crackles.", "音割れ対策用"),
         UiText::DescLatency => (
             "Higher hides crackles but adds delay.",
             "大きくすると途切れにくくなりますが遅延が増えます",
@@ -555,10 +554,6 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
             "セーブステート等の全体操作",
         ),
         UiText::DescStoragePolicy => ("Takes effect on next launch.", "次回起動から有効です"),
-        UiText::DescSystemControllers => (
-            "The controller screen for this system.",
-            "この機種のコントローラー画面",
-        ),
         UiText::SectionPlay => ("Play", "プレイ"),
         UiText::SectionControllers => ("Controllers", "コントローラー"),
         UiText::SectionSaves => ("Saves", "保存データ"),
@@ -636,7 +631,7 @@ pub fn notification_group_label(language: AppLanguage, level: &str) -> String {
 pub fn slot_description(language: AppLanguage) -> String {
     localized!(
         language,
-        "The controller for this port.".to_string(),
+        "Controller for this port.".to_string(),
         "このポートで使うコントローラー".to_string()
     )
 }
@@ -942,7 +937,6 @@ mod tests {
             DescAudioDetail,
             DescShortcutsLink,
             DescStoragePolicy,
-            DescSystemControllers,
             SectionPlay,
             SectionControllers,
             SectionSaves,

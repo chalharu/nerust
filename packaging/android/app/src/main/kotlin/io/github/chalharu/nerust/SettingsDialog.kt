@@ -287,9 +287,9 @@ internal fun NerustErrorDialogCard(
 
 internal fun settingsContentDescription(
     sections: List<SettingsSection>,
-    title: String = "Settings",
-    onLabel: String = "On",
-    offLabel: String = "Off",
+    title: String,
+    onLabel: String,
+    offLabel: String,
 ): String =
     buildList {
         add(title)
@@ -304,8 +304,8 @@ internal fun settingsContentDescription(
 
 internal fun settingsRowDisplayValue(
     row: SettingsRow,
-    onLabel: String = "On",
-    offLabel: String = "Off",
+    onLabel: String,
+    offLabel: String,
 ): String =
     when (row.kind) {
         "choice" -> row.choices.getOrNull(row.selected)?.label ?: "?"
@@ -1176,6 +1176,8 @@ private fun SettingsSectionList(
 ) {
     // Split rows into groups at header rows; each group renders as one card.
     val groups = remember(section) { splitSectionGroups(section.rows) }
+    val onLabel = stringResource(R.string.settings_on)
+    val offLabel = stringResource(R.string.settings_off)
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -1221,8 +1223,8 @@ private fun SettingsSectionList(
                                 "choice" -> {
                                     SettingsNavigationRow(
                                         title = row.label,
-                                        value = settingsRowDisplayValue(row),
-                                        semanticsLabel = "${row.label}: ${settingsRowDisplayValue(row)}",
+                                        value = settingsRowDisplayValue(row, onLabel, offLabel),
+                                        semanticsLabel = "${row.label}: ${settingsRowDisplayValue(row, onLabel, offLabel)}",
                                         supportingText = row.description,
                                         onClick = { actions.onRowClick(row) },
                                     )
@@ -1253,7 +1255,7 @@ private fun SettingsSectionList(
                                 else -> {
                                     SettingsInfoRow(
                                         title = row.label,
-                                        value = settingsRowDisplayValue(row),
+                                        value = settingsRowDisplayValue(row, onLabel, offLabel),
                                         semanticsLabel = row.label,
                                         supportingText = row.description,
                                     )
