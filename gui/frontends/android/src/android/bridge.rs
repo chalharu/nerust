@@ -9,6 +9,7 @@ use std::{
 use jni::objects::{JIntArray, JObject};
 use jni::refs::Global;
 use nerust_core_traits::peripheral::{AccelerationSample, AccelerometerInputHandle};
+use nerust_settings_core::model::language::AppLanguage;
 use winit::{event_loop::EventLoopProxy, platform::android::activity::AndroidApp};
 
 use crate::bridge_events::FrontendEvent;
@@ -93,6 +94,10 @@ pub(super) struct SettingsSlot {
     /// Devices the Auto overlay gate counts (Kotlin `InputDevice`, hotplug
     /// live). Display-only device truth, never persisted.
     pub(super) gamepads: Vec<super::settings_views::GamepadInfo>,
+    /// System locale (Kotlin `configuration`, hotplug live), resolved to the
+    /// app's supported set at ingestion: never SystemDefault, `None` until
+    /// the first push. Ephemeral device truth, never persisted.
+    pub(super) system_locale: Option<AppLanguage>,
 }
 
 impl SettingsSlot {
@@ -104,6 +109,7 @@ impl SettingsSlot {
             keyboards: Vec::new(),
             touch_capable: None,
             gamepads: Vec::new(),
+            system_locale: None,
         }
     }
 }
@@ -160,6 +166,11 @@ pub(super) mod methods {
     );
     bridge_method!(SET_CARTRIDGE_RUMBLE, "setCartridgeRumble", "(I)V");
     bridge_method!(APPLY_SCREEN_ORIENTATION, "applyScreenOrientation", "(I)V");
+    bridge_method!(
+        APPLY_APP_LANGUAGE,
+        "applyAppLanguage",
+        "(Ljava/lang/String;)V"
+    );
     bridge_method!(
         DELETE_SAF_FILE,
         "deleteSafFile",

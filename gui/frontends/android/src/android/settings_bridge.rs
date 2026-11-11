@@ -11,6 +11,7 @@ use super::settings_views;
 use crate::bridge_contract::SETTINGS_SCHEMA_VERSION;
 use crate::settings_flight::SettingsRequestId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
+use nerust_settings_core::model::language::AppLanguage;
 use nerust_settings_core::model::local::ScreenOrientation;
 
 /// Versioned JNI screen result: dismissal only. The accepted draft travels
@@ -37,6 +38,7 @@ pub(super) fn request_show_settings_dialog(
             &state.keyboards,
             state.touch_capable,
             &state.gamepads,
+            state.system_locale,
         )
     })
     .map_err(|error| error.to_string())?;
@@ -70,6 +72,37 @@ pub(super) fn request_show_settings_dialog(
         })),
     );
     Ok(true)
+}
+
+/// BCP-47 tag for the in-app language (`AppLanguage` mapped at the call
+/// site; empty means the system locale). Kotlin persists it and recreates
+/// so the drawer and every Android string follow the saved choice.
+pub(super) fn app_language_tag(language: AppLanguage) -> &'static str {
+    match language {
+        AppLanguage::Japanese => "ja",
+        AppLanguage::English => "en",
+        AppLanguage::SystemDefault => "",
+    }
+}
+
+/// Publish the saved in-app language without opening the screen.
+pub(super) fn apply_app_language(app: &AndroidApp, tag: &str) {
+    let tag = tag.to_string();
+    bridge::post_to_activity(
+        app,
+        "apply Android app language",
+        move |env, activity| {
+            let tag = env.new_string(tag)?;
+            bridge::call_bridge_method(
+                env,
+                &activity,
+                &bridge::methods::APPLY_APP_LANGUAGE,
+                &[JValue::Object(tag.as_ref())],
+            )?;
+            Ok(())
+        },
+        None,
+    );
 }
 
 /// Publish the current orientation without opening the screen.
@@ -243,9 +276,15 @@ fn hardware_key(
                 pressed,
                 draft,
                 &mut state.capture,
-                &state.keyboards,
-                state.touch_capable,
-                &state.gamepads,
+                settings_views::Projection {
+                    keyboards: &state.keyboards,
+                    touch_capable: state.touch_capable,
+                    gamepads: &state.gamepads,
+                    i18n: settings_views::I18n::resolve(
+                        draft.shared.general.language,
+                        state.system_locale,
+                    ),
+                },
             )
             {
                 Ok((payload, consumed)) => serde_json::json!({"ok": true, "consumed": consumed, "payload": serde_json::from_str::<serde_json::Value>(&payload).unwrap_or(serde_json::Value::Null)}).to_string(),
@@ -290,6 +329,7 @@ fn settings_command(env: &mut jni::EnvUnowned<'_>, command: JString<'_>) -> jni:
                 &mut state.keyboards,
                 &mut state.touch_capable,
                 &mut state.gamepads,
+                &mut state.system_locale,
             ) {
                 Ok(sections) => serde_json::json!({"ok": true, "payload": serde_json::from_str::<serde_json::Value>(&sections).unwrap_or(serde_json::Value::Null)}).to_string(),
                 Err(error) => serde_json::json!({"ok": false, "error": error}).to_string(),
