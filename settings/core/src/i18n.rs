@@ -348,7 +348,7 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::Cancel => ("Cancel", "キャンセル"),
         UiText::ConflictDetected => (
             "Conflicting bindings must be resolved before saving.",
-            "割当競合を解消してください。",
+            "重複したキー割り当てを解消してください。",
         ),
         UiText::CapturePrompt => ("Press a key…", "キーを押してください…"),
         UiText::InvalidCustomStorageDirectory => (
@@ -500,7 +500,7 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
             "表示言語。システム既定にもできます",
         ),
         UiText::DescVsync => (
-            "Keeps the picture tear-free. Leave on unless a game needs it off.",
+            "Keeps the picture tear-free. Usually best left on.",
             "画面のちらつきを抑えます。通常はオンのままに",
         ),
         UiText::DescOrientation => (
@@ -508,17 +508,14 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
             "ゲーム中も即時反映されます",
         ),
         UiText::DescMute => ("Volume setting is kept.", "音量設定は保持されます"),
-        UiText::DescSampleRate => (
-            "Change only if audio crackles.",
-            "音が途切れる場合に調整します",
-        ),
+        UiText::DescSampleRate => ("Adjust if audio crackles.", "音が途切れる場合に調整します"),
         UiText::DescLatency => (
             "Higher hides crackles but adds delay.",
             "大きくすると途切れにくくなりますが遅延が増えます",
         ),
         UiText::DescNotifInfo => (
-            "Game messages such as save confirmations.",
-            "セーブ完了などのお知らせ",
+            "Game messages such as save-state confirmations.",
+            "セーブステート保存などのお知らせ",
         ),
         UiText::DescNotifWarning => (
             "Warnings such as slowdown or missing files.",
@@ -531,7 +528,7 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         ),
         UiText::DescNotifArea => (
             "Overlay messages, or reserve a strip.",
-            "重ねて表示するか帯を確保するか",
+            "重ねるか専用帯にするか",
         ),
         UiText::DescStatusArea => (
             "On a shared edge it follows the message area.",
@@ -539,7 +536,7 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         ),
         UiText::DescOverlayVisibility => (
             "Auto hides the buttons while a gamepad is connected, and briefly after controller input. Terminals without a touch screen never show them.",
-            "自動はゲームパッド接続中や操作直後は非表示。タッチ非対応端末は常に非表示",
+            "自動はゲームパッド接続中や操作直後は非表示。タッチ非対応端末では表示されません",
         ),
         UiText::DescCartridgeMotion => (
             "Extra sensor for cartridges that need it.",
@@ -559,8 +556,8 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         ),
         UiText::DescAudioDetail => ("Sample rate and latency.", "サンプルレートと遅延"),
         UiText::DescShortcutsLink => (
-            "Global keys such as save state. Always active.",
-            "セーブ等の全体操作。ポートと無関係に常時有効",
+            "Global keys such as save state.",
+            "セーブステート等の全体操作",
         ),
         UiText::DescStoragePolicy => (
             "Where save data lives. Takes effect on next launch.",
@@ -693,18 +690,8 @@ pub fn port_count_line(language: AppLanguage, count: usize) -> String {
 pub fn system_field_description(language: AppLanguage) -> String {
     localized!(
         language,
-        "Provided by this system's core. Change only if a game misbehaves.".to_string(),
-        "機種コア固有の設定。動作がおかしい時のみ変更".to_string()
-    )
-}
-
-/// Description for a global-shortcut capture row. Shortcuts stay active
-/// regardless of port assignment, unlike device bindings.
-pub fn shortcut_row_description(language: AppLanguage) -> String {
-    localized!(
-        language,
-        "Global key. Works regardless of port assignment.".to_string(),
-        "全体操作キー。ポート割当と無関係に有効".to_string()
+        "Applies to this system only.".to_string(),
+        "この機種のみに適用されます".to_string()
     )
 }
 
