@@ -65,16 +65,18 @@ def _prop_cases(event, name, prop, base, required):
 
 
 def _conditional_cases(event, definition, base):
-    """Conditional-required probes for a gated event."""
-    if "if" not in definition:
-        return []
-    key, condition = next(iter(definition["if"]["properties"].items()))
-    conditional = dict(base, **{key: condition["const"]})
+    """Conditional-required probes for gated events."""
+    gates = definition.get("allOf", [])
+    if "if" in definition:
+        gates = [{"if": definition["if"], "then": definition["then"]}]
     cases = []
-    for name in definition["then"]["required"]:
-        payload = dict(conditional)
-        del payload[name]
-        cases.append((f"{event}: {key}={condition['const']} missing {name}", payload, False))
+    for gate in gates:
+        key, condition = next(iter(gate["if"]["properties"].items()))
+        conditional = dict(base, **{key: condition["const"]})
+        for name in gate["then"]["required"]:
+            payload = dict(conditional)
+            del payload[name]
+            cases.append((f"{event}: {key}={condition['const']} missing {name}", payload, False))
     return cases
 
 
