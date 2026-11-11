@@ -187,7 +187,6 @@ pub enum UiText {
     NotAssigned,
     OverlayDetail,
     AutoHideGamepads,
-    DescLanguage,
     DescVsync,
     DescOrientation,
     DescMute,
@@ -495,10 +494,6 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::Unknown => ("Unknown", "不明"),
         UiText::NotAssigned => ("Not assigned", "未割当"),
         UiText::OverlayDetail => ("Overlay detail", "オーバーレイ詳細"),
-        UiText::DescLanguage => (
-            "Display language. You can also follow the system.",
-            "表示言語。システム既定にもできます",
-        ),
         UiText::DescVsync => ("Reduces screen tearing.", "ティアリングを抑えます"),
         UiText::DescOrientation => (
             "Applies immediately, even mid-game.",
@@ -515,13 +510,16 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
             "保存完了などのお知らせ",
         ),
         UiText::DescNotifWarning => (
-            "Warnings such as slowdown or missing files.",
-            "遅延やファイル不足などの警告",
+            "Slowdown or missing files, for example.",
+            "遅延やファイル不足など",
         ),
-        UiText::DescNotifError => ("Errors that stop or block an action.", "操作を止めるエラー"),
+        UiText::DescNotifError => (
+            "When an action stops or gets blocked.",
+            "操作を止めるエラー",
+        ),
         UiText::DescNotifErrorModal => (
-            "Also pop up a dialog for errors.",
-            "エラー時にダイアログも出します",
+            "Shows separately from the overlay.",
+            "オーバーレイとは別に表示",
         ),
         UiText::DescNotifArea => (
             "Overlay messages, or reserve a strip.",
@@ -532,20 +530,20 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
             "同じ辺では通知の領域に従います",
         ),
         UiText::DescOverlayVisibility => (
-            "Auto hides the buttons while a gamepad is connected, and briefly after controller input. Terminals without a touch screen never show them.",
-            "自動はゲームパッド接続中や操作直後は非表示。タッチ非対応端末では表示されません",
+            "Auto hides for connected gamepads or recent input. Touch screen required.",
+            "ゲームパッド接続中・操作直後は非表示。タッチ画面必須",
         ),
         UiText::DescCartridgeMotion => (
-            "Extra sensor for cartridges that need it.",
-            "対応カートリッジ用の追加センサー",
+            "Only some cartridges use this.",
+            "一部のカートリッジのみ使用します",
         ),
         UiText::DescCartridgeRumble => (
-            "Vibration for cartridges that support it.",
-            "対応カートリッジの振動",
+            "Only cartridges with rumble use this.",
+            "振動対応カートリッジのみ使用します",
         ),
         UiText::DescOverlayDetail => (
-            "Fine-tune size, position, and transparency.",
-            "大きさ・位置・透明度を調整します",
+            "Size, position, and transparency.",
+            "大きさ・位置・透明度の調整",
         ),
         UiText::AutoHideGamepads => (
             "Gamepads hiding the overlay",
@@ -556,13 +554,10 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
             "Global keys such as save state.",
             "セーブステート等の全体操作",
         ),
-        UiText::DescStoragePolicy => (
-            "Where save data lives. Takes effect on next launch.",
-            "保存先。次回起動から有効です",
-        ),
+        UiText::DescStoragePolicy => ("Takes effect on next launch.", "次回起動から有効です"),
         UiText::DescSystemControllers => (
-            "Open the controller screen for this system.",
-            "この機種のコントローラー画面を開きます",
+            "The controller screen for this system.",
+            "この機種のコントローラー画面",
         ),
         UiText::SectionPlay => ("Play", "プレイ"),
         UiText::SectionControllers => ("Controllers", "コントローラー"),
@@ -573,8 +568,8 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::ControllerType => ("Controller type", "コントローラーの種類"),
         UiText::NoKeyboards => ("No keyboards connected", "接続中のキーボードはありません"),
         UiText::DescNoKeyboards => (
-            "Connect a USB or Bluetooth keyboard to assign it to a player.",
-            "USBやBluetoothキーボードを接続するとプレイヤーに割り当てられます",
+            "Connect a USB or Bluetooth keyboard.",
+            "USB・Bluetoothキーボードを接続",
         ),
         UiText::ResetSettings => ("Reset settings", "設定を初期化"),
         UiText::ResetScreen => ("Reset this screen", "この画面を初期化"),
@@ -641,8 +636,8 @@ pub fn notification_group_label(language: AppLanguage, level: &str) -> String {
 pub fn slot_description(language: AppLanguage) -> String {
     localized!(
         language,
-        "Choose the controller for this port.".to_string(),
-        "このポートで使うコントローラーを選びます".to_string()
+        "The controller for this port.".to_string(),
+        "このポートで使うコントローラー".to_string()
     )
 }
 
@@ -928,7 +923,6 @@ mod tests {
             Unknown,
             NotAssigned,
             OverlayDetail,
-            DescLanguage,
             DescVsync,
             DescOrientation,
             DescMute,
