@@ -2,6 +2,7 @@ package io.github.chalharu.nerust
 
 import android.annotation.SuppressLint
 import android.app.NativeActivity
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
@@ -122,9 +123,14 @@ class MainActivity :
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
     }
 
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLocale.wrap(newBase))
+    }
+
     override fun onResume() {
         super.onResume()
         Log.i(TAG, "onResume")
+        pushSystemLocaleToVault()
         activeActivityForTest = this
         chromeManager.onResume()
         sensorController.onResume()
@@ -619,6 +625,24 @@ class MainActivity :
         )
     }
 
+    /** Persist the saved in-app language and recreate so the drawer and
+     * every Android string follow the choice in real time. Rust pushes
+     * this after a successful settings save; no-op when unchanged. */
+    fun applyAppLanguage(tag: String) {
+        if (AppLocale.setSavedTag(this, tag)) recreate()
+    }
+
+    /** Push the terminal locale tag into the Rust vault so SystemDefault
+     * resolves without the LANG env Android never sets. */
+    private fun pushSystemLocaleToVault() {
+        val tag = AppLocale.currentTag(this) ?: return
+        try {
+            pushSystemLocale(tag)
+        } catch (e: Exception) {
+            Log.e(TAG, "pushSystemLocale failed", e)
+        }
+    }
+
     fun applyScreenOrientation(value: Int) {
         val orientation = screenOrientationRequest(value)
         if (orientation == null) {
@@ -665,6 +689,8 @@ class MainActivity :
         } else {
             "visibility=$visibility, attached=$isAttachedToWindow, token=${windowToken != null}, shown=$isShown"
         }
+
+    private external fun pushSystemLocale(tag: String)
 
     private external fun onFilePickerResult(uri: String?)
 

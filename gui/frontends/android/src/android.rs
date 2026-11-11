@@ -106,6 +106,12 @@ pub(super) fn register_main_activity_natives(
                     as *mut c_void,
             ),
             jni::NativeMethod::from_raw_parts(
+                jni_str!("pushSystemLocale"),
+                jni_str!("(Ljava/lang/String;)V"),
+                settings_bridge::Java_io_github_chalharu_nerust_MainActivity_pushSystemLocale
+                    as *mut c_void,
+            ),
+            jni::NativeMethod::from_raw_parts(
                 jni_str!("onCartridgeAcceleration"),
                 jni_str!("(FF)V"),
                 bridge::Java_io_github_chalharu_nerust_MainActivity_onCartridgeAcceleration
