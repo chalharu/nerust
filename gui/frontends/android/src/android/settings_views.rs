@@ -1497,7 +1497,7 @@ fn build_app_section(vm: &SettingsViewModel, language: AppLanguage) -> SectionWi
             choice_row(
                 "general.language",
                 t(UiText::Language),
-                t(UiText::DescLanguage),
+                String::new(),
                 &choices,
                 &selected,
             )
@@ -3697,6 +3697,7 @@ mod tests {
             "advanced.nes",
             "app.about",
             "audio.volume",
+            "general.language",
             "controls.cartridge_rumble_strength",
             "controls.cartridge_rumble_target",
             "controls.overlay_haptics",
