@@ -218,7 +218,11 @@ mod tests {
             member: "pad:0".into(),
             ports: "p1, p2".into(),
         };
-        assert!(conflict.message(AppLanguage::Japanese).contains("複数ポート"));
+        assert!(
+            conflict
+                .message(AppLanguage::Japanese)
+                .contains("複数ポート")
+        );
         assert!(
             conflict
                 .message(AppLanguage::English)
