@@ -502,7 +502,7 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::DescSampleRate => ("Adjust if audio crackles.", "音割れ対策用"),
         UiText::DescLatency => (
             "Higher: less crackle, more delay.",
-            "大きくするほど途切れ防止・遅延増加。",
+            "大きくするほど途切れ防止・遅延増加",
         ),
         UiText::DescNotifInfo => ("Such as save confirmations.", "保存完了など"),
         UiText::DescNotifWarning => ("Slowdown or missing files.", "遅延・ファイル不足"),
