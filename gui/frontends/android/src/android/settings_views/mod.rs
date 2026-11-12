@@ -22,7 +22,7 @@ use nerust_settings_core::{
     input::{BUILTIN_KEYBOARD_MEMBER, member_is_gamepad, member_is_shareable},
     model::{
         app_state::{DesktopAppState, PORT_PLAYER_1, PORT_PLAYER_2},
-        input::{default_shortcut_bindings, ensure_default_shortcuts},
+        input::{ShortcutAction, default_shortcut_bindings, ensure_default_shortcuts},
         language::AppLanguage,
         local::{
             HostBackendLocalSettings, NotificationAreaMode, NotificationColor,
@@ -112,6 +112,13 @@ pub(super) struct RowWire {
     pub target: String,
     #[serde(default = "default_true")]
     pub visible: bool,
+    /// Whether the row accepts input. Capture rows disable this when no
+    /// keyboard is connected (capture is keyboard-only); `reason` explains
+    /// why so Kotlin never invents copy.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub reason: String,
 }
 
 fn default_true() -> bool {
@@ -136,6 +143,8 @@ impl RowWire {
             text: String::new(),
             target: String::new(),
             visible: true,
+            enabled: true,
+            reason: String::new(),
         }
     }
 }
@@ -741,6 +750,11 @@ fn apply_capture_command(
             Ok(())
         }
         WireOp::StartCapture => {
+            // Backstop for the disabled row: no keyboard means no key will
+            // ever arrive, so fail here instead of stranding a prompt.
+            if truth.keyboards.is_empty() {
+                return Err(truth.i18n.text(UiText::KeyboardRequired));
+            }
             vm.capture
                 .start_capture(target.clone())
                 .map_err(|error| error.to_string())?;
@@ -1411,12 +1425,16 @@ fn group_row(key: &str, label: String, description: String, target: &str) -> Row
 
 /// Key-capture row: tap starts capture, Clear unbinds, Cancel aborts.
 /// `description` stays empty: the value line already names the binding.
+/// Disabled rows (no keyboard connected) keep Clear: unbinding needs no
+/// input device. `reason` carries the localized why.
 fn capture_row(
     key: &str,
     label: String,
     description: String,
     text: String,
     target: &str,
+    enabled: bool,
+    reason: &str,
 ) -> RowWire {
     RowWire {
         key: key.to_string(),
@@ -1425,6 +1443,8 @@ fn capture_row(
         kind: RowKind::Capture,
         text,
         target: target.to_string(),
+        enabled,
+        reason: reason.to_string(),
         ..RowWire::new(RowKind::Capture)
     }
 }
@@ -1492,7 +1512,7 @@ fn build_sections(
     sections.extend(build_player_sections(vm, snapshot, i18n, truth.keyboards));
     sections.extend(build_system_sections(vm, i18n));
     sections.extend(build_input_sections(vm, i18n));
-    sections.extend(build_keys_sections(vm, i18n));
+    sections.extend(build_keys_sections(vm, i18n, truth.keyboards));
     // Canonical order owned by Rust; dynamic device sections (device.*)
     // keep build order after the known taxonomy.
     sections.sort_by_key(|section| {
@@ -2110,8 +2130,18 @@ fn overlay_detail_section(
 }
 
 /// Global shortcuts screen: one capture row per binding plus reset.
-fn shortcuts_section(vm: &SettingsViewModel, i18n: I18n) -> SectionWire {
+/// Fullscreen and debugger are desktop-only (window chrome the phone has
+/// no equivalent for): their rows never reach Android, though the shared
+/// bindings persist for desktop. Capture needs a keyboard; without one
+/// the rows disable with a reason instead of opening a dead prompt.
+fn shortcuts_section(
+    vm: &SettingsViewModel,
+    i18n: I18n,
+    keyboards: &[KeyboardInfo],
+) -> SectionWire {
     let shortcuts_view = vm.shortcuts.view.get();
+    let capture_open = !keyboards.is_empty();
+    let reason = i18n.text(UiText::KeyboardRequired);
     // Shortcut targets encode a system only as a decoding hint; every
     // global shortcut decodes identically, so the first system suffices.
     let shortcut_system = vm
@@ -2126,6 +2156,14 @@ fn shortcuts_section(vm: &SettingsViewModel, i18n: I18n) -> SectionWire {
         rows: shortcuts_view
             .rows
             .iter()
+            .filter(|binding| {
+                !matches!(
+                    binding.target,
+                    CaptureTarget::Shortcut(
+                        ShortcutAction::ToggleFullscreen | ShortcutAction::OpenDebugger
+                    )
+                )
+            })
             .map(|binding| {
                 capture_row(
                     &format!("controls.{}", binding_key(&binding.target)),
@@ -2133,6 +2171,8 @@ fn shortcuts_section(vm: &SettingsViewModel, i18n: I18n) -> SectionWire {
                     String::new(),
                     binding_value_text(binding),
                     &encode_target(&binding.target, &shortcut_system),
+                    capture_open,
+                    &reason,
                 )
             })
             .chain(std::iter::once(button_row(
@@ -2156,7 +2196,7 @@ fn build_controllers_sections(
     vec![
         controllers_quick_section(snapshot, i18n, keyboards, touch_capable),
         overlay_detail_section(&snapshot.local.touch_overlay, gamepads, i18n),
-        shortcuts_section(vm, i18n),
+        shortcuts_section(vm, i18n, keyboards),
     ]
 }
 
@@ -2608,8 +2648,15 @@ fn build_device_sections(
 }
 /// One key-mapping screen per machine: the shared single keyboard table
 /// (per-device split is future work). Reached from each keyboard device
-/// detail screen; the controller screens hold slots only.
-fn build_keys_sections(vm: &SettingsViewModel, i18n: I18n) -> Vec<SectionWire> {
+/// detail screen; the controller screens hold slots only. Capture needs a
+/// keyboard; without one the rows disable with a reason.
+fn build_keys_sections(
+    vm: &SettingsViewModel,
+    i18n: I18n,
+    keyboards: &[KeyboardInfo],
+) -> Vec<SectionWire> {
+    let capture_open = !keyboards.is_empty();
+    let reason = i18n.text(UiText::KeyboardRequired);
     vm.inputs()
         .iter()
         .map(|input| {
@@ -2628,6 +2675,8 @@ fn build_keys_sections(vm: &SettingsViewModel, i18n: I18n) -> Vec<SectionWire> {
                         String::new(),
                         binding_value_text(binding),
                         &encode_target(&binding.target, &view.system_id.to_string()),
+                        capture_open,
+                        &reason,
                     )
                 }));
             }

@@ -110,6 +110,8 @@ internal data class SettingsRow(
     val visible: Boolean = true,
     val description: String = "",
     val detailTarget: String = "",
+    val enabled: Boolean = true,
+    val reason: String = "",
 )
 
 /** One settings section as projected by Rust (`settings_views::SectionWire`). */
@@ -162,6 +164,8 @@ internal fun parseSettingsSections(payload: JSONObject): List<SettingsSection> {
                     visible = row.getBoolean("visible"),
                     description = row.getString("description"),
                     detailTarget = row.getString("detail_target"),
+                    enabled = row.optBoolean("enabled", true),
+                    reason = row.optString("reason", ""),
                 )
         }
         val id = section.getString("id")
@@ -499,7 +503,9 @@ internal fun NerustSettingsDialogCard(
                         }
                     }
                     "capture" -> {
-                        sendCommand(row.key, 0, 0L, "start_capture", mutating = false)
+                        if (row.enabled) {
+                            sendCommand(row.key, 0, 0L, "start_capture", mutating = false)
+                        }
                     }
                     "choice" -> activeRowKey = row.key
                     // toggle/number/info act inline or are static;
@@ -793,17 +799,29 @@ private fun CommandErrorBanner(message: String) {
     }
 }
 
-// Banners ride as the first lazy items so they scroll with the content
+// Capture prompt pins to the top while waiting for a key: unlike issues
+// and errors it gates the whole screen, so scrolling it away strands the
+// user mid-capture. Issues and errors keep scrolling with the content
 // instead of squeezing the list on small screens.
-private fun androidx.compose.foundation.lazy.LazyListScope.settingsBannerItems(
+private fun androidx.compose.foundation.lazy.LazyListScope.captureStickyHeader(
     banners: SettingsBanners,
     onCancelCapture: () -> Unit,
 ) {
     banners.capturePrompt?.let { prompt ->
-        item(key = "banner-capture") {
+        stickyHeader(key = "banner-capture") {
             CaptureBanner(prompt = prompt, onCancelCapture = onCancelCapture)
         }
     }
+}
+
+// Issues and errors ride as the first lazy items so they scroll with
+// the content instead of squeezing the list on small screens. The
+// capture prompt stays pinned above them (see captureStickyHeader).
+private fun androidx.compose.foundation.lazy.LazyListScope.settingsBannerItems(
+    banners: SettingsBanners,
+    onCancelCapture: () -> Unit,
+) {
+    captureStickyHeader(banners = banners, onCancelCapture = onCancelCapture)
     if (banners.issues.isNotEmpty()) {
         item(key = "banner-issues") {
             IssuesBanner(issues = banners.issues)
@@ -1484,6 +1502,9 @@ private fun SettingsCaptureRow(
     // capture, the trailing button clears. Nested clickables would let a
     // Clear tap also start a capture. No container label: each sibling
     // speaks for itself, so TalkBack never hears the row twice.
+    // A disabled row (no keyboard: capture is keyboard-only) drops the
+    // tap target and names the reason; Clear stays, unbinding needs no
+    // input device.
     Row(
         modifier =
             Modifier
@@ -1496,12 +1517,17 @@ private fun SettingsCaptureRow(
             modifier =
                 Modifier
                     .weight(1f)
-                    .clickable(onClick = onStart)
+                    .then(if (row.enabled) Modifier.clickable(onClick = onStart) else Modifier)
                     .padding(vertical = 4.dp),
         ) {
             Text(text = row.label, style = MaterialTheme.typography.titleMedium)
             Text(
-                text = row.text.ifBlank { stringResource(R.string.settings_tap_to_assign) },
+                text =
+                    if (row.enabled) {
+                        row.text.ifBlank { stringResource(R.string.settings_tap_to_assign) }
+                    } else {
+                        row.reason
+                    },
                 style = MaterialTheme.typography.bodyMedium,
             )
         }
