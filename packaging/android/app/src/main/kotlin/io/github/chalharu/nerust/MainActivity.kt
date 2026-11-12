@@ -750,10 +750,10 @@ class MainActivity :
 
     private external fun nativeSlotList(): String
 
-    /** Drawer slot submenu: list, select, create, and delete behind a
+    /** Drawer slot screen: list, select, create, and delete behind a
      * confirm. Select/create dismiss (the op lands on the live session);
      * delete stays open and refreshes from the republished mirror.
-     * The initial query runs on the shared background lane; only the dialog
+     * The initial query runs on the shared background lane; only the screen
      * show posts back. Refresh re-queries off the main thread too. */
     internal fun showSlotMenu() {
         BridgeIo.runIo {
@@ -768,7 +768,7 @@ class MainActivity :
                     ownedByTest = false,
                     onDismiss = { state.stop() },
                 ) { dismiss ->
-                    SlotMenuDialog(
+                    SlotMenuScreen(
                         rows = state.rows,
                         onSelect = { id ->
                             sendMenuAction(
