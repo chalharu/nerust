@@ -147,9 +147,8 @@ internal fun scanDeviceTruth(packageManager: PackageManager): DeviceTruth {
         val device = InputDevice.getDevice(id) ?: continue
         val hit = scanOneDevice(device) ?: continue
         if (hit.touch) touch = true
-        when (val row = hit.keyboard) {
-            null -> {}
-            else -> if (row.builtin) builtin = row else if (seen.add(row.member)) keyboards += row
+        hit.keyboard?.let { row ->
+            if (row.builtin) builtin = row else if (seen.add(row.member)) keyboards += row
         }
         hit.gamepad?.let { gamepads += it }
     }
