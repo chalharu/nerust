@@ -114,6 +114,24 @@ private fun keyboardRowFor(device: InputDevice): KeyboardRow? {
     }
 }
 
+/** One device's contribution to the shared scan, or null when the
+ * device carries nothing (negative id, virtual, or no truth at all). */
+private data class DeviceHit(
+    val keyboard: KeyboardRow?,
+    val gamepad: String?,
+    val touch: Boolean,
+)
+
+private fun scanOneDevice(device: InputDevice): DeviceHit? {
+    if (device.id < 0) return null
+    if (Build.VERSION.SDK_INT >= 29 && device.isVirtual) return null
+    val touch = device.supportsSource(InputDevice.SOURCE_TOUCHSCREEN)
+    val keyboard = keyboardRowFor(device)
+    val gamepad = if (isCountedGamepad(device)) device.name else null
+    if (!touch && keyboard == null && gamepad == null) return null
+    return DeviceHit(keyboard, gamepad, touch)
+}
+
 /** Single-pass device scan: touch fallback, keyboard rows, and counted
  * gamepads from one enumeration. Hotplug/resume paths share this so
  * settings and runtime can never disagree about what is connected.
@@ -127,18 +145,13 @@ internal fun scanDeviceTruth(packageManager: PackageManager): DeviceTruth {
     val gamepads = mutableListOf<String>()
     for (id in InputDevice.getDeviceIds()) {
         val device = InputDevice.getDevice(id) ?: continue
-        if (device.id < 0) continue
-        if (Build.VERSION.SDK_INT >= 29 && device.isVirtual) continue
-        if (!touch && device.supportsSource(InputDevice.SOURCE_TOUCHSCREEN)) touch = true
-        val row = keyboardRowFor(device)
-        if (row != null) {
-            if (row.builtin) {
-                builtin = row
-            } else if (seen.add(row.member)) {
-                keyboards += row
-            }
+        val hit = scanOneDevice(device) ?: continue
+        if (hit.touch) touch = true
+        when (val row = hit.keyboard) {
+            null -> {}
+            else -> if (row.builtin) builtin = row else if (seen.add(row.member)) keyboards += row
         }
-        if (isCountedGamepad(device)) gamepads += device.name
+        hit.gamepad?.let { gamepads += it }
     }
     val rows = listOfNotNull(builtin) + keyboards
     return DeviceTruth(rows, gamepads.distinct(), touch)
