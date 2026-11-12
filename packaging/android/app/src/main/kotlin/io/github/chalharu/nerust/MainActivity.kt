@@ -749,10 +749,17 @@ class MainActivity :
 
     private external fun nativeSlotList(): String
 
+    /** Slot-list push target: SlotActivity installs its row updater while
+     * open. Rust pushes the refreshed list after every slot op lands, so
+     * no polling. Cleared on destroy; a dead screen never receives. */
+    fun onSlotListChanged(json: String) {
+        slotListener?.invoke(json)
+    }
+
     /** Drawer slot screen: a standalone activity over the live session.
      * Select/create finish back to the game; delete stays and refreshes
-     * from the republished mirror. The initial query runs on the shared
-     * background lane; only the activity start posts back. */
+     * from the Rust push after the op lands. The initial query runs on the
+     * shared background lane; only the activity start posts back. */
     internal fun showSlotMenu() {
         BridgeIo.runIo {
             val raw = querySlotList() ?: return@runIo
@@ -782,6 +789,10 @@ class MainActivity :
 
     companion object {
         private const val TAG = "Nerust"
+
+        /** See onSlotListChanged. */
+        @Volatile
+        internal var slotListener: ((String) -> Unit)? = null
 
         init {
             // Load the native library via the app classloader so the JVM resolves `external fun`.

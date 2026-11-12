@@ -142,19 +142,11 @@ pub(super) fn register_main_activity_natives(
     // menu lane from its own activity class.
     let slot_class = env.find_class(jni_str!("io/github/chalharu/nerust/SlotActivity"))?;
     let slot_methods = unsafe {
-        [
-            jni::NativeMethod::from_raw_parts(
-                jni_str!("nativeQuerySlotList"),
-                jni_str!("()Ljava/lang/String;"),
-                menu::Java_io_github_chalharu_nerust_SlotActivity_nativeQuerySlotList
-                    as *mut c_void,
-            ),
-            jni::NativeMethod::from_raw_parts(
-                jni_str!("sendSlotAction"),
-                jni_str!("(Ljava/lang/String;)V"),
-                menu::Java_io_github_chalharu_nerust_SlotActivity_sendSlotAction as *mut c_void,
-            ),
-        ]
+        [jni::NativeMethod::from_raw_parts(
+            jni_str!("sendSlotAction"),
+            jni_str!("(Ljava/lang/String;)V"),
+            menu::Java_io_github_chalharu_nerust_SlotActivity_sendSlotAction as *mut c_void,
+        )]
     };
     unsafe { env.register_native_methods(slot_class, &slot_methods)? };
 
@@ -657,6 +649,24 @@ impl AndroidFrontend {
                 }
                 MenuAction::DeleteSlot(slot_id) => {
                     let _ = self.exec(SessionCommand::DeleteSlot(slot_id));
+                    // Event-driven refresh: the vault mirror is current now,
+                    // so push it. No Kotlin polling.
+                    let fresh = menu::query_slot_list_json();
+                    bridge::post_to_activity(
+                        &self.app,
+                        "push refreshed slot list",
+                        move |env, activity| {
+                            let fresh = env.new_string(fresh)?;
+                            bridge::call_bridge_method(
+                                env,
+                                &activity,
+                                &bridge::methods::ON_SLOT_LIST_CHANGED,
+                                &[jni::objects::JValue::Object(fresh.as_ref())],
+                            )?;
+                            Ok(())
+                        },
+                        None,
+                    );
                 }
                 MenuAction::TouchGate { respond } => {
                     self.chrome

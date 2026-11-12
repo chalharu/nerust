@@ -167,6 +167,11 @@ pub(super) mod methods {
     );
     bridge_method!(FINISH_ACTIVITY, "finish", "()V");
     bridge_method!(
+        ON_SLOT_LIST_CHANGED,
+        "onSlotListChanged",
+        "(Ljava/lang/String;)V"
+    );
+    bridge_method!(
         CONFIGURE_CONTROLS_OVERLAY,
         "configureControlsOverlay",
         "(Ljava/lang/String;IZLjava/lang/String;Ljava/lang/String;)V"

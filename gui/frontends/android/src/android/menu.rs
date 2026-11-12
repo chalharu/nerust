@@ -60,7 +60,7 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_nativeIsEmula
 /// Synchronous slot-list query for the drawer submenu (MainActivity reads
 /// it when the submenu opens and after every slot op it sends).
 /// The standalone slot screen reads the same vault through its own class.
-fn query_slot_list_json() -> String {
+pub(super) fn query_slot_list_json() -> String {
     bridge::with_settings(|state| {
         build_slot_list_json(
             &state
@@ -108,21 +108,6 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onErrorDialog
         jni::Outcome::Panic(_) => {
             log::error!("Android error-dismiss callback panicked");
         }
-    }
-}
-
-/// Standalone slot screen query: same vault, own activity class.
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_io_github_chalharu_nerust_SlotActivity_nativeQuerySlotList(
-    mut env: jni::EnvUnowned<'_>,
-    _activity: JObject<'_>,
-) -> jni::sys::jstring {
-    let out = query_slot_list_json();
-    match bridge::with_callback_env(&mut env, |env| -> jni::errors::Result<jni::sys::jstring> {
-        Ok(env.new_string(out)?.into_raw())
-    }) {
-        jni::Outcome::Ok(ptr) => ptr,
-        _ => std::ptr::null_mut(),
     }
 }
 

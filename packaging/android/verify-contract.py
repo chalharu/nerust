@@ -119,7 +119,6 @@ def _callback_signature(symbol, args_text, result_text):
         require(symbol.startswith((
             "Java_io_github_chalharu_nerust_MainActivity_native",
             "Java_io_github_chalharu_nerust_SettingsActivity_native",
-            "Java_io_github_chalharu_nerust_SlotActivity_native",
         )), f"only native queries may return values: {symbol}")
         match = re.fullmatch(r"->\s*jni::sys::(\w+)", result)
         require(match and match[1] in RUST_TYPES,
