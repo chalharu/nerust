@@ -102,6 +102,7 @@ dependencies {
     // back dispatcher owners without hand-rolled registries). Pinned to
     // the version the BOM already resolves so the lockfile stands.
     val activityComposeVersion = "1.8.2"
+    val orgJsonVersion = "20240303"
 
     implementation(composeBom)
     implementation("androidx.activity:activity-compose:$activityComposeVersion")
@@ -122,7 +123,7 @@ dependencies {
     // JVM unit tests run without the Android framework (org.json stubs):
     // the reference implementation lets JSON parsing tests execute.
     // Test-only: never ships in the APK.
-    testImplementation("org.json:json:20240303")
+    testImplementation("org.json:json:$orgJsonVersion")
 
     androidTestImplementation("androidx.test:core:$androidxTestCoreVersion")
     androidTestImplementation("androidx.test:runner:$androidxTestRunnerVersion")
