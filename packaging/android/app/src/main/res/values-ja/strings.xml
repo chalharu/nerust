@@ -42,6 +42,7 @@
     <string name="slot_active">選択中</string>
     <string name="slot_new">新しいスロット</string>
     <string name="slot_new_hint">新しいスロットに保存</string>
+    <string name="slot_select">選択</string>
     <string name="slot_delete">削除</string>
     <string name="slot_delete_title">%1$sを削除しますか？</string>
     <string name="slot_delete_message">%1$s（%2$s）を完全に削除します。元に戻せません。</string>

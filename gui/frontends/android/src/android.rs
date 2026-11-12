@@ -138,6 +138,26 @@ pub(super) fn register_main_activity_natives(
     };
     unsafe { env.register_native_methods(class, &methods)? };
 
+    // The standalone slot screen reads the same vault and feeds the same
+    // menu lane from its own activity class.
+    let slot_class = env.find_class(jni_str!("io/github/chalharu/nerust/SlotActivity"))?;
+    let slot_methods = unsafe {
+        [
+            jni::NativeMethod::from_raw_parts(
+                jni_str!("nativeQuerySlotList"),
+                jni_str!("()Ljava/lang/String;"),
+                menu::Java_io_github_chalharu_nerust_SlotActivity_nativeQuerySlotList
+                    as *mut c_void,
+            ),
+            jni::NativeMethod::from_raw_parts(
+                jni_str!("sendSlotAction"),
+                jni_str!("(Ljava/lang/String;)V"),
+                menu::Java_io_github_chalharu_nerust_SlotActivity_sendSlotAction as *mut c_void,
+            ),
+        ]
+    };
+    unsafe { env.register_native_methods(slot_class, &slot_methods)? };
+
     // The standalone settings screen talks to the same vault from its own
     // activity class, so the same callbacks are bound there too.
     let settings_class = env.find_class(jni_str!("io/github/chalharu/nerust/SettingsActivity"))?;

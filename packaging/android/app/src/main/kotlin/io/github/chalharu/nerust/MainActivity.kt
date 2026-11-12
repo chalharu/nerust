@@ -749,49 +749,16 @@ class MainActivity :
 
     private external fun nativeSlotList(): String
 
-    /** Drawer slot screen: list, select, create, and delete behind a
-     * confirm. Select/create dismiss (the op lands on the live session);
-     * delete stays open and refreshes from the republished mirror.
-     * The initial query runs on the shared background lane; only the screen
-     * show posts back. Refresh re-queries off the main thread too. */
+    /** Drawer slot screen: a standalone activity over the live session.
+     * Select/create finish back to the game; delete stays and refreshes
+     * from the republished mirror. The initial query runs on the shared
+     * background lane; only the activity start posts back. */
     internal fun showSlotMenu() {
         BridgeIo.runIo {
             val raw = querySlotList() ?: return@runIo
-            val rows = parseSlotList(raw)
             BridgeIo.postMain {
                 if (isDestroyed || isFinishing) return@postMain
-                val state = SlotMenuState(raw, rows)
-                dialogManager.show(
-                    dialogTag = SLOT_MENU_TAG,
-                    contentDescription = "slots",
-                    ownedByTest = false,
-                    onDismiss = { state.stop() },
-                ) { dismiss ->
-                    SlotMenuScreen(
-                        rows = state.rows,
-                        onSelect = { id ->
-                            sendMenuAction(
-                                menuEvent(MenuAction.SELECT_SLOT) {
-                                    put("slot_id", id)
-                                },
-                            )
-                            dismiss()
-                        },
-                        onDelete = { id ->
-                            sendMenuAction(
-                                menuEvent(MenuAction.DELETE_SLOT) {
-                                    put("slot_id", id)
-                                },
-                            )
-                            state.refreshAfter(::querySlotList)
-                        },
-                        onCreate = {
-                            sendMenuAction(menuEvent(MenuAction.CREATE_SLOT))
-                            dismiss()
-                        },
-                        onDismiss = dismiss,
-                    )
-                }
+                startActivity(SlotActivity.createIntent(this, raw, requestedOrientation))
             }
         }
     }
