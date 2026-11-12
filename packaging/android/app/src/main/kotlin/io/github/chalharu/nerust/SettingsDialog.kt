@@ -22,7 +22,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -334,6 +333,9 @@ internal fun settingsRowDisplayValue(
 private const val TAG = "SettingsDialog"
 private const val COMMAND_FAILED = "command failed"
 
+/** Shared card shape for settings surfaces; one allocation, not six. */
+private val SettingsCardShape = RoundedCornerShape(28.dp)
+
 /** DTO-driven settings screen: sections from Rust, one synchronous command
  * per edit, save/dismiss only at the end. */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
@@ -476,6 +478,7 @@ internal fun NerustSettingsDialogCard(
     val dirtyVisibleSections =
         remember(sections, dirtyKeys) { ancestorDirtySections(sections, dirtyKeys, parents) }
     val actions =
+        remember(sections) {
         SettingsRowActions(
             onCancelCapture = { sendCommand("", 0, 0L, "cancel_capture", mutating = false) },
             onSelectChoice = { row, choiceIndex ->
@@ -521,7 +524,9 @@ internal fun NerustSettingsDialogCard(
                 activeRowKey = rowKey
             },
         )
+        }
     val state =
+        remember(sections, activeSection, activeRow, issues, capturePrompt, commandError, parents, dirtyVisibleSections) {
         SettingsScreenState(
             sections = sections,
             activeSection = activeSection,
@@ -532,6 +537,7 @@ internal fun NerustSettingsDialogCard(
             parents = parents,
             dirtySections = dirtyVisibleSections,
         )
+        }
 
     NerustExpressiveHost {
         Scaffold(
@@ -821,7 +827,7 @@ private fun LazyListScope.settingsSearchResults(
     if (hits.isEmpty()) {
         item(key = "settings-search-empty") {
             Card(
-                shape = RoundedCornerShape(28.dp),
+                shape = SettingsCardShape,
                 colors =
                     CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -852,7 +858,7 @@ private fun LazyListScope.settingsSearchResults(
                         else -> onNavigate(section.id, null)
                     }
                 },
-                shape = RoundedCornerShape(28.dp),
+                shape = SettingsCardShape,
                 colors =
                     CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -1080,7 +1086,9 @@ private fun SettingsCategoryList(
     // below only consumes them through the plain list DSL.
     val onLabel = stringResource(R.string.settings_on)
     val offLabel = stringResource(R.string.settings_off)
-    val hits = searchHits(state.sections, query, onLabel, offLabel)
+    val hits = remember(state.sections, query, onLabel, offLabel) {
+        searchHits(state.sections, query, onLabel, offLabel)
+    }
     val emptyText =
         if (query.isBlank()) "" else stringResource(R.string.settings_search_empty, query)
     LazyColumn(
@@ -1102,7 +1110,7 @@ private fun SettingsCategoryList(
                     )
                 },
                 singleLine = true,
-                shape = RoundedCornerShape(28.dp),
+                shape = SettingsCardShape,
             )
         }
         if (query.isNotBlank()) {
@@ -1141,7 +1149,7 @@ private fun SettingsCategoryList(
             val entryCount = section.rows.count { it.kind != "header" && it.kind != "button" }
             Card(
                 onClick = { actions.onSectionClick(section.id) },
-                shape = RoundedCornerShape(28.dp),
+                shape = SettingsCardShape,
                 colors =
                     CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -1217,7 +1225,7 @@ private fun SettingsSectionList(
             }
             item(key = "${section.id}#$groupIndex#card") {
                 Card(
-                    shape = RoundedCornerShape(28.dp),
+                    shape = SettingsCardShape,
                     colors =
                         CardDefaults.cardColors(
                             containerColor = MaterialTheme.colorScheme.surfaceContainer,
@@ -1515,7 +1523,7 @@ private fun SettingsChoiceList(
         settingsBannerItems(banners = banners, onCancelCapture = onCancelCapture)
         item(key = "${row.key}#card") {
             Card(
-                shape = RoundedCornerShape(28.dp),
+                shape = SettingsCardShape,
                 colors =
                     CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.surfaceContainer,
@@ -1583,15 +1591,19 @@ private fun SettingsNavigationRow(
     semanticsLabel: String,
     supportingText: String? = null,
     showChevron: Boolean = false,
-    onClick: () -> Unit,
+    onClick: (() -> Unit)? = null,
 ) {
+    // onClick == null renders a static readout that never pushes a detail
+    // level that renders nothing.
+    val base = Modifier.fillMaxWidth()
+    val modifier =
+        if (onClick != null) {
+            base.clickable(onClick = onClick).padding(horizontal = 24.dp, vertical = 18.dp)
+        } else {
+            base.padding(horizontal = 24.dp, vertical = 18.dp)
+        }
     Row(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onClick)
-                .padding(horizontal = 24.dp, vertical = 18.dp)
-                .semantics(mergeDescendants = true) { contentDescription = semanticsLabel },
+        modifier = modifier.semantics(mergeDescendants = true) { contentDescription = semanticsLabel },
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -1625,28 +1637,11 @@ private fun SettingsInfoRow(
     semanticsLabel: String,
     supportingText: String? = null,
 ) {
-    // Static readout: deliberately not clickable so it never pushes a
-    // detail level that renders nothing.
-    Row(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 18.dp)
-                .semantics(mergeDescendants = true) { contentDescription = semanticsLabel },
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(text = title, style = MaterialTheme.typography.titleMedium)
-            supportingText?.takeIf(String::isNotBlank)?.let {
-                Text(
-                    text = it,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        Text(text = value, style = MaterialTheme.typography.bodyMedium)
-    }
+    SettingsNavigationRow(
+        title = title,
+        value = value,
+        semanticsLabel = semanticsLabel,
+        supportingText = supportingText,
+    )
 }
 

@@ -45,6 +45,34 @@ internal fun connectedGamepadNames(): List<String> {
     return names.distinct()
 }
 
+private val GAMEPAD_BUTTON_CODES =
+    intArrayOf(
+        KeyEvent.KEYCODE_BUTTON_A,
+        KeyEvent.KEYCODE_BUTTON_B,
+        KeyEvent.KEYCODE_BUTTON_X,
+        KeyEvent.KEYCODE_BUTTON_Y,
+        KeyEvent.KEYCODE_BUTTON_L1,
+        KeyEvent.KEYCODE_BUTTON_R1,
+        KeyEvent.KEYCODE_BUTTON_L2,
+        KeyEvent.KEYCODE_BUTTON_R2,
+        KeyEvent.KEYCODE_BUTTON_START,
+        KeyEvent.KEYCODE_BUTTON_SELECT,
+    )
+
+private val GAME_AXES =
+    intArrayOf(
+        MotionEvent.AXIS_X,
+        MotionEvent.AXIS_Y,
+        MotionEvent.AXIS_Z,
+        MotionEvent.AXIS_RX,
+        MotionEvent.AXIS_RY,
+        MotionEvent.AXIS_RZ,
+        MotionEvent.AXIS_HAT_X,
+        MotionEvent.AXIS_HAT_Y,
+        MotionEvent.AXIS_LTRIGGER,
+        MotionEvent.AXIS_RTRIGGER,
+    )
+
 /** One-device verdict for the Auto gate. A counted device must expose the
  * joystick class with a gamepad source or a non-alphabetic keyboard
  * (proven uinput-fpc filter, libgdx #5007), hold a controller number
@@ -78,33 +106,7 @@ private fun isCountedGamepad(device: InputDevice): Boolean {
     if (!joystickClass || !(gamepadSource || nonAlphaKeyboard)) return false
     // Canonical gamepad buttons; any one proves a real controller.
     // All exist since API 1, so no version guard is needed.
-    val buttonCodes =
-        intArrayOf(
-            KeyEvent.KEYCODE_BUTTON_A,
-            KeyEvent.KEYCODE_BUTTON_B,
-            KeyEvent.KEYCODE_BUTTON_X,
-            KeyEvent.KEYCODE_BUTTON_Y,
-            KeyEvent.KEYCODE_BUTTON_L1,
-            KeyEvent.KEYCODE_BUTTON_R1,
-            KeyEvent.KEYCODE_BUTTON_L2,
-            KeyEvent.KEYCODE_BUTTON_R2,
-            KeyEvent.KEYCODE_BUTTON_START,
-            KeyEvent.KEYCODE_BUTTON_SELECT,
-        )
-    if (!device.hasKeys(*buttonCodes).any { it }) return false
+    if (!device.hasKeys(*GAMEPAD_BUTTON_CODES).any { it }) return false
     // Game axes a real controller drives; button clusters expose none.
-    val gameAxes =
-        intArrayOf(
-            MotionEvent.AXIS_X,
-            MotionEvent.AXIS_Y,
-            MotionEvent.AXIS_Z,
-            MotionEvent.AXIS_RX,
-            MotionEvent.AXIS_RY,
-            MotionEvent.AXIS_RZ,
-            MotionEvent.AXIS_HAT_X,
-            MotionEvent.AXIS_HAT_Y,
-            MotionEvent.AXIS_LTRIGGER,
-            MotionEvent.AXIS_RTRIGGER,
-        )
-    return gameAxes.any { device.getMotionRange(it) != null }
+    return GAME_AXES.any { device.getMotionRange(it) != null }
 }

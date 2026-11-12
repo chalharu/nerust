@@ -233,7 +233,7 @@ class SettingsActivity :
             // documented negative-id rule for virtual keyboards.
             val virtual =
                 device.id < 0 ||
-                    (android.os.Build.VERSION.SDK_INT >= 29 && device.isVirtual)
+                    (Build.VERSION.SDK_INT >= 29 && device.isVirtual)
             if (virtual) continue
             // gpio-keys, pmic power keys, headset jacks, touch panels and
             // fingerprint sensors all expose SOURCE_KEYBOARD; a letter key
@@ -260,78 +260,37 @@ class SettingsActivity :
         pushSystemLocale()
     }
 
+    /** One push through the command pipe; Rust re-projects and the card
+     * applies it without marking the draft dirty. */
+    private fun pushOp(label: String, op: String, payload: Any) {
+        val nav = navActions ?: return
+        val raw =
+            try {
+                nativeSettingsCommand(settingsCommandJson(op, 0, 0, op, payload))
+            } catch (e: Exception) {
+                Log.e(TAG, "$label push failed", e)
+                return
+            }
+        raw?.let { nav.refreshPayload(it) }
+    }
+
     internal fun pushKeyboardEnumeration() {
-        val nav = navActions ?: return
-        val raw =
-            try {
-                nativeSettingsCommand(
-                    settingsCommandJson("keyboards", 0, 0, "keyboards", enumerateKeyboards()),
-                )
-            } catch (e: Exception) {
-                Log.e(TAG, "keyboard enumeration push failed", e)
-                return
-            }
-        raw?.let { nav.refreshPayload(it) }
+        pushOp("keyboard enumeration", "keyboards", enumerateKeyboards())
     }
 
-    /** Push touch capability alongside the keyboards: Rust disables the
-     * Always/Auto overlay choices on terminals without a touch screen.
-     * See [hasTouchscreen] for the flag-or-device rule. */
     internal fun pushTouchCapability() {
-        val nav = navActions ?: return
-        val capable = hasTouchscreen(packageManager)
-        val raw =
-            try {
-                nativeSettingsCommand(
-                    settingsCommandJson(
-                        "touch",
-                        0,
-                        0,
-                        "touch",
-                        JSONObject().put("capable", capable),
-                    ),
-                )
-            } catch (e: Exception) {
-                Log.e(TAG, "touch capability push failed", e)
-                return
-            }
-        raw?.let { nav.refreshPayload(it) }
+        pushOp("touch capability", "touch", JSONObject().put("capable", hasTouchscreen(packageManager)))
     }
 
-    /** Push the terminal locale tag so SystemDefault resolves to the
-     * language the user actually sees (Android never sets LANG). */
     internal fun pushSystemLocale() {
-        val nav = navActions ?: return
         val tag = AppLocale.currentTag() ?: return
-        val raw =
-            try {
-                nativeSettingsCommand(
-                    settingsCommandJson("locale", 0, 0, "locale", JSONObject().put("lang", tag)),
-                )
-            } catch (e: Exception) {
-                Log.e(TAG, "locale push failed", e)
-                return
-            }
-        raw?.let { nav.refreshPayload(it) }
+        pushOp("locale", "locale", JSONObject().put("lang", tag))
     }
 
-    /** Push the devices the Auto gate counts (see [connectedGamepadNames]):
-     * Rust shows them in the overlay detail screen so users can see why
-     * Auto currently hides, without logcat. Non-mutating like the rest. */
     internal fun pushGamepads() {
-        val nav = navActions ?: return
         val names = JSONArray()
         connectedGamepadNames().forEach { names.put(JSONObject().put("name", it)) }
-        val raw =
-            try {
-                nativeSettingsCommand(
-                    settingsCommandJson("gamepads", 0, 0, "gamepads", names),
-                )
-            } catch (e: Exception) {
-                Log.e(TAG, "gamepad push failed", e)
-                return
-            }
-        raw?.let { nav.refreshPayload(it) }
+        pushOp("gamepad", "gamepads", names)
     }
 
     override fun onDestroy() {

@@ -568,18 +568,26 @@ class ChromeManager(private val activity: MainActivity) {
         hideControlsForControllerInput()
     }
 
+    /** Shared tail for overlay-gate flips: dismiss, push the gate, reattach. */
+    private fun refreshOverlayChrome() {
+        controlsOverlayPopup?.dismiss()
+        controlsOverlayPopup = null
+        controlsOverlayView = null
+        pushTouchGate()
+        scheduleChromeAttach()
+    }
+
     /** Non-touch terminals never draw buttons; the settings row names the
      * reason so the choice does not look broken. */
     fun setTouchCapable(capable: Boolean) {
         if (touchCapable == capable) return
         touchCapable = capable
         if (!capable) {
-            controlsOverlayPopup?.dismiss()
-            controlsOverlayPopup = null
-            controlsOverlayView = null
+            refreshOverlayChrome()
+        } else {
+            pushTouchGate()
+            scheduleChromeAttach()
         }
-        pushTouchGate()
-        scheduleChromeAttach()
     }
 
     /** Auto hides while a gamepad is connected and returns on disconnect;
@@ -590,12 +598,8 @@ class ChromeManager(private val activity: MainActivity) {
         if (connected) {
             activity.window.decorView.removeCallbacks(restoreControllerOverlayRunnable)
             controllerOverlayHiddenUntil = 0L
-            controlsOverlayPopup?.dismiss()
-            controlsOverlayPopup = null
-            controlsOverlayView = null
         }
-        pushTouchGate()
-        scheduleChromeAttach()
+        refreshOverlayChrome()
     }
 
     private fun ensureDrawerChromePopup(anchor: View): Boolean {

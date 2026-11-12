@@ -39,8 +39,7 @@ use crate::bridge_contract::{
 };
 
 /// Typed controller-key mapping, checked against the shared JSON schema.
-/// Kotlin names are generated from that schema; new keys must also map here.
-#[cfg(test)]
+/// Single source: the decoder reads this table, no parallel match.
 pub(crate) const CONTROLLER_KEY_TABLE: &[(&str, AbstractKey)] = &[
     ("button1", AbstractKey::Button1),
     ("button2", AbstractKey::Button2),
@@ -154,21 +153,12 @@ fn decode_controller_parts(device_id: i32, key: &str, pressed: bool) -> Option<M
     })
 }
 
-/// Jump-table key lookup; the schema test below keeps it in sync with the table.
+/// Single-table key lookup; the schema test keeps it in sync.
 fn controller_key(key: &str) -> Option<AbstractKey> {
-    Some(match key {
-        "button1" => AbstractKey::Button1,
-        "button2" => AbstractKey::Button2,
-        "button5" => AbstractKey::Button5,
-        "button6" => AbstractKey::Button6,
-        "start" => AbstractKey::Start,
-        "select" => AbstractKey::Select,
-        "up" => AbstractKey::DpadUp,
-        "down" => AbstractKey::DpadDown,
-        "left" => AbstractKey::DpadLeft,
-        "right" => AbstractKey::DpadRight,
-        _ => return None,
-    })
+    CONTROLLER_KEY_TABLE
+        .iter()
+        .find(|(name, _)| *name == key)
+        .map(|(_, mapped)| *mapped)
 }
 
 /// Decode one raw bridge string: only v1 JSON decodes, never a silent drop.

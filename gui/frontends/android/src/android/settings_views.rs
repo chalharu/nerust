@@ -557,10 +557,13 @@ pub(super) fn apply_hardware_key(
 ) -> Result<(String, bool), String> {
     with_vm_deps(|deps| {
         let i18n = truth.i18n;
+        // Borrow first: releases and unmapped keys (volume, Back, ...) must
+        // not pay a target+prompt clone on the hot path.
         if pressed
-            && let Some((target, _)) = capture.clone()
             && let Some(key) = android_keycode_to_key(keycode)
+            && let Some((target, _)) = capture.as_ref()
         {
+            let target = target.clone();
             let vm = build_vm(snapshot, deps, i18n)?;
             vm.capture
                 .start_capture(target)
