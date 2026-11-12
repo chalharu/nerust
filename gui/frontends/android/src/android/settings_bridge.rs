@@ -302,8 +302,7 @@ fn hardware_key(
                         state.system_locale,
                     ),
                 },
-            )
-            {
+            ) {
                 Ok((payload, consumed)) => {
                     debug_assert!(payload.starts_with('{'), "hardware payload must be JSON");
                     format!("{{\"ok\":true,\"consumed\":{consumed},\"payload\":{payload}}}")

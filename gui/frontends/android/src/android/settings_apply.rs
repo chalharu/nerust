@@ -25,7 +25,9 @@ impl super::AndroidFrontend {
             // Applied racing a live re-request: the snapshot is real user input, so apply it.
             // Error flush stays shielded below; the user re-saves if needed.
             (true, true) => {
-                log::warn!("handle_settings_result: applying settings while a newer dialog is open");
+                log::warn!(
+                    "handle_settings_result: applying settings while a newer dialog is open"
+                );
                 true
             }
             // Dismissed without changes: flush under the current presentation.

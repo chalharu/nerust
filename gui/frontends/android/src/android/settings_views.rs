@@ -762,6 +762,18 @@ fn apply_capture_command(
     }
 }
 
+/// Required JSON array field of the device-truth payload.
+fn payload_vec<T>(command: &WireCommand, field: &str) -> Result<Vec<T>, String>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let raw = command
+        .payload
+        .get(field)
+        .ok_or_else(|| format!("device_truth op misses {field}"))?;
+    serde_json::from_value(raw.clone()).map_err(|error| error.to_string())
+}
+
 /// Single device-truth push (Kotlin `InputDevice` enumeration, hotplug
 /// refresh included): keyboards, touch capability, counted gamepads, and
 /// the terminal locale in one op, one re-projection. Ephemeral truth,
@@ -774,12 +786,7 @@ fn apply_device_truth_command(
     system_locale: &mut Option<AppLanguage>,
     command: &WireCommand,
 ) -> Result<(), String> {
-    let keyboards_raw = command
-        .payload
-        .get("keyboards")
-        .ok_or_else(|| "device_truth op misses keyboards".to_string())?;
-    let list: Vec<KeyboardInfo> =
-        serde_json::from_value(keyboards_raw.clone()).map_err(|error| error.to_string())?;
+    let list: Vec<KeyboardInfo> = payload_vec(command, "keyboards")?;
     for info in &list {
         if info.member.is_empty() {
             return Err("keyboard member id must not be empty".to_string());
@@ -790,15 +797,9 @@ fn apply_device_truth_command(
         .payload
         .get("capable")
         .ok_or_else(|| "device_truth op misses capable".to_string())?;
-    *touch_capable = Some(
-        serde_json::from_value(capable_raw.clone()).map_err(|error| error.to_string())?,
-    );
-    let gamepads_raw = command
-        .payload
-        .get("gamepads")
-        .ok_or_else(|| "device_truth op misses gamepads".to_string())?;
-    let names: Vec<GamepadInfo> =
-        serde_json::from_value(gamepads_raw.clone()).map_err(|error| error.to_string())?;
+    *touch_capable =
+        Some(serde_json::from_value(capable_raw.clone()).map_err(|error| error.to_string())?);
+    let names: Vec<GamepadInfo> = payload_vec(command, "gamepads")?;
     for info in &names {
         if info.name.is_empty() {
             return Err("gamepad name must not be empty".to_string());
