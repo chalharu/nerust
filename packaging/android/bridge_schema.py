@@ -52,3 +52,24 @@ def uncomment(text):
 
 def repo_root():
     return Path(__file__).resolve().parents[2]
+
+
+def gates_by_action(schema):
+    """Gated menu actions derived purely from the schema gates.
+
+    Accepts the full bridge schema or a bare menuEvent definition.
+    Returns {ACTION_UPPER: (required, forbidden)} where required is the
+    gate's conditional-required field set and forbidden is every other
+    gated field (union of all gates' required minus this gate's own).
+    Actions without a gate (plain actions, create_slot) are absent.
+    """
+    menu = schema["definitions"]["menuEvent"] if "definitions" in schema else schema
+    required_by_action = {}
+    for gate in menu.get("allOf", []):
+        const = next(iter(gate["if"]["properties"].values()))["const"]
+        required_by_action[const.upper()] = frozenset(gate["then"]["required"])
+    union = frozenset().union(*required_by_action.values()) if required_by_action else frozenset()
+    return {
+        action: (required, union - required)
+        for action, required in required_by_action.items()
+    }

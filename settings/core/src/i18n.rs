@@ -495,17 +495,14 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::Unknown => ("Unknown", "不明"),
         UiText::NotAssigned => ("Not assigned", "未割当"),
         UiText::OverlayDetail => ("Overlay detail", "オーバーレイ詳細"),
-        UiText::DescVsync => ("Reduces screen tearing.", "ティアリングを抑えます"),
+        UiText::DescVsync => ("", ""),
         UiText::DescOrientation => (
             "Applies immediately, even mid-game.",
             "ゲーム中も即時反映されます",
         ),
-        UiText::DescMute => ("Keeps the volume.", "音量を保持"),
+        UiText::DescMute => ("", ""),
         UiText::DescSampleRate => ("Adjust if audio crackles.", "音割れ対策用"),
-        UiText::DescLatency => (
-            "Higher: less crackle, more delay.",
-            "大きくするほど途切れ防止・遅延増加",
-        ),
+        UiText::DescLatency => ("Less crackle, more delay.", "途切れ防止・遅延増加"),
         UiText::DescNotifInfo => ("Such as save confirmations.", "保存完了など"),
         UiText::DescNotifWarning => ("Slowdown or missing files.", "遅延・ファイル不足"),
         UiText::DescNotifError => ("Halted actions.", "操作停止"),
@@ -516,8 +513,8 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
             "同じ辺は通知領域に従います",
         ),
         UiText::DescOverlayVisibility => (
-            "Auto hides for connected gamepads or recent input. Touch screen required.",
-            "ゲームパッド接続中・操作直後は非表示。タッチ画面必須",
+            "Auto hides on gamepads; needs touch.",
+            "パッド接続中は非表示。要タッチ画面",
         ),
         UiText::DescCartridgeMotion => ("Only some cartridges.", "一部カートリッジのみ使用します"),
         UiText::DescCartridgeRumble => (
@@ -556,7 +553,7 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::KeyMapping => ("Key mapping", "キー割り当て"),
         UiText::Connection => ("Connection", "接続"),
         UiText::Capabilities => ("Capabilities", "対応機能"),
-        UiText::KeyMappingDesc => ("System keyboard keys.", "機種キー割り当て"),
+        UiText::KeyMappingDesc => ("", ""),
     }
 }
 
@@ -891,9 +888,7 @@ mod tests {
             Unknown,
             NotAssigned,
             OverlayDetail,
-            DescVsync,
             DescOrientation,
-            DescMute,
             DescSampleRate,
             DescLatency,
             DescNotifInfo,
@@ -934,11 +929,21 @@ mod tests {
             KeyMapping,
             Connection,
             Capabilities,
-            KeyMappingDesc,
         ] {
             assert!(!text(en(), key).is_empty());
             assert!(!text(ja(), key).is_empty());
             assert_ne!(text(en(), key), text(ja(), key));
+        }
+    }
+
+    #[test]
+    fn restating_descriptions_stay_bare() {
+        // Self-evident labels carry no supporting text: the rows render
+        // bare instead of restating the label.
+        use UiText::*;
+        for key in [DescVsync, DescMute, KeyMappingDesc] {
+            assert!(text(en(), key).is_empty());
+            assert!(text(ja(), key).is_empty());
         }
     }
 

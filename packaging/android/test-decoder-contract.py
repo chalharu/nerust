@@ -27,11 +27,17 @@ def sample(prop):
 
 
 def _enum_cases(event, name, prop, base):
-    """Accepted members plus unknown-marker rejection."""
+    """First/last members plus unknown-marker rejection.
+
+    Every member is still pinned by the generated constants and the
+    schema/decoder parity checks; probes keep one representative per
+    boundary plus the rejection signal instead of one case per member.
+    """
     if "enum" not in prop:
         return []
+    members = list(dict.fromkeys((prop["enum"][0], prop["enum"][-1])))
     cases = [(f"{event}: {name}={value!r}", dict(base, **{name: value}), True)
-             for value in prop["enum"]]
+             for value in members]
     cases.append((f"{event}: {name}='__unknown__'", dict(base, **{name: "__unknown__"}), False))
     return cases
 

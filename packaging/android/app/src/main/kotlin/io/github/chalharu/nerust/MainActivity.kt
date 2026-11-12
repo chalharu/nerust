@@ -87,6 +87,9 @@ class MainActivity :
 
     @Volatile private var lastLoadedSystemForTest: String? = null
 
+    /** Last presence scan: identical hotplug/resume bursts skip the apply. */
+    @Volatile private var lastPresenceTruth: DeviceTruth? = null
+
     /** Set only on user-initiated finish paths; native exits then, never on destroy. */
     private var userInitiatedExit = false
 
@@ -269,15 +272,32 @@ class MainActivity :
      * must not evict the touch controls.
      * Touch capability mirrors the settings push (feature flag or a
      * touchscreen device): settings and runtime must agree, or "Always"
-     * would save yet never draw. */
+     * would save yet never draw.
+     * Scan runs on the shared background lane; only the chrome apply posts
+     * back. Identical scans skip the apply via the last-result cache. */
     private fun refreshControllerPresence() {
-        val scan = scanDeviceTruth(packageManager)
-        chromeManager.setTouchCapable(scan.touchCapable)
-        if (scan.gamepadNames.isNotEmpty()) {
-            // Debug breadcrumb for Auto-hide reports: which device hid it.
-            Log.d(TAG, "overlay auto-hide counts gamepad: ${scan.gamepadNames.joinToString()}")
+        BridgeIo.runIo {
+            val scan =
+                try {
+                    scanDeviceTruth(packageManager)
+                } catch (e: Exception) {
+                    Log.e(TAG, "device scan failed", e)
+                    return@runIo
+                }
+            if (scan == lastPresenceTruth) return@runIo
+            lastPresenceTruth = scan
+            val touchCapable = scan.touchCapable
+            val gamepadNames = scan.gamepadNames
+            BridgeIo.postMain {
+                if (isDestroyed || isFinishing) return@postMain
+                chromeManager.setTouchCapable(touchCapable)
+                if (gamepadNames.isNotEmpty()) {
+                    // Debug breadcrumb for Auto-hide reports: which device hid it.
+                    Log.d(TAG, "overlay auto-hide counts gamepad: ${gamepadNames.joinToString()}")
+                }
+                chromeManager.setControllerConnected(gamepadNames.isNotEmpty())
+            }
         }
-        chromeManager.setControllerConnected(scan.gamepadNames.isNotEmpty())
     }
 
     override fun onPause() {
@@ -732,40 +752,48 @@ class MainActivity :
 
     /** Drawer slot submenu: list, select, create, and delete behind a
      * confirm. Select/create dismiss (the op lands on the live session);
-     * delete stays open and refreshes from the republished mirror. */
+     * delete stays open and refreshes from the republished mirror.
+     * The initial query runs on the shared background lane; only the dialog
+     * show posts back. Refresh re-queries off the main thread too. */
     internal fun showSlotMenu() {
-        val raw = querySlotList() ?: return
-        val state = SlotMenuState(raw, parseSlotList(raw))
-        dialogManager.show(
-            dialogTag = SLOT_MENU_TAG,
-            contentDescription = "slots:${state.rows.size}",
-            ownedByTest = false,
-            onDismiss = { state.stop() },
-        ) { dismiss ->
-            SlotMenuDialog(
-                rows = state.rows,
-                onSelect = { id ->
-                    sendMenuAction(
-                        menuEvent(MenuAction.SELECT_SLOT) {
-                            put("slot_id", id)
+        BridgeIo.runIo {
+            val raw = querySlotList() ?: return@runIo
+            val rows = parseSlotList(raw)
+            BridgeIo.postMain {
+                if (isDestroyed || isFinishing) return@postMain
+                val state = SlotMenuState(raw, rows)
+                dialogManager.show(
+                    dialogTag = SLOT_MENU_TAG,
+                    contentDescription = "slots:${state.rows.size}",
+                    ownedByTest = false,
+                    onDismiss = { state.stop() },
+                ) { dismiss ->
+                    SlotMenuDialog(
+                        rows = state.rows,
+                        onSelect = { id ->
+                            sendMenuAction(
+                                menuEvent(MenuAction.SELECT_SLOT) {
+                                    put("slot_id", id)
+                                },
+                            )
+                            dismiss()
                         },
-                    )
-                    dismiss()
-                },
-                onDelete = { id ->
-                    sendMenuAction(
-                        menuEvent(MenuAction.DELETE_SLOT) {
-                            put("slot_id", id)
+                        onDelete = { id ->
+                            sendMenuAction(
+                                menuEvent(MenuAction.DELETE_SLOT) {
+                                    put("slot_id", id)
+                                },
+                            )
+                            state.refreshAfter(::querySlotList)
                         },
+                        onCreate = {
+                            sendMenuAction(menuEvent(MenuAction.CREATE_SLOT))
+                            dismiss()
+                        },
+                        onDismiss = dismiss,
                     )
-                    state.refreshAfter(::querySlotList)
-                },
-                onCreate = {
-                    sendMenuAction(menuEvent(MenuAction.CREATE_SLOT))
-                    dismiss()
-                },
-                onDismiss = dismiss,
-            )
+                }
+            }
         }
     }
 

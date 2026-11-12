@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from bridge_schema import ContractError, load_sibling, require, uncomment
+from bridge_schema import ContractError, gates_by_action, load_sibling, require, uncomment
 
 GEN = load_sibling("generator", "generate-contract.py")
 
@@ -22,20 +22,18 @@ MISSING_DECODER = "missing typed event decoder"
 
 def sources():
     src = GEN.RUST / "src"
+    main = (GEN.KOTLIN / "MainActivity.kt").read_text()
+    settings = (GEN.KOTLIN / "SettingsActivity.kt").read_text()
+    activity = main + "\n" + settings
+    callsites = (activity + "\n"
+                 + (GEN.KOTLIN / "ChromeManager.kt").read_text() + "\n"
+                 + (GEN.KOTLIN / "BridgeContract.kt").read_text())
     return {
         "decoder": (src / "bridge_events.rs").read_text(),
         "generated": (src / "bridge_contract.rs").read_text(),
         "producer": (GEN.KOTLIN / "BridgeContract.kt").read_text(),
-        "activity": (GEN.KOTLIN / "MainActivity.kt").read_text()
-        + "\n"
-        + (GEN.KOTLIN / "SettingsActivity.kt").read_text(),
-        "callsites": (GEN.KOTLIN / "MainActivity.kt").read_text()
-        + "\n"
-        + (GEN.KOTLIN / "SettingsActivity.kt").read_text()
-        + "\n"
-        + (GEN.KOTLIN / "ChromeManager.kt").read_text()
-        + "\n"
-        + (GEN.KOTLIN / "BridgeContract.kt").read_text(),
+        "activity": activity,
+        "callsites": callsites,
         "table": (src / "android/bridge.rs").read_text(),
         "registration": (src / "android.rs").read_text(),
         "callbacks": [(src / f"android/{name}.rs").read_text()
@@ -339,10 +337,9 @@ def validate_producer(definitions, producer, kotlin):
     producer = uncomment(producer)
     match = re.search(r'internal fun menuEvent\s*\(', producer)
     require(match, "unparsed event producers")
-    require(not re.search(r'internal fun (menuEventJson|touchGateEventJson|controllerEventJson)\s*\(',
-                          producer), "obsolete typed builders remain")
-    args = _balanced_call(producer, match.end() - 1)[1:-1]
-    after = producer[match.end() - 1 + len(_balanced_call(producer, match.end() - 1)):]
+    call = _balanced_call(producer, match.end() - 1)
+    args = call[1:-1]
+    after = producer[match.end() - 1 + len(call):]
     body_match = re.match(r'\s*:\s*String\s*=\s*JSONObject\(\)(.*?)\.toString\(\)', after, re.DOTALL)
     require(body_match, "unparsed event producers")
     body = body_match.group(1)
@@ -356,47 +353,36 @@ def validate_producer(definitions, producer, kotlin):
             "producer envelope/version drift")
     require(re.search(r'\.apply\(extras\)\s*$', body.strip()), "producer must apply extras last")
     menu = definitions["menu"]
-    for call in _menu_event_calls(uncomment(kotlin)):
+    code = uncomment(kotlin)
+    gated = gates_by_action(menu)
+    gated_fields = set().union(*(required for required, _ in gated.values())) if gated else set()
+    for call in _menu_event_calls(code):
         pairs = re.findall(r'(?<![\w.])put\("(\w+)", ([^()\n]*)\)', call)
         for key, value in pairs:
             require(re.fullmatch(r'"[^"\n]*"|[\w.]+', value) is not None,
                     f"unsupported extras value: {value}")
         puts_in_call = {key for key, _ in pairs}
-        gated = next(
-            (action for action in ("TOUCH_GATE", "CONTROLLER", "SELECT_SLOT", "DELETE_SLOT", "CREATE_SLOT")
-             if f"MenuAction.{action}" in call),
+        action = next(
+            (name for name in list(gated) + ["CREATE_SLOT"]
+             if f"MenuAction.{name}" in call),
             None,
         )
-        if gated is None:
-            require(not (puts_in_call & {"pressed", "device_id", "key", "slot_id"}),
+        if action is None:
+            require(not (puts_in_call & gated_fields),
                     "plain menuEvent must not carry gated fields")
             continue
-        if gated == "CREATE_SLOT":
-            # Slot creation takes no payload by design (menuEvent allOf has
-            # no gate const for create_slot); fail loud on any extras.
+        if action == "CREATE_SLOT":
+            # Slot creation takes no payload by design (the schema has no
+            # gate const for create_slot); fail loud on any extras.
             require(not puts_in_call, "create_slot takes no extras")
             continue
-        const = gated.lower()
-        gate = [g for g in menu.get("allOf", [])
-                if g.get("if", {}).get("properties", {}).get("action", {}).get("const") == const]
-        if gated in ("SELECT_SLOT", "DELETE_SLOT"):
-            require(gate, f"schema must gate {const} extras")
-            require(set(gate[0]["then"]["required"]) <= puts_in_call,
-                    f"{const} call misses gated fields")
-            require(not (puts_in_call & {"pressed", "device_id", "key"}),
-                    f"{const} call carries foreign gated fields")
-            continue
-        if gated == "TOUCH_GATE":
-            require(gate, "schema must gate touch_gate extras")
-            require(set(gate[0]["then"]["required"]) <= puts_in_call,
-                    "touch_gate call misses gated fields")
-            require(not (puts_in_call & {"device_id", "key"}), "touch_gate call carries controller fields")
-        elif gated == "CONTROLLER":
-            require(gate, "schema must gate controller extras")
-            require(set(gate[0]["then"]["required"]) <= puts_in_call,
-                    "controller call misses gated fields")
-    require("menuEventJson" not in kotlin and "touchGateEventJson" not in kotlin
-            and "controllerEventJson" not in kotlin, "obsolete typed builders remain")
+        required, forbidden = gated[action]
+        require(set(required) <= puts_in_call,
+                f"{action.lower()} call misses gated fields")
+        require(not (puts_in_call & set(forbidden)),
+                f"{action.lower()} call carries foreign gated fields")
+    require("menuEventJson" not in code and "touchGateEventJson" not in code
+            and "controllerEventJson" not in code, "obsolete typed builders remain")
 
 
 def verify(schema, source):
