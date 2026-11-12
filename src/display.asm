@@ -1,0 +1,5 @@
+INCLUDE "src/display/LCDC.asm"
+INCLUDE "src/display/LoadFont.asm"
+INCLUDE "src/display/ResetDisplay.asm"
+INCLUDE "src/display/WaitVBlank.asm"
+INCLUDE "src/display/LoadPalette.asm"
