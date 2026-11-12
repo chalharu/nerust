@@ -164,11 +164,7 @@ class MainActivity :
         // Settings capture lives in SettingsActivity with its own dispatch;
         // here only gamepad sources divert, everything else keeps platform
         // behavior (volume, Back, hardware keyboards in gameplay).
-        val source = event.source
-        val isController =
-            source and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
-                source and InputDevice.SOURCE_DPAD == InputDevice.SOURCE_DPAD ||
-                source and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
+        val isController = isControllerSource(event.source)
         if (!isController) {
             return super.dispatchKeyEvent(event)
         }

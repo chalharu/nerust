@@ -12,6 +12,11 @@ pub fn member_is_shareable(member: &str) -> bool {
     member.starts_with(KEYBOARD_MEMBER_PREFIX)
 }
 
+/// Gamepad members: exclusive, one port at a time.
+pub fn member_is_gamepad(member: &str) -> bool {
+    member.starts_with(GAMEPAD_MEMBER_PREFIX)
+}
+
 /// Exclusive members (gamepads) appearing in more than one port.
 /// Returns one entry per offending member: (member, ports).
 pub fn exclusive_member_conflicts(ports: &PortDeviceSets) -> Vec<(String, Vec<String>)> {

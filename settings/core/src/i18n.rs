@@ -615,11 +615,8 @@ pub fn port_summary(language: AppLanguage, names: &[String]) -> String {
     match names {
         [] => text(language, UiText::NotAssigned).to_string(),
         [first] => first.clone(),
-        [first, rest @ ..] => localized!(
-            language,
-            format!("{first} +{}", rest.len()),
-            format!("{first} +{}", rest.len())
-        ),
+        // Count suffix is language-neutral, so no per-language branch.
+        [first, rest @ ..] => format!("{first} +{}", rest.len()),
     }
 }
 

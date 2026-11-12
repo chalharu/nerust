@@ -330,6 +330,8 @@ def validate_producer(definitions, producer):
             "unparsed event producers")
     for name, args, body in builders:
         _check_producer_event(name, _producer_puts(body), _producer_arg_types(args), definitions)
+    require(not re.search(r'menuEventJson\(\s*MenuAction\.(CONTROLLER|TOUCH_GATE)', producer),
+            "generic menuEventJson must not emit gated actions; use the typed builders")
 
 
 def verify(schema, source):

@@ -4,10 +4,7 @@ use nerust_input_traits::{AbstractKey, ControlId, DigitalInputEvent, InputValue}
 use nerust_settings_core::model::input::ShortcutAction;
 
 use crate::{
-    session::{
-        KeyboardShortcut, SessionHandle,
-        field_press::{FieldSource, dpad_axis_of},
-    },
+    session::{KeyboardShortcut, SessionHandle, field_press::FieldSource},
     settings::bindings::events::shortcut::shortcut_action_for_key,
 };
 
@@ -136,10 +133,7 @@ impl SessionHandle {
         };
         let attachment = event.attachment.as_str().to_string();
         let control = event.control.as_str().to_string();
-        let dpad = self
-            .input
-            .abstract_for(&attachment, &control)
-            .and_then(|abs| dpad_axis_of(abs).map(|_| (attachment, control, abs)));
+        let dpad = self.input.dpad_for(&attachment, &control);
         self.commit_press(
             field,
             FieldSource::Control(event.attachment, event.control),
@@ -161,11 +155,8 @@ impl SessionHandle {
         let changed = (pressed && first_press) || !pressed;
         if changed && let Some(&field) = self.input.key_field_map.get(&key) {
             let source_info = self.input.key_source.get(&key).cloned();
-            let dpad = source_info.and_then(|(attachment, control)| {
-                self.input
-                    .abstract_for(&attachment, &control)
-                    .and_then(|abs| dpad_axis_of(abs).map(|_| (attachment, control, abs)))
-            });
+            let dpad = source_info
+                .and_then(|(attachment, control)| self.input.dpad_for(&attachment, &control));
             self.commit_press(field, FieldSource::Key(key), dpad, pressed);
         }
 

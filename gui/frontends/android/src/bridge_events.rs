@@ -231,10 +231,8 @@ mod tests {
 
     #[test]
     fn decode_json_event_maps_versioned_menu() {
-        assert_eq!(
-            decode_frontend_event(r#"{"v":1,"type":"menu","action":"open_rom"}"#),
-            Some(FrontendEvent::Menu(MenuAction::OpenRom))
-        );
+        // open_rom is covered by decodes_every_menu_action_from_kotlin_envelope;
+        // this pins the gated controller shape and the second envelope type.
         assert_eq!(
             decode_frontend_event(
                 r#"{"v":1,"type":"menu","action":"controller","device_id":7,"key":"button1","pressed":true}"#
@@ -267,8 +265,18 @@ mod tests {
             decode_frontend_event(r#"{"v":1,"type":"menu","action":"controller","device_id":7}"#),
             None
         );
+        // Bare action names and colon-separated payloads never reach the
+        // typed dispatch: the JSON prefix guard rejects them first.
         for legacy in [
             ACTION_OPEN_ROM,
+            "controller:7:button1:1",
+            "error_dialog_dismissed",
+        ] {
+            assert_eq!(decode_frontend_event(legacy), None);
+        }
+        // Unknown actions inside a valid envelope reach the typed dispatch
+        // and fail there (not at the prefix guard).
+        for unknown in [
             ACTION_OPEN_SETTINGS,
             ACTION_TOGGLE_PAUSE,
             ACTION_SAVE_STATE,
@@ -277,10 +285,13 @@ mod tests {
             ACTION_EXIT,
             ACTION_UNLOAD,
             ACTION_ORIENTATION_CHANGED,
-            "controller:7:button1:1",
-            "error_dialog_dismissed",
         ] {
-            assert_eq!(decode_frontend_event(legacy), None);
+            assert_eq!(
+                decode_frontend_event(&format!(
+                    r#"{{"v":1,"type":"menu","action":"legacy_{unknown}"}}"#
+                )),
+                None
+            );
         }
     }
 

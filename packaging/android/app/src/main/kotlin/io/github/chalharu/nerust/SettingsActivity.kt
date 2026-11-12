@@ -347,11 +347,9 @@ class SettingsActivity :
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (!isControllerSource(event.source)) {
-            return routeSettingsKeyEvent(event.keyCode, event.action) ||
-                super.dispatchKeyEvent(event)
-        }
-        return super.dispatchKeyEvent(event)
+        if (isControllerSource(event.source)) return super.dispatchKeyEvent(event)
+        return routeSettingsKeyEvent(event.keyCode, event.action) ||
+            super.dispatchKeyEvent(event)
     }
 
     // Deprecated upstream; kept because minSdk 28 predates the
@@ -396,7 +394,9 @@ class SettingsActivity :
     ): Boolean {
         val nav = navActions ?: return false
         if (!nav.isCapturing) return false
-        if (action != KeyEvent.ACTION_DOWN && action != KeyEvent.ACTION_UP) return true
+        // Non-key actions (e.g. ACTION_MULTIPLE) are not bindings: let the
+        // platform handle them instead of swallowing the press.
+        if (action != KeyEvent.ACTION_DOWN && action != KeyEvent.ACTION_UP) return false
         val raw =
             try {
                 nativeHardwareKey(keyCode, action == KeyEvent.ACTION_DOWN)
@@ -477,10 +477,5 @@ class SettingsActivity :
 
         fun currentActivityForTest(): SettingsActivity? =
             activeActivityForTest?.takeUnless { it.isDestroyed || it.isFinishing }
-
-        private fun isControllerSource(source: Int): Boolean =
-            source and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
-                source and InputDevice.SOURCE_DPAD == InputDevice.SOURCE_DPAD ||
-                source and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
     }
 }

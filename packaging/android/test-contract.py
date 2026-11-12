@@ -165,12 +165,18 @@ class StructureTests(unittest.TestCase):
                 elif mutation in {"minimum", "maximum"}:
                     menu["properties"]["device_id"][mutation] += 1
                 else:
-                    gates = menu["allOf"] if "allOf" in menu else [{"if": menu["if"], "then": menu["then"]}]
-                    touch = next(
-                        gate for gate in gates
-                        if gate["if"]["properties"]["action"]["const"] == "touch_gate"
-                    )
-                    touch["then"]["required"].remove("pressed")
+                    for action, field in (("controller", "device_id"), ("touch_gate", "pressed")):
+                        self.schema = copy.deepcopy(original)
+                        menu = self.schema["definitions"]["menuEvent"]
+                        gates = menu["allOf"] if "allOf" in menu else [{"if": menu["if"], "then": menu["then"]}]
+                        target = next(
+                            gate for gate in gates
+                            if gate["if"]["properties"]["action"]["const"] == action
+                        )
+                        target["then"]["required"].remove(field)
+                        with self.assertRaises(VERIFY.ContractError):
+                            self.verify()
+                    continue
                 with self.assertRaises(VERIFY.ContractError):
                     self.verify()
 
@@ -190,11 +196,12 @@ class StructureTests(unittest.TestCase):
                     menu["properties"]["key"]["enum"].append("probe")
                 else:
                     gates = menu["allOf"] if "allOf" in menu else [{"if": menu["if"], "then": menu["then"]}]
-                    touch = next(
-                        gate for gate in gates
-                        if gate["if"]["properties"]["action"]["const"] == "touch_gate"
-                    )
-                    touch["then"]["required"].remove("pressed")
+                    for action, field in (("controller", "device_id"), ("touch_gate", "pressed")):
+                        target = next(
+                            gate for gate in gates
+                            if gate["if"]["properties"]["action"]["const"] == action
+                        )
+                        target["then"]["required"].remove(field)
                 self.assertNotEqual(CONTRACT.outputs(changed)[path], baseline)
 
     def test_modified_generated_validation_is_rejected(self):
@@ -300,6 +307,7 @@ class StructureTests(unittest.TestCase):
             self.assertTrue(cases[f"menu: missing optional {field}"])
             self.assertFalse(cases[f"menu: {field}=None"])
             self.assertFalse(cases[f"menu: action=controller missing {field}"])
+        self.assertFalse(cases["menu: action=touch_gate missing pressed"])
         self.assertFalse(cases["menu: unknown field extra"])
         self.assertFalse(cases["menu: key='__unknown__'"])
         for event, field in (("menuEvent", "device_id"), ("errorDialogDismissedEvent", "request_id")):
