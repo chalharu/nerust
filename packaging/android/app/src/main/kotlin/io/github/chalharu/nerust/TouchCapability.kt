@@ -21,6 +21,14 @@ internal fun hasTouchscreen(packageManager: PackageManager): Boolean {
     return false
 }
 
+/** Key-event sources that divert to the gamepad path. Shared by gameplay
+ * (MainActivity) and capture (SettingsActivity) so the two can never
+ * disagree about what counts as a controller. */
+internal fun isControllerSource(source: Int): Boolean =
+    source and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
+        source and InputDevice.SOURCE_DPAD == InputDevice.SOURCE_DPAD ||
+        source and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
+
 /** Names of devices the Auto overlay gate counts, shared by the runtime
  * gate (MainActivity) and the settings status push (SettingsActivity).
  * One function so the two can never disagree about what "connected" means.

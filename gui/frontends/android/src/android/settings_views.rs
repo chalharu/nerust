@@ -19,7 +19,7 @@ use nerust_gui_viewmodel::settings::{SettingsViewModel, StoragePathError, Storag
 use nerust_settings_core::{
     editor::CaptureTarget,
     i18n::{UiText, port_count_line, port_summary, slot_description, text as ui_text},
-    input::{BUILTIN_KEYBOARD_MEMBER, GAMEPAD_MEMBER_PREFIX, KEYBOARD_MEMBER_PREFIX},
+    input::{BUILTIN_KEYBOARD_MEMBER, member_is_gamepad, member_is_shareable},
     model::{
         app_state::{DesktopAppState, PORT_PLAYER_1, PORT_PLAYER_2},
         input::{default_shortcut_bindings, ensure_default_shortcuts},
@@ -2438,7 +2438,7 @@ fn port_member_names(
                 .filter(|member| {
                     if member.as_str() == BUILTIN_KEYBOARD_MEMBER {
                         builtin_present
-                    } else if member.starts_with(KEYBOARD_MEMBER_PREFIX) {
+                    } else if member_is_shareable(member) {
                         keyboards.iter().any(|info| info.member == **member)
                     } else {
                         true
@@ -2476,9 +2476,9 @@ fn keyboard_member_name(member: &str, keyboards: &[KeyboardInfo], i18n: I18n) ->
         } else {
             info.name.clone()
         }
-    } else if member.starts_with(KEYBOARD_MEMBER_PREFIX) {
+    } else if member_is_shareable(member) {
         i18n.text(UiText::ExternalKeyboard)
-    } else if member.starts_with(GAMEPAD_MEMBER_PREFIX) {
+    } else if member_is_gamepad(member) {
         i18n.text(UiText::GamepadDevice)
     } else {
         member.to_string()

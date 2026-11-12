@@ -25,7 +25,7 @@ pub(crate) fn validate_bridge_event(value: &mut serde_json::Value) -> Option<()>
                 let valid = match name.as_str() {
                     "v" => {
                         normalize_bridge_integer(value)?;
-                        value.as_i64() == Some(1)
+                        value.as_i64() == Some(BRIDGE_EVENT_VERSION as i64)
                     }
                     "type" => value.as_str() == Some("menu"),
                     "action" => {
@@ -94,7 +94,7 @@ pub(crate) fn validate_bridge_event(value: &mut serde_json::Value) -> Option<()>
                 let valid = match name.as_str() {
                     "v" => {
                         normalize_bridge_integer(value)?;
-                        value.as_i64() == Some(1)
+                        value.as_i64() == Some(BRIDGE_EVENT_VERSION as i64)
                     }
                     "type" => value.as_str() == Some("error_dialog_dismissed"),
                     "request_id" => {

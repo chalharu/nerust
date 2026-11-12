@@ -177,6 +177,15 @@ def _validator_event_lines(event, definition):
     lines = [f'        {json.dumps(event)} => {{', "            for (name, value) in object.iter_mut() {",
               "                let valid = match name.as_str() {"]
     for name, prop in props.items():
+        if name == "v" and prop.get("const") == 1:
+            # Envelope version: normalize like any integer, but compare
+            # against the generated constant so a schema bump cannot leave
+            # a stale literal behind.
+            lines += [f'                    {json.dumps(name)} => {{',
+                      '                        normalize_bridge_integer(value)?;',
+                      '                        value.as_i64() == Some(BRIDGE_EVENT_VERSION as i64)',
+                      '                    }']
+            continue
         if field_type(prop) != "integer" and "enum" not in prop:
             lines += [f'                    {json.dumps(name)} => {rust_predicate(prop)},']
             continue

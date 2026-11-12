@@ -25,22 +25,15 @@ pub(crate) enum DpadAxis {
     Horizontal,
 }
 
-/// Axis of a dpad abstract, if it is one.
-pub(crate) fn dpad_axis_of(abs: AbstractKey) -> Option<DpadAxis> {
+/// Axis and opposite direction for a dpad abstract, if it is one.
+/// Single table so callers never pair a separate axis check with an
+/// `expect` on the opposite.
+pub(crate) fn dpad_pair(abs: AbstractKey) -> Option<(DpadAxis, AbstractKey)> {
     match abs {
-        AbstractKey::DpadUp | AbstractKey::DpadDown => Some(DpadAxis::Vertical),
-        AbstractKey::DpadLeft | AbstractKey::DpadRight => Some(DpadAxis::Horizontal),
-        _ => None,
-    }
-}
-
-/// Opposite direction of a dpad abstract, if it has one.
-pub(crate) fn opposite_of(abs: AbstractKey) -> Option<AbstractKey> {
-    match abs {
-        AbstractKey::DpadUp => Some(AbstractKey::DpadDown),
-        AbstractKey::DpadDown => Some(AbstractKey::DpadUp),
-        AbstractKey::DpadLeft => Some(AbstractKey::DpadRight),
-        AbstractKey::DpadRight => Some(AbstractKey::DpadLeft),
+        AbstractKey::DpadUp => Some((DpadAxis::Vertical, AbstractKey::DpadDown)),
+        AbstractKey::DpadDown => Some((DpadAxis::Vertical, AbstractKey::DpadUp)),
+        AbstractKey::DpadLeft => Some((DpadAxis::Horizontal, AbstractKey::DpadRight)),
+        AbstractKey::DpadRight => Some((DpadAxis::Horizontal, AbstractKey::DpadLeft)),
         _ => None,
     }
 }
@@ -72,7 +65,7 @@ impl FieldPressState {
         };
         self.control_field
             .insert((attachment.clone(), control.clone()), field);
-        let Some(axis) = dpad_axis_of(abs) else {
+        let Some((axis, opposite)) = dpad_pair(abs) else {
             return vec![(field, true)];
         };
         self.dpad_held
@@ -81,7 +74,6 @@ impl FieldPressState {
             .entry(abs)
             .or_default()
             .insert(control);
-        let opposite = opposite_of(abs).expect("dpad abstract has an opposite");
         if self.is_abstract_held(&attachment, opposite) {
             // Opposite held: neutralize the axis, both fields release.
             self.neutral.insert((attachment.clone(), axis));
@@ -110,7 +102,7 @@ impl FieldPressState {
         let Some((attachment, control, abs)) = dpad else {
             return vec![(field, self.is_held(field))];
         };
-        let Some(axis) = dpad_axis_of(abs) else {
+        let Some((axis, opposite)) = dpad_pair(abs) else {
             return vec![(field, self.is_held(field))];
         };
         let mut side_still_held = false;
@@ -141,7 +133,6 @@ impl FieldPressState {
         }
         // This side fully left. Resolve the pair: the still-held opposite
         // re-asserts, or the axis simply unblocks.
-        let opposite = opposite_of(abs).expect("dpad abstract has an opposite");
         self.neutral.remove(&(attachment.clone(), axis));
         if self.is_abstract_held(&attachment, opposite) {
             match self.peer_field(&attachment, opposite) {

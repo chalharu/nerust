@@ -61,6 +61,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.hideFromAccessibility
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.painterResource
@@ -834,10 +835,7 @@ private fun LazyListScope.settingsSearchResults(
             }
         }
     } else {
-        val hitKey = { _: Int, hit: Pair<SettingsSection, SettingsRow> ->
-            "search:${hit.first.id}:${hit.second.key}"
-        }
-        itemsIndexed(hits, key = hitKey) { _, (section, row) ->
+        items(hits, key = { hit -> "search:${hit.first.id}:${hit.second.key}" }) { (section, row) ->
             val trail =
                 listOf(breadcrumbOf(section.id), section.label)
                     .filter { it.isNotBlank() }
@@ -1118,7 +1116,7 @@ private fun SettingsCategoryList(
         // Cards show visible categories only; search above covers hidden
         // screens through the same `sections` list.
         val visibleSections = state.sections.filter { it.visible }
-        itemsIndexed(visibleSections, key = { _, section -> section.id }) { _, section ->
+        items(visibleSections, key = { section -> section.id }) { section ->
             // Summaries show inline-editable rows plus group rows that carry
             // a value (player/device summaries); bare chevrons stay out.
             // on/off labels ride the hoisted composable resolutions above.
@@ -1161,6 +1159,7 @@ private fun SettingsCategoryList(
                                 text = "•",
                                 style = MaterialTheme.typography.titleLarge,
                                 color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.semantics { hideFromAccessibility() },
                             )
                         }
                     }
@@ -1204,9 +1203,9 @@ private fun SettingsSectionList(
         contentPadding = PaddingValues(vertical = 12.dp),
     ) {
         settingsBannerItems(banners = banners, onCancelCapture = actions.onCancelCapture)
-        groups.forEach { group ->
+        groups.forEachIndexed { groupIndex, group ->
             if (group.title.isNotBlank()) {
-                item(key = "${section.id}#${group.title}") {
+                item(key = "${section.id}#$groupIndex") {
                     Text(
                         text = group.title,
                         style = MaterialTheme.typography.titleSmall,
@@ -1215,7 +1214,7 @@ private fun SettingsSectionList(
                     )
                 }
             }
-            item(key = "${section.id}#${group.title}#card") {
+            item(key = "${section.id}#$groupIndex#card") {
                 Card(
                     shape = RoundedCornerShape(28.dp),
                     colors =
@@ -1341,7 +1340,7 @@ private fun SettingsToggleRow(
                         onValueChange = onToggle,
                     )
                     .padding(horizontal = 24.dp, vertical = 12.dp)
-                    .semantics(mergeDescendants = true) { contentDescription = row.label },
+                    .semantics(mergeDescendants = true) {},
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -1431,8 +1430,7 @@ private fun SettingsSliderRow(
         modifier =
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 12.dp)
-                .semantics { contentDescription = row.label },
+                .padding(horizontal = 24.dp, vertical = 12.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1539,9 +1537,7 @@ private fun SettingsChoiceList(
                                         onClick = { onSelect(choiceIndex) },
                                     )
                                     .padding(vertical = 12.dp, horizontal = 20.dp)
-                                    .semantics(mergeDescendants = true) {
-                                        contentDescription = choice.label
-                                    },
+                                    .semantics(mergeDescendants = true) {},
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {

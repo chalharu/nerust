@@ -855,7 +855,15 @@ private fun DrawerActionItem(
     // and doubling it makes TalkBack hear the row twice.
     NavigationDrawerItem(
         // Icon is decorative: the item already carries the label for TalkBack.
-        icon = { Icon(painter = painterResource(id = iconRes), contentDescription = null) },
+        // Tint follows the drawer content color so bundled black vectors do
+        // not stay black on a dark sheet.
+        icon = {
+            Icon(
+                painter = painterResource(id = iconRes),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        },
         label = { Text(label) },
         selected = false,
         onClick = onClick,
