@@ -67,6 +67,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.painterResource
 import kotlin.math.roundToLong
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
 
 /** One pick-list entry: the value rides back to Rust by index, so Kotlin
@@ -131,42 +132,9 @@ internal fun parseSettingsSections(payload: JSONObject): List<SettingsSection> {
         val rows = mutableListOf<SettingsRow>()
         val fields = section.getJSONArray("rows")
         for (j in 0 until fields.length()) {
-            val row = fields.getJSONObject(j)
-            val choices = mutableListOf<SettingsChoice>()
-            val options = row.getJSONArray("choices")
-            for (k in 0 until options.length()) {
-                val option = options.getJSONObject(k)
-                choices +=
-                    SettingsChoice(
-                        label = option.getString("label"),
-                        enabled = option.getBoolean("enabled"),
-                        reason = option.getString("reason"),
-                    )
-            }
-            val kind = row.getString("kind")
-            if (kind !in setOf("choice", "toggle", "number", "info", "header", "group", "capture", "button")) {
-                Log.w(TAG, "unknown settings row kind: $kind (key=${row.getString("key")})")
-            }
-            rows +=
-                SettingsRow(
-                    key = row.getString("key"),
-                    label = row.getString("label"),
-                    kind = kind,
-                    choices = choices,
-                    selected = row.getInt("selected"),
-                    number = row.getLong("number"),
-                    step = row.getLong("step").coerceAtLeast(1L),
-                    min = row.getLong("min"),
-                    max = row.getLong("max"),
-                    unit = row.getString("unit"),
-                    text = row.getString("text"),
-                    target = row.getString("target"),
-                    visible = row.getBoolean("visible"),
-                    description = row.getString("description"),
-                    detailTarget = row.getString("detail_target"),
-                    enabled = row.optBoolean("enabled", true),
-                    reason = row.optString("reason", ""),
-                )
+            // One bad row must not kill the screen: skip it, keep the rest.
+            val parsed = parseSettingsRow(fields.optJSONObject(j))
+            if (parsed != null) rows += parsed
         }
         val id = section.getString("id")
         val label = section.getString("label")
@@ -175,6 +143,53 @@ internal fun parseSettingsSections(payload: JSONObject): List<SettingsSection> {
         out += SettingsSection(id = id, label = label, rows = rows.filter { it.visible }, visible = visible, sub = sub)
     }
     return out
+}
+
+/** One row or null when malformed (logged, skipped by the caller). */
+private fun parseSettingsRow(row: JSONObject?): SettingsRow? {
+    if (row == null) {
+        Log.w(TAG, "skipping null settings row")
+        return null
+    }
+    return try {
+        val choices = mutableListOf<SettingsChoice>()
+        val options = row.getJSONArray("choices")
+        for (k in 0 until options.length()) {
+            val option = options.getJSONObject(k)
+            choices +=
+                SettingsChoice(
+                    label = option.getString("label"),
+                    enabled = option.getBoolean("enabled"),
+                    reason = option.getString("reason"),
+                )
+        }
+        val kind = row.getString("kind")
+        if (kind !in setOf("choice", "toggle", "number", "info", "header", "group", "capture", "button")) {
+            Log.w(TAG, "unknown settings row kind: $kind (key=${row.optString("key")})")
+        }
+        SettingsRow(
+            key = row.getString("key"),
+            label = row.getString("label"),
+            kind = kind,
+            choices = choices,
+            selected = row.getInt("selected"),
+            number = row.getLong("number"),
+            step = row.getLong("step").coerceAtLeast(1L),
+            min = row.getLong("min"),
+            max = row.getLong("max"),
+            unit = row.getString("unit"),
+            text = row.getString("text"),
+            target = row.getString("target"),
+            visible = row.getBoolean("visible"),
+            description = row.getString("description"),
+            detailTarget = row.getString("detail_target"),
+            enabled = row.optBoolean("enabled", true),
+            reason = row.optString("reason", ""),
+        )
+    } catch (e: JSONException) {
+        Log.w(TAG, "skipping malformed settings row (key=${row.optString("key")})", e)
+        null
+    }
 }
 
 /** Single command builder: `payload` is op-specific JSON (`keyboards` uses

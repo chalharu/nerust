@@ -124,7 +124,9 @@ internal fun SlotMenuDialog(
 ) {
     var pendingDelete by remember { mutableStateOf<SlotEntry?>(null) }
     Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = MaterialTheme.shapes.extraLarge) {
+        // Same expressive theme as the settings card; DialogManager hosts bare.
+        NerustExpressiveHost {
+            Surface(shape = MaterialTheme.shapes.extraLarge) {
             Column(
                 modifier =
                     Modifier
@@ -154,6 +156,7 @@ internal fun SlotMenuDialog(
                     HorizontalDivider()
                 }
                 SlotMenuNewRow(onCreate = onCreate)
+                }
             }
         }
     }

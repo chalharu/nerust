@@ -13,7 +13,7 @@ import tomllib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from bridge_schema import load_sibling
+from bridge_schema import load_sibling, require
 
 GEN = load_sibling("generator", "generate-contract.py")
 
@@ -67,8 +67,7 @@ def _prop_cases(event, name, prop, base, required):
 def _conditional_cases(event, definition, base):
     """Conditional-required probes for gated events."""
     gates = definition.get("allOf", [])
-    if "if" in definition:
-        gates = [{"if": definition["if"], "then": definition["then"]}]
+    require("if" not in definition, "legacy top-level if/then shape removed; use allOf")
     cases = []
     for gate in gates:
         key, condition = next(iter(gate["if"]["properties"].items()))
