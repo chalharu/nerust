@@ -1,18 +1,28 @@
 package io.github.chalharu.nerust
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -20,9 +30,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -119,8 +129,11 @@ internal class SlotMenuState(
 
 private val SLOT_REFRESH_DELAYS_MS = longArrayOf(100L, 200L, 400L)
 
+/** Full-screen slot manager: a settings-grade screen (top bar + list),
+ * not a centered popup. Swipe a row or tap the trash icon to delete
+ * (both land on the same irreversible-delete confirm); tap selects. */
 @Composable
-internal fun SlotMenuDialog(
+internal fun SlotMenuScreen(
     rows: List<SlotEntry>,
     onSelect: (Long) -> Unit,
     onDelete: (Long) -> Unit,
@@ -128,39 +141,48 @@ internal fun SlotMenuDialog(
     onDismiss: () -> Unit,
 ) {
     var pendingDelete by remember { mutableStateOf<SlotEntry?>(null) }
-    Dialog(onDismissRequest = onDismiss) {
-        // Same expressive theme as the settings card; DialogManager hosts bare.
-        NerustExpressiveHost {
-            Surface(shape = MaterialTheme.shapes.extraLarge) {
-            Column(
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState())
-                        .padding(vertical = 8.dp),
-            ) {
-                Text(
-                    text = stringResource(R.string.drawer_slots),
-                    style = MaterialTheme.typography.titleLarge,
-                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
-                )
-                if (rows.isEmpty()) {
-                    Text(
-                        text = stringResource(R.string.slot_empty),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+    // Same expressive theme as the settings card; DialogManager hosts bare.
+    NerustExpressiveHost {
+        Surface(modifier = Modifier.fillMaxSize()) {
+            Scaffold(
+                topBar = {
+                    TopAppBar(
+                        title = { Text(text = stringResource(R.string.drawer_slots)) },
+                        navigationIcon = {
+                            IconButton(onClick = onDismiss) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_settings_back),
+                                    contentDescription = stringResource(R.string.settings_back),
+                                )
+                            }
+                        },
+                        colors =
+                            TopAppBarDefaults.topAppBarColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                            ),
                     )
-                }
-                rows.forEach { row ->
-                    SlotMenuRow(
-                        row = row,
-                        onSelect = { onSelect(row.id) },
-                        onDelete = { pendingDelete = row },
-                    )
-                    HorizontalDivider()
-                }
-                SlotMenuNewRow(onCreate = onCreate)
+                },
+            ) { padding ->
+                LazyColumn(contentPadding = padding) {
+                    if (rows.isEmpty()) {
+                        item {
+                            Text(
+                                text = stringResource(R.string.slot_empty),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
+                            )
+                        }
+                    }
+                    items(rows, key = { it.id }) { row ->
+                        SlotDismissableRow(
+                            row = row,
+                            onSelect = { onSelect(row.id) },
+                            onDelete = { pendingDelete = row },
+                        )
+                        HorizontalDivider()
+                    }
+                    item { SlotMenuNewRow(onCreate = onCreate) }
                 }
             }
         }
@@ -175,6 +197,50 @@ internal fun SlotMenuDialog(
             onDismiss = { pendingDelete = null },
         )
     }
+}
+
+/** One slot row with swipe-to-delete. The swipe only arms the shared
+ * confirm (never deletes directly: deletion is irreversible), so the
+ * dismiss state always snaps back. */
+@Composable
+private fun SlotDismissableRow(
+    row: SlotEntry,
+    onSelect: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val dismissState =
+        rememberSwipeToDismissBoxState(
+            confirmValueChange = { value ->
+                if (value != SwipeToDismissBoxValue.Settled && row.occupied) onDelete()
+                false
+            },
+        )
+    SwipeToDismissBox(
+        state = dismissState,
+        enableDismissFromStartToEnd = false,
+        backgroundContent = {
+            if (row.occupied) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.CenterEnd,
+                ) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_slot_delete),
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(end = 24.dp),
+                    )
+                }
+            }
+        },
+        content = {
+            SlotMenuRow(
+                row = row,
+                onSelect = onSelect,
+                onDelete = onDelete,
+            )
+        },
+    )
 }
 
 @Composable
@@ -202,10 +268,11 @@ private fun SlotMenuRow(
             )
         }
         if (row.occupied) {
-            TextButton(onClick = onDelete) {
-                Text(
-                    text = stringResource(R.string.slot_delete),
-                    color = MaterialTheme.colorScheme.error,
+            IconButton(onClick = onDelete) {
+                Icon(
+                    painter = painterResource(id = R.drawable.ic_slot_delete),
+                    contentDescription = stringResource(R.string.slot_delete),
+                    tint = MaterialTheme.colorScheme.error,
                 )
             }
         }
