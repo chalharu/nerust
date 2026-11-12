@@ -181,7 +181,8 @@ class SettingsActivity :
                 .put("keyboards", keyboards)
                 .put("capable", scan.touchCapable)
                 .put("gamepads", gamepads)
-        AppLocale.currentTag()?.let { payload.put("lang", it) }
+        AppLocale.savedTag(this).ifEmpty { AppLocale.currentTag().orEmpty() }
+            .takeIf { it.isNotEmpty() }?.let { payload.put("lang", it) }
         pushOp("device truth", "device_truth", payload)
     }
 

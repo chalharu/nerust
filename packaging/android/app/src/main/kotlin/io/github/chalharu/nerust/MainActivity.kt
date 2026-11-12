@@ -647,9 +647,12 @@ class MainActivity :
     }
 
     /** Push the terminal locale tag into the Rust vault so SystemDefault
-     * resolves without the LANG env Android never sets. */
+     * resolves without the LANG env Android never sets. The saved in-app
+     * choice wins; the system tag is only the fallback. */
     private fun pushSystemLocaleToVault() {
-        val tag = AppLocale.currentTag() ?: return
+        val tag =
+            AppLocale.savedTag(this).ifEmpty { AppLocale.currentTag().orEmpty() }
+        if (tag.isEmpty()) return
         try {
             pushSystemLocale(tag)
         } catch (e: Exception) {

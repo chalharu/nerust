@@ -197,8 +197,7 @@ def _validator_event_lines(event, definition):
     lines += [f'            for name in [{required}] {{',
               "                object.get(name)?;", "            }"]
     gates = definition.get("allOf", [])
-    if "if" in definition:
-        gates = [{"if": definition["if"], "then": definition["then"]}]
+    require("if" not in definition, "legacy top-level if/then shape removed; use allOf")
     for gate in gates:
         lines += _validator_gate_lines(gate)
     return lines + ["            Some(())", "        }"]

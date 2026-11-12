@@ -201,8 +201,12 @@ class StructureTests(unittest.TestCase):
                 else:
                     for action, field in (("controller", "device_id"), ("touch_gate", "pressed"),
                               ("select_slot", "slot_id"), ("delete_slot", "slot_id")):
-                        find_gate(menu, action)["then"]["required"].remove(field)
-                self.assertNotEqual(CONTRACT.outputs(changed)[path], baseline)
+                        with self.subTest(gate=action):
+                            changed = copy.deepcopy(original)
+                            menu = changed["definitions"]["menuEvent"]
+                            find_gate(menu, action)["then"]["required"].remove(field)
+                            self.assertNotEqual(CONTRACT.outputs(changed)[path], baseline)
+                    continue
 
     def test_modified_generated_validation_is_rejected(self):
         self.source["generated"] = self.source["generated"].replace("_ => false", "_ => true")

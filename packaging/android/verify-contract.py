@@ -363,13 +363,18 @@ def validate_producer(definitions, producer, kotlin):
                     f"unsupported extras value: {value}")
         puts_in_call = {key for key, _ in pairs}
         gated = next(
-            (action for action in ("TOUCH_GATE", "CONTROLLER", "SELECT_SLOT", "DELETE_SLOT")
+            (action for action in ("TOUCH_GATE", "CONTROLLER", "SELECT_SLOT", "DELETE_SLOT", "CREATE_SLOT")
              if f"MenuAction.{action}" in call),
             None,
         )
         if gated is None:
             require(not (puts_in_call & {"pressed", "device_id", "key", "slot_id"}),
                     "plain menuEvent must not carry gated fields")
+            continue
+        if gated == "CREATE_SLOT":
+            # Slot creation takes no payload by design (menuEvent allOf has
+            # no gate const for create_slot); fail loud on any extras.
+            require(not puts_in_call, "create_slot takes no extras")
             continue
         const = gated.lower()
         gate = [g for g in menu.get("allOf", [])

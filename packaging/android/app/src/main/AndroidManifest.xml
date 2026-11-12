@@ -26,6 +26,7 @@
             android:name="io.github.chalharu.nerust.SettingsActivity"
             android:configChanges="density|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
             android:exported="false"
+            android:launchMode="singleTop"
             android:parentActivityName="io.github.chalharu.nerust.MainActivity"
             android:theme="@android:style/Theme.NoTitleBar.Fullscreen" />
     </application>
