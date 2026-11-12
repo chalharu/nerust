@@ -199,6 +199,21 @@ pub(super) struct GamepadInfo {
 /// `keyboards`/`gamepads` upsert the vault's enumerated device lists from
 /// `payload`; `reset_section` restores one screen (or `all`) to defaults.
 /// `payload` is op-specific JSON (`keyboards`/`gamepads` only today).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum WireOp {
+    #[default]
+    Set,
+    Keyboards,
+    Touch,
+    Gamepads,
+    Locale,
+    ResetSection,
+    CancelCapture,
+    ClearBinding,
+    StartCapture,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct WireCommand {
     pub key: String,
@@ -206,14 +221,10 @@ pub(super) struct WireCommand {
     pub index: usize,
     #[serde(default)]
     pub number: i64,
-    #[serde(default = "default_op_set")]
-    pub op: String,
+    #[serde(default)]
+    pub op: WireOp,
     #[serde(default)]
     pub payload: serde_json::Value,
-}
-
-fn default_op_set() -> String {
-    "set".to_string()
 }
 
 /// View-model dependencies shared across JNI calls. `CoreFactory` is
@@ -426,15 +437,15 @@ pub(super) fn apply_command_to(
         serde_json::from_str(command_json).map_err(|error| error.to_string())?;
     with_vm_deps(|deps| {
         let i18n = I18n::resolve(snapshot.shared.general.language, *system_locale);
-        match command.op.as_str() {
-            "keyboards" => {
+        match command.op {
+            WireOp::Keyboards => {
                 apply_keyboards_command(keyboards, &command)?;
                 prune_missing_builtin(snapshot, keyboards);
             }
-            "touch" => apply_touch_command(touch_capable, &command)?,
-            "gamepads" => apply_gamepads_command(gamepads, &command)?,
-            "locale" => apply_locale_command(system_locale, &command)?,
-            "reset_section" => {
+            WireOp::Touch => apply_touch_command(touch_capable, &command)?,
+            WireOp::Gamepads => apply_gamepads_command(gamepads, &command)?,
+            WireOp::Locale => apply_locale_command(system_locale, &command)?,
+            WireOp::ResetSection => {
                 let vm = build_vm(snapshot, deps, i18n)?;
                 let truth = Projection {
                     keyboards,
@@ -445,7 +456,7 @@ pub(super) fn apply_command_to(
                 let sections = build_sections(&vm, snapshot, truth);
                 apply_reset_section(snapshot, deps, &sections, &command, truth)?;
             }
-            "cancel_capture" | "clear_binding" | "start_capture" => {
+            WireOp::CancelCapture | WireOp::ClearBinding | WireOp::StartCapture => {
                 let truth = Projection {
                     keyboards,
                     touch_capable: *touch_capable,
@@ -454,7 +465,7 @@ pub(super) fn apply_command_to(
                 };
                 apply_capture_command(snapshot, deps, &command, capture, truth)?
             }
-            "set" => {
+            WireOp::Set => {
                 let vm = build_vm(snapshot, deps, i18n)?;
                 let truth = Projection {
                     keyboards,
@@ -465,7 +476,6 @@ pub(super) fn apply_command_to(
                 let sections = build_sections(&vm, snapshot, truth);
                 apply_set_command(snapshot, deps, &vm, &sections, &command, i18n)?;
             }
-            op => return Err(format!("unknown command op: {op}")),
         }
         // Re-resolve: the command may have changed the language choice.
         let i18n = I18n::resolve(snapshot.shared.general.language, *system_locale);
@@ -717,7 +727,7 @@ fn apply_capture_command(
     capture: &mut CaptureSlot,
     truth: Projection,
 ) -> Result<(), String> {
-    if command.op == "cancel_capture" {
+    if command.op == WireOp::CancelCapture {
         *capture = None;
         return Ok(());
     }
@@ -728,8 +738,8 @@ fn apply_capture_command(
         return Err(format!("{}: not a capture row", command.key));
     }
     let target = decode_target(&row.target, deps)?;
-    match command.op.as_str() {
-        "clear_binding" => {
+    match command.op {
+        WireOp::ClearBinding => {
             vm.capture
                 .clear_binding(&target)
                 .map_err(|error| error.to_string())?;
@@ -737,7 +747,7 @@ fn apply_capture_command(
             *capture = None;
             Ok(())
         }
-        "start_capture" => {
+        WireOp::StartCapture => {
             vm.capture
                 .start_capture(target.clone())
                 .map_err(|error| error.to_string())?;
@@ -745,7 +755,7 @@ fn apply_capture_command(
             *capture = Some((target, prompt));
             Ok(())
         }
-        op => Err(format!("unknown command op: {op}")),
+        op => Err(format!("unknown capture op: {op:?}")),
     }
 }
 
@@ -956,7 +966,7 @@ fn reset_row(
                     key: row.key.clone(),
                     index: default_row.selected,
                     number: default_row.number,
-                    op: "set".to_string(),
+                    op: WireOp::Set,
                     payload: serde_json::Value::Null,
                 };
                 let vm = build_vm(snapshot, deps, i18n)?;
@@ -2836,7 +2846,7 @@ mod tests {
         capture: &mut CaptureSlot,
         keyboards: &mut Vec<KeyboardInfo>,
         key: &str,
-        op: &str,
+        op: WireOp,
         index: usize,
         number: i64,
     ) -> ViewPayload {
@@ -2845,7 +2855,7 @@ mod tests {
                 key: key.to_string(),
                 index,
                 number,
-                op: op.to_string(),
+                op,
                 payload: serde_json::Value::Null,
             })
             .unwrap();
@@ -2869,7 +2879,7 @@ mod tests {
             &mut None,
             &mut test_keyboards(),
             key,
-            "set",
+            WireOp::Set,
             index,
             number,
         )
@@ -3040,7 +3050,7 @@ mod tests {
                     key: "general.language".to_string(),
                     index: japanese,
                     number: 0,
-                    op: "set".to_string(),
+                    op: WireOp::Set,
                     payload: serde_json::Value::Null,
                 })
                 .unwrap(),
@@ -3082,7 +3092,7 @@ mod tests {
                     key: "audio.volume".to_string(),
                     index: 0,
                     number: 42,
-                    op: "set".to_string(),
+                    op: WireOp::Set,
                     payload: serde_json::Value::Null,
                 })
                 .unwrap(),
@@ -3139,7 +3149,7 @@ mod tests {
                     key: "general.language".to_string(),
                     index: english,
                     number: 0,
-                    op: "set".to_string(),
+                    op: WireOp::Set,
                     payload: serde_json::Value::Null,
                 })
                 .unwrap(),
@@ -3164,7 +3174,7 @@ mod tests {
             key: "locale".to_string(),
             index: 0,
             number: 0,
-            op: "locale".to_string(),
+            op: WireOp::Locale,
             payload: serde_json::json!({ "lang": "ja" }),
         })
         .unwrap();
@@ -3200,7 +3210,7 @@ mod tests {
                 key: "locale".to_string(),
                 index: 0,
                 number: 0,
-                op: "locale".to_string(),
+                op: WireOp::Locale,
                 payload: bad,
             })
             .unwrap();
@@ -3527,7 +3537,7 @@ mod tests {
             &mut None,
             &mut keyboards,
             "devices.p2.kbd:usb-1",
-            "set",
+            WireOp::Set,
             1,
             0,
         );
@@ -3556,7 +3566,7 @@ mod tests {
             &mut None,
             &mut keyboards,
             "devices.p2.kbd:usb-1",
-            "set",
+            WireOp::Set,
             0,
             0,
         );
@@ -3583,7 +3593,7 @@ mod tests {
             key: "keyboards".to_string(),
             index: 0,
             number: 0,
-            op: "keyboards".to_string(),
+            op: WireOp::Keyboards,
             payload: serde_json::to_value(vec![KeyboardInfo {
                 member: "kbd:usb-1".to_string(),
                 name: "USB Keyboard".to_string(),
@@ -3627,7 +3637,7 @@ mod tests {
                     key: "keyboards".to_string(),
                     index: 0,
                     number: 0,
-                    op: "keyboards".to_string(),
+                    op: WireOp::Keyboards,
                     payload: serde_json::Value::Array(vec![]),
                 })
                 .unwrap(),
@@ -3664,7 +3674,7 @@ mod tests {
             key: "keyboards".to_string(),
             index: 0,
             number: 0,
-            op: "keyboards".to_string(),
+            op: WireOp::Keyboards,
             payload: serde_json::to_value(test_keyboards()).unwrap(),
         })
         .unwrap();
@@ -3708,7 +3718,7 @@ mod tests {
             key: "gamepads".to_string(),
             index: 0,
             number: 0,
-            op: "gamepads".to_string(),
+            op: WireOp::Gamepads,
             payload: serde_json::to_value(test_gamepads()).unwrap(),
         })
         .unwrap();
@@ -3737,7 +3747,7 @@ mod tests {
             key: "gamepads".to_string(),
             index: 0,
             number: 0,
-            op: "gamepads".to_string(),
+            op: WireOp::Gamepads,
             payload: serde_json::json!([{ "name": "" }]),
         })
         .unwrap();
@@ -3776,7 +3786,7 @@ mod tests {
                 key: "touch".to_string(),
                 index: 0,
                 number: 0,
-                op: "touch".to_string(),
+                op: WireOp::Touch,
                 payload: serde_json::json!({ "capable": value }),
             })
             .unwrap();
@@ -3851,7 +3861,7 @@ mod tests {
             key: "reset.play".to_string(),
             index: 0,
             number: 0,
-            op: "reset_section".to_string(),
+            op: WireOp::ResetSection,
             payload: serde_json::Value::Null,
         })
         .unwrap();
@@ -4008,7 +4018,7 @@ mod tests {
             &mut capture,
             &mut test_keyboards(),
             &key,
-            "start_capture",
+            WireOp::StartCapture,
             0,
             0,
         );
@@ -4099,7 +4109,7 @@ mod tests {
             &mut capture,
             &mut test_keyboards(),
             &key,
-            "clear_binding",
+            WireOp::ClearBinding,
             0,
             0,
         );
@@ -4336,7 +4346,7 @@ mod tests {
                 key: "nope.missing".to_string(),
                 index: 0,
                 number: 0,
-                op: "set".to_string(),
+                op: WireOp::Set,
                 payload: serde_json::Value::Null,
             })
             .unwrap();
@@ -4357,7 +4367,7 @@ mod tests {
                 key: "audio.sample_rate".to_string(),
                 index: 99,
                 number: 0,
-                op: "set".to_string(),
+                op: WireOp::Set,
                 payload: serde_json::Value::Null,
             })
             .unwrap();
@@ -4374,18 +4384,14 @@ mod tests {
                 .is_err()
             );
 
-            let bad_op = serde_json::to_string(&WireCommand {
-                key: "audio.volume".to_string(),
-                index: 0,
-                number: 42,
-                op: "frobnicate".to_string(),
-                payload: serde_json::Value::Null,
-            })
-            .unwrap();
+            // Unknown wire ops fail at the parse boundary (the op enum is
+            // exhaustive, so dispatch itself cannot see them).
+            let bad_op =
+                r#"{"key":"audio.volume","index":0,"number":42,"op":"frobnicate","payload":null}"#;
             assert!(
                 apply_command_to(
                     &mut snapshot,
-                    &bad_op,
+                    bad_op,
                     &mut None,
                     &mut test_keyboards(),
                     &mut None,
@@ -4399,7 +4405,7 @@ mod tests {
                 key: "devices.evil.kbd:builtin".to_string(),
                 index: 1,
                 number: 0,
-                op: "set".to_string(),
+                op: WireOp::Set,
                 payload: serde_json::Value::Null,
             })
             .unwrap();
@@ -4421,7 +4427,7 @@ mod tests {
                 key: "reset.evil".to_string(),
                 index: 0,
                 number: 0,
-                op: "reset_section".to_string(),
+                op: WireOp::ResetSection,
                 payload: serde_json::Value::Null,
             })
             .unwrap();

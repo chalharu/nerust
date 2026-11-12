@@ -101,6 +101,27 @@ fn build_touch_overlay(
 }
 
 impl SessionHandle {
+    /// Shared press/release tail: the OR/neutral machine resolves updates,
+    /// then they apply to the live input in one place.
+    fn commit_press(
+        &mut self,
+        field: usize,
+        source: FieldSource,
+        dpad: Option<(String, String, AbstractKey)>,
+        pressed: bool,
+    ) {
+        let updates = if pressed {
+            self.input.press_state.press(field, source, dpad)
+        } else {
+            self.input.press_state.release(field, source, dpad)
+        };
+        if let Some(gui_input) = self.emu.input_mut() {
+            for (field, assert) in updates {
+                let _ = gui_input.set(field, InputValue::Digital(assert));
+            }
+        }
+    }
+
     /// Called by touch overlay (Android) with a pre-resolved DigitalInputEvent.
     /// Routes through the OR/neutral machine so multi-device holds merge and
     /// opposite dpad directions neutralize instead of sticking.
@@ -119,17 +140,12 @@ impl SessionHandle {
             .input
             .abstract_for(&attachment, &control)
             .and_then(|abs| dpad_axis_of(abs).map(|_| (attachment, control, abs)));
-        let source = FieldSource::Control(event.attachment, event.control);
-        let updates = if event.is_pressed() {
-            self.input.press_state.press(field, source, dpad)
-        } else {
-            self.input.press_state.release(field, source, dpad)
-        };
-        if let Some(gui_input) = self.emu.input_mut() {
-            for (field, assert) in updates {
-                let _ = gui_input.set(field, InputValue::Digital(assert));
-            }
-        }
+        self.commit_press(
+            field,
+            FieldSource::Control(event.attachment, event.control),
+            dpad,
+            event.is_pressed(),
+        );
     }
 
     pub fn handle_keyboard_key(&mut self, key: Key, pressed: bool) -> Option<KeyboardShortcut> {
@@ -150,17 +166,7 @@ impl SessionHandle {
                     .abstract_for(&attachment, &control)
                     .and_then(|abs| dpad_axis_of(abs).map(|_| (attachment, control, abs)))
             });
-            let source = FieldSource::Key(key);
-            let updates = if pressed {
-                self.input.press_state.press(field, source, dpad)
-            } else {
-                self.input.press_state.release(field, source, dpad)
-            };
-            if let Some(gui_input) = self.emu.input_mut() {
-                for (field, assert) in updates {
-                    let _ = gui_input.set(field, InputValue::Digital(assert));
-                }
-            }
+            self.commit_press(field, FieldSource::Key(key), dpad, pressed);
         }
 
         if first_press {

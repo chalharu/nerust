@@ -204,7 +204,7 @@ class ChromeManager(private val activity: MainActivity) {
         val respond = !isOverlayHidden()
         if (lastTouchGatePushed == respond) return
         lastTouchGatePushed = respond
-        activity.sendMenuAction(menuEventJson(MenuAction.TOUCH_GATE, respond))
+        activity.sendMenuAction(touchGateEventJson(respond))
     }
 
     fun configureControlsOverlay(
@@ -388,7 +388,7 @@ class ChromeManager(private val activity: MainActivity) {
     fun dispatchMenuAction(action: String) {
         removeDrawerOverlay()
         // Kotlin builds the v1 envelope; Rust decodes JSON only.
-        activity.sendMenuAction(menuEventJson(action, false))
+        activity.sendMenuAction(menuEventJson(action))
     }
 
     fun dismissChromePopups() {
