@@ -145,12 +145,7 @@ internal fun parseSettingsSections(payload: JSONObject): List<SettingsSection> {
     return out
 }
 
-/** One row or null when malformed (logged, skipped by the caller). */
-private fun parseSettingsRow(row: JSONObject?): SettingsRow? {
-    if (row == null) {
-        Log.w(TAG, "skipping null settings row")
-        return null
-    }
+private fun parseSettingsChoices(row: JSONObject): List<SettingsChoice>? {
     return try {
         val choices = mutableListOf<SettingsChoice>()
         val options = row.getJSONArray("choices")
@@ -163,6 +158,21 @@ private fun parseSettingsRow(row: JSONObject?): SettingsRow? {
                     reason = option.getString("reason"),
                 )
         }
+        choices
+    } catch (e: JSONException) {
+        Log.w(TAG, "skipping malformed settings choices (key=${row.optString("key")})", e)
+        null
+    }
+}
+
+/** One row or null when malformed (logged, skipped by the caller). */
+private fun parseSettingsRow(row: JSONObject?): SettingsRow? {
+    if (row == null) {
+        Log.w(TAG, "skipping null settings row")
+        return null
+    }
+    return try {
+        val choices = parseSettingsChoices(row) ?: return null
         val kind = row.getString("kind")
         if (kind !in setOf("choice", "toggle", "number", "info", "header", "group", "capture", "button")) {
             Log.w(TAG, "unknown settings row kind: $kind (key=${row.optString("key")})")

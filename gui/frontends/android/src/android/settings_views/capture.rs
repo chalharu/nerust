@@ -5,17 +5,11 @@
 
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_input_traits::Key;
-use nerust_settings_core::editor::CaptureTarget;
 
 use super::projection::project_fresh;
-use super::wire::*;
-
-/// Single capture gate: capture rows enable (and the command path accepts)
-/// exactly when at least one input device is enumerated. Rows derive from
-/// this; the command path rejects only via the row's enabled state.
-pub(super) fn capture_open(keyboards: &[KeyboardInfo], gamepads: &[GamepadInfo]) -> bool {
-    !keyboards.is_empty() || !gamepads.is_empty()
-}
+use super::wire::{
+    CaptureSlot, Projection, ViewPayload, build_vm, sync_snapshot_from_vm, with_vm_deps,
+};
 
 /// Hardware key routing for capture (and future keyboard play): Android
 /// keycodes to `Key`. Only pressed events with an active capture mutate.
@@ -165,40 +159,4 @@ fn android_keycode_to_key(keycode: i32) -> Option<Key> {
         .binary_search_by_key(&keycode, |(code, _)| *code)
         .ok()
         .map(|index| ANDROID_KEYCODE_TABLE[index].1)
-}
-
-pub(super) fn target_system(target: &CaptureTarget, deps: &VmDeps) -> String {
-    match target {
-        CaptureTarget::Binding { system, .. } => system.to_string(),
-        CaptureTarget::Shortcut(_) => deps
-            .factories
-            .first()
-            .map(|factory| factory.system_id().to_string())
-            .unwrap_or_default(),
-    }
-}
-
-/// Opaque capture target: newline-free JSON the key must not parse.
-/// The `Value` form is the internal boundary (single serialization at the
-/// row edge); the command path decodes the row string once per command.
-fn encode_target_value(target: &CaptureTarget, system: &str) -> serde_json::Value {
-    match target {
-        CaptureTarget::Binding {
-            attachment,
-            control,
-            ..
-        } => serde_json::json!({
-            "kind": "binding",
-            "system": system,
-            "attachment": attachment,
-            "control": control,
-        }),
-        CaptureTarget::Shortcut(action) => {
-            serde_json::json!({"kind": "shortcut", "action": action})
-        }
-    }
-}
-
-pub(super) fn encode_target(target: &CaptureTarget, system: &str) -> String {
-    encode_target_value(target, system).to_string()
 }

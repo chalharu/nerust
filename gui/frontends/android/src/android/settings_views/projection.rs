@@ -19,8 +19,11 @@ use nerust_settings_core::{
     },
 };
 
-use super::capture::{capture_open, encode_target, target_system};
-use super::wire::*;
+use super::wire::{
+    CaptureSlot, CaptureWire, GamepadInfo, I18n, KeyboardInfo, Projection, RowWire, SectionWire,
+    ViewPayload, VmDeps, build_vm, button_row, capture_open, capture_row, choice_row, draft_issues,
+    encode_target, group_row, header_row, info_row, number_row, target_system, toggle_row,
+};
 use crate::bridge_contract::SETTINGS_SCHEMA_VERSION;
 
 /// Assemble the wire payload from an already-built view model: sections,

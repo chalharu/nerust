@@ -19,7 +19,7 @@ DECODER = load_sibling("decoder_contract", "test-decoder-contract.py")
 
 def gated_probe_mutations(schema):
     """One (gate const, removed field) pair per gated action, schema-derived."""
-    return [(action.lower(), sorted(required)[0])
+    return [(action.lower(), min(required))
             for action, (required, _forbidden) in sorted(gates_by_action(schema).items())]
 
 
