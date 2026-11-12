@@ -147,6 +147,8 @@ internal class SlotMenuState(
     ) {
         if (!alive(gen)) return
         if (raw == null || raw == lastRaw) {
+            // The slot op lands on the live session asynchronously: keep
+            // polling (backoff, ~3s budget) instead of stranding stale rows.
             poll(query, gen, attempt + 1)
         } else {
             lastRaw = raw
@@ -155,7 +157,7 @@ internal class SlotMenuState(
     }
 }
 
-private val SLOT_REFRESH_DELAYS_MS = longArrayOf(100L, 200L, 400L)
+private val SLOT_REFRESH_DELAYS_MS = longArrayOf(100L, 200L, 400L, 800L, 1600L)
 
 /** Full-screen slot manager: a settings-grade screen (top bar + list),
  * not a centered popup. Tap selects; long-press opens the row menu;
