@@ -714,6 +714,58 @@ class MainActivity :
 
     private external fun nativeIsEmulationPaused(): Boolean
 
+    /** Slot-list query for the drawer submenu (vault mirror, published
+     * after every session command). Plain wrapper like the pause query:
+     * the external stays private so the JVM name never mangles. */
+    private fun querySlotList(): String? =
+        try {
+            nativeSlotList()
+        } catch (e: Exception) {
+            Log.e(TAG, "nativeSlotList failed", e)
+            null
+        }
+
+    private external fun nativeSlotList(): String
+
+    /** Drawer slot submenu: list, select, create, and delete behind a
+     * confirm. Select/create dismiss (the op lands on the live session);
+     * delete stays open and refreshes from the republished mirror. */
+    internal fun showSlotMenu() {
+        val raw = querySlotList() ?: return
+        val state = SlotMenuState(raw, parseSlotList(raw))
+        dialogManager.show(
+            dialogTag = SLOT_MENU_TAG,
+            contentDescription = "slots:${state.rows.size}",
+            ownedByTest = false,
+            onDismiss = { state.stop() },
+        ) { dismiss ->
+            SlotMenuDialog(
+                rows = state.rows,
+                onSelect = { id ->
+                    sendMenuAction(
+                        menuEvent(MenuAction.SELECT_SLOT) {
+                            put("slot_id", id)
+                        },
+                    )
+                    dismiss()
+                },
+                onDelete = { id ->
+                    sendMenuAction(
+                        menuEvent(MenuAction.DELETE_SLOT) {
+                            put("slot_id", id)
+                        },
+                    )
+                    state.refreshAfter(::querySlotList)
+                },
+                onCreate = {
+                    sendMenuAction(menuEvent(MenuAction.CREATE_SLOT))
+                    dismiss()
+                },
+                onDismiss = dismiss,
+            )
+        }
+    }
+
     private external fun onFilePickerResult(uri: String?)
 
     private external fun onMenuAction(action: String)

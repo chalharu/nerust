@@ -119,6 +119,10 @@ dependencies {
     implementation("androidx.savedstate:savedstate:$savedStateVersion")
 
     testImplementation("junit:junit:$junitVersion")
+    // JVM unit tests run without the Android framework (org.json stubs):
+    // the reference implementation lets JSON parsing tests execute.
+    // Test-only: never ships in the APK.
+    testImplementation("org.json:json:20240303")
 
     androidTestImplementation("androidx.test:core:$androidxTestCoreVersion")
     androidTestImplementation("androidx.test:runner:$androidxTestRunnerVersion")

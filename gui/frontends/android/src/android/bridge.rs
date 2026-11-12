@@ -9,6 +9,7 @@ use std::{
 use jni::objects::{JIntArray, JObject};
 use jni::refs::Global;
 use nerust_core_traits::peripheral::{AccelerationSample, AccelerometerInputHandle};
+use nerust_persistence::model::StateSlotSummary;
 use nerust_settings_core::model::language::AppLanguage;
 use winit::{event_loop::EventLoopProxy, platform::android::activity::AndroidApp};
 
@@ -102,6 +103,12 @@ pub(super) struct SettingsSlot {
     /// session command). The drawer reads it once per open for the dynamic
     /// Pause/Resume row; synchronous vault read, never the live session.
     pub(super) emulation_paused: bool,
+    /// Slot list mirror for the drawer submenu (event loop, republished
+    /// after every session command). Cloned summaries, never a live lock:
+    /// the JNI list query reads this synchronously on the Java thread.
+    pub(super) slots: Vec<StateSlotSummary>,
+    /// Active slot mirror, republished with the list above.
+    pub(super) active_slot: Option<u64>,
 }
 
 impl SettingsSlot {
@@ -115,6 +122,8 @@ impl SettingsSlot {
             gamepads: Vec::new(),
             system_locale: None,
             emulation_paused: false,
+            slots: Vec::new(),
+            active_slot: None,
         }
     }
 }

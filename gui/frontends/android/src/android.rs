@@ -124,6 +124,11 @@ pub(super) fn register_main_activity_natives(
                     as *mut c_void,
             ),
             jni::NativeMethod::from_raw_parts(
+                jni_str!("nativeSlotList"),
+                jni_str!("()Ljava/lang/String;"),
+                menu::Java_io_github_chalharu_nerust_MainActivity_nativeSlotList as *mut c_void,
+            ),
+            jni::NativeMethod::from_raw_parts(
                 jni_str!("onSystemInsetsChanged"),
                 jni_str!("([I)V"),
                 bridge::Java_io_github_chalharu_nerust_MainActivity_onSystemInsetsChanged
@@ -627,6 +632,12 @@ impl AndroidFrontend {
                         pressed,
                     );
                 }
+                MenuAction::CreateSlot => {
+                    let _ = self.exec(SessionCommand::CreateSlot);
+                }
+                MenuAction::DeleteSlot(slot_id) => {
+                    let _ = self.exec(SessionCommand::DeleteSlot(slot_id));
+                }
                 MenuAction::TouchGate { respond } => {
                     self.chrome
                         .input
@@ -686,6 +697,9 @@ impl AndroidFrontend {
                 MenuAction::Reset => self.reset(),
                 MenuAction::SaveState => {
                     let _ = self.exec(SessionCommand::SaveActiveSlotOrNew);
+                }
+                MenuAction::SelectSlot(slot_id) => {
+                    let _ = self.exec(SessionCommand::SelectActiveSlot(slot_id));
                 }
                 MenuAction::TogglePause => self.toggle_pause(),
             },
@@ -762,9 +776,12 @@ impl AndroidFrontend {
                 }
                 // Single choke point for every pause mutation (drawer toggle,
                 // shortcuts, auto-pause, error dialogs): republish so the
-                // drawer query below never reads stale truth.
+                // drawer query below never reads stale truth. The slot list
+                // rides along: cloned summaries, no I/O on this path.
                 bridge::with_settings(|state| {
                     state.emulation_paused = self.core.session.tick_metrics().paused;
+                    state.slots = self.core.session.slots().to_vec();
+                    state.active_slot = self.core.session.active_slot_id();
                 });
                 Some(o)
             }

@@ -37,6 +37,16 @@
     <string name="drawer_resume">Resume</string>
     <string name="drawer_save_state">Save State</string>
     <string name="drawer_load_state">Load State</string>
+    <string name="drawer_slots">Slots</string>
+    <string name="slot_title">Slot %1$d</string>
+    <string name="slot_empty">Empty</string>
+    <string name="slot_unknown_time">Unknown</string>
+    <string name="slot_active">Active</string>
+    <string name="slot_new">New slot</string>
+    <string name="slot_new_hint">Save to a new slot</string>
+    <string name="slot_delete">Delete</string>
+    <string name="slot_delete_title">Delete %1$s?</string>
+    <string name="slot_delete_message">%1$s (%2$s) will be permanently deleted. This cannot be undone.</string>
     <string name="drawer_reset">Reset</string>
     <string name="drawer_unload_rom">Unload ROM</string>
     <string name="drawer_exit">Exit</string>
