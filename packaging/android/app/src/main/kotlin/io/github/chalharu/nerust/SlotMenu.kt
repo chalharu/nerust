@@ -112,28 +112,38 @@ internal class SlotMenuState(
         poll(query, ++generation, 0)
     }
 
+    private fun alive(gen: Int): Boolean = !stopped && gen == generation
+
     private fun poll(
         query: () -> String?,
         gen: Int,
         attempt: Int,
     ) {
-        if (stopped || gen != generation || attempt >= SLOT_REFRESH_DELAYS_MS.size) return
+        if (!alive(gen)) return
+        if (attempt >= SLOT_REFRESH_DELAYS_MS.size) return
         BridgeIo.scheduleIo(SLOT_REFRESH_DELAYS_MS[attempt]) {
-            if (stopped || gen != generation) return@scheduleIo
+            if (!alive(gen)) return@scheduleIo
             val raw = try {
                 query()
             } catch (_: Exception) {
                 null
             }
-            BridgeIo.postMain {
-                if (stopped || gen != generation) return@postMain
-                if (raw != null && raw != lastRaw) {
-                    lastRaw = raw
-                    rows = parseSlotList(raw)
-                } else {
-                    poll(query, gen, attempt + 1)
-                }
-            }
+            BridgeIo.postMain { onPollResult(query, raw, gen, attempt) }
+        }
+    }
+
+    private fun onPollResult(
+        query: () -> String?,
+        raw: String?,
+        gen: Int,
+        attempt: Int,
+    ) {
+        if (!alive(gen)) return
+        if (raw == null || raw == lastRaw) {
+            poll(query, gen, attempt + 1)
+        } else {
+            lastRaw = raw
+            rows = parseSlotList(raw)
         }
     }
 }
