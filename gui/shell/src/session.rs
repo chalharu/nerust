@@ -37,7 +37,9 @@ use nerust_gui_runtime::settings::{
     HostBackendCapabilities, SettingsError, SettingsPaths, SettingsSnapshot,
     manager::SettingsManager,
 };
-use nerust_input_traits::{AbstractKey, InputAssignments, Key, UnifiedFieldMap};
+use nerust_input_traits::{
+    AbstractKey, AttachmentId, DigitalControlId, InputAssignments, Key, UnifiedFieldMap,
+};
 use nerust_persistence::error::PersistenceError;
 use nerust_render_traits::{FrameBuffer, VideoRenderProfile};
 use nerust_settings_core::factory::settings_view;
@@ -115,6 +117,39 @@ pub enum KeyboardShortcut {
     OpenDebugger,
 }
 
+/// Bounded string interner for persisted device names.
+/// Settings/topology names are a fixed small set, so one box per unique
+/// string is a fixed cost, never a per-event cost. The map keeps one owned
+/// copy per id for repeat lookups; the leak behind each id lives as long
+/// as the department that interned it.
+#[derive(Debug, Default)]
+struct IdInterner {
+    attachments: HashMap<String, AttachmentId>,
+    controls: HashMap<String, DigitalControlId>,
+}
+
+impl IdInterner {
+    fn attachment(&mut self, name: &str) -> AttachmentId {
+        if let Some(id) = self.attachments.get(name) {
+            return *id;
+        }
+        let leaked: &'static str = Box::leak(name.to_owned().into_boxed_str());
+        let id = AttachmentId::new(leaked);
+        self.attachments.insert(name.to_owned(), id);
+        id
+    }
+
+    fn control(&mut self, name: &str) -> DigitalControlId {
+        if let Some(id) = self.controls.get(name) {
+            return *id;
+        }
+        let leaked: &'static str = Box::leak(name.to_owned().into_boxed_str());
+        let id = DigitalControlId::new(leaked);
+        self.controls.insert(name.to_owned(), id);
+        id
+    }
+}
+
 /// Input department: assignments, key maps, live runtime. One owner
 /// for the input domain so `SessionHandle` stays a facade.
 struct InputDept {
@@ -122,8 +157,10 @@ struct InputDept {
     /// Reverse map: keyboard key → field index, rebuilt on binding/controller change.
     key_field_map: HashMap<nerust_input_traits::Key, usize>,
     pressed_keys: HashSet<Key>,
-    /// Key → (attachment, control) for dpad-neutral resolution.
-    key_source: HashMap<nerust_input_traits::Key, (String, String)>,
+    /// Key → Copy (attachment, control) for dpad-neutral resolution.
+    /// Interned at rebuild time so the hot path never allocates.
+    key_source: HashMap<nerust_input_traits::Key, (AttachmentId, DigitalControlId)>,
+    interner: IdInterner,
     /// OR merge + neutral resolution across keyboards and controls.
     press_state: field_press::FieldPressState,
     topology_epoch: u64,
@@ -139,6 +176,7 @@ impl InputDept {
             key_field_map: HashMap::new(),
             pressed_keys: HashSet::new(),
             key_source: HashMap::new(),
+            interner: IdInterner::default(),
             press_state: field_press::FieldPressState::default(),
             topology_epoch: 0,
             touch_cache: Default::default(),
@@ -151,6 +189,8 @@ impl InputDept {
 
     /// Rebuild the keyboard reverse map from the implicit profile.
     /// Takes only the bindings it reads; never reaches into settings or the registry.
+    /// Attachment/control names intern to Copy ids here so the hot path
+    /// never allocates.
     pub(crate) fn rebuild_key_field_map(
         &mut self,
         bindings: Option<&[nerust_settings_core::model::input::KeyboardBinding]>,
@@ -165,7 +205,10 @@ impl InputDept {
                 {
                     self.key_source.insert(
                         binding.key,
-                        (binding.attachment.as_str().to_string(), control.clone()),
+                        (
+                            self.interner.attachment(binding.attachment.as_str()),
+                            self.interner.control(control),
+                        ),
                     );
                 }
             }
@@ -192,23 +235,27 @@ impl InputDept {
     /// Same traversal as `build_touch_overlay` in `session/input.rs`, kept
     /// separate on purpose: the overlay fans out whole port sets into
     /// controls, while this resolves one control's abstract.
-    fn abstract_for(&self, attachment: &str, control: &str) -> Option<AbstractKey> {
+    fn abstract_for(
+        &self,
+        attachment: AttachmentId,
+        control: DigitalControlId,
+    ) -> Option<AbstractKey> {
         use nerust_input_traits::ControlId;
         for (_slot, profile) in self.current_assignments.slots() {
             let Some(profile) = profile else {
                 continue;
             };
             for set in profile.port_sets() {
-                if !set.ports.iter().any(|port| port.as_str() == attachment) {
+                if !set.ports.contains(&attachment) {
                     continue;
                 }
                 for (port, group) in set.ports.iter().zip(profile.port_groups()) {
-                    if port.as_str() != attachment {
+                    if *port != attachment {
                         continue;
                     }
                     for info in *group {
                         if let ControlId::Digital(id) = info.id
-                            && id.as_str() == control
+                            && id == control
                         {
                             return info.abstract_key;
                         }
@@ -220,12 +267,17 @@ impl InputDept {
     }
 
     /// Dpad context for the OR/neutral machine: resolved abstract plus the
-    /// owned pair the machine keys on. `None` for non-dpad controls, so both
-    /// input paths share one gate instead of copy-pasting it.
-    fn dpad_for(&self, attachment: &str, control: &str) -> Option<(String, String, AbstractKey)> {
+    /// Copy pair the machine keys on. `None` for non-dpad controls, so both
+    /// input paths share one gate instead of copy-pasting it. No
+    /// allocation: every id here is already Copy.
+    fn dpad_for(
+        &self,
+        attachment: AttachmentId,
+        control: DigitalControlId,
+    ) -> Option<(AttachmentId, DigitalControlId, AbstractKey)> {
         let abs = self.abstract_for(attachment, control)?;
         field_press::dpad_pair(abs)?;
-        Some((attachment.to_string(), control.to_string(), abs))
+        Some((attachment, control, abs))
     }
 
     /// Persistable projection of the live assignments: only slot and controller ids survive.

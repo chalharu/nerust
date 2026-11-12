@@ -157,7 +157,7 @@ class MainActivity :
         chromeManager.onConfigurationChanged()
         // Tell Rust to rebuild its touch overlay even if no winit Resized event arrives.
         // The Rust re-push converges with the re-attach above.
-        sendMenuAction(menuEventJson(MenuAction.ORIENTATION_CHANGED))
+        sendMenuAction(menuEvent(MenuAction.ORIENTATION_CHANGED))
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -219,13 +219,25 @@ class MainActivity :
             chromeManager.noteControllerInput()
             sensorController.noteControllerInput()
         }
-        sendMenuAction(controllerEventJson(deviceId, key, pressed))
+        sendMenuAction(
+                menuEvent(MenuAction.CONTROLLER) {
+                    put("device_id", deviceId)
+                    put("key", key)
+                    put("pressed", pressed)
+                },
+            )
         if (keys.isEmpty()) controllerPressed.remove(deviceId)
     }
 
     private fun releaseController(deviceId: Int) {
         controllerPressed.remove(deviceId)?.toList()?.forEach { key ->
-            sendMenuAction(controllerEventJson(deviceId, key, false))
+            sendMenuAction(
+                menuEvent(MenuAction.CONTROLLER) {
+                    put("device_id", deviceId)
+                    put("key", key)
+                    put("pressed", false)
+                },
+            )
         }
     }
 
@@ -257,13 +269,13 @@ class MainActivity :
      * touchscreen device): settings and runtime must agree, or "Always"
      * would save yet never draw. */
     private fun refreshControllerPresence() {
-        chromeManager.setTouchCapable(hasTouchscreen(packageManager))
-        val present = connectedGamepadNames()
-        if (present.isNotEmpty()) {
+        val scan = scanDeviceTruth(packageManager)
+        chromeManager.setTouchCapable(scan.touchCapable)
+        if (scan.gamepadNames.isNotEmpty()) {
             // Debug breadcrumb for Auto-hide reports: which device hid it.
-            Log.d(TAG, "overlay auto-hide counts gamepad: ${present.joinToString()}")
+            Log.d(TAG, "overlay auto-hide counts gamepad: ${scan.gamepadNames.joinToString()}")
         }
-        chromeManager.setControllerConnected(present.isNotEmpty())
+        chromeManager.setControllerConnected(scan.gamepadNames.isNotEmpty())
     }
 
     override fun onPause() {

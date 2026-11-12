@@ -1,30 +1,19 @@
 package io.github.chalharu.nerust
 
-import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.hardware.input.InputManager
-import android.os.Build
 import android.os.Bundle
 import android.util.Log
-import android.view.InputDevice
 import android.view.KeyEvent
-import android.window.OnBackInvokedCallback
-import android.window.OnBackInvokedDispatcher
+import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.LifecycleRegistry
-import androidx.lifecycle.ViewModelStore
-import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
-import androidx.savedstate.SavedStateRegistry
-import androidx.savedstate.SavedStateRegistryController
-import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import org.json.JSONException
 import org.json.JSONArray
@@ -41,40 +30,18 @@ private const val EXTRA_ORIENTATION = "nerust.extra.ORIENTATION"
  * JSON. Being an Activity (not a Dialog window) `dispatchKeyEvent` fires
  * directly, so no dialog key hook is needed for hardware-key capture. */
 class SettingsActivity :
-    Activity(),
-    LifecycleOwner,
-    SavedStateRegistryOwner,
-    ViewModelStoreOwner,
+    ComponentActivity(),
     InputManager.InputDeviceListener {
-    private val lifecycleRegistry = LifecycleRegistry(this)
-    private val registryController = SavedStateRegistryController.create(this)
-    private val store = ViewModelStore()
     private var navActions: SettingsNavActions? = null
     private var resultSent = false
     private var requestId: Long = -1L
-    // Predictive-back callback (API 33+): without it the gesture finishes
-    // the activity, bypassing the in-stack back handling below. Typed as
-    // Any so class verification never touches the API-33 type on old OS.
-    private var backDispatcherCallback: Any? = null
-
-    override val lifecycle: Lifecycle
-        get() = lifecycleRegistry
-
-    override val savedStateRegistry: SavedStateRegistry
-        get() = registryController.savedStateRegistry
-
-    override val viewModelStore: ViewModelStore
-        get() = store
 
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(AppLocale.wrap(newBase))
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        registryController.performAttach()
-        registryController.performRestore(savedInstanceState)
         super.onCreate(savedInstanceState)
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         // Follow the game screen: without this an unspecified activity falls
         // back to the system default (portrait with auto-rotate off) even
         // while the game is locked landscape, so the setting screen would
@@ -163,33 +130,28 @@ class SettingsActivity :
                 },
             )
         }
-        // Gesture/hardware parity: the title-bar back and the OS back must
-        // run the same stack logic, so register the predictive-back path
-        // next to the deprecated onBackPressed override below (API 33+).
-        if (Build.VERSION.SDK_INT >= 33) {
-            val callback =
-                OnBackInvokedCallback {
+        // Gesture/hardware parity: the title-bar back and the OS back run
+        // the same stack logic through the dispatcher (predictive-back on
+        // API 33+, compat fallback below, one path either way).
+        onBackPressedDispatcher.addCallback(
+            this,
+            object : OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
                     if (!handleSettingsBack()) dismissWithResult(dismissed = true)
                 }
-            onBackInvokedDispatcher.registerOnBackInvokedCallback(
-                OnBackInvokedDispatcher.PRIORITY_DEFAULT,
-                callback,
-            )
-            backDispatcherCallback = callback
-        }
+            },
+        )
     }
 
     override fun onResume() {
         super.onResume()
         activeActivityForTest = this
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
         (getSystemService(INPUT_SERVICE) as InputManager).registerInputDeviceListener(this, null)
         pushDeviceTruth()
     }
 
     override fun onPause() {
         (getSystemService(INPUT_SERVICE) as InputManager).unregisterInputDeviceListener(this)
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
         super.onPause()
     }
 
@@ -199,65 +161,28 @@ class SettingsActivity :
 
     override fun onInputDeviceChanged(deviceId: Int) = pushDeviceTruth()
 
-    /** Enumerate physical keyboards (Kotlin `InputDevice`): the built-in
-     * row (device id 0 with letter keys) plus one row per external
-     * descriptor. BT/USB are indistinguishable via public API so rows stay
-     * agnostic; virtual devices are excluded; duplicate HID descriptors
-     * merge. Button clusters (power keys, headset jacks, touch panels,
-     * fingerprint sensors) also expose SOURCE_KEYBOARD, and id 0 is no
-     * safer than any other id, so every row must carry letter keys to
-     * count as a keyboard — built-in and external share one rule. */
-    internal fun enumerateKeyboards(): JSONArray {
-        val out = JSONArray()
-        val seen = mutableSetOf<String>()
-        val devices =
-            InputDevice.getDeviceIds().toList().mapNotNull { InputDevice.getDevice(it) }.filter {
-                it.sources and InputDevice.SOURCE_KEYBOARD == InputDevice.SOURCE_KEYBOARD
-            }
-        val builtin =
-            devices.firstOrNull {
-                it.id == 0 && it.hasKeys(KeyEvent.KEYCODE_A)[0]
-            }
-        if (builtin != null) {
-            seen += "kbd:builtin"
-            out.put(
-                JSONObject()
-                    .put("member", "kbd:builtin")
-                    .put("name", builtin.name)
-                    .put("builtin", true),
-            )
-        }
-        for (device in devices) {
-            if (device.id == 0) continue
-            // isVirtual() is API 29+; guard it, falling back to the
-            // documented negative-id rule for virtual keyboards.
-            val virtual =
-                device.id < 0 ||
-                    (Build.VERSION.SDK_INT >= 29 && device.isVirtual)
-            if (virtual) continue
-            // gpio-keys, pmic power keys, headset jacks, touch panels and
-            // fingerprint sensors all expose SOURCE_KEYBOARD; a letter key
-            // is what separates a keyboard from a button cluster.
-            if (!device.hasKeys(KeyEvent.KEYCODE_A)[0]) continue
-            val member = "kbd:${device.descriptor}"
-            if (!seen.add(member)) continue
-            out.put(
-                JSONObject()
-                    .put("member", member)
-                    .put("name", device.name)
-                    .put("builtin", false),
-            )
-        }
-        return out
-    }
-
     /** Push the enumeration through the existing command pipe; Rust
      * re-projects and the card applies it without marking the draft dirty. */
     internal fun pushDeviceTruth() {
-        pushKeyboardEnumeration()
-        pushTouchCapability()
-        pushGamepads()
-        pushSystemLocale()
+        val scan = scanDeviceTruth(packageManager)
+        val keyboards = JSONArray()
+        scan.keyboards.forEach { row ->
+            keyboards.put(
+                JSONObject()
+                    .put("member", row.member)
+                    .put("name", row.name)
+                    .put("builtin", row.builtin),
+            )
+        }
+        val gamepads = JSONArray()
+        scan.gamepadNames.forEach { gamepads.put(JSONObject().put("name", it)) }
+        val payload =
+            JSONObject()
+                .put("keyboards", keyboards)
+                .put("capable", scan.touchCapable)
+                .put("gamepads", gamepads)
+        AppLocale.currentTag()?.let { payload.put("lang", it) }
+        pushOp("device truth", "device_truth", payload)
     }
 
     /** One push through the command pipe; Rust re-projects and the card
@@ -274,33 +199,7 @@ class SettingsActivity :
         raw?.let { nav.refreshPayload(it) }
     }
 
-    internal fun pushKeyboardEnumeration() {
-        pushOp("keyboard enumeration", "keyboards", enumerateKeyboards())
-    }
-
-    internal fun pushTouchCapability() {
-        pushOp("touch capability", "touch", JSONObject().put("capable", hasTouchscreen(packageManager)))
-    }
-
-    internal fun pushSystemLocale() {
-        val tag = AppLocale.currentTag() ?: return
-        pushOp("locale", "locale", JSONObject().put("lang", tag))
-    }
-
-    internal fun pushGamepads() {
-        val names = JSONArray()
-        connectedGamepadNames().forEach { names.put(JSONObject().put("name", it)) }
-        pushOp("gamepad", "gamepads", names)
-    }
-
     override fun onDestroy() {
-        if (Build.VERSION.SDK_INT >= 33) {
-            (backDispatcherCallback as? OnBackInvokedCallback)?.let {
-                onBackInvokedDispatcher.unregisterOnBackInvokedCallback(it)
-            }
-            backDispatcherCallback = null
-        }
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         if (this == activeActivityForTest) activeActivityForTest = null
         super.onDestroy()
     }
@@ -309,15 +208,6 @@ class SettingsActivity :
         if (isControllerSource(event.source)) return super.dispatchKeyEvent(event)
         return routeSettingsKeyEvent(event.keyCode, event.action) ||
             super.dispatchKeyEvent(event)
-    }
-
-    // Deprecated upstream; kept because minSdk 28 predates the
-    // OnBackInvokedDispatcher replacement. Back resolves inside the
-    // settings nav stack first (see handleSettingsBack).
-    @Suppress("DEPRECATION")
-    override fun onBackPressed() {
-        if (handleSettingsBack()) return
-        dismissWithResult(dismissed = true)
     }
 
     /** Back resolves capture → navigate up → discard confirm → dismiss. */

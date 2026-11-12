@@ -211,15 +211,16 @@ class StructureTests(unittest.TestCase):
             self.verify()
 
     def test_producer_field_type_name_required_and_version_are_detected(self):
-        original = self.source["producer"]
-        for before, after in (("pressed: Boolean", "pressed: String"),
-                              ('"device_id"', '"device"'),
-                              ('.put("action", action)', ""),
-                              ('.put("v", BRIDGE_EVENT_VERSION)', '.put("v", "1")'),
-                              ('.put("pressed", pressed)', '.put("extra", pressed)')):
-            with self.subTest(before=before):
-                self.assertIn(before, original)
-                self.source["producer"] = original.replace(before, after)
+        original = copy.deepcopy(self.source)
+        for key, before, after in (("producer", '.put("action", action)', ""),
+                                   ("producer", '.put("v", BRIDGE_EVENT_VERSION)', '.put("v", "1")'),
+                                   ("producer", ".apply(extras)", ""),
+                                   ("callsites", 'put("pressed", respond)', 'put("extra", respond)'),
+                                   ("callsites", 'put("device_id", deviceId)', 'put("device", deviceId)')):
+            with self.subTest(key=key, before=before):
+                self.source = copy.deepcopy(original)
+                self.assertIn(before, self.source[key])
+                self.source[key] = self.source[key].replace(before, after)
                 with self.assertRaises(VERIFY.ContractError):
                     self.verify()
 
@@ -281,8 +282,8 @@ class StructureTests(unittest.TestCase):
             VERIFY.validate_jni(broken, table, activity, callbacks)
 
     def test_unsupported_bridge_syntax_does_not_silently_pass(self):
-        self.source["producer"] = self.source["producer"].replace(
-            '.put("pressed", pressed)', '.put("pressed", pressed.toString())')
+        self.source["callsites"] = self.source["callsites"].replace(
+            'put("pressed", respond)', 'put("pressed", respond.toString())')
         with self.assertRaises(VERIFY.ContractError):
             self.verify()
 

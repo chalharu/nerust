@@ -4,32 +4,13 @@ import org.json.JSONObject
 
 // Versions, MenuAction and ControllerKey are generated in BridgeWire.kt.
 
-/** v1 menu event: {"v":1,"type":"menu","action":...}. Plain actions carry
- * no press state; the gate and the controller have their own typed builders
- * (the checker pins exactly these three). */
-internal fun menuEventJson(action: String): String =
+/** v1 menu event: {"v":1,"type":"menu","action":...}. The single producer:
+ * plain actions pass no extras; gated actions (touch_gate, controller)
+ * carry their required fields in `extras`, pinned at the call sites. */
+internal fun menuEvent(action: String, extras: JSONObject.() -> Unit = {}): String =
     JSONObject()
         .put("v", BRIDGE_EVENT_VERSION)
         .put("type", "menu")
         .put("action", action)
-        .toString()
-
-/** v1 touch-gate event: the overlay response switch. */
-internal fun touchGateEventJson(respond: Boolean): String =
-    JSONObject()
-        .put("v", BRIDGE_EVENT_VERSION)
-        .put("type", "menu")
-        .put("action", MenuAction.TOUCH_GATE)
-        .put("pressed", respond)
-        .toString()
-
-/** v1 controller event: typed device, key, and press state. */
-internal fun controllerEventJson(deviceId: Int, key: String, pressed: Boolean): String =
-    JSONObject()
-        .put("v", BRIDGE_EVENT_VERSION)
-        .put("type", "menu")
-        .put("action", MenuAction.CONTROLLER)
-        .put("device_id", deviceId)
-        .put("key", key)
-        .put("pressed", pressed)
+        .apply(extras)
         .toString()

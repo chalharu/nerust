@@ -100,6 +100,10 @@ dependencies {
     val androidxTestExtVersion = "1.3.0"
 
     implementation(composeBom)
+    // ComponentActivity for the standalone settings screen (lifecycle +
+    // back dispatcher owners without hand-rolled registries). Pinned to
+    // the version the BOM already resolves so the lockfile stands.
+    implementation("androidx.activity:activity-compose:1.8.2")
     // Material 3 Expressive (settings screen redesign): pin the 1.5.0 line
     // where MaterialExpressiveTheme/MotionScheme.expressive() live. Lift to
     // stable 1.5.x once the BOM manages it.
