@@ -669,8 +669,8 @@ fn machine_sections_link_to_hidden_controller_screens() {
         .expect("shortcuts screen exists");
     assert_eq!(
         shortcuts.rows.len(),
-        9,
-        "all global shortcut actions plus the screen reset stay reachable"
+        7,
+        "desktop-only actions stay out: six phone shortcuts plus the screen reset"
     );
     assert!(
         shortcuts
@@ -678,9 +678,83 @@ fn machine_sections_link_to_hidden_controller_screens() {
             .iter()
             .filter(|row| row.kind == super::RowKind::Capture)
             .count()
-            == 8,
+            == 6,
         "shortcuts rows are capturable"
     );
+}
+
+#[test]
+fn desktop_only_shortcuts_stay_out_of_android() {
+    let (_snapshot, payload) = test_payload();
+    let shortcuts = payload
+        .sections
+        .iter()
+        .find(|section| section.id == "controls.shortcuts")
+        .expect("shortcuts screen exists");
+    for banned in ["ToggleFullscreen", "OpenDebugger"] {
+        assert!(
+            !shortcuts.rows.iter().any(|row| row.target.contains(banned)),
+            "{banned} is desktop-only"
+        );
+    }
+}
+
+#[test]
+fn capture_rows_disable_without_keyboard() {
+    let (_snapshot, payload) = test_payload_with_keyboards(&[]);
+    let captures: Vec<_> = payload
+        .sections
+        .iter()
+        .flat_map(|section| &section.rows)
+        .filter(|row| row.kind == super::RowKind::Capture)
+        .collect();
+    assert!(!captures.is_empty(), "capture rows exist to disable");
+    for row in &captures {
+        assert!(!row.enabled, "{} disables without a keyboard", row.key);
+        assert!(!row.reason.is_empty(), "{} names the reason", row.key);
+    }
+    let (_snapshot, payload) = test_payload();
+    assert!(
+        payload
+            .sections
+            .iter()
+            .flat_map(|section| &section.rows)
+            .filter(|row| row.kind == super::RowKind::Capture)
+            .all(|row| row.enabled),
+        "keyboards present re-enable capture"
+    );
+}
+
+#[test]
+fn start_capture_rejected_without_keyboard() {
+    let (mut snapshot, _) = test_payload_with_keyboards(&[]);
+    let mut capture: CaptureSlot = None;
+    let key = "controls.shortcut.TogglePause";
+    let command_json = serde_json::to_string(&WireCommand {
+        key: key.to_string(),
+        index: 0,
+        number: 0,
+        op: WireOp::StartCapture,
+        payload: serde_json::Value::Null,
+    })
+    .unwrap();
+    let error = with_test_deps(|| {
+        apply_command_to(
+            &mut snapshot,
+            &command_json,
+            &mut capture,
+            &mut Vec::new(),
+            &mut None,
+            &mut Vec::new(),
+            &mut None,
+        )
+        .expect_err("start without a keyboard must fail")
+    });
+    assert!(
+        error.contains("Keyboard"),
+        "fail loud with the reason: {error}"
+    );
+    assert!(capture.is_none(), "no prompt strands");
 }
 
 #[test]
