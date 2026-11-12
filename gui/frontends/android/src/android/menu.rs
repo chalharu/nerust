@@ -1,5 +1,7 @@
 use super::bridge;
-use crate::bridge_events::{FrontendEvent, decode_frontend_event};
+use crate::bridge_events::{
+    FrontendEvent, SlotListEntry, build_slot_list_json, decode_frontend_event,
+};
 use crate::error_dialog_controller::DialogRequestId;
 use jni::objects::{JObject, JString};
 
@@ -48,6 +50,34 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_nativeIsEmula
     _activity: JObject<'_>,
 ) -> jni::sys::jboolean {
     bridge::with_settings(|state| state.emulation_paused) as jni::sys::jboolean
+}
+
+/// Synchronous slot-list query for the drawer submenu (MainActivity reads
+/// it when the submenu opens and after every slot op it sends).
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_nativeSlotList(
+    mut env: jni::EnvUnowned<'_>,
+    _activity: JObject<'_>,
+) -> jni::sys::jstring {
+    let out = bridge::with_settings(|state| {
+        build_slot_list_json(
+            &state
+                .slots
+                .iter()
+                .map(|slot| SlotListEntry {
+                    id: slot.slot_id,
+                    saved_at: slot.saved_at,
+                })
+                .collect::<Vec<_>>(),
+            state.active_slot,
+        )
+    });
+    match bridge::with_callback_env(&mut env, |env| -> jni::errors::Result<jni::sys::jstring> {
+        Ok(env.new_string(out)?.into_raw())
+    }) {
+        jni::Outcome::Ok(ptr) => ptr,
+        _ => std::ptr::null_mut(),
+    }
 }
 
 /// Dedicated error-dialog dismiss entry point.

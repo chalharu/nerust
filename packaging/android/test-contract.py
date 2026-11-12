@@ -173,7 +173,8 @@ class StructureTests(unittest.TestCase):
                 elif mutation in {"minimum", "maximum"}:
                     menu["properties"]["device_id"][mutation] += 1
                 else:
-                    for action, field in (("controller", "device_id"), ("touch_gate", "pressed")):
+                    for action, field in (("controller", "device_id"), ("touch_gate", "pressed"),
+                              ("select_slot", "slot_id"), ("delete_slot", "slot_id")):
                         self.schema = copy.deepcopy(original)
                         menu = self.schema["definitions"]["menuEvent"]
                         find_gate(menu, action)["then"]["required"].remove(field)
@@ -198,7 +199,8 @@ class StructureTests(unittest.TestCase):
                 elif mutation == "enum":
                     menu["properties"]["key"]["enum"].append("probe")
                 else:
-                    for action, field in (("controller", "device_id"), ("touch_gate", "pressed")):
+                    for action, field in (("controller", "device_id"), ("touch_gate", "pressed"),
+                              ("select_slot", "slot_id"), ("delete_slot", "slot_id")):
                         find_gate(menu, action)["then"]["required"].remove(field)
                 self.assertNotEqual(CONTRACT.outputs(changed)[path], baseline)
 
@@ -302,11 +304,14 @@ class StructureTests(unittest.TestCase):
 
     def test_runtime_probes_cover_optional_null_unknown_bounds_and_conditionals(self):
         cases = {label: accepted for label, _, accepted in DECODER.probes(self.schema)}
-        for field in ("device_id", "key", "pressed"):
+        for field in ("device_id", "key", "pressed", "slot_id"):
             self.assertTrue(cases[f"menu: missing optional {field}"])
             self.assertFalse(cases[f"menu: {field}=None"])
+        for field in ("device_id", "key", "pressed"):
             self.assertFalse(cases[f"menu: action=controller missing {field}"])
         self.assertFalse(cases["menu: action=touch_gate missing pressed"])
+        self.assertFalse(cases["menu: action=select_slot missing slot_id"])
+        self.assertFalse(cases["menu: action=delete_slot missing slot_id"])
         self.assertFalse(cases["menu: unknown field extra"])
         self.assertFalse(cases["menu: key='__unknown__'"])
         for event, field in (("menuEvent", "device_id"), ("errorDialogDismissedEvent", "request_id")):

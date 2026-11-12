@@ -259,7 +259,8 @@ def validate_decoder(definitions, decoder):
             optional = kind.startswith("Option<")
             if optional:
                 kind = kind[7:-1]
-            types = {"u32": "integer", "i32": "integer", "String": "string", "bool": "boolean",
+            types = {"u32": "integer", "i32": "integer", "i64": "integer",
+                     "u64": "integer", "String": "string", "bool": "boolean",
                      "crate::error_dialog_controller::DialogRequestId": "integer"}
             require(kind in types, f"unsupported decoder field type: {kind}")
             props[name] = (types[kind], not optional)
@@ -361,22 +362,34 @@ def validate_producer(definitions, producer, kotlin):
             require(re.fullmatch(r'"[^"\n]*"|[\w.]+', value) is not None,
                     f"unsupported extras value: {value}")
         puts_in_call = {key for key, _ in pairs}
-        if "MenuAction.TOUCH_GATE" in call:
-            gate = [g for g in menu.get("allOf", [])
-                    if g.get("if", {}).get("properties", {}).get("action", {}).get("const") == "touch_gate"]
+        gated = next(
+            (action for action in ("TOUCH_GATE", "CONTROLLER", "SELECT_SLOT", "DELETE_SLOT")
+             if f"MenuAction.{action}" in call),
+            None,
+        )
+        if gated is None:
+            require(not (puts_in_call & {"pressed", "device_id", "key", "slot_id"}),
+                    "plain menuEvent must not carry gated fields")
+            continue
+        const = gated.lower()
+        gate = [g for g in menu.get("allOf", [])
+                if g.get("if", {}).get("properties", {}).get("action", {}).get("const") == const]
+        if gated in ("SELECT_SLOT", "DELETE_SLOT"):
+            require(gate, f"schema must gate {const} extras")
+            require(set(gate[0]["then"]["required"]) <= puts_in_call,
+                    f"{const} call misses gated fields")
+            require(not (puts_in_call & {"pressed", "device_id", "key"}),
+                    f"{const} call carries foreign gated fields")
+            continue
+        if gated == "TOUCH_GATE":
             require(gate, "schema must gate touch_gate extras")
             require(set(gate[0]["then"]["required"]) <= puts_in_call,
                     "touch_gate call misses gated fields")
             require(not (puts_in_call & {"device_id", "key"}), "touch_gate call carries controller fields")
-        elif "MenuAction.CONTROLLER" in call:
-            gate = [g for g in menu.get("allOf", [])
-                    if g.get("if", {}).get("properties", {}).get("action", {}).get("const") == "controller"]
+        elif gated == "CONTROLLER":
             require(gate, "schema must gate controller extras")
             require(set(gate[0]["then"]["required"]) <= puts_in_call,
                     "controller call misses gated fields")
-        else:
-            require(not (puts_in_call & {"pressed", "device_id", "key"}),
-                    "plain menuEvent must not carry gated fields")
     require("menuEventJson" not in kotlin and "touchGateEventJson" not in kotlin
             and "controllerEventJson" not in kotlin, "obsolete typed builders remain")
 

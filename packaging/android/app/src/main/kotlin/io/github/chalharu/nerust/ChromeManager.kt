@@ -82,6 +82,7 @@ private val DRAWER_ACTIONS =
         DrawerAction(R.string.drawer_pause, MenuAction.TOGGLE_PAUSE, R.drawable.ic_drawer_pause),
         DrawerAction(R.string.drawer_save_state, MenuAction.SAVE_STATE, R.drawable.ic_drawer_save_state),
         DrawerAction(R.string.drawer_load_state, MenuAction.LOAD_STATE, R.drawable.ic_drawer_load_state),
+        DrawerAction(R.string.drawer_slots, OPEN_SLOTS, R.drawable.ic_drawer_save_state),
         DrawerAction(R.string.drawer_reset, MenuAction.RESET, R.drawable.ic_drawer_reset),
         DrawerAction(R.string.drawer_unload_rom, MenuAction.UNLOAD, R.drawable.ic_drawer_unload_rom),
         DrawerAction(R.string.drawer_exit, MenuAction.EXIT, R.drawable.ic_drawer_exit),
@@ -390,6 +391,13 @@ class ChromeManager(private val activity: MainActivity) {
     }
 
     fun dispatchMenuAction(action: String) {
+        if (action == OPEN_SLOTS) {
+            // Drawer-local submenu: no wire round-trip, the dialog queries
+            // the vault mirror directly.
+            removeDrawerOverlay()
+            activity.showSlotMenu()
+            return
+        }
         removeDrawerOverlay()
         // Kotlin builds the v1 envelope; Rust decodes JSON only.
         activity.sendMenuAction(menuEvent(action))

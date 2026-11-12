@@ -626,7 +626,7 @@ class MainActivityE2eTest {
         const val DRAWER_OVERLAY_TAG = "nerust-drawer-overlay"
         const val DRAWER_TIMEOUT_MS = 5_000L
         const val EXPECTED_DRAWER_CONTENT =
-            "Nerust\nOpen ROM\nSettings\nPause\nSave State\nLoad State\nReset\nUnload ROM\nExit"
+            "Nerust\nOpen ROM\nSettings\nPause\nSave State\nLoad State\nSlots\nReset\nUnload ROM\nExit"
         const val MENU_BUTTON_TAG = "nerust-menu-button"
         const val LIFECYCLE_SAVE_DELAY_MS = 1_000L
         const val POLL_INTERVAL_MS = 50L

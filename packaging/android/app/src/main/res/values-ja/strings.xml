@@ -36,6 +36,16 @@
     <string name="drawer_resume">再開</string>
     <string name="drawer_save_state">セーブステート保存</string>
     <string name="drawer_load_state">セーブステート読み込み</string>
+    <string name="drawer_slots">スロット</string>
+    <string name="slot_title">スロット%1$d</string>
+    <string name="slot_empty">空き</string>
+    <string name="slot_unknown_time">不明</string>
+    <string name="slot_active">選択中</string>
+    <string name="slot_new">新しいスロット</string>
+    <string name="slot_new_hint">新しいスロットに保存</string>
+    <string name="slot_delete">削除</string>
+    <string name="slot_delete_title">%1$sを削除しますか？</string>
+    <string name="slot_delete_message">%1$s（%2$s）を完全に削除します。元に戻せません。</string>
     <string name="drawer_reset">リセット</string>
     <string name="drawer_unload_rom">ROMを閉じる</string>
     <string name="drawer_exit">終了</string>

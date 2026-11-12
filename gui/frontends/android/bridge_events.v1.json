@@ -29,6 +29,9 @@
             "save_state",
             "toggle_pause",
             "unload",
+            "create_slot",
+            "delete_slot",
+            "select_slot",
             "controller",
             "touch_gate"
           ]
@@ -49,7 +52,8 @@
             "right"
           ]
         },
-        "pressed": { "type": "boolean" }
+        "pressed": { "type": "boolean" },
+        "slot_id": { "type": "integer", "minimum": 0, "maximum": 9223372036854775807 }
       },
       "additionalProperties": false,
       "allOf": [
@@ -66,6 +70,20 @@
             "required": ["action"]
           },
           "then": { "required": ["pressed"] }
+        },
+        {
+          "if": {
+            "properties": { "action": { "const": "select_slot" } },
+            "required": ["action"]
+          },
+          "then": { "required": ["slot_id"] }
+        },
+        {
+          "if": {
+            "properties": { "action": { "const": "delete_slot" } },
+            "required": ["action"]
+          },
+          "then": { "required": ["slot_id"] }
         }
       ]
     },
@@ -90,6 +108,9 @@
     "save_state": "MenuAction::SaveState",
     "toggle_pause": "MenuAction::TogglePause",
     "unload": "MenuAction::Unload",
+    "create_slot": "MenuAction::CreateSlot",
+    "delete_slot": "MenuAction::DeleteSlot{slot_id}",
+    "select_slot": "MenuAction::SelectSlot{slot_id}",
     "controller": "MenuAction::ControllerInput{device_id,key,pressed}",
     "touch_gate": "MenuAction::TouchGate{pressed}"
   },

@@ -13,6 +13,9 @@ pub(crate) const ACTION_RESET: &str = "reset";
 pub(crate) const ACTION_SAVE_STATE: &str = "save_state";
 pub(crate) const ACTION_TOGGLE_PAUSE: &str = "toggle_pause";
 pub(crate) const ACTION_UNLOAD: &str = "unload";
+pub(crate) const ACTION_CREATE_SLOT: &str = "create_slot";
+pub(crate) const ACTION_DELETE_SLOT: &str = "delete_slot";
+pub(crate) const ACTION_SELECT_SLOT: &str = "select_slot";
 pub(crate) const ACTION_CONTROLLER: &str = "controller";
 pub(crate) const ACTION_TOUCH_GATE: &str = "touch_gate";
 
@@ -41,6 +44,9 @@ pub(crate) fn validate_bridge_event(value: &mut serde_json::Value) -> Option<()>
                                     | "save_state"
                                     | "toggle_pause"
                                     | "unload"
+                                    | "create_slot"
+                                    | "delete_slot"
+                                    | "select_slot"
                                     | "controller"
                                     | "touch_gate"
                             )
@@ -70,6 +76,12 @@ pub(crate) fn validate_bridge_event(value: &mut serde_json::Value) -> Option<()>
                         )
                     }
                     "pressed" => value.is_boolean(),
+                    "slot_id" => {
+                        normalize_bridge_integer(value)?;
+                        value
+                            .as_i64()
+                            .is_some_and(|number| (0..=9223372036854775807).contains(&number))
+                    }
                     _ => false,
                 };
                 if !valid {
@@ -86,6 +98,12 @@ pub(crate) fn validate_bridge_event(value: &mut serde_json::Value) -> Option<()>
             }
             if object.get("action")?.as_str() == Some("touch_gate") {
                 object.get("pressed")?;
+            }
+            if object.get("action")?.as_str() == Some("select_slot") {
+                object.get("slot_id")?;
+            }
+            if object.get("action")?.as_str() == Some("delete_slot") {
+                object.get("slot_id")?;
             }
             Some(())
         }
