@@ -30,7 +30,8 @@ def sources():
     src = GEN.RUST / "src"
     main = (GEN.KOTLIN / "MainActivity.kt").read_text()
     settings = (GEN.KOTLIN / "SettingsActivity.kt").read_text()
-    activity = main + "\n" + settings
+    slots = (GEN.KOTLIN / "SlotActivity.kt").read_text()
+    activity = main + "\n" + settings + "\n" + slots
     callsites = (activity + "\n"
                  + (GEN.KOTLIN / "ChromeManager.kt").read_text() + "\n"
                  + (GEN.KOTLIN / "BridgeContract.kt").read_text())
@@ -118,6 +119,7 @@ def _callback_signature(symbol, args_text, result_text):
         require(symbol.startswith((
             "Java_io_github_chalharu_nerust_MainActivity_native",
             "Java_io_github_chalharu_nerust_SettingsActivity_native",
+            "Java_io_github_chalharu_nerust_SlotActivity_native",
         )), f"only native queries may return values: {symbol}")
         match = re.fullmatch(r"->\s*jni::sys::(\w+)", result)
         require(match and match[1] in RUST_TYPES,
@@ -161,8 +163,8 @@ def _checked_native(entries, symbols):
 def _kotlin_methods(activity, call_names):
     """Kotlin bridge methods with the external native subset.
 
-    The activity source concatenates MainActivity and SettingsActivity; extern
-    names must stay unique across both so registration stays unambiguous.
+    The activity source concatenates every host activity; extern
+    names must stay unique across all of them so registration stays unambiguous.
     """
     methods = {}
     kotlin_native = {}

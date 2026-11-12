@@ -43,6 +43,7 @@
     <string name="slot_active">Active</string>
     <string name="slot_new">New slot</string>
     <string name="slot_new_hint">Save to a new slot</string>
+    <string name="slot_select">Select</string>
     <string name="slot_delete">Delete</string>
     <string name="slot_delete_title">Delete %1$s?</string>
     <string name="slot_delete_message">%1$s (%2$s) will be permanently deleted. This cannot be undone.</string>

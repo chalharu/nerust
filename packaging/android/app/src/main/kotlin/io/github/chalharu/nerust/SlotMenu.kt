@@ -1,18 +1,21 @@
 package io.github.chalharu.nerust
 
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -38,8 +41,6 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import org.json.JSONObject
-
-internal const val SLOT_MENU_TAG = "nerust-slot-menu"
 
 /** Drawer-only submenu opener: handled in Kotlin, never crosses the wire. */
 internal const val OPEN_SLOTS = "open_slots"
@@ -151,8 +152,9 @@ internal class SlotMenuState(
 private val SLOT_REFRESH_DELAYS_MS = longArrayOf(100L, 200L, 400L)
 
 /** Full-screen slot manager: a settings-grade screen (top bar + list),
- * not a centered popup. Swipe a row or tap the trash icon to delete
- * (both land on the same irreversible-delete confirm); tap selects. */
+ * not a centered popup. Tap selects; long-press opens the row menu;
+ * swipe a row or tap the trash icon to delete (all land on the same
+ * irreversible-delete confirm). */
 @Composable
 internal fun SlotMenuScreen(
     rows: List<SlotEntry>,
@@ -242,14 +244,19 @@ private fun SlotDismissableRow(
         enableDismissFromEndToStart = row.occupied,
         backgroundContent = {
             if (row.occupied) {
+                // Gmail-style reveal: the error fill wipes in behind the
+                // row, icon pinned to the swipe edge.
                 Box(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier =
+                        Modifier
+                            .fillMaxSize()
+                            .background(MaterialTheme.colorScheme.errorContainer),
                     contentAlignment = Alignment.CenterEnd,
                 ) {
                     Icon(
                         painter = painterResource(id = R.drawable.ic_slot_delete),
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.error,
+                        tint = MaterialTheme.colorScheme.onErrorContainer,
                         modifier = Modifier.padding(end = 24.dp),
                     )
                 }
@@ -265,36 +272,53 @@ private fun SlotDismissableRow(
     )
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SlotMenuRow(
     row: SlotEntry,
     onSelect: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    val title = stringResource(R.string.slot_title, row.id)
-    val subtitle = slotSubtitle(row)
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onSelect)
-                .padding(horizontal = 24.dp, vertical = 12.dp),
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(text = title, style = MaterialTheme.typography.titleMedium)
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+    var showMenu by remember { mutableStateOf(false) }
+    Box {
+        ListItem(
+            headlineContent = { Text(text = stringResource(R.string.slot_title, row.id)) },
+            supportingContent = { Text(text = slotSubtitle(row)) },
+            trailingContent = {
+                if (row.occupied) {
+                    IconButton(onClick = onDelete) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_slot_delete),
+                            contentDescription = stringResource(R.string.slot_delete),
+                            tint = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+            },
+            modifier =
+                Modifier.combinedClickable(
+                    onClick = onSelect,
+                    onLongClick = { showMenu = true },
+                ),
+        )
+        DropdownMenu(
+            expanded = showMenu,
+            onDismissRequest = { showMenu = false },
+        ) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.slot_select)) },
+                onClick = {
+                    showMenu = false
+                    onSelect()
+                },
             )
-        }
-        if (row.occupied) {
-            IconButton(onClick = onDelete) {
-                Icon(
-                    painter = painterResource(id = R.drawable.ic_slot_delete),
-                    contentDescription = stringResource(R.string.slot_delete),
-                    tint = MaterialTheme.colorScheme.error,
+            if (row.occupied) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.slot_delete)) },
+                    onClick = {
+                        showMenu = false
+                        onDelete()
+                    },
                 )
             }
         }
@@ -318,23 +342,11 @@ private fun slotSubtitle(row: SlotEntry): String {
 
 @Composable
 private fun SlotMenuNewRow(onCreate: () -> Unit) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onCreate)
-                .padding(horizontal = 24.dp, vertical = 12.dp),
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(text = stringResource(R.string.slot_new), style = MaterialTheme.typography.titleMedium)
-            Text(
-                text = stringResource(R.string.slot_new_hint),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
+    ListItem(
+        headlineContent = { Text(text = stringResource(R.string.slot_new)) },
+        supportingContent = { Text(text = stringResource(R.string.slot_new_hint)) },
+        modifier = Modifier.clickable(onClick = onCreate),
+    )
 }
 
 @Composable
