@@ -198,7 +198,7 @@ class SettingsActivity :
                     .put("keyboards", keyboards)
                     .put("capable", scan.touchCapable)
                     .put("gamepads", gamepads)
-            AppLocale.savedTag(this@SettingsActivity).ifEmpty { AppLocale.currentTag().orEmpty() }
+            AppLocale.effectiveTag(this@SettingsActivity)
                 .takeIf { it.isNotEmpty() }?.let { payload.put("lang", it) }
             pushOp("device truth", "device_truth", payload)
         }
@@ -209,7 +209,7 @@ class SettingsActivity :
      * background lane; only the nav apply posts back to the main thread. */
     private fun pushOp(label: String, op: String, payload: JSONObject) {
         if (navActions == null) return
-        val command = settingsCommandJson(op, 0, 0, op, payload)
+        val command = settingsCommandJson(op, payload)
         BridgeIo.runIo {
             val raw =
                 try {

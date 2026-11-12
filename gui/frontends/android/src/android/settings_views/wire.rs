@@ -31,7 +31,6 @@ pub(crate) struct ViewPayload {
 
 /// Pending key capture: opaque target plus the localized prompt.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Pending key capture: opaque target plus the localized prompt.
 pub(crate) struct CaptureWire {
     pub target: String,
     pub prompt: String,
@@ -42,10 +41,6 @@ pub(crate) struct CaptureWire {
 /// `sub` is the navigation breadcrumb parent ("Player 1" under "Devices");
 /// empty falls back to the top-level title.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// One settings section: id plus pre-resolved label plus rows. Invisible
-/// sections stay addressable (group navigation) but leave the category list.
-/// `sub` is the navigation breadcrumb parent ("Player 1" under "Devices");
-/// empty falls back to the top-level title.
 pub(crate) struct SectionWire {
     pub id: String,
     pub label: String,
@@ -68,17 +63,6 @@ pub(crate) struct SectionWire {
 /// non-editable navigation aids. `Button` rows ask Kotlin for confirmation
 /// first, then send the `reset_section` op named by the row key.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// One settings row. `choices` carries both the Kotlin-visible labels and the
-/// Rust-typed values (echoed back by index); `number`/`step`/`min`/`max`/`unit`
-/// drive slider rows; `text` drives read-only info rows and doubles as the
-/// trailing value for `group` rows (player/device summaries) and as nothing
-/// for `button` rows; `description` is the M3 supporting text shown under the
-/// label, present only where it adds information (self-evident labels stay
-/// bare: no restatements, no choice listings, no misplaced instructions); `detail_target` shows a trailing Details
-/// button navigating to another section (device rows); `target` carries the
-/// opaque capture target for `capture` rows; `Header`/`Group` rows are
-/// non-editable navigation aids. `Button` rows ask Kotlin for confirmation
-/// first, then send the `reset_section` op named by the row key.
 pub(crate) struct RowWire {
     pub key: String,
     pub label: String,
@@ -151,11 +135,6 @@ impl RowWire {
 /// A non-empty `detail_target` adds a trailing Details button (device rows).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-/// Row presentation kinds. Toggles render as switches, numbers as sliders,
-/// infos as static text, headers as subgroup titles, groups as navigation
-/// rows into another section, captures as key-capture rows, buttons as
-/// confirm-then-run actions (resets); choices render as radio lists.
-/// A non-empty `detail_target` adds a trailing Details button (device rows).
 pub(crate) enum RowKind {
     Choice,
     Toggle,
@@ -171,9 +150,6 @@ pub(crate) enum RowKind {
 /// choice is currently selectable (slot conflicts disable taken profiles),
 /// and the owner slot label when disabled so Kotlin can explain why.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// One pick-list entry: display label, opaque typed value, whether the
-/// choice is currently selectable (slot conflicts disable taken profiles),
-/// and the owner slot label when disabled so Kotlin can explain why.
 pub(crate) struct ChoiceWire {
     pub value: serde_json::Value,
     pub label: String,
@@ -191,13 +167,6 @@ pub(crate) struct ChoiceWire {
 /// agnostic, virtual devices excluded, HID duplicate descriptors merged —
 /// all classified Kotlin-side, see the IA keyboard rule).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// One physical keyboard enumerated on the device (Kotlin `InputDevice`).
-/// The vault holds the list; Rust never touches hardware. `member` is the
-/// stable port-set id ("kbd:builtin" or "kbd:<descriptor>"), `name` the
-/// OS display name, `builtin` the built-in row (device id 0, always
-/// present when it exists; external rows are per descriptor, BT/USB
-/// agnostic, virtual devices excluded, HID duplicate descriptors merged —
-/// all classified Kotlin-side, see the IA keyboard rule).
 pub(crate) struct KeyboardInfo {
     pub member: String,
     pub name: String,
@@ -209,9 +178,6 @@ pub(crate) struct KeyboardInfo {
 /// same rule as the runtime gate). Names only: Rust displays them in the
 /// overlay detail screen so users see why Auto hides, without logcat.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// One gamepad the Auto overlay gate counts (Kotlin `InputDevice`,
-/// same rule as the runtime gate). Names only: Rust displays them in the
-/// overlay detail screen so users see why Auto hides, without logcat.
 pub(crate) struct GamepadInfo {
     pub name: String,
 }
@@ -223,11 +189,6 @@ pub(crate) struct GamepadInfo {
 /// `reset_section` restores one screen (or `all`) to defaults.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-/// One settings edit from Kotlin: row key plus op. `set` reads the choice
-/// index or the slider number; capture ops act on the row's opaque target;
-/// `device_truth` upserts the vault's enumerated device lists from
-/// `payload` (`keyboards` + `capable` + `gamepads`, `lang` optional);
-/// `reset_section` restores one screen (or `all`) to defaults.
 pub(crate) enum WireOp {
     #[default]
     Set,
@@ -280,9 +241,6 @@ pub(super) fn with_vm_deps<T>(
 /// existence, so this only rejects malformed paths. Snapshot-level URI rules
 /// still run in the view-model validator.
 #[derive(Debug)]
-/// Android storage lives behind SAF: the document-tree picker flow owns
-/// existence, so this only rejects malformed paths. Snapshot-level URI rules
-/// still run in the view-model validator.
 struct SafStorageValidator;
 
 impl StoragePathValidator for SafStorageValidator {
@@ -323,11 +281,6 @@ pub(super) fn build_vm(
 /// The VM working copy is normalized with the same value, so labels from
 /// both layers agree.
 #[derive(Debug, Clone, Copy)]
-/// Resolved display language plus text accessors: constructed once per
-/// projection from the draft choice and the vault system `Locale`, then
-/// threaded through every builder instead of a bare locale or language.
-/// The VM working copy is normalized with the same value, so labels from
-/// both layers agree.
 pub(crate) struct I18n {
     language: AppLanguage,
 }
@@ -363,6 +316,15 @@ impl I18n {
     pub(super) fn slot_description(self) -> String {
         slot_description(self.language)
     }
+
+    /// Full disabled-choice sentence, formatted Rust-side so word order
+    /// follows the locale (Kotlin renders it verbatim).
+    pub(super) fn slot_in_use(self, owner: &str) -> String {
+        match self.language {
+            AppLanguage::Japanese => format!("{owner}使用中"),
+            _ => format!("Used in {owner}"),
+        }
+    }
 }
 
 /// Terminal locale tag to the supported set. Both directions of the
@@ -390,10 +352,6 @@ pub(crate) fn app_language_tag(language: AppLanguage) -> &'static str {
 /// `Copy` struct instead of four parallel params (keeps every wire fn
 /// under the argument cap).
 #[derive(Debug, Clone, Copy)]
-/// Vault device truth for one projection: enumerated keyboards, touch
-/// capability, counted gamepads, and the resolved display language. One
-/// `Copy` struct instead of four parallel params (keeps every wire fn
-/// under the argument cap).
 pub(crate) struct Projection<'a> {
     pub keyboards: &'a [KeyboardInfo],
     pub touch_capable: Option<bool>,
@@ -402,7 +360,7 @@ pub(crate) struct Projection<'a> {
 }
 
 /// Single construction site: every command arm and test projects alike.
-pub(super) fn projection<'a>(
+pub(crate) fn projection<'a>(
     keyboards: &'a [KeyboardInfo],
     touch_capable: Option<bool>,
     gamepads: &'a [GamepadInfo],

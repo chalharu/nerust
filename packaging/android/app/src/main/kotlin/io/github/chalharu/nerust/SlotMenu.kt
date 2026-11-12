@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 import org.json.JSONObject
 
 internal const val SLOT_MENU_TAG = "nerust-slot-menu"
@@ -79,7 +80,8 @@ internal fun parseSlotList(raw: String): List<SlotEntry> {
 internal fun formatSlotTime(millis: Long): String =
     Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()).format(SLOT_TIME_FORMAT)
 
-private val SLOT_TIME_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+private val SLOT_TIME_FORMAT: DateTimeFormatter =
+    DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.US)
 
 /** Bounded refresh: after a slot op the event thread republishes the
  * vault mirror, so re-query off the main thread until the payload moves
@@ -97,30 +99,39 @@ internal class SlotMenuState(
     @Volatile
     private var stopped = false
 
+    // Generation counter: overlapping refresh loops (rapid deletes) must
+    // not overwrite each other; only the newest poll writes rows.
+    @Volatile
+    private var generation = 0
+
     fun stop() {
         stopped = true
     }
 
     fun refreshAfter(query: () -> String?) {
-        poll(query, 0)
+        poll(query, ++generation, 0)
     }
 
-    private fun poll(query: () -> String?, attempt: Int) {
-        if (stopped || attempt >= SLOT_REFRESH_DELAYS_MS.size) return
+    private fun poll(
+        query: () -> String?,
+        gen: Int,
+        attempt: Int,
+    ) {
+        if (stopped || gen != generation || attempt >= SLOT_REFRESH_DELAYS_MS.size) return
         BridgeIo.scheduleIo(SLOT_REFRESH_DELAYS_MS[attempt]) {
-            if (stopped) return@scheduleIo
+            if (stopped || gen != generation) return@scheduleIo
             val raw = try {
                 query()
             } catch (_: Exception) {
                 null
             }
             BridgeIo.postMain {
-                if (stopped) return@postMain
+                if (stopped || gen != generation) return@postMain
                 if (raw != null && raw != lastRaw) {
                     lastRaw = raw
                     rows = parseSlotList(raw)
                 } else {
-                    poll(query, attempt + 1)
+                    poll(query, gen, attempt + 1)
                 }
             }
         }
@@ -218,6 +229,7 @@ private fun SlotDismissableRow(
     SwipeToDismissBox(
         state = dismissState,
         enableDismissFromStartToEnd = false,
+        enableDismissFromEndToStart = row.occupied,
         backgroundContent = {
             if (row.occupied) {
                 Box(

@@ -68,8 +68,8 @@ fn player_id(index: usize) -> String {
     format!("player.{}", index + 1)
 }
 
-fn devices_id(index: usize) -> String {
-    format!("devices.{}", index + 1)
+fn devices_id(port: &str) -> String {
+    format!("devices.{port}")
 }
 
 fn types_id(index: usize) -> String {
@@ -920,7 +920,9 @@ fn slot_rows(view: &nerust_gui_viewmodel::settings::dto::InputTabView, i18n: I18
             for (wire, choice) in row.choices.iter_mut().zip(slot.choices.iter()) {
                 let covered = covering_owner.as_ref().filter(|_| choice.value.is_some());
                 wire.enabled = covered.is_none();
-                wire.reason = covered.cloned().unwrap_or_default();
+                wire.reason = covered
+                    .map(|owner| i18n.slot_in_use(owner.as_str()))
+                    .unwrap_or_default();
             }
             row
         })
@@ -939,7 +941,7 @@ fn build_player_sections(
     let mut sections = Vec::new();
     for (index, port) in PLAYER_PORTS.iter().enumerate() {
         let player_id = player_id(index);
-        let devices_id = devices_id(index);
+        let devices_id = devices_id(port);
         let types_id = types_id(index);
         let label = player_label(index, i18n);
         let names = port_member_names(port, snapshot, keyboards, i18n);

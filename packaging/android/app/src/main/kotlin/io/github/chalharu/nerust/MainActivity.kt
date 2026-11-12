@@ -670,8 +670,7 @@ class MainActivity :
      * resolves without the LANG env Android never sets. The saved in-app
      * choice wins; the system tag is only the fallback. */
     private fun pushSystemLocaleToVault() {
-        val tag =
-            AppLocale.savedTag(this).ifEmpty { AppLocale.currentTag().orEmpty() }
+        val tag = AppLocale.effectiveTag(this)
         if (tag.isEmpty()) return
         try {
             pushSystemLocale(tag)
@@ -764,7 +763,7 @@ class MainActivity :
                 val state = SlotMenuState(raw, rows)
                 dialogManager.show(
                     dialogTag = SLOT_MENU_TAG,
-                    contentDescription = "slots:${state.rows.size}",
+                    contentDescription = "slots",
                     ownedByTest = false,
                     onDismiss = { state.stop() },
                 ) { dismiss ->

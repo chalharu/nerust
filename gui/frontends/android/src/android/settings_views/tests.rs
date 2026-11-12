@@ -781,8 +781,8 @@ fn player_screens_wire_devices_types_and_summaries() {
     let (_snapshot, payload) = test_payload();
     // Default draft: built-in keyboard drives player 1.
     for (player_id, devices_id, types_id) in [
-        ("player.1", "devices.1", "types.1"),
-        ("player.2", "devices.2", "types.2"),
+        ("player.1", "devices.p1", "types.1"),
+        ("player.2", "devices.p2", "types.2"),
     ] {
         let player = payload
             .sections
@@ -858,17 +858,17 @@ fn devices_screen_lists_keyboards_with_membership_switches() {
     let devices = payload
         .sections
         .iter()
-        .find(|section| section.id == "devices.1")
+        .find(|section| section.id == "devices.p1")
         .expect("devices screen exists");
     assert!(
-        devices.rows.iter().any(|row| row.key == "devices.1.none"),
+        devices.rows.iter().any(|row| row.key == "devices.p1.none"),
         "empty enumeration explains itself instead of rendering blank"
     );
     let (_snapshot, payload) = test_payload();
     let devices = payload
         .sections
         .iter()
-        .find(|section| section.id == "devices.1")
+        .find(|section| section.id == "devices.p1")
         .expect("devices screen exists");
     let builtin = devices
         .rows
@@ -1284,6 +1284,45 @@ fn reset_section_restores_screen_defaults() {
     );
 }
 #[test]
+fn every_emitted_reset_key_executes() {
+    // Device-screen resets used index ids (`reset.devices.1`) while the
+    // reset arm matched port ids (`p1`): every such scope errored. Press
+    // each emitted reset key so a namespace drift fails loud here.
+    let (mut snapshot, payload) = test_payload();
+    let mut keyboards = test_keyboards();
+    let keys: Vec<String> = payload
+        .sections
+        .iter()
+        .flat_map(|section| &section.rows)
+        .filter(|row| row.kind == RowKind::Button)
+        .map(|row| row.key.clone())
+        .collect();
+    assert!(!keys.is_empty(), "reset rows exist to press");
+    for key in keys {
+        let reset = serde_json::to_string(&WireCommand {
+            key: key.clone(),
+            index: 0,
+            number: 0,
+            op: WireOp::ResetSection,
+            payload: serde_json::Value::Null,
+        })
+        .unwrap();
+        with_test_deps(|| {
+            apply_command_to(
+                &mut snapshot,
+                &reset,
+                &mut None,
+                &mut keyboards,
+                &mut None,
+                &mut Vec::new(),
+                &mut None,
+            )
+        })
+        .unwrap_or_else(|_| panic!("reset executes: {key}"));
+    }
+}
+
+#[test]
 fn same_profile_drives_both_slots() {
     let (mut snapshot, payload) = test_payload();
     // The standard pad is one instance per slot: P1 taking it must not
@@ -1681,8 +1720,8 @@ fn bare_rows_are_reviewed_allowlist() {
         "reset.controllers",
         "reset.controls.overlay_detail",
         "reset.controls.shortcuts",
-        "reset.devices.1",
-        "reset.devices.2",
+        "reset.devices.p1",
+        "reset.devices.p2",
         "reset.input.gba",
         "reset.input.gbc",
         "reset.input.nes",

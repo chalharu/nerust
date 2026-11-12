@@ -228,33 +228,29 @@ private fun applyPayloadJson(
     }
 }
 
-/** Typed command builders: `payload` is op-specific JSON (`device_truth`
- *  uses an object, nothing else carries one today). Two overloads instead of
- *  one `Any?` so a raw String can never be silently mis-encoded: passing a
- *  String fails to compile. */
+/** Typed command builders: op-only commands (`device_truth`) carry no row;
+ * row commands always do. Two names instead of one `Any?` payload so a raw
+ * String can never be silently mis-encoded: passing one fails to compile. */
 internal fun settingsCommandJson(
-    key: String,
-    index: Int,
-    number: Long,
-    op: String = "set",
+    op: String,
     payload: JSONObject? = null,
 ): String {
     val doc =
         JSONObject()
-            .put("key", key)
-            .put("index", index)
-            .put("number", number)
+            .put("key", op)
+            .put("index", 0)
+            .put("number", 0L)
             .put("op", op)
     if (payload != null) doc.put("payload", payload)
     return doc.toString()
 }
 
-internal fun settingsCommandJson(
+internal fun settingsRowCommand(
     key: String,
     index: Int,
     number: Long,
-    op: String,
-    payload: JSONArray?,
+    op: String = "set",
+    payload: JSONArray? = null,
 ): String {
     val doc =
         JSONObject()
@@ -307,66 +303,47 @@ internal fun NerustExpressiveHost(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun NerustDialogHost(content: @Composable () -> Unit) {
-    Box(
-        modifier =
-            Modifier
-                .fillMaxSize()
-                .padding(24.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        content()
-    }
-}
-
-@Composable
-private fun NerustDialogCard(
-    title: String,
-    buttons: @Composable RowScope.() -> Unit,
-    body: @Composable ColumnScope.() -> Unit,
-) {
-    Surface(
-        modifier = Modifier.widthIn(min = 280.dp, max = 420.dp),
-        shape = MaterialTheme.shapes.extraLarge,
-        tonalElevation = 6.dp,
-    ) {
-        Column(modifier = Modifier.padding(24.dp)) {
-            Text(text = title, style = MaterialTheme.typography.headlineSmall)
-            Spacer(modifier = Modifier.height(16.dp))
-            body()
-            Spacer(modifier = Modifier.height(24.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-                content = buttons,
-            )
-        }
-    }
-}
-
-@Composable
 internal fun NerustErrorDialogCard(
     message: String,
     onDismissRequest: () -> Unit,
 ) {
     NerustExpressiveHost {
-        NerustDialogHost {
-            NerustDialogCard(
-                title = stringResource(R.string.settings_error_title),
-                buttons = {
-                    TextButton(onClick = onDismissRequest) {
-                        Text(stringResource(R.string.settings_ok))
-                    }
-                },
+        Box(
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .padding(24.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Surface(
+                modifier = Modifier.widthIn(min = 280.dp, max = 420.dp),
+                shape = MaterialTheme.shapes.extraLarge,
+                tonalElevation = 6.dp,
             ) {
-                SelectionContainer {
+                Column(modifier = Modifier.padding(24.dp)) {
                     Text(
-                        text = message,
-                        modifier =
-                            Modifier
-                                .heightIn(max = 480.dp)
-                                .verticalScroll(rememberScrollState()),
+                        text = stringResource(R.string.settings_error_title),
+                        style = MaterialTheme.typography.headlineSmall,
                     )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    SelectionContainer {
+                        Text(
+                            text = message,
+                            modifier =
+                                Modifier
+                                    .heightIn(max = 480.dp)
+                                    .verticalScroll(rememberScrollState()),
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        TextButton(onClick = onDismissRequest) {
+                            Text(stringResource(R.string.settings_ok))
+                        }
+                    }
                 }
             }
         }
@@ -408,6 +385,10 @@ private const val COMMAND_FAILED = "command failed"
 
 /** Scope key restoring every setting; per-screen keys stay in their rows. */
 private const val RESET_ALL_KEY = "reset.all"
+
+/** Per-screen reset row: hidden from the list, run from the top bar. */
+private fun isScreenResetRow(row: SettingsRow): Boolean =
+    row.kind == "button" && row.key != RESET_ALL_KEY && row.key.startsWith("reset.")
 
 /** Shared card shape for settings surfaces; one allocation, not six. */
 private val SettingsCardShape = RoundedCornerShape(28.dp)
@@ -475,12 +456,7 @@ internal fun NerustSettingsDialogCard(
         mutating: Boolean = true,
         payload: JSONArray? = null,
     ) {
-        val command =
-            if (payload == null) {
-                settingsCommandJson(key, index, number, op)
-            } else {
-                settingsCommandJson(key, index, number, op, payload)
-            }
+        val command = settingsRowCommand(key, index, number, op, payload)
         BridgeIo.runIo {
             val raw =
                 try {
@@ -624,9 +600,7 @@ internal fun NerustSettingsDialogCard(
     // The screen reset lives in the top bar next to save; its button row
     // stays out of the list. reset.all keeps its own row.
     val screenResetKey =
-        activeSection?.rows?.firstOrNull {
-            it.kind == "button" && it.key != RESET_ALL_KEY && it.key.startsWith("reset.")
-        }?.key
+        activeSection?.rows?.firstOrNull(::isScreenResetRow)?.key
     NerustExpressiveHost {
         Scaffold(
             topBar = {
@@ -1322,7 +1296,7 @@ private fun SettingsSectionList(
     // the reason on every row; each row still shows its binding.
     val listRows =
         remember(section) {
-            section.rows.filterNot { it.kind == "button" && it.key != RESET_ALL_KEY }
+            section.rows.filterNot(::isScreenResetRow)
         }
     val noInputNote =
         remember(section) {
@@ -1419,11 +1393,12 @@ private fun SettingsSectionList(
                                     )
                                 }
                                 else -> {
-                                    SettingsInfoRow(
+                                    SettingsNavigationRow(
                                         title = row.label,
                                         value = settingsRowDisplayValue(row, onLabel, offLabel),
                                         semanticsLabel = row.label,
                                         supportingText = row.description,
+                                        onClick = null,
                                     )
                                 }
                             }
@@ -1644,7 +1619,7 @@ private fun SettingsCaptureRow(
             Text(text = row.label, style = MaterialTheme.typography.titleMedium)
             val value = row.text.ifBlank { stringResource(R.string.settings_tap_to_assign) }
             Text(
-                text = if (row.enabled) value else row.text,
+                text = if (row.enabled) value else row.text.ifBlank { row.reason },
                 style = MaterialTheme.typography.bodyMedium,
             )
         }
@@ -1681,11 +1656,8 @@ private fun SettingsChoiceList(
             ) {
                 Column {
                     row.choices.forEachIndexed { choiceIndex, choice ->
-                        // Rust passes the owner slot label; Kotlin owns the sentence.
-                        val reason =
-                            choice.reason.ifBlank { null }?.let { owner ->
-                                stringResource(R.string.settings_used_in, owner)
-                            }
+                        // Rust owns the sentence (word order follows the
+                        // locale); Kotlin renders it verbatim.
                         Row(
                             modifier =
                                 Modifier
@@ -1709,11 +1681,9 @@ private fun SettingsChoiceList(
                                             MaterialTheme.colorScheme.onSurfaceVariant
                                         },
                                 )
-                                if (!choice.enabled) {
+                                if (!choice.enabled && choice.reason.isNotBlank()) {
                                     Text(
-                                        text =
-                                            reason
-                                                ?: stringResource(R.string.settings_used_elsewhere),
+                                        text = choice.reason,
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -1744,13 +1714,11 @@ private fun SettingsNavigationRow(
 ) {
     // onClick == null renders a static readout that never pushes a detail
     // level that renders nothing.
-    val base = Modifier.fillMaxWidth()
     val modifier =
-        if (onClick != null) {
-            base.clickable(onClick = onClick).padding(horizontal = 24.dp, vertical = 18.dp)
-        } else {
-            base.padding(horizontal = 24.dp, vertical = 18.dp)
-        }
+        Modifier
+            .fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(horizontal = 24.dp, vertical = 18.dp)
     Row(
         modifier = modifier.semantics(mergeDescendants = true) { contentDescription = semanticsLabel },
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1778,19 +1746,3 @@ private fun SettingsNavigationRow(
         }
     }
 }
-
-@Composable
-private fun SettingsInfoRow(
-    title: String,
-    value: String,
-    semanticsLabel: String,
-    supportingText: String? = null,
-) {
-    SettingsNavigationRow(
-        title = title,
-        value = value,
-        semanticsLabel = semanticsLabel,
-        supportingText = supportingText,
-    )
-}
-

@@ -115,7 +115,7 @@ impl SessionHandle {
             self.input.press_state.release(field, source, dpad)
         };
         if let Some(gui_input) = self.emu.input_mut() {
-            for (field, assert) in updates {
+            for &(field, assert) in updates.as_slice() {
                 let _ = gui_input.set(field, InputValue::Digital(assert));
             }
         }

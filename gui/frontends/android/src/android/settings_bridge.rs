@@ -274,13 +274,27 @@ fn err_json(error: impl std::fmt::Display) -> String {
     serde_json::json!({"ok": false, "error": error.to_string()}).to_string()
 }
 
+/// Success envelope: one serialization at this JNI edge, no re-parse or
+/// string concat of an already-built payload.
+#[derive(serde::Serialize)]
+struct Envelope<'a> {
+    ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    consumed: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    payload: Option<&'a settings_views::ViewPayload>,
+}
+
 /// Success envelope: the payload serializes exactly once at this JNI edge.
 /// The envelope shape is unchanged (`{"ok":true,"payload":{...}}`); only the
 /// old re-parse/concat round-trip is gone.
 fn envelope_ok(payload: &settings_views::ViewPayload) -> Result<String, String> {
-    let json = serde_json::to_string(payload).map_err(|error| error.to_string())?;
-    debug_assert!(json.starts_with('{'), "payload must be JSON");
-    Ok(format!("{{\"ok\":true,\"payload\":{json}}}"))
+    serde_json::to_string(&Envelope {
+        ok: true,
+        consumed: None,
+        payload: Some(payload),
+    })
+    .map_err(|error| error.to_string())
 }
 
 /// Hardware-key envelope: consumed presses carry the refreshed payload;
@@ -289,16 +303,12 @@ fn envelope_key(
     payload: Option<&settings_views::ViewPayload>,
     consumed: bool,
 ) -> Result<String, String> {
-    match payload {
-        Some(payload) => {
-            let json = serde_json::to_string(payload).map_err(|error| error.to_string())?;
-            debug_assert!(json.starts_with('{'), "payload must be JSON");
-            Ok(format!(
-                "{{\"ok\":true,\"consumed\":{consumed},\"payload\":{json}}}"
-            ))
-        }
-        None => Ok(format!("{{\"ok\":true,\"consumed\":{consumed}}}")),
-    }
+    serde_json::to_string(&Envelope {
+        ok: true,
+        consumed: Some(consumed),
+        payload,
+    })
+    .map_err(|error| error.to_string())
 }
 
 fn hardware_key(
@@ -310,34 +320,43 @@ fn hardware_key(
         Ok((keycode, pressed))
     });
     let out = match parsed {
-        jni::Outcome::Ok((keycode, pressed)) => bridge::with_settings(|state| {
-            let Some(draft) = state.draft.as_mut() else {
-                return err_json("no settings draft");
-            };
-            if state.capture.is_none() {
-                return serde_json::json!({"ok": true, "consumed": false}).to_string();
-            }
-            match settings_views::apply_hardware_key(
-                keycode,
-                pressed,
-                draft,
-                &mut state.capture,
-                settings_views::Projection {
-                    keyboards: &state.keyboards,
-                    touch_capable: state.touch_capable,
-                    gamepads: &state.gamepads,
-                    i18n: settings_views::I18n::resolve(
-                        draft.shared.general.language,
-                        state.system_locale,
+        jni::Outcome::Ok((keycode, pressed)) => {
+            // Compute under the lock, serialize outside it: the payload
+            // string is the expensive part and needs no vault access.
+            let applied = bridge::with_settings(|state| {
+                let Some(draft) = state.draft.as_mut() else {
+                    return Err("no settings draft".to_string());
+                };
+                if state.capture.is_none() {
+                    return Ok((None, false));
+                }
+                settings_views::apply_hardware_key(
+                    keycode,
+                    pressed,
+                    draft,
+                    &mut state.capture,
+                    settings_views::projection(
+                        &state.keyboards,
+                        state.touch_capable,
+                        &state.gamepads,
+                        settings_views::I18n::resolve(
+                            draft.shared.general.language,
+                            state.system_locale,
+                        ),
                     ),
-                },
-            ) {
+                )
+            });
+            match applied {
                 Ok((payload, consumed)) => {
-                    envelope_key(payload.as_ref(), consumed).unwrap_or_else(err_json)
+                    if payload.is_some() || consumed {
+                        envelope_key(payload.as_ref(), consumed).unwrap_or_else(err_json)
+                    } else {
+                        serde_json::json!({"ok": true, "consumed": false}).to_string()
+                    }
                 }
                 Err(error) => err_json(error),
             }
-        }),
+        }
         _ => err_json("jni decode failed"),
     };
     match bridge::with_callback_env(&mut *env, |env| -> jni::errors::Result<jni::sys::jstring> {
@@ -365,23 +384,27 @@ fn settings_command(env: &mut jni::EnvUnowned<'_>, command: JString<'_>) -> jni:
         command.try_to_string(env)
     });
     let out = match parsed {
-        jni::Outcome::Ok(command_json) => bridge::with_settings(|state| {
-            let Some(draft) = state.draft.as_mut() else {
-                return err_json("no settings draft");
-            };
-            match settings_views::apply_command_to(
-                draft,
-                &command_json,
-                &mut state.capture,
-                &mut state.keyboards,
-                &mut state.touch_capable,
-                &mut state.gamepads,
-                &mut state.system_locale,
-            ) {
+        jni::Outcome::Ok(command_json) => {
+            // Compute under the lock, serialize outside it.
+            let applied = bridge::with_settings(|state| {
+                let Some(draft) = state.draft.as_mut() else {
+                    return Err("no settings draft".to_string());
+                };
+                settings_views::apply_command_to(
+                    draft,
+                    &command_json,
+                    &mut state.capture,
+                    &mut state.keyboards,
+                    &mut state.touch_capable,
+                    &mut state.gamepads,
+                    &mut state.system_locale,
+                )
+            });
+            match applied {
                 Ok(payload) => envelope_ok(&payload).unwrap_or_else(err_json),
                 Err(error) => err_json(error),
             }
-        }),
+        }
         _ => err_json("jni decode failed"),
     };
     match bridge::with_callback_env(&mut *env, |env| -> jni::errors::Result<jni::sys::jstring> {

@@ -43,4 +43,9 @@ internal object AppLocale {
         if (locales.isEmpty) return null
         return locales[0].language.takeIf { it.isNotEmpty() }
     }
+
+    /** Effective tag for the Rust vault: the saved in-app choice wins,
+     * the terminal locale is only the fallback. */
+    internal fun effectiveTag(context: Context): String =
+        savedTag(context).ifEmpty { currentTag().orEmpty() }
 }

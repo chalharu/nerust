@@ -31,8 +31,8 @@ pub(crate) fn apply_hardware_key(
             && let Some(key) = android_keycode_to_key(keycode)
             && let Some((target, _)) = capture.as_ref()
         {
-            let target = target.clone();
             let vm = build_vm(snapshot, deps, i18n)?;
+            let target = target.clone();
             vm.capture
                 .start_capture(target)
                 .map_err(|error| error.to_string())?;
