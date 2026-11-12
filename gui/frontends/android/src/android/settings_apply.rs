@@ -10,6 +10,7 @@ use super::{
     bridge, error_dialog, picker,
     settings::{self, SettingsDialogResult},
 };
+use crate::error_dialog_controller::SettingsClosedTransition;
 
 impl super::AndroidFrontend {
     /// Gate a settings result: stale synthesized dismisses die here, applied
@@ -46,7 +47,7 @@ impl super::AndroidFrontend {
                 .dialogs
                 .on_settings_closed(queue, self.is_resumed, tick)
         }) {
-            crate::error_dialog_controller::SettingsClosedTransition::Show { auto_pause } => {
+            SettingsClosedTransition::Show { auto_pause } => {
                 if auto_pause {
                     self.pause();
                 }
@@ -57,8 +58,8 @@ impl super::AndroidFrontend {
                     error_dialog::request_show_error_dialog(&self.app, id, detail);
                 }
             }
-            crate::error_dialog_controller::SettingsClosedTransition::Resume => self.resume(),
-            crate::error_dialog_controller::SettingsClosedTransition::Idle => {}
+            SettingsClosedTransition::Resume => self.resume(),
+            SettingsClosedTransition::Idle => {}
         }
     }
 

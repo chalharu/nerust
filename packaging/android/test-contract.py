@@ -17,6 +17,14 @@ VERIFY = load_sibling("verify_contract", "verify-contract.py")
 DECODER = load_sibling("decoder_contract", "test-decoder-contract.py")
 
 
+def find_gate(menu, action):
+    """Conditional gate for one menu action."""
+    return next(
+        gate for gate in menu["allOf"]
+        if gate["if"]["properties"]["action"]["const"] == action
+    )
+
+
 class ContractTests(unittest.TestCase):
     def setUp(self):
         self.schema = json.loads((CONTRACT.RUST / "bridge_events.v1.json").read_text())
@@ -168,12 +176,7 @@ class StructureTests(unittest.TestCase):
                     for action, field in (("controller", "device_id"), ("touch_gate", "pressed")):
                         self.schema = copy.deepcopy(original)
                         menu = self.schema["definitions"]["menuEvent"]
-                        gates = menu["allOf"] if "allOf" in menu else [{"if": menu["if"], "then": menu["then"]}]
-                        target = next(
-                            gate for gate in gates
-                            if gate["if"]["properties"]["action"]["const"] == action
-                        )
-                        target["then"]["required"].remove(field)
+                        find_gate(menu, action)["then"]["required"].remove(field)
                         with self.assertRaises(VERIFY.ContractError):
                             self.verify()
                     continue
@@ -195,13 +198,8 @@ class StructureTests(unittest.TestCase):
                 elif mutation == "enum":
                     menu["properties"]["key"]["enum"].append("probe")
                 else:
-                    gates = menu["allOf"] if "allOf" in menu else [{"if": menu["if"], "then": menu["then"]}]
                     for action, field in (("controller", "device_id"), ("touch_gate", "pressed")):
-                        target = next(
-                            gate for gate in gates
-                            if gate["if"]["properties"]["action"]["const"] == action
-                        )
-                        target["then"]["required"].remove(field)
+                        find_gate(menu, action)["then"]["required"].remove(field)
                 self.assertNotEqual(CONTRACT.outputs(changed)[path], baseline)
 
     def test_modified_generated_validation_is_rejected(self):

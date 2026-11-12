@@ -44,7 +44,7 @@ mod android;
 
 // Exercise the actual settings views serializer on the host, without JNI.
 #[cfg(all(test, not(target_os = "android")))]
-#[path = "android/settings_views.rs"]
+#[path = "android/settings_views/mod.rs"]
 mod settings_views;
 
 #[cfg(any(target_os = "android", test))]

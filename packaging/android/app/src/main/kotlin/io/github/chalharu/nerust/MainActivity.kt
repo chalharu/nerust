@@ -186,8 +186,10 @@ class MainActivity :
         if (pressed && event.repeatCount > 0) {
             return true
         }
+        // Only DOWN/UP carry button state; anything else (e.g. ACTION_MULTIPLE)
+        // is not ours to consume.
         if (event.action != KeyEvent.ACTION_DOWN && event.action != KeyEvent.ACTION_UP) {
-            return true
+            return super.dispatchKeyEvent(event)
         }
         updateControllerInput(event.deviceId, key, pressed)
         return true

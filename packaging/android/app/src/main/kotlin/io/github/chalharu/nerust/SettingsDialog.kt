@@ -1249,10 +1249,11 @@ private fun SettingsSectionList(
                                     )
                                 }
                                 "choice" -> {
+                                    val display = settingsRowDisplayValue(row, onLabel, offLabel)
                                     SettingsNavigationRow(
                                         title = row.label,
-                                        value = settingsRowDisplayValue(row, onLabel, offLabel),
-                                        semanticsLabel = "${row.label}: ${settingsRowDisplayValue(row, onLabel, offLabel)}",
+                                        value = display,
+                                        semanticsLabel = "${row.label}: $display",
                                         supportingText = row.description,
                                         onClick = { actions.onRowClick(row) },
                                     )
