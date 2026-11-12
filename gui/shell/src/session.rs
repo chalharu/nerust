@@ -117,36 +117,47 @@ pub enum KeyboardShortcut {
     OpenDebugger,
 }
 
-/// Bounded string interner for persisted device names.
-/// Settings/topology names are a fixed small set, so one box per unique
-/// string is a fixed cost, never a per-event cost. The map keeps one owned
-/// copy per id for repeat lookups; the leak behind each id lives as long
-/// as the department that interned it.
+/// Bounded string interner for persisted device names. Attachments and
+/// controls are a fixed taxonomy per session, so one box per unique
+/// string is a fixed cost, never a per-event cost. The bound turns a
+/// hostile hotplug-descriptor stream from a slow leak into a loud skip.
 #[derive(Debug, Default)]
 struct IdInterner {
     attachments: HashMap<String, AttachmentId>,
     controls: HashMap<String, DigitalControlId>,
 }
 
+/// Distinct names kept alive by the interner. Past this, hotplug churn
+/// skips instead of leaking.
+const MAX_INTERNED: usize = 512;
+
 impl IdInterner {
-    fn attachment(&mut self, name: &str) -> AttachmentId {
+    fn attachment(&mut self, name: &str) -> Option<AttachmentId> {
         if let Some(id) = self.attachments.get(name) {
-            return *id;
+            return Some(*id);
+        }
+        if self.attachments.len() >= MAX_INTERNED {
+            log::error!("attachment interner full; skipping {name}");
+            return None;
         }
         let leaked: &'static str = Box::leak(name.to_owned().into_boxed_str());
         let id = AttachmentId::new(leaked);
         self.attachments.insert(name.to_owned(), id);
-        id
+        Some(id)
     }
 
-    fn control(&mut self, name: &str) -> DigitalControlId {
+    fn control(&mut self, name: &str) -> Option<DigitalControlId> {
         if let Some(id) = self.controls.get(name) {
-            return *id;
+            return Some(*id);
+        }
+        if self.controls.len() >= MAX_INTERNED {
+            log::error!("control interner full; skipping {name}");
+            return None;
         }
         let leaked: &'static str = Box::leak(name.to_owned().into_boxed_str());
         let id = DigitalControlId::new(leaked);
         self.controls.insert(name.to_owned(), id);
-        id
+        Some(id)
     }
 }
 
@@ -203,13 +214,13 @@ impl InputDept {
                 if let nerust_settings_core::model::input::PersistedControlId::Digital(control) =
                     &binding.control
                 {
-                    self.key_source.insert(
-                        binding.key,
-                        (
-                            self.interner.attachment(binding.attachment.as_str()),
-                            self.interner.control(control),
-                        ),
-                    );
+                    let (Some(attachment), Some(control)) = (
+                        self.interner.attachment(binding.attachment.as_str()),
+                        self.interner.control(control),
+                    ) else {
+                        continue;
+                    };
+                    self.key_source.insert(binding.key, (attachment, control));
                 }
             }
         }

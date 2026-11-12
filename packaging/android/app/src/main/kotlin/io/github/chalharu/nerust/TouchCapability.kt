@@ -48,7 +48,7 @@ private fun isCountedGamepad(device: InputDevice): Boolean {
     if (!joystickClass || !(gamepadSource || nonAlphaKeyboard)) return false
     // Canonical gamepad buttons; any one proves a real controller.
     // All exist since API 1, so no version guard is needed.
-    if (!device.hasKeys(*GAMEPAD_BUTTON_CODES).any { it }) return false
+    if (GAMEPAD_BUTTON_CODES.none { device.hasKeys(it)[0] }) return false
     // Game axes a real controller drives; button clusters expose none.
     return GAME_AXES.any { device.getMotionRange(it) != null }
 }
@@ -116,21 +116,20 @@ private fun keyboardRowFor(device: InputDevice): KeyboardRow? {
 }
 
 /** One device's contribution to the shared scan, or null when the
- * device carries nothing (negative id, virtual, or no truth at all). */
-private data class DeviceHit(
-    val keyboard: KeyboardRow?,
-    val gamepad: String?,
-    val touch: Boolean,
-)
-
-private fun scanOneDevice(device: InputDevice): DeviceHit? {
+ * device carries nothing (negative id, virtual, or no truth at all).
+ * Returns the merged verdict directly: at most one row per device. */
+private fun scanOneDevice(device: InputDevice): DeviceTruth? {
     if (device.id < 0) return null
     if (Build.VERSION.SDK_INT >= 29 && device.isVirtual) return null
     val touch = device.supportsSource(InputDevice.SOURCE_TOUCHSCREEN)
     val keyboard = keyboardRowFor(device)
     val gamepad = if (isCountedGamepad(device)) device.name else null
     if (!touch && keyboard == null && gamepad == null) return null
-    return DeviceHit(keyboard, gamepad, touch)
+    return DeviceTruth(
+        keyboards = listOfNotNull(keyboard),
+        gamepadNames = listOfNotNull(gamepad),
+        touchCapable = touch,
+    )
 }
 
 /** Single-pass device scan: touch fallback, keyboard rows, and counted
@@ -147,11 +146,11 @@ internal fun scanDeviceTruth(packageManager: PackageManager): DeviceTruth {
     for (id in InputDevice.getDeviceIds()) {
         val device = InputDevice.getDevice(id) ?: continue
         val hit = scanOneDevice(device) ?: continue
-        if (hit.touch) touch = true
-        hit.keyboard?.let { row ->
+        if (hit.touchCapable) touch = true
+        hit.keyboards.firstOrNull()?.let { row ->
             if (row.builtin) builtin = row else if (seen.add(row.member)) keyboards += row
         }
-        hit.gamepad?.let { gamepads += it }
+        gamepads += hit.gamepadNames
     }
     val rows = listOfNotNull(builtin) + keyboards
     return DeviceTruth(rows, gamepads.distinct(), touch)

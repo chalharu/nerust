@@ -38,6 +38,40 @@ pub(crate) fn dpad_pair(abs: AbstractKey) -> Option<(DpadAxis, AbstractKey)> {
     }
 }
 
+/// At most two field updates per event, inline on the stack: the input
+/// hot path never heap-allocates for the common one-update case.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct FieldUpdates {
+    updates: [(usize, bool); 2],
+    len: u8,
+}
+
+impl FieldUpdates {
+    fn one(update: (usize, bool)) -> Self {
+        Self {
+            updates: [update, (0, false)],
+            len: 1,
+        }
+    }
+
+    fn two(first: (usize, bool), second: (usize, bool)) -> Self {
+        Self {
+            updates: [first, second],
+            len: 2,
+        }
+    }
+
+    pub(crate) fn as_slice(&self) -> &[(usize, bool)] {
+        &self.updates[..self.len as usize]
+    }
+}
+
+impl PartialEq<Vec<(usize, bool)>> for FieldUpdates {
+    fn eq(&self, other: &Vec<(usize, bool)>) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
 /// Live press state for every field.
 #[derive(Debug, Default)]
 pub(crate) struct FieldPressState {
@@ -53,20 +87,20 @@ pub(crate) struct FieldPressState {
 
 impl FieldPressState {
     /// Press a field. `dpad` carries Copy ids plus the abstract for
-    /// direction buttons. Returns (field, assert) updates.
+    /// direction buttons. Returns (field, assert) updates, inline.
     pub(crate) fn press(
         &mut self,
         field: usize,
         source: FieldSource,
         dpad: Option<(AttachmentId, DigitalControlId, AbstractKey)>,
-    ) -> Vec<(usize, bool)> {
+    ) -> FieldUpdates {
         self.holders.entry(field).or_default().insert(source);
         let Some((attachment, control, abs)) = dpad else {
-            return vec![(field, true)];
+            return FieldUpdates::one((field, true));
         };
         self.control_field.insert((attachment, control), field);
         let Some((axis, opposite)) = dpad_pair(abs) else {
-            return vec![(field, true)];
+            return FieldUpdates::one((field, true));
         };
         self.dpad_held
             .entry(attachment)
@@ -78,11 +112,11 @@ impl FieldPressState {
             // Opposite held: neutralize the axis, both fields release.
             self.neutral.insert((attachment, axis));
             match self.peer_field(attachment, opposite) {
-                Some(peer) => vec![(field, false), (peer, false)],
-                None => vec![(field, false)],
+                Some(peer) => FieldUpdates::two((field, false), (peer, false)),
+                None => FieldUpdates::one((field, false)),
             }
         } else {
-            vec![(field, true)]
+            FieldUpdates::one((field, true))
         }
     }
 
@@ -110,13 +144,13 @@ impl FieldPressState {
         Some(still_held)
     }
 
-    /// Release a field. Returns (field, assert) updates to apply.
+    /// Release a field. Returns (field, assert) updates to apply, inline.
     pub(crate) fn release(
         &mut self,
         field: usize,
         source: FieldSource,
         dpad: Option<(AttachmentId, DigitalControlId, AbstractKey)>,
-    ) -> Vec<(usize, bool)> {
+    ) -> FieldUpdates {
         if let Some(holders) = self.holders.get_mut(&field) {
             holders.remove(&source);
             if holders.is_empty() {
@@ -124,10 +158,10 @@ impl FieldPressState {
             }
         }
         let Some((attachment, control, abs)) = dpad else {
-            return vec![(field, self.is_held(field))];
+            return FieldUpdates::one((field, self.is_held(field)));
         };
         let Some((axis, opposite)) = dpad_pair(abs) else {
-            return vec![(field, self.is_held(field))];
+            return FieldUpdates::one((field, self.is_held(field)));
         };
         let side_still_held = self
             .remove_dpad_hold(attachment, abs, control)
@@ -136,23 +170,23 @@ impl FieldPressState {
             // Same direction still held by another source: the pair is
             // unchanged, so a neutral pair stays neutral.
             if self.neutral.contains(&(attachment, axis)) {
-                return vec![(field, false)];
+                return FieldUpdates::one((field, false));
             }
-            return vec![(field, self.is_held(field))];
+            return FieldUpdates::one((field, self.is_held(field)));
         }
         if !self.neutral.contains(&(attachment, axis)) {
-            return vec![(field, self.is_held(field))];
+            return FieldUpdates::one((field, self.is_held(field)));
         }
         // This side fully left. Resolve the pair: the still-held opposite
         // re-asserts, or the axis simply unblocks.
         self.neutral.remove(&(attachment, axis));
         if self.is_abstract_held(attachment, opposite) {
             match self.peer_field(attachment, opposite) {
-                Some(peer) => vec![(field, false), (peer, true)],
-                None => vec![(field, false)],
+                Some(peer) => FieldUpdates::two((field, false), (peer, true)),
+                None => FieldUpdates::one((field, false)),
             }
         } else {
-            vec![(field, self.is_held(field))]
+            FieldUpdates::one((field, self.is_held(field)))
         }
     }
 
@@ -177,8 +211,15 @@ impl FieldPressState {
     }
 
     fn peer_field(&self, attachment: AttachmentId, abs: AbstractKey) -> Option<usize> {
-        let ctrl = self.dpad_held.get(&attachment)?.get(&abs)?.iter().next()?;
-        self.control_field.get(&(attachment, *ctrl)).copied()
+        // Deterministic pick: several controls may hold one abstract, but
+        // they converge on one field; take the smallest instead of HashSet
+        // iteration order.
+        self.dpad_held
+            .get(&attachment)?
+            .get(&abs)?
+            .iter()
+            .filter_map(|ctrl| self.control_field.get(&(attachment, *ctrl)).copied())
+            .min()
     }
 }
 

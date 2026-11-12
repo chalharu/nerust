@@ -1,5 +1,6 @@
 package io.github.chalharu.nerust
 
+import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.os.SystemClock
@@ -82,7 +83,7 @@ private val DRAWER_ACTIONS =
         DrawerAction(R.string.drawer_pause, MenuAction.TOGGLE_PAUSE, R.drawable.ic_drawer_pause),
         DrawerAction(R.string.drawer_save_state, MenuAction.SAVE_STATE, R.drawable.ic_drawer_save_state),
         DrawerAction(R.string.drawer_load_state, MenuAction.LOAD_STATE, R.drawable.ic_drawer_load_state),
-        DrawerAction(R.string.drawer_slots, OPEN_SLOTS, R.drawable.ic_drawer_save_state),
+        DrawerAction(R.string.drawer_slots, OPEN_SLOTS, R.drawable.ic_drawer_slots),
         DrawerAction(R.string.drawer_reset, MenuAction.RESET, R.drawable.ic_drawer_reset),
         DrawerAction(R.string.drawer_unload_rom, MenuAction.UNLOAD, R.drawable.ic_drawer_unload_rom),
         DrawerAction(R.string.drawer_exit, MenuAction.EXIT, R.drawable.ic_drawer_exit),
@@ -306,12 +307,15 @@ class ChromeManager(private val activity: MainActivity) {
         // Hide the edge-handle popup while the drawer is open.
         drawerChromePopup?.dismiss()
 
+        // One wrapped context per open: the overlay, the probe, and the
+        // edge handle all resolve drawer strings through it.
+        val strings = AppLocale.wrap(activity)
         val overlay =
             ComposeOwnerFrameLayout(activity) { view ->
                 activity.installComposeOwners(view)
             }.apply {
                 tag = DRAWER_OVERLAY_TAG
-                setTag(R.id.nerust_drawer_content_probe, drawerContentDescription(emulationPaused))
+                setTag(R.id.nerust_drawer_content_probe, drawerContentDescription(strings, emulationPaused))
                 layoutParams =
                     FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
@@ -319,7 +323,7 @@ class ChromeManager(private val activity: MainActivity) {
                     )
             }
         val drawerContent =
-            ComposeView(AppLocale.wrap(activity)).apply {
+            ComposeView(strings).apply {
                 tag = DRAWER_COMPOSE_TAG
                 layoutParams =
                     FrameLayout.LayoutParams(
@@ -765,8 +769,7 @@ class ChromeManager(private val activity: MainActivity) {
 
     private fun dp(value: Int): Int = (value * activity.resources.displayMetrics.density).toInt()
 
-    private fun drawerContentDescription(emulationPaused: Boolean): String {
-        val strings = AppLocale.wrap(activity)
+    private fun drawerContentDescription(strings: Context, emulationPaused: Boolean): String {
         return (
             listOf(DRAWER_TITLE) +
                 DRAWER_ACTIONS.map { action ->

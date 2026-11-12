@@ -270,7 +270,9 @@ mod tests {
             );
         }
         assert_eq!(
-            decode_frontend_event(r#"{"v":1,"type":"menu","action":"touch_gate"}"#),
+            decode_frontend_event(&format!(
+                r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"touch_gate"}}"#
+            )),
             None,
             "touch gate without pressed never defaults"
         );
@@ -281,9 +283,9 @@ mod tests {
         // open_rom is covered by decodes_every_menu_action_from_kotlin_envelope;
         // this pins the gated controller shape and the second envelope type.
         assert_eq!(
-            decode_frontend_event(
-                r#"{"v":1,"type":"menu","action":"controller","device_id":7,"key":"button1","pressed":true}"#
-            ),
+            decode_frontend_event(&format!(
+                r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"controller","device_id":7,"key":"button1","pressed":true}}"#
+            )),
             Some(FrontendEvent::Menu(MenuAction::ControllerInput {
                 device_id: 7,
                 key: nerust_input_traits::AbstractKey::Button1,
@@ -291,7 +293,9 @@ mod tests {
             }))
         );
         assert_eq!(
-            decode_frontend_event(r#"{"v":1,"type":"error_dialog_dismissed","request_id":7}"#),
+            decode_frontend_event(&format!(
+                r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"error_dialog_dismissed","request_id":7}}"#
+            )),
             Some(FrontendEvent::ErrorDialogDismissed(
                 crate::error_dialog_controller::DialogRequestId(7)
             ))
@@ -355,15 +359,22 @@ mod tests {
     #[test]
     fn decode_json_event_rejects_bad_version_and_unknown() {
         assert_eq!(
-            decode_frontend_event(r#"{"v":2,"type":"menu","action":"open_rom"}"#),
+            decode_frontend_event(&format!(
+                r#"{{"v":{},"type":"menu","action":"open_rom"}}"#,
+                BRIDGE_EVENT_VERSION + 1
+            )),
             None
         );
         assert_eq!(
-            decode_frontend_event(r#"{"v":1,"type":"menu","action":"mystery"}"#),
+            decode_frontend_event(&format!(
+                r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"mystery"}}"#
+            )),
             None
         );
         assert_eq!(
-            decode_frontend_event(r#"{"v":1,"type":"menu","action":"controller","device_id":7}"#),
+            decode_frontend_event(&format!(
+                r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"controller","device_id":7}}"#
+            )),
             None
         );
         // Bare action names and colon-separated payloads never reach the
@@ -389,7 +400,7 @@ mod tests {
         ] {
             assert_eq!(
                 decode_frontend_event(&format!(
-                    r#"{{"v":1,"type":"menu","action":"legacy_{unknown}"}}"#
+                    r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"legacy_{unknown}"}}"#
                 )),
                 None
             );
@@ -471,7 +482,7 @@ mod tests {
                 "schema is missing controller key {name}"
             );
             let raw = format!(
-                r#"{{"v":1,"type":"menu","action":"controller","device_id":3,"key":"{name}","pressed":true}}"#
+                r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"controller","device_id":3,"key":"{name}","pressed":true}}"#
             );
             assert_eq!(
                 decode_frontend_event(&raw),
@@ -484,9 +495,9 @@ mod tests {
             );
         }
         assert_eq!(
-            decode_frontend_event(
-                r#"{"v":1,"type":"menu","action":"controller","device_id":3,"key":"mystery","pressed":true}"#
-            ),
+            decode_frontend_event(&format!(
+                r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"controller","device_id":3,"key":"mystery","pressed":true}}"#
+            )),
             None
         );
     }

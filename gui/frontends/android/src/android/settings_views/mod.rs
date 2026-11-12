@@ -20,7 +20,7 @@ mod wire;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_settings_core::model::language::AppLanguage;
 use projection::project_fresh;
-use wire::{projection, with_vm_deps};
+use wire::with_vm_deps;
 
 #[cfg(not(target_os = "android"))]
 use wire::{CaptureSlot, GamepadInfo, I18n, KeyboardInfo, ViewPayload};
@@ -33,8 +33,8 @@ pub(crate) use capture::apply_hardware_key;
 pub(crate) use commands::{apply_command_to, finish_snapshot};
 #[cfg(target_os = "android")]
 pub(crate) use wire::{
-    CaptureSlot, GamepadInfo, I18n, KeyboardInfo, Projection, ViewPayload, app_language_tag,
-    install_vm_deps, system_language_from_tag,
+    CaptureSlot, GamepadInfo, I18n, KeyboardInfo, ViewPayload, app_language_tag, install_vm_deps,
+    projection, system_language_from_tag,
 };
 
 #[cfg(test)]
@@ -56,7 +56,7 @@ pub(super) fn open_payload(
 ) -> Result<ViewPayload, String> {
     with_vm_deps(|deps| {
         let i18n = I18n::resolve(snapshot.shared.general.language, system_locale);
-        let truth = projection(keyboards, touch_capable, gamepads, i18n);
+        let truth = wire::projection(keyboards, touch_capable, gamepads, i18n);
         let capture: CaptureSlot = None;
         project_fresh(snapshot, deps, &capture, truth)
     })
