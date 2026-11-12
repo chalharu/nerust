@@ -51,13 +51,10 @@ pub(super) fn request_show_settings_dialog(
     let Some((request_id, payload)) = payload else {
         return Ok(false);
     };
-    let tagged = serde_json::json!({
-        "schemaVersion": SETTINGS_SCHEMA_VERSION,
-        "requestId": request_id.0,
-        "payload": serde_json::from_str::<serde_json::Value>(&payload)
-            .map_err(|error| error.to_string())?,
-    })
-    .to_string();
+    let tagged = format!(
+        "{{\"schemaVersion\":{SETTINGS_SCHEMA_VERSION},\"requestId\":{},\"payload\":{payload}}}",
+        request_id.0
+    );
     bridge::post_to_activity(
         app,
         "show Android settings screen",
@@ -307,7 +304,10 @@ fn hardware_key(
                 },
             )
             {
-                Ok((payload, consumed)) => serde_json::json!({"ok": true, "consumed": consumed, "payload": serde_json::from_str::<serde_json::Value>(&payload).unwrap_or(serde_json::Value::Null)}).to_string(),
+                Ok((payload, consumed)) => {
+                    debug_assert!(payload.starts_with('{'), "hardware payload must be JSON");
+                    format!("{{\"ok\":true,\"consumed\":{consumed},\"payload\":{payload}}}")
+                }
                 Err(error) => serde_json::json!({"ok": false, "error": error}).to_string(),
             }
         }),
@@ -351,7 +351,10 @@ fn settings_command(env: &mut jni::EnvUnowned<'_>, command: JString<'_>) -> jni:
                 &mut state.gamepads,
                 &mut state.system_locale,
             ) {
-                Ok(sections) => serde_json::json!({"ok": true, "payload": serde_json::from_str::<serde_json::Value>(&sections).unwrap_or(serde_json::Value::Null)}).to_string(),
+                Ok(sections) => {
+                    debug_assert!(sections.starts_with('{'), "command payload must be JSON");
+                    format!("{{\"ok\":true,\"payload\":{sections}}}")
+                }
                 Err(error) => serde_json::json!({"ok": false, "error": error}).to_string(),
             }
         }),

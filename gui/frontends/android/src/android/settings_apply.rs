@@ -15,21 +15,26 @@ impl super::AndroidFrontend {
     /// Gate a settings result: stale synthesized dismisses die here, applied
     /// snapshots racing a live dialog still apply. Returns false to stop.
     fn gate_settings_result(&mut self, is_applied: bool, tick: TickMetrics) -> bool {
-        if self.flow.dialogs.is_settings_open() && !is_applied {
+        match (self.flow.dialogs.is_settings_open(), is_applied) {
             // Stale synthesized dismiss racing a suspend-then-rerequest: ignore it.
             // The live flight's result arrives with its own request id.
-            log::debug!("handle_settings_result: stale result while dialog open; ignoring");
-            return false;
-        }
-        if self.flow.dialogs.is_settings_open() {
+            (true, false) => {
+                log::debug!("handle_settings_result: stale result while dialog open; ignoring");
+                false
+            }
             // Applied racing a live re-request: the snapshot is real user input, so apply it.
             // Error flush stays shielded below; the user re-saves if needed.
-            log::warn!("handle_settings_result: applying settings while a newer dialog is open");
-        } else if !is_applied {
+            (true, true) => {
+                log::warn!("handle_settings_result: applying settings while a newer dialog is open");
+                true
+            }
             // Dismissed without changes: flush under the current presentation.
-            self.flush_closed_settings_dialogs(tick);
+            (false, false) => {
+                self.flush_closed_settings_dialogs(tick);
+                true
+            }
+            (false, true) => true,
         }
-        true
     }
 
     /// Settings-close dialog flush: take the next queued batch after the session apply.
