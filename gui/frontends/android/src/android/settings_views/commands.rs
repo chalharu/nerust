@@ -24,7 +24,12 @@ use nerust_system_traits::factory::descriptor::{SystemSettingsChoiceId, SystemSe
 use super::projection::{
     PLAYER_PORTS, build_sections, project_fresh, project_payload, prune_missing_builtin,
 };
-use super::wire::*;
+use super::wire::{
+    CaptureSlot, GamepadInfo, I18n, KeyboardInfo, Projection, RowKind, RowWire, SectionWire,
+    ViewPayload, VmDeps, WireCommand, WireOp, build_vm, choice, find_row, pin_draft_language,
+    projection, range_value, sync_snapshot_from_vm, system_language_from_tag, toggle_value,
+    with_vm_deps,
+};
 
 /// Apply one wire command to the draft snapshot in place, returning the
 /// refreshed payload. Stateless per call except for the passed draft,

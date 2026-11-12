@@ -31,7 +31,6 @@ pub(crate) struct ViewPayload {
 
 /// Pending key capture: opaque target plus the localized prompt.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-
 /// Pending key capture: opaque target plus the localized prompt.
 pub(crate) struct CaptureWire {
     pub target: String,
@@ -43,7 +42,6 @@ pub(crate) struct CaptureWire {
 /// `sub` is the navigation breadcrumb parent ("Player 1" under "Devices");
 /// empty falls back to the top-level title.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-
 /// One settings section: id plus pre-resolved label plus rows. Invisible
 /// sections stay addressable (group navigation) but leave the category list.
 /// `sub` is the navigation breadcrumb parent ("Player 1" under "Devices");
@@ -70,7 +68,6 @@ pub(crate) struct SectionWire {
 /// non-editable navigation aids. `Button` rows ask Kotlin for confirmation
 /// first, then send the `reset_section` op named by the row key.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-
 /// One settings row. `choices` carries both the Kotlin-visible labels and the
 /// Rust-typed values (echoed back by index); `number`/`step`/`min`/`max`/`unit`
 /// drive slider rows; `text` drives read-only info rows and doubles as the
@@ -174,7 +171,6 @@ pub(crate) enum RowKind {
 /// choice is currently selectable (slot conflicts disable taken profiles),
 /// and the owner slot label when disabled so Kotlin can explain why.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-
 /// One pick-list entry: display label, opaque typed value, whether the
 /// choice is currently selectable (slot conflicts disable taken profiles),
 /// and the owner slot label when disabled so Kotlin can explain why.
@@ -195,7 +191,6 @@ pub(crate) struct ChoiceWire {
 /// agnostic, virtual devices excluded, HID duplicate descriptors merged —
 /// all classified Kotlin-side, see the IA keyboard rule).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-
 /// One physical keyboard enumerated on the device (Kotlin `InputDevice`).
 /// The vault holds the list; Rust never touches hardware. `member` is the
 /// stable port-set id ("kbd:builtin" or "kbd:<descriptor>"), `name` the
@@ -214,7 +209,6 @@ pub(crate) struct KeyboardInfo {
 /// same rule as the runtime gate). Names only: Rust displays them in the
 /// overlay detail screen so users see why Auto hides, without logcat.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-
 /// One gamepad the Auto overlay gate counts (Kotlin `InputDevice`,
 /// same rule as the runtime gate). Names only: Rust displays them in the
 /// overlay detail screen so users see why Auto hides, without logcat.
@@ -245,7 +239,6 @@ pub(crate) enum WireOp {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-
 pub(crate) struct WireCommand {
     pub key: String,
     #[serde(default)]
@@ -287,7 +280,6 @@ pub(super) fn with_vm_deps<T>(
 /// existence, so this only rejects malformed paths. Snapshot-level URI rules
 /// still run in the view-model validator.
 #[derive(Debug)]
-
 /// Android storage lives behind SAF: the document-tree picker flow owns
 /// existence, so this only rejects malformed paths. Snapshot-level URI rules
 /// still run in the view-model validator.
@@ -331,7 +323,6 @@ pub(super) fn build_vm(
 /// The VM working copy is normalized with the same value, so labels from
 /// both layers agree.
 #[derive(Debug, Clone, Copy)]
-
 /// Resolved display language plus text accessors: constructed once per
 /// projection from the draft choice and the vault system `Locale`, then
 /// threaded through every builder instead of a bare locale or language.
@@ -399,7 +390,6 @@ pub(crate) fn app_language_tag(language: AppLanguage) -> &'static str {
 /// `Copy` struct instead of four parallel params (keeps every wire fn
 /// under the argument cap).
 #[derive(Debug, Clone, Copy)]
-
 /// Vault device truth for one projection: enumerated keyboards, touch
 /// capability, counted gamepads, and the resolved display language. One
 /// `Copy` struct instead of four parallel params (keeps every wire fn
@@ -665,4 +655,47 @@ pub(super) fn button_row(key: &str, label: String, description: String) -> RowWi
         description,
         ..RowWire::new(RowKind::Button)
     }
+}
+
+/// Single capture gate: capture rows enable (and the command path accepts)
+/// exactly when at least one input device is enumerated. Lives in the leaf
+/// module so projection and capture share it without a module cycle.
+pub(super) fn capture_open(keyboards: &[KeyboardInfo], gamepads: &[GamepadInfo]) -> bool {
+    !keyboards.is_empty() || !gamepads.is_empty()
+}
+
+pub(super) fn target_system(target: &CaptureTarget, deps: &VmDeps) -> String {
+    match target {
+        CaptureTarget::Binding { system, .. } => system.to_string(),
+        CaptureTarget::Shortcut(_) => deps
+            .factories
+            .first()
+            .map(|factory| factory.system_id().to_string())
+            .unwrap_or_default(),
+    }
+}
+
+/// Opaque capture target: newline-free JSON the key must not parse.
+/// The `Value` form is the internal boundary (single serialization at the
+/// row edge); the command path decodes the row string once per command.
+fn encode_target_value(target: &CaptureTarget, system: &str) -> serde_json::Value {
+    match target {
+        CaptureTarget::Binding {
+            attachment,
+            control,
+            ..
+        } => serde_json::json!({
+            "kind": "binding",
+            "system": system,
+            "attachment": attachment,
+            "control": control,
+        }),
+        CaptureTarget::Shortcut(action) => {
+            serde_json::json!({"kind": "shortcut", "action": action})
+        }
+    }
+}
+
+pub(super) fn encode_target(target: &CaptureTarget, system: &str) -> String {
+    encode_target_value(target, system).to_string()
 }

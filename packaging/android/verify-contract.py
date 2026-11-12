@@ -11,7 +11,13 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from bridge_schema import ContractError, gates_by_action, load_sibling, require, uncomment
+from bridge_schema import (
+    ContractError,
+    gates_by_action,
+    load_sibling,
+    require,
+    uncomment,
+)
 
 GEN = load_sibling("generator", "generate-contract.py")
 
