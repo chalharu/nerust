@@ -1,9 +1,8 @@
 package io.github.chalharu.nerust
 
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -33,8 +32,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import java.time.Instant
 import java.time.ZoneId
@@ -272,38 +274,41 @@ private fun SlotDismissableRow(
     )
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SlotMenuRow(
     row: SlotEntry,
     onSelect: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    // Delete lives behind swipe and long-press only: no permanent trash
+    // icon. The long-press menu opens at the touch point (DropdownMenu
+    // offset), not at the row edge.
     var showMenu by remember { mutableStateOf(false) }
+    var menuOffset by remember { mutableStateOf(DpOffset.Zero) }
+    val density = LocalDensity.current
     Box {
         ListItem(
             headlineContent = { Text(text = stringResource(R.string.slot_title, row.id)) },
             supportingContent = { Text(text = slotSubtitle(row)) },
-            trailingContent = {
-                if (row.occupied) {
-                    IconButton(onClick = onDelete) {
-                        Icon(
-                            painter = painterResource(id = R.drawable.ic_slot_delete),
-                            contentDescription = stringResource(R.string.slot_delete),
-                            tint = MaterialTheme.colorScheme.error,
-                        )
-                    }
-                }
-            },
             modifier =
-                Modifier.combinedClickable(
-                    onClick = onSelect,
-                    onLongClick = { showMenu = true },
-                ),
+                Modifier
+                    .clickable(onClick = onSelect)
+                    .pointerInput(row.id) {
+                        detectTapGestures(
+                            onLongPress = { point ->
+                                menuOffset =
+                                    with(density) {
+                                        DpOffset(point.x.toDp(), point.y.toDp())
+                                    }
+                                showMenu = true
+                            },
+                        )
+                    },
         )
         DropdownMenu(
             expanded = showMenu,
             onDismissRequest = { showMenu = false },
+            offset = menuOffset,
         ) {
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.slot_select)) },
