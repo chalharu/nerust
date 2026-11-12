@@ -236,10 +236,7 @@ mod tests {
         );
         assert_eq!(state.press(10, left_a, Some(left())), vec![(10, true)]);
         // Same direction, second source: still asserted, no neutral.
-        assert_eq!(
-            state.press(10, left_b, Some(left_b_ctrl)),
-            vec![(10, true)]
-        );
+        assert_eq!(state.press(10, left_b, Some(left_b_ctrl)), vec![(10, true)]);
         // Opposite presses: neutral.
         assert_eq!(
             state.press(11, right_key, Some(right())),

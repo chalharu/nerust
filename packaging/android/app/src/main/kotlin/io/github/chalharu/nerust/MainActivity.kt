@@ -206,6 +206,18 @@ class MainActivity :
         return true
     }
 
+    /** Single controller-event producer: press, release, and removal
+     * synthesis share one extras shape. */
+    private fun sendControllerInput(deviceId: Int, key: String, pressed: Boolean) {
+        sendMenuAction(
+            menuEvent(MenuAction.CONTROLLER) {
+                put("device_id", deviceId)
+                put("key", key)
+                put("pressed", pressed)
+            },
+        )
+    }
+
     private fun updateControllerInput(
         deviceId: Int,
         key: String,
@@ -219,25 +231,13 @@ class MainActivity :
             chromeManager.noteControllerInput()
             sensorController.noteControllerInput()
         }
-        sendMenuAction(
-                menuEvent(MenuAction.CONTROLLER) {
-                    put("device_id", deviceId)
-                    put("key", key)
-                    put("pressed", pressed)
-                },
-            )
+        sendControllerInput(deviceId, key, pressed)
         if (keys.isEmpty()) controllerPressed.remove(deviceId)
     }
 
     private fun releaseController(deviceId: Int) {
         controllerPressed.remove(deviceId)?.toList()?.forEach { key ->
-            sendMenuAction(
-                menuEvent(MenuAction.CONTROLLER) {
-                    put("device_id", deviceId)
-                    put("key", key)
-                    put("pressed", false)
-                },
-            )
+            sendControllerInput(deviceId, key, false)
         }
     }
 

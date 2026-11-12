@@ -284,9 +284,10 @@ def _producer_puts(body):
     return puts
 
 
-def _balanced_call(text, start):
-    """Call text from the opening paren at `start` through its match."""
-    require(text[start] == "(", "producer call must open with a paren")
+def _balanced(text, start, brackets):
+    """Span from the opening bracket at `start` through its match."""
+    opening, closing = brackets
+    require(text[start] == opening, f"block must open with {opening}")
     depth = 0
     in_string = None
     index = start
@@ -297,37 +298,24 @@ def _balanced_call(text, start):
                 in_string = None
         elif char in ('"', "'"):
             in_string = char
-        elif char == "(":
+        elif char == opening:
             depth += 1
-        elif char == ")":
+        elif char == closing:
             depth -= 1
             if depth == 0:
                 return text[start:index + 1]
         index += 1
-    raise ContractError("unbalanced producer call")
+    raise ContractError("unbalanced block")
+
+
+def _balanced_call(text, start):
+    """Call text from the opening paren at `start` through its match."""
+    return _balanced(text, start, "()")
 
 
 def _balanced_braces(text, start):
     """Brace block from the opening brace at `start` through its match."""
-    require(text[start] == "{", "extras block must open with a brace")
-    depth = 0
-    in_string = None
-    index = start
-    while index < len(text):
-        char = text[index]
-        if in_string:
-            if char == in_string and text[index - 1] != "\\":
-                in_string = None
-        elif char in ('"', "'"):
-            in_string = char
-        elif char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-            if depth == 0:
-                return text[start:index + 1]
-        index += 1
-    raise ContractError("unbalanced extras block")
+    return _balanced(text, start, "{}")
 
 
 def _menu_event_calls(kotlin):
