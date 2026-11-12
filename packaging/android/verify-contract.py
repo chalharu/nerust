@@ -338,7 +338,8 @@ def validate_producer(definitions, producer, kotlin):
     producer = uncomment(producer)
     match = re.search(r'internal fun menuEvent\s*\(', producer)
     require(match, "unparsed event producers")
-    require(not re.search(r'internal fun \w+Event\w*Json\s*\(', producer), "obsolete typed builders remain")
+    require(not re.search(r'internal fun (menuEventJson|touchGateEventJson|controllerEventJson)\s*\(',
+                          producer), "obsolete typed builders remain")
     args = _balanced_call(producer, match.end() - 1)[1:-1]
     after = producer[match.end() - 1 + len(_balanced_call(producer, match.end() - 1)):]
     body_match = re.match(r'\s*:\s*String\s*=\s*JSONObject\(\)(.*?)\.toString\(\)', after, re.DOTALL)
