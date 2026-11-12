@@ -278,8 +278,8 @@ def validate_decoder(definitions, decoder):
 
 def _producer_puts(body):
     """Producer field assignments emitted into the JSON object."""
-    puts = re.findall(r'\.put\("(\w+)",\s*("[^"\n]*"|[\w.]+)\)', body)
-    rest = re.sub(r'\.put\("(\w+)",\s*("[^"\n]*"|[\w.]+)\)', '', body).strip()
+    puts = re.findall(r'\.put\("(\w+)", ([^()\n]*)\)', body)
+    rest = re.sub(r'\.put\("(\w+)", ([^()\n]*)\)', '', body).strip()
     require(rest == '' or rest == '.apply(extras)', "unsupported producer expression")
     return puts
 
@@ -343,7 +343,7 @@ def validate_producer(definitions, producer, kotlin):
     after = producer[match.end() - 1 + len(_balanced_call(producer, match.end() - 1)):]
     body_match = re.match(r'\s*:\s*String\s*=\s*JSONObject\(\)(.*?)\.toString\(\)', after, re.DOTALL)
     require(body_match, "unparsed event producers")
-    name, body = "menuEvent", body_match.group(1)
+    body = body_match.group(1)
     require(re.fullmatch(r'\s*action:\s*String\s*,\s*extras:\s*JSONObject\.\(\)\s*->\s*Unit\s*=\s*\{\}\s*',
                          args),
             "unified producer must take (action, extras)")
@@ -354,9 +354,8 @@ def validate_producer(definitions, producer, kotlin):
             "producer envelope/version drift")
     require(re.search(r'\.apply\(extras\)\s*$', body.strip()), "producer must apply extras last")
     menu = definitions["menu"]
-    required = set(menu["required"])
     for call in _menu_event_calls(uncomment(kotlin)):
-        pairs = re.findall(r'(?<![\w.])put\("(\w+)",\s*("[^"\n]*"|[\w.]+|\S+?)\)', call)
+        pairs = re.findall(r'(?<![\w.])put\("(\w+)", ([^()\n]*)\)', call)
         for key, value in pairs:
             require(re.fullmatch(r'"[^"\n]*"|[\w.]+', value) is not None,
                     f"unsupported extras value: {value}")

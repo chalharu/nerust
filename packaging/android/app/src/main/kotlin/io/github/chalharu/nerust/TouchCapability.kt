@@ -98,15 +98,27 @@ internal data class DeviceTruth(
     val touchCapable: Boolean,
 )
 
-/** Single-pass device scan: touch fallback, keyboard rows, and counted
- * gamepads from one enumeration. The built-in row (device id 0 with
- * letter keys) leads, then one row per external descriptor; BT/USB stay
- * agnostic, virtual devices excluded, duplicate HID descriptors merged.
+/** One keyboard row for a device, or null when it is not one.
+ * The built-in row (device id 0 with letter keys) leads; externals are
+ * per descriptor, BT/USB agnostic; virtual devices never reach here.
  * Button clusters (power keys, headset jacks, touch panels, fingerprint
  * sensors) also expose SOURCE_KEYBOARD, so every row must carry letter
- * keys — built-in and external share one rule. Keyboards stay out of the
- * gamepad gate on purpose: shareable auxiliary input must not evict the
- * touch controls. */
+ * keys — built-in and external share one rule. */
+private fun keyboardRowFor(device: InputDevice): KeyboardRow? {
+    if (device.sources and InputDevice.SOURCE_KEYBOARD != InputDevice.SOURCE_KEYBOARD) return null
+    if (!device.hasKeys(KeyEvent.KEYCODE_A)[0]) return null
+    return if (device.id == 0) {
+        KeyboardRow("kbd:builtin", device.name, true)
+    } else {
+        KeyboardRow("kbd:${device.descriptor}", device.name, false)
+    }
+}
+
+/** Single-pass device scan: touch fallback, keyboard rows, and counted
+ * gamepads from one enumeration. Hotplug/resume paths share this so
+ * settings and runtime can never disagree about what is connected.
+ * Keyboards stay out of the gamepad gate on purpose: shareable auxiliary
+ * input must not evict the touch controls. */
 internal fun scanDeviceTruth(packageManager: PackageManager): DeviceTruth {
     var touch = packageManager.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN)
     var builtin: KeyboardRow? = null
@@ -118,16 +130,12 @@ internal fun scanDeviceTruth(packageManager: PackageManager): DeviceTruth {
         if (device.id < 0) continue
         if (Build.VERSION.SDK_INT >= 29 && device.isVirtual) continue
         if (!touch && device.supportsSource(InputDevice.SOURCE_TOUCHSCREEN)) touch = true
-        if (device.sources and InputDevice.SOURCE_KEYBOARD == InputDevice.SOURCE_KEYBOARD &&
-            device.hasKeys(KeyEvent.KEYCODE_A)[0]
-        ) {
-            if (device.id == 0) {
-                builtin = KeyboardRow("kbd:builtin", device.name, true)
-            } else {
-                val member = "kbd:${device.descriptor}"
-                if (seen.add(member)) {
-                    keyboards += KeyboardRow(member, device.name, false)
-                }
+        val row = keyboardRowFor(device)
+        if (row != null) {
+            if (row.builtin) {
+                builtin = row
+            } else if (seen.add(row.member)) {
+                keyboards += row
             }
         }
         if (isCountedGamepad(device)) gamepads += device.name
