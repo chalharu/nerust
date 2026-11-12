@@ -202,6 +202,32 @@ private fun parseSettingsRow(row: JSONObject?): SettingsRow? {
     }
 }
 
+/** Applies one command result to the screen state. Top-level (not nested in
+ * the card) so its branches don't inflate the composable's complexity. All
+ * screen mutation flows through the two callbacks, which are branch-free. */
+private fun applyPayloadJson(
+    raw: String,
+    mutating: Boolean,
+    onApplied: (List<SettingsSection>, List<String>, String?, Boolean) -> Unit,
+    onError: (String?) -> Unit,
+): Boolean {
+    try {
+        val doc = JSONObject(raw)
+        if (!doc.optBoolean("ok", false)) {
+            onError(doc.optString("error", COMMAND_FAILED))
+            return false
+        }
+        val payload = doc.getJSONObject("payload")
+        onError(null)
+        onApplied(parseSettingsSections(payload), parseIssues(payload), parseCapture(payload), mutating)
+        return true
+    } catch (e: Exception) {
+        Log.e(TAG, "settings command result malformed", e)
+        onError(e.message ?: COMMAND_FAILED)
+        return false
+    }
+}
+
 /** Typed command builders: `payload` is op-specific JSON (`device_truth`
  *  uses an object, nothing else carries one today). Two overloads instead of
  *  one `Any?` so a raw String can never be silently mis-encoded: passing a
@@ -421,28 +447,19 @@ internal fun NerustSettingsDialogCard(
     fun applyPayloadJson(
         raw: String,
         mutating: Boolean,
-    ): Boolean {
-        try {
-            val doc = JSONObject(raw)
-            if (!doc.optBoolean("ok", false)) {
-                Log.e(TAG, "settings command rejected: ${doc.optString("error", COMMAND_FAILED)}")
-                commandError = doc.optString("error", COMMAND_FAILED)
-                return false
-            }
-            val payload = doc.getJSONObject("payload")
-            commandError = null
-            sections = parseSettingsSections(payload)
-            issues = parseIssues(payload)
-            capturePrompt = parseCapture(payload)
-            previewOrientation(sections, onOrientationChanged)
-            if (mutating) isDirty = true
-            return true
-        } catch (e: Exception) {
-            Log.e(TAG, "settings payload parse failed", e)
-            commandError = e.message ?: COMMAND_FAILED
-            return false
-        }
-    }
+    ): Boolean =
+        applyPayloadJson(
+            raw,
+            mutating,
+            onApplied = { s, i, c, d ->
+                sections = s
+                issues = i
+                capturePrompt = c
+                previewOrientation(s, onOrientationChanged)
+                isDirty = isDirty || d
+            },
+            onError = { commandError = it },
+        )
 
     /** Every edit rides one command on the shared background lane; the
      *  payload apply (and dirty marking) posts back to the main thread.
@@ -473,9 +490,8 @@ internal fun NerustSettingsDialogCard(
                     return@runIo
                 }
             BridgeIo.postMain {
-                if (!applyPayloadJson(raw, mutating)) return@postMain
-                if (!mutating) return@postMain
-                dirtyKeys = resetDirtyKeys(sections, dirtyKeys, op, key)
+                val applied = applyPayloadJson(raw, mutating)
+                if (mutating && applied) dirtyKeys = resetDirtyKeys(sections, dirtyKeys, op, key)
             }
         }
     }
