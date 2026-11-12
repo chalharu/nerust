@@ -1,0 +1,3 @@
+# mgblib
+
+👋 This is not the Game Boy library you're looking for. Move along...
