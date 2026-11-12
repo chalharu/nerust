@@ -2,8 +2,10 @@ package io.github.chalharu.nerust
 
 import android.annotation.SuppressLint
 import android.app.NativeActivity
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.hardware.input.InputManager
 import android.media.AudioManager
@@ -29,11 +31,9 @@ import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import org.json.JSONException
 import org.json.JSONObject
-import kotlin.math.max
 
-private const val SETTINGS_DIALOG_TAG = "nerust-settings-dialog"
+private const val SETTINGS_SCREEN_TAG = "nerust-settings-screen"
 private const val ERROR_DIALOG_TAG = "nerust-error-dialog"
-private const val DIALOG_PRESENTATION_FULL_SCREEN = "full_screen"
 
 internal fun screenOrientationRequest(value: Int): Int? =
     when (value) {
@@ -87,6 +87,9 @@ class MainActivity :
 
     @Volatile private var lastLoadedSystemForTest: String? = null
 
+    /** Last presence scan: identical hotplug/resume bursts skip the apply. */
+    @Volatile private var lastPresenceTruth: DeviceTruth? = null
+
     /** Set only on user-initiated finish paths; native exits then, never on destroy. */
     private var userInitiatedExit = false
 
@@ -123,14 +126,20 @@ class MainActivity :
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
     }
 
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLocale.wrap(newBase))
+    }
+
     override fun onResume() {
         super.onResume()
         Log.i(TAG, "onResume")
+        pushSystemLocaleToVault()
         activeActivityForTest = this
         chromeManager.onResume()
         sensorController.onResume()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
         (getSystemService(INPUT_SERVICE) as InputManager).registerInputDeviceListener(this, null)
+        refreshControllerPresence()
         chromeManager.scheduleChromeAttach()
     }
 
@@ -151,15 +160,14 @@ class MainActivity :
         chromeManager.onConfigurationChanged()
         // Tell Rust to rebuild its touch overlay even if no winit Resized event arrives.
         // The Rust re-push converges with the re-attach above.
-        sendMenuAction(menuEventJson(MenuAction.ORIENTATION_CHANGED))
+        sendMenuAction(menuEvent(MenuAction.ORIENTATION_CHANGED))
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        val source = event.source
-        val isController =
-            source and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
-                source and InputDevice.SOURCE_DPAD == InputDevice.SOURCE_DPAD ||
-                source and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
+        // Settings capture lives in SettingsActivity with its own dispatch;
+        // here only gamepad sources divert, everything else keeps platform
+        // behavior (volume, Back, hardware keyboards in gameplay).
+        val isController = isControllerSource(event.source)
         if (!isController) {
             return super.dispatchKeyEvent(event)
         }
@@ -181,8 +189,10 @@ class MainActivity :
         if (pressed && event.repeatCount > 0) {
             return true
         }
+        // Only DOWN/UP carry button state; anything else (e.g. ACTION_MULTIPLE)
+        // is not ours to consume.
         if (event.action != KeyEvent.ACTION_DOWN && event.action != KeyEvent.ACTION_UP) {
-            return true
+            return super.dispatchKeyEvent(event)
         }
         updateControllerInput(event.deviceId, key, pressed)
         return true
@@ -201,6 +211,18 @@ class MainActivity :
         return true
     }
 
+    /** Single controller-event producer: press, release, and removal
+     * synthesis share one extras shape. */
+    private fun sendControllerInput(deviceId: Int, key: String, pressed: Boolean) {
+        sendMenuAction(
+            menuEvent(MenuAction.CONTROLLER) {
+                put("device_id", deviceId)
+                put("key", key)
+                put("pressed", pressed)
+            },
+        )
+    }
+
     private fun updateControllerInput(
         deviceId: Int,
         key: String,
@@ -214,13 +236,13 @@ class MainActivity :
             chromeManager.noteControllerInput()
             sensorController.noteControllerInput()
         }
-        sendMenuAction(controllerEventJson(deviceId, key, pressed))
+        sendControllerInput(deviceId, key, pressed)
         if (keys.isEmpty()) controllerPressed.remove(deviceId)
     }
 
     private fun releaseController(deviceId: Int) {
         controllerPressed.remove(deviceId)?.toList()?.forEach { key ->
-            sendMenuAction(controllerEventJson(deviceId, key, false))
+            sendControllerInput(deviceId, key, false)
         }
     }
 
@@ -229,13 +251,53 @@ class MainActivity :
         controllerPressed.keys.toList().forEach(::releaseController)
     }
 
-    override fun onInputDeviceAdded(deviceId: Int) = Unit
+    override fun onInputDeviceAdded(deviceId: Int) {
+        refreshControllerPresence()
+    }
 
-    override fun onInputDeviceChanged(deviceId: Int) = Unit
+    override fun onInputDeviceChanged(deviceId: Int) {
+        refreshControllerPresence()
+    }
 
     override fun onInputDeviceRemoved(deviceId: Int) {
         releaseController(deviceId)
         sensorController.noteControllerRemoved(deviceId)
+        refreshControllerPresence()
+    }
+
+    /** Auto overlay rule, evaluated live: non-touch terminals never draw
+     * buttons; while a gamepad is connected Auto hides them. Keyboards
+     * stay out of this gate on purpose: they are shareable auxiliary
+     * input (and the emulator always enumerates one), so mere presence
+     * must not evict the touch controls.
+     * Touch capability mirrors the settings push (feature flag or a
+     * touchscreen device): settings and runtime must agree, or "Always"
+     * would save yet never draw.
+     * Scan runs on the shared background lane; only the chrome apply posts
+     * back. Identical scans skip the apply via the last-result cache. */
+    private fun refreshControllerPresence() {
+        BridgeIo.runIo {
+            val scan =
+                try {
+                    scanDeviceTruth(packageManager)
+                } catch (e: Exception) {
+                    Log.e(TAG, "device scan failed", e)
+                    return@runIo
+                }
+            if (scan == lastPresenceTruth) return@runIo
+            lastPresenceTruth = scan
+            val touchCapable = scan.touchCapable
+            val gamepadNames = scan.gamepadNames
+            BridgeIo.postMain {
+                if (isDestroyed || isFinishing) return@postMain
+                chromeManager.setTouchCapable(touchCapable)
+                if (gamepadNames.isNotEmpty()) {
+                    // Debug breadcrumb for Auto-hide reports: which device hid it.
+                    Log.d(TAG, "overlay auto-hide counts gamepad: ${gamepadNames.joinToString()}")
+                }
+                chromeManager.setControllerConnected(gamepadNames.isNotEmpty())
+            }
+        }
     }
 
     override fun onPause() {
@@ -301,7 +363,8 @@ class MainActivity :
         }
     }
 
-    @Deprecated("Used on Android 12 and earlier; API 33+ uses OnBackInvokedDispatcher")
+    // Deprecated upstream; kept because minSdk 28 predates the
+    // OnBackInvokedDispatcher replacement (API 33+ path lives above).
     @SuppressLint("GestureBackNavigation")
     @Suppress("DEPRECATION")
     override fun onBackPressed() {
@@ -504,9 +567,9 @@ class MainActivity :
 
     fun isChromeViewShowingForTest(tag: String): Boolean =
         chromeManager.isViewShowingForTest(tag) ?: when (tag) {
-            SETTINGS_DIALOG_TAG,
-            -> {
-                dialogManager.isShowing(tag)
+            SETTINGS_SCREEN_TAG -> {
+                val settings = SettingsActivity.currentActivityForTest()
+                settings != null && !settings.isFinishing && !settings.isDestroyed
             }
 
             else -> {
@@ -516,9 +579,8 @@ class MainActivity :
 
     fun findChromeViewForTest(tag: String): View? =
         chromeManager.findViewForTest(tag) ?: when (tag) {
-            SETTINGS_DIALOG_TAG,
-            -> {
-                dialogManager.rootViewForTag(tag)
+            SETTINGS_SCREEN_TAG -> {
+                SettingsActivity.currentActivityForTest()?.window?.decorView
             }
 
             else -> {
@@ -529,6 +591,7 @@ class MainActivity :
     fun chromeDebugStateForTest(tag: String): String =
         "tag=$tag, destroyed=$isDestroyed, finishing=$isFinishing, decor=${window.decorView.debugViewState()}, " +
             chromeManager.debugStateForTest() + dialogManager.debugState() +
+            ", settings=${SettingsActivity.currentActivityForTest()?.isFinishing}" +
             ", lastDialog=$lastDialogStateForTest"
 
     fun dispatchMenuActionForTest(action: String) {
@@ -552,24 +615,18 @@ class MainActivity :
     }
 
     fun dismissComposeDialogForTest() {
-        dialogManager.dismissForTest()
+        SettingsActivity.currentActivityForTest()?.finishForReplacement()
+            ?: dialogManager.dismissForTest()
     }
 
     fun resetChromeStateForTest() {
+        SettingsActivity.currentActivityForTest()?.finish()
         dialogManager.resetForTest()
         chromeManager.removeDrawerOverlay()
     }
 
-    internal fun showSettingsDialogForTest(fields: List<SettingsField>) {
-        showSettingsDialogInternal(
-            content = SettingsDialogContent(fields = fields),
-            requestId = null,
-            ownedByTest = true,
-        )
-    }
-
-    /** Show a modal Android settings dialog. Presents the versioned settings JSON from Rust.
-     * Save and dismiss return request-scoped JSON keyed by stable setting IDs. */
+    /** Show a DTO-driven Android settings screen. Presents the versioned sections from Rust.
+     * Save and dismiss return request-scoped JSON; edits ride synchronous per-row commands. */
     fun showSettingsDialog(payload: String) {
         val document =
             try {
@@ -587,55 +644,39 @@ class MainActivity :
             return
         }
         val requestId = document.getLong("requestId")
-        val sectionDocuments = document.getJSONArray("sections")
-        val parsed = mutableListOf<SettingsField>()
-        for (sectionIndex in 0 until sectionDocuments.length()) {
-            val section = sectionDocuments.getJSONObject(sectionIndex)
-            val sectionId = section.getString("id")
-            val sectionLabel =
-                section.optString("label").ifBlank {
-                    SettingsSectionFallback.labelFor(sectionId)
-                }
-            val fields = section.getJSONArray("fields")
-            for (fieldIndex in 0 until fields.length()) {
-                val field = fields.getJSONObject(fieldIndex)
-                val kind = field.optString("kind", "choice")
-                if (kind == "range") {
-                    parsed +=
-                        SettingsField(
-                            key = field.getString("key"),
-                            section = sectionId,
-                            sectionLabel = sectionLabel,
-                            label = field.getString("label"),
-                            kind = kind,
-                            choices = emptyList(),
-                            value = field.getInt("value"),
-                            visible = field.optBoolean("visible", true),
-                            rangeMin = field.getInt("min"),
-                            rangeMax = field.getInt("max"),
-                            unit = field.optString("unit", ""),
-                        )
-                } else {
-                    val options = field.getJSONArray("options")
-                    parsed +=
-                        SettingsField(
-                            key = field.getString("key"),
-                            section = sectionId,
-                            sectionLabel = sectionLabel,
-                            label = field.getString("label"),
-                            kind = kind,
-                            choices = List(options.length()) { options.getString(it) },
-                            value = field.getInt("value"),
-                            visible = field.optBoolean("visible", true),
-                        )
-                }
-            }
-        }
-        showSettingsDialogInternal(
-            content = SettingsDialogContent(fields = parsed),
-            requestId = requestId,
-            ownedByTest = false,
+        // SettingsActivity unwraps and validates the same versioned envelope.
+        // Pass the live orientation lock so the settings screen opens in the
+        // same orientation as the game screen (see onCreate).
+        startActivity(
+            SettingsActivity.createIntent(
+                this,
+                SETTINGS_SCHEMA_VERSION,
+                requestId,
+                document.toString(),
+                requestedOrientation,
+            ),
         )
+    }
+
+    /** Persist the saved in-app language. No recreate: drawer, dialogs
+     * and the edge handle inflate from the wrapped context on every show,
+     * so they follow the choice live. Recreating the NativeActivity would
+     * destroy the Rust event loop and freeze the app. */
+    fun applyAppLanguage(tag: String) {
+        AppLocale.setSavedTag(this, tag)
+    }
+
+    /** Push the terminal locale tag into the Rust vault so SystemDefault
+     * resolves without the LANG env Android never sets. The saved in-app
+     * choice wins; the system tag is only the fallback. */
+    private fun pushSystemLocaleToVault() {
+        val tag = AppLocale.effectiveTag(this)
+        if (tag.isEmpty()) return
+        try {
+            pushSystemLocale(tag)
+        } catch (e: Exception) {
+            Log.e(TAG, "pushSystemLocale failed", e)
+        }
     }
 
     fun applyScreenOrientation(value: Int) {
@@ -649,96 +690,14 @@ class MainActivity :
         }
     }
 
-    private fun showSettingsDialogInternal(
-        content: SettingsDialogContent,
-        requestId: Long?,
-        ownedByTest: Boolean,
-    ) {
-        val settings =
-            content.fields.map { field ->
-                val maxIndex =
-                    if (field.kind == "range") {
-                        (field.rangeMax - field.rangeMin).coerceAtLeast(0)
-                    } else {
-                        max(0, field.choices.lastIndex)
-                    }
-                AndroidSetting(
-                    key = field.key,
-                    section = field.section,
-                    sectionLabel = field.sectionLabel,
-                    label = field.label,
-                    kind = field.kind,
-                    choices = field.choices.ifEmpty { listOf("?") },
-                    rangeMin = field.rangeMin,
-                    rangeMax = field.rangeMax,
-                    unit = field.unit,
-                    visible = field.visible,
-                ) to field.value.coerceIn(0, maxIndex)
-            }
-        val keys = settings.map { it.first.key }
-        val initialSelections = settings.map { it.second }
-        val rows = settings.map { it.first }
-        var resultSent = false
-
-        dialogManager.show(
-            dialogTag = SETTINGS_DIALOG_TAG,
-            contentDescription = settingsContentDescription(rows, initialSelections),
-            presentation = DIALOG_PRESENTATION_FULL_SCREEN,
-            ownedByTest = ownedByTest,
-            onDismiss = {
-                if (!resultSent && requestId != null) {
-                    onSettingsDialogResult(
-                        JSONObject()
-                            .put("schemaVersion", SETTINGS_SCHEMA_VERSION)
-                            .put("requestId", requestId)
-                            .put("dismissed", true)
-                            .put("values", JSONObject())
-                            .toString(),
-                    )
-                }
-            },
-        ) { dismiss ->
-            NerustSettingsDialogCard(
-                settings = rows,
-                initialSelections = initialSelections,
-                onDismissRequest = dismiss,
-                onPositionDraftChanged = { notificationsPosition, statusPosition ->
-                    nativeSettingsAreaVisible(notificationsPosition, statusPosition)
-                },
-                onSave = { selections ->
-                    resultSent = true
-                    if (requestId != null) {
-                        val values = JSONObject()
-                        keys.forEachIndexed { index, key -> values.put(key, selections[index]) }
-                        val result =
-                            JSONObject()
-                                .put("schemaVersion", SETTINGS_SCHEMA_VERSION)
-                                .put("requestId", requestId)
-                                .put("values", values)
-                        onSettingsDialogResult(result.toString())
-                    }
-                    dismiss()
-                },
-            )
-        }
-        dialogManager.rootViewForTag(SETTINGS_DIALOG_TAG)?.setTag(
-            R.id.nerust_settings_hierarchy_probe,
-            buildSettingsSections(rows).joinToString("\n") { section ->
-                "${section.label}: ${settingsCountLabel(section.settingIndices.size)}"
-            },
-        )
-    }
-
     /** Dumb host for the Rust dialog gate: always present what Rust requests.
-     * A showing settings dialog is dismissed with notify so Rust resolves it. */
+     * A showing settings screen finishes with its own dismissal result so
+     * Rust resolves it before the error shows. */
     fun showErrorDialog(requestId: Long, message: String) {
-        if (dialogManager.isShowing(SETTINGS_DIALOG_TAG)) {
-            dialogManager.dismissForStop()
-        }
+        SettingsActivity.currentActivityForTest()?.finishForReplacement()
         dialogManager.show(
             dialogTag = ERROR_DIALOG_TAG,
             contentDescription = message,
-            presentation = DIALOG_PRESENTATION_FULL_SCREEN,
             ownedByTest = false,
             onDismiss = { onErrorDialogDismissed(requestId) },
         ) { dismiss ->
@@ -767,6 +726,50 @@ class MainActivity :
             "visibility=$visibility, attached=$isAttachedToWindow, token=${windowToken != null}, shown=$isShown"
         }
 
+    private external fun pushSystemLocale(tag: String)
+
+    /** Pause truth for the drawer (vault, published after every session
+     * command). Plain wrapper: `internal external` would mangle the JVM
+     * name (`$app` suffix) and break native registration, so the external
+     * stays private like every other query. */
+    internal fun isEmulationPaused(): Boolean = nativeIsEmulationPaused()
+
+    private external fun nativeIsEmulationPaused(): Boolean
+
+    /** Slot-list query for the drawer submenu (vault mirror, published
+     * after every session command). Plain wrapper like the pause query:
+     * the external stays private so the JVM name never mangles. */
+    private fun querySlotList(): String? =
+        try {
+            nativeSlotList()
+        } catch (e: Exception) {
+            Log.e(TAG, "nativeSlotList failed", e)
+            null
+        }
+
+    private external fun nativeSlotList(): String
+
+    /** Slot-list push target: SlotActivity installs its row updater while
+     * open. Rust pushes the refreshed list after every slot op lands, so
+     * no polling. Cleared on destroy; a dead screen never receives. */
+    fun onSlotListChanged(json: String) {
+        slotListener?.invoke(json)
+    }
+
+    /** Drawer slot screen: a standalone activity over the live session.
+     * Select/create finish back to the game; delete stays and refreshes
+     * from the Rust push after the op lands. The initial query runs on the
+     * shared background lane; only the activity start posts back. */
+    internal fun showSlotMenu() {
+        BridgeIo.runIo {
+            val raw = querySlotList() ?: return@runIo
+            BridgeIo.postMain {
+                if (isDestroyed || isFinishing) return@postMain
+                startActivity(SlotActivity.createIntent(this, raw, requestedOrientation))
+            }
+        }
+    }
+
     private external fun onFilePickerResult(uri: String?)
 
     private external fun onMenuAction(action: String)
@@ -774,13 +777,6 @@ class MainActivity :
     private external fun onErrorDialogDismissed(requestId: Long)
 
     private external fun onDirectoryPickerResult(uri: String?)
-
-    private external fun onSettingsDialogResult(result: String?)
-
-    private external fun nativeSettingsAreaVisible(
-        notificationsPosition: Int,
-        statusPosition: Int,
-    ): Boolean
 
     private external fun onActivityDestroyed(userInitiatedExit: Boolean)
 
@@ -793,6 +789,10 @@ class MainActivity :
 
     companion object {
         private const val TAG = "Nerust"
+
+        /** See onSlotListChanged. */
+        @Volatile
+        internal var slotListener: ((String) -> Unit)? = null
 
         init {
             // Load the native library via the app classloader so the JVM resolves `external fun`.

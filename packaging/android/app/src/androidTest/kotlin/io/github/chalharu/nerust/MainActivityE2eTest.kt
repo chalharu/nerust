@@ -8,6 +8,8 @@ import android.os.Build
 import android.os.SystemClock
 import android.util.Log
 import androidx.test.core.app.ApplicationProvider
+import org.json.JSONArray
+import org.json.JSONObject
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -69,7 +71,6 @@ class MainActivityE2eTest {
             manager.show(
                 dialogTag = "audit-first",
                 contentDescription = "first",
-                presentation = DIALOG_PRESENTATION_FULL_SCREEN,
                 onDismiss = { oldAcks++ },
             ) { dismiss -> firstDismiss.set(dismiss) }
         }
@@ -82,7 +83,6 @@ class MainActivityE2eTest {
                 manager.show(
                     dialogTag = "audit-replacement",
                     contentDescription = "replacement",
-                    presentation = DIALOG_PRESENTATION_FULL_SCREEN,
                     onDismiss = { newAcks++ },
                 ) { _ -> }
             }
@@ -170,67 +170,94 @@ class MainActivityE2eTest {
 
         runOnActivityThread(activity) {
             require(!activity.isDestroyed) { "MainActivity should remain alive before opening Settings" }
-            activity.showSettingsDialogForTest(
+            launchSettingsForTest(
                 listOf(
-                    SettingsField(
-                        key = "video_filter",
-                        section = "video",
-                        sectionLabel = "Video",
-                        label = "Video Filter",
-                        kind = "choice",
-                        choices = listOf("CRT", "LCD"),
-                        value = 1,
-                        visible = true,
+                    SettingsSection(
+                        id = "video",
+                        label = "Video",
+                        rows =
+                            listOf(
+                                SettingsRow(
+                                    key = "video_filter",
+                                    label = "Video Filter",
+                                    kind = "choice",
+                                    choices = listOf(SettingsChoice("CRT"), SettingsChoice("LCD")),
+                                    selected = 1,
+                                    number = 0L,
+                                    step = 1L,
+                                    unit = "",
+                                    text = "",
+                                ),
+                            ),
                     ),
-                    SettingsField(
-                        key = "touch_overlay",
-                        section = "controls",
-                        sectionLabel = "Controls",
-                        label = "Touch Overlay",
-                        kind = "choice",
-                        choices = listOf("On", "Off"),
-                        value = 0,
-                        visible = true,
+                    SettingsSection(
+                        id = "controls",
+                        label = "Controls",
+                        rows =
+                            listOf(
+                                SettingsRow(
+                                    key = "touch_overlay",
+                                    label = "Touch Overlay",
+                                    kind = "toggle",
+                                    choices = listOf(SettingsChoice("On"), SettingsChoice("Off")),
+                                    selected = 0,
+                                    number = 0L,
+                                    step = 1L,
+                                    unit = "",
+                                    text = "",
+                                ),
+                            ),
                     ),
                 ),
             )
         }
 
-        assertChromeViewAvailable(
-            activity,
-            SETTINGS_DIALOG_TAG,
-            DIALOG_TIMEOUT_MS,
-            "Settings dialog should be attached after requesting it",
+        assertTrue(
+            "SettingsActivity should start after requesting it",
+            waitUntil(DIALOG_TIMEOUT_MS) { SettingsActivity.currentActivityForTest() != null },
         )
 
         runOnActivityThread(activity) {
-            val dialogRoot =
-                requireNotNull(activity.findChromeViewForTest(SETTINGS_DIALOG_TAG)) {
-                    "Settings dialog root should be available"
+            val settingsRoot =
+                requireNotNull(activity.findChromeViewForTest(SETTINGS_SCREEN_TAG)) {
+                    "SettingsActivity decor should be available"
                 }
-            assertEquals(
-                "Settings\nVideo Filter: LCD\nTouch Overlay: On",
-                dialogRoot.getTag(R.id.nerust_dialog_content_probe),
+            assertTrue(
+                "Settings should run in its own activity",
+                SettingsActivity.currentActivityForTest() != null,
             )
             assertEquals(
-                DIALOG_PRESENTATION_FULL_SCREEN,
-                dialogRoot.getTag(R.id.nerust_dialog_presentation_probe),
+                "Settings\nVideo Filter: LCD\nTouch Overlay: On",
+                settingsRoot.getTag(R.id.nerust_settings_content_probe),
             )
             assertEquals(
                 "Video: 1 setting\nControls: 1 setting",
-                dialogRoot.getTag(R.id.nerust_settings_hierarchy_probe),
+                settingsRoot.getTag(R.id.nerust_settings_hierarchy_probe),
             )
             activity.dismissComposeDialogForTest()
         }
+        assertTrue(
+            "SettingsActivity should finish after dismissal",
+            waitUntil(DIALOG_TIMEOUT_MS) { SettingsActivity.currentActivityForTest() == null },
+        )
 
         runOnActivityThread(activity) {
             activity.resetChromeStateForTest()
         }
-        exerciseMenuAction(
-            activity,
-            MenuAction.OPEN_SETTINGS,
-            SETTINGS_DIALOG_TAG,
-            "Settings dialog should be attached after dispatching open_settings",
+        runOnActivityThread(activity) {
+            require(!activity.isDestroyed) { "MainActivity should remain alive before dispatching open_settings" }
+            activity.dispatchMenuActionForTest(MenuAction.OPEN_SETTINGS)
+        }
+        assertTrue(
+            "SettingsActivity should start after dispatching open_settings",
+            waitUntil(DIALOG_TIMEOUT_MS) { SettingsActivity.currentActivityForTest() != null },
+        )
+        runOnActivityThread(activity) {
+            activity.resetChromeStateForTest()
+        }
+        assertTrue(
+            "SettingsActivity should finish after reset",
+            waitUntil(DIALOG_TIMEOUT_MS) { SettingsActivity.currentActivityForTest() == null },
         )
 
         runOnActivityThread(activity) {
@@ -241,6 +268,67 @@ class MainActivityE2eTest {
             waitUntil(DIALOG_TIMEOUT_MS) { MainActivity.currentActivityForTest() == null },
         )
         SystemClock.sleep(LIFECYCLE_SAVE_DELAY_MS)
+    }
+
+    /** Launch the standalone settings screen with canned sections. */
+    private fun launchSettingsForTest(sections: List<SettingsSection>) {
+        // Mirror the production envelope: SettingsActivity unwraps "payload".
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val envelope = JSONObject().put("payload", sectionsToJson(sections))
+        context.startActivity(
+            SettingsActivity.createIntent(context, SETTINGS_SCHEMA_VERSION, -1L, envelope.toString())
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+    }
+
+    private fun sectionsToJson(sections: List<SettingsSection>): JSONObject {
+        val rowsOf = { rows: List<SettingsRow> ->
+            val array = JSONArray()
+            rows.forEach { row ->
+                val choices = JSONArray()
+                row.choices.forEach { choice ->
+                    choices.put(
+                        JSONObject()
+                            .put("label", choice.label)
+                            .put("enabled", choice.enabled)
+                            .put("reason", choice.reason),
+                    )
+                }
+                array.put(
+                    JSONObject()
+                        .put("key", row.key)
+                        .put("label", row.label)
+                        .put("kind", row.kind)
+                        .put("choices", choices)
+                        .put("selected", row.selected)
+                        .put("number", row.number)
+                        .put("step", row.step)
+                        .put("min", row.min)
+                        .put("max", row.max)
+                        .put("unit", row.unit)
+                        .put("text", row.text)
+                        .put("target", row.target)
+                        .put("description", row.description)
+                        .put("detail_target", row.detailTarget)
+                        .put("visible", row.visible),
+                )
+            }
+            array
+        }
+        val array = JSONArray()
+        sections.forEach { section ->
+            array.put(
+                JSONObject()
+                    .put("id", section.id)
+                    .put("label", section.label)
+                    .put("rows", rowsOf(section.rows))
+                    .put("visible", section.visible)
+                    .put("sub", section.sub),
+            )
+        }
+        return JSONObject()
+            .put("sections", array)
+            .put("issues", JSONArray())
     }
 
     @Test(timeout = TEST_TIMEOUT_MS)
@@ -415,29 +503,6 @@ class MainActivityE2eTest {
         )
     }
 
-    private fun exerciseMenuAction(
-        activity: MainActivity,
-        action: String,
-        expectedDialogTag: String,
-        expectedDialogMessage: String,
-    ) {
-        SystemClock.sleep(STARTUP_STABILITY_DELAY_MS)
-        runOnActivityThread(activity) {
-            require(!activity.isDestroyed) { "MainActivity should remain alive before dispatching $action" }
-            activity.dispatchMenuActionForTest(action)
-        }
-        assertChromeViewAvailable(activity, expectedDialogTag, DIALOG_TIMEOUT_MS, expectedDialogMessage)
-        runOnActivityThread(activity) {
-            activity.resetChromeStateForTest()
-        }
-        if (!waitUntil(DIALOG_TIMEOUT_MS) { !safeChromeViewIsShowing(activity, expectedDialogTag) }) {
-            fail("Dialog for $action should be dismissed after handling the action; ${safeChromeDebugState(activity, expectedDialogTag)}")
-        }
-        runOnActivityThread(activity) {
-            require(!activity.isDestroyed) { "MainActivity should remain alive after dispatching $action" }
-        }
-    }
-
     @Test
     fun pushedZonesParseToDrawableRects() {
         // Geometry lives in Rust; Kotlin only parses the pushed payload.
@@ -556,13 +621,12 @@ class MainActivityE2eTest {
 
     private companion object {
         const val DIALOG_TIMEOUT_MS = 5_000L
-        const val DIALOG_PRESENTATION_FULL_SCREEN = "full_screen"
         const val DRAWER_COMPOSE_TAG = "nerust-drawer-compose"
         const val DRAWER_EDGE_HANDLE_TAG = "nerust-drawer-edge-handle"
         const val DRAWER_OVERLAY_TAG = "nerust-drawer-overlay"
         const val DRAWER_TIMEOUT_MS = 5_000L
         const val EXPECTED_DRAWER_CONTENT =
-            "Nerust\nOpen ROM\nSettings\nPause / Resume\nSave State\nLoad State\nReset\nUnload ROM\nExit"
+            "Nerust\nOpen ROM\nSettings\nPause\nSave State\nLoad State\nSlots\nReset\nUnload ROM\nExit"
         const val MENU_BUTTON_TAG = "nerust-menu-button"
         const val LIFECYCLE_SAVE_DELAY_MS = 1_000L
         const val POLL_INTERVAL_MS = 50L
@@ -572,7 +636,7 @@ class MainActivityE2eTest {
             Intent.FLAG_GRANT_READ_URI_PERMISSION or
                 Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
                 Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
-        const val SETTINGS_DIALOG_TAG = "nerust-settings-dialog"
+        const val SETTINGS_SCREEN_TAG = "nerust-settings-screen"
         const val SHUTDOWN_WATCHDOG_MS = 30_000L
         const val TAG = "MainActivityE2eTest"
         const val STARTUP_STABILITY_DELAY_MS = 2_000L

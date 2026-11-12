@@ -10,11 +10,25 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from bridge_schema import ContractError, load_sibling
+from bridge_schema import ContractError, gates_by_action, load_sibling
 
 CONTRACT = load_sibling("contract", "generate-contract.py")
 VERIFY = load_sibling("verify_contract", "verify-contract.py")
 DECODER = load_sibling("decoder_contract", "test-decoder-contract.py")
+
+
+def gated_probe_mutations(schema):
+    """One (gate const, removed field) pair per gated action, schema-derived."""
+    return [(action.lower(), min(required))
+            for action, (required, _forbidden) in sorted(gates_by_action(schema).items())]
+
+
+def remove_gated_field(schema, const, field):
+    """Drop one conditional-required field from the gate for `const`."""
+    menu = schema["definitions"]["menuEvent"]
+    gate = next(gate for gate in menu["allOf"]
+                if gate["if"]["properties"]["action"]["const"] == const)
+    gate["then"]["required"].remove(field)
 
 
 class ContractTests(unittest.TestCase):
@@ -165,7 +179,12 @@ class StructureTests(unittest.TestCase):
                 elif mutation in {"minimum", "maximum"}:
                     menu["properties"]["device_id"][mutation] += 1
                 else:
-                    menu["then"]["required"].remove("pressed")
+                    for const, field in gated_probe_mutations(original):
+                        self.schema = copy.deepcopy(original)
+                        remove_gated_field(self.schema, const, field)
+                        with self.assertRaises(VERIFY.ContractError):
+                            self.verify()
+                    continue
                 with self.assertRaises(VERIFY.ContractError):
                     self.verify()
 
@@ -184,8 +203,12 @@ class StructureTests(unittest.TestCase):
                 elif mutation == "enum":
                     menu["properties"]["key"]["enum"].append("probe")
                 else:
-                    menu["then"]["required"].remove("pressed")
-                self.assertNotEqual(CONTRACT.outputs(changed)[path], baseline)
+                    for const, field in gated_probe_mutations(original):
+                        with self.subTest(gate=const):
+                            changed = copy.deepcopy(original)
+                            remove_gated_field(changed, const, field)
+                            self.assertNotEqual(CONTRACT.outputs(changed)[path], baseline)
+                    continue
 
     def test_modified_generated_validation_is_rejected(self):
         self.source["generated"] = self.source["generated"].replace("_ => false", "_ => true")
@@ -194,15 +217,16 @@ class StructureTests(unittest.TestCase):
             self.verify()
 
     def test_producer_field_type_name_required_and_version_are_detected(self):
-        original = self.source["producer"]
-        for before, after in (("pressed: Boolean", "pressed: String"),
-                              ('"device_id"', '"device"'),
-                              ('.put("action", action)', ""),
-                              ('.put("v", BRIDGE_EVENT_VERSION)', '.put("v", "1")'),
-                              ('.put("pressed", pressed)', '.put("extra", pressed)')):
-            with self.subTest(before=before):
-                self.assertIn(before, original)
-                self.source["producer"] = original.replace(before, after)
+        original = copy.deepcopy(self.source)
+        for key, before, after in (("producer", '.put("action", action)', ""),
+                                   ("producer", '.put("v", BRIDGE_EVENT_VERSION)', '.put("v", "1")'),
+                                   ("producer", ".apply(extras)", ""),
+                                   ("callsites", 'put("pressed", respond)', 'put("extra", respond)'),
+                                   ("callsites", 'put("device_id", deviceId)', 'put("device", deviceId)')):
+            with self.subTest(key=key, before=before):
+                self.source = copy.deepcopy(original)
+                self.assertIn(before, self.source[key])
+                self.source[key] = self.source[key].replace(before, after)
                 with self.assertRaises(VERIFY.ContractError):
                     self.verify()
 
@@ -264,8 +288,8 @@ class StructureTests(unittest.TestCase):
             VERIFY.validate_jni(broken, table, activity, callbacks)
 
     def test_unsupported_bridge_syntax_does_not_silently_pass(self):
-        self.source["producer"] = self.source["producer"].replace(
-            '.put("pressed", pressed)', '.put("pressed", pressed.toString())')
+        self.source["callsites"] = self.source["callsites"].replace(
+            'put("pressed", respond)', 'put("pressed", respond.toString())')
         with self.assertRaises(VERIFY.ContractError):
             self.verify()
 
@@ -286,10 +310,14 @@ class StructureTests(unittest.TestCase):
 
     def test_runtime_probes_cover_optional_null_unknown_bounds_and_conditionals(self):
         cases = {label: accepted for label, _, accepted in DECODER.probes(self.schema)}
-        for field in ("device_id", "key", "pressed"):
+        for field in ("device_id", "key", "pressed", "slot_id"):
             self.assertTrue(cases[f"menu: missing optional {field}"])
             self.assertFalse(cases[f"menu: {field}=None"])
+        for field in ("device_id", "key", "pressed"):
             self.assertFalse(cases[f"menu: action=controller missing {field}"])
+        self.assertFalse(cases["menu: action=touch_gate missing pressed"])
+        self.assertFalse(cases["menu: action=select_slot missing slot_id"])
+        self.assertFalse(cases["menu: action=delete_slot missing slot_id"])
         self.assertFalse(cases["menu: unknown field extra"])
         self.assertFalse(cases["menu: key='__unknown__'"])
         for event, field in (("menuEvent", "device_id"), ("errorDialogDismissedEvent", "request_id")):

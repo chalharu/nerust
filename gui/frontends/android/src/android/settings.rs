@@ -1,10 +1,10 @@
-//! Android settings facade: model, codec, and bridge re-exported.
-//! Dialog gates read the bridge; the frontend executes plans.
+//! Android settings facade: view-model-driven screen wiring.
+//! Dialog gates read the bridge flight; the frontend executes plans.
 
 pub(super) use super::bridge::SettingsDialogResult;
 pub(super) use super::settings_bridge::{
-    apply_screen_orientation, cached_setting_defs, cloned_cached_settings, is_dialog_open,
-    request_show_settings_dialog, reset_transient, take_result, update_cached_settings,
+    apply_app_language, apply_screen_orientation, display_language, is_dialog_open,
+    request_show_settings_dialog, reset_transient, take_result,
 };
-pub(super) use super::settings_codec::{SettingsApplier, SettingsPlan};
-pub(super) use super::settings_model::AndroidSettings;
+pub(super) use super::settings_views::app_language_tag;
+pub(super) use super::settings_views::{finish_snapshot, install_vm_deps};

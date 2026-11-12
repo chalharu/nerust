@@ -61,7 +61,6 @@ class DialogManager(private val activity: MainActivity) {
     fun show(
         dialogTag: String,
         contentDescription: String,
-        presentation: String,
         onDismiss: () -> Unit,
         ownedByTest: Boolean = false,
         content: @Composable (dismiss: () -> Unit) -> Unit,
@@ -75,7 +74,6 @@ class DialogManager(private val activity: MainActivity) {
             }.apply {
                 tag = dialogTag
                 setTag(R.id.nerust_dialog_content_probe, contentDescription)
-                setTag(R.id.nerust_dialog_presentation_probe, presentation)
                 layoutParams =
                     FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
@@ -83,7 +81,7 @@ class DialogManager(private val activity: MainActivity) {
                     )
             }
         val composeView =
-            ComposeView(activity).apply {
+            ComposeView(AppLocale.wrap(activity)).apply {
                 tag = "$dialogTag-compose"
                 layoutParams =
                     FrameLayout.LayoutParams(
@@ -99,10 +97,11 @@ class DialogManager(private val activity: MainActivity) {
                 setCanceledOnTouchOutside(true)
             }
 
+        // No theme wrapper here: every host (settings, error) brings its
+        // own expressive theme. A shared wrapper would nest themes and
+        // skew surface colors.
         composeView.setContent {
-            androidx.compose.material3.MaterialTheme {
-                content { dialog.dismiss() }
-            }
+            content { dialog.dismiss() }
         }
 
         activity.installComposeOwners(root)

@@ -1,0 +1,51 @@
+package io.github.chalharu.nerust
+
+import android.content.Context
+import android.content.res.Configuration
+import android.content.res.Resources
+import java.util.Locale
+
+/** In-app language persistence and locale wrapping. Android resources
+ * (drawer, dialogs) resolve through the wrapped context, so they follow
+ * the saved settings choice without recreating the NativeActivity
+ * (a recreate would destroy the native event loop and freeze the app).
+ * Empty means the terminal locale. Rust-rendered strings resolve
+ * separately through the vault locale push (see `pushSystemLocale`). */
+internal object AppLocale {
+    private const val PREFS = "nerust_app"
+    private const val KEY = "app_locale"
+
+    /** BCP-47 display tag, "" for the terminal locale. */
+    internal fun savedTag(context: Context): String =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, "") ?: ""
+
+    /** Persists the tag. */
+    internal fun setSavedTag(context: Context, tag: String) {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        if ((prefs.getString(KEY, "") ?: "") == tag) return
+        prefs.edit().putString(KEY, tag).apply()
+    }
+
+    /** Wraps the base context with the saved locale (no-op for system). */
+    internal fun wrap(base: Context): Context {
+        val tag = savedTag(base)
+        if (tag.isEmpty()) return base
+        val config = Configuration(base.resources.configuration)
+        config.setLocale(Locale.forLanguageTag(tag))
+        return base.createConfigurationContext(config)
+    }
+
+    /** Terminal locale tag for the Rust vault (`null` when unknown).
+     * Reads the system resources, never an activity context: activities
+     * carry our own override after [wrap], which is not the terminal. */
+    internal fun currentTag(): String? {
+        val locales = Resources.getSystem().configuration.locales
+        if (locales.isEmpty) return null
+        return locales[0].language.takeIf { it.isNotEmpty() }
+    }
+
+    /** Effective tag for the Rust vault: the saved in-app choice wins,
+     * the terminal locale is only the fallback. */
+    internal fun effectiveTag(context: Context): String =
+        savedTag(context).ifEmpty { currentTag().orEmpty() }
+}

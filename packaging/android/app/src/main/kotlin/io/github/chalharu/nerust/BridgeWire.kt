@@ -2,7 +2,7 @@
 package io.github.chalharu.nerust
 
 internal const val BRIDGE_EVENT_VERSION = 1
-internal const val SETTINGS_SCHEMA_VERSION = 1
+internal const val SETTINGS_SCHEMA_VERSION = 2
 internal const val SAF_CHUNK_BYTES = 65536
 internal const val SAF_SUMMARY_BYTES = 65536
 
@@ -16,7 +16,11 @@ internal object MenuAction {
     const val SAVE_STATE = "save_state"
     const val TOGGLE_PAUSE = "toggle_pause"
     const val UNLOAD = "unload"
+    const val CREATE_SLOT = "create_slot"
+    const val DELETE_SLOT = "delete_slot"
+    const val SELECT_SLOT = "select_slot"
     const val CONTROLLER = "controller"
+    const val TOUCH_GATE = "touch_gate"
 
     val ALL: Set<String> = setOf(
         EXIT,
@@ -28,7 +32,11 @@ internal object MenuAction {
         SAVE_STATE,
         TOGGLE_PAUSE,
         UNLOAD,
+        CREATE_SLOT,
+        DELETE_SLOT,
+        SELECT_SLOT,
         CONTROLLER,
+        TOUCH_GATE,
     )
 }
 

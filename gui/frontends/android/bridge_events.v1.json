@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "nerust Android bridge events v1",
-  "x-settings-schema-version": 1,
+  "x-settings-schema-version": 2,
   "x-saf-chunk-bytes": 65536,
   "x-saf-summary-bytes": 65536,
   "description": "Canonical v1 Kotlin→Rust bridge strings. The Rust bridge_events.rs decoder validates this schema before dispatch. Error acknowledgements require the correlated request_id; Kotlin sends it through the dedicated onErrorDialogDismissed(J)V native.",
@@ -29,7 +29,11 @@
             "save_state",
             "toggle_pause",
             "unload",
-            "controller"
+            "create_slot",
+            "delete_slot",
+            "select_slot",
+            "controller",
+            "touch_gate"
           ]
         },
         "device_id": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
@@ -48,14 +52,40 @@
             "right"
           ]
         },
-        "pressed": { "type": "boolean" }
+        "pressed": { "type": "boolean" },
+        "slot_id": { "type": "integer", "minimum": 0, "maximum": 9223372036854775807 }
       },
       "additionalProperties": false,
-      "if": {
-        "properties": { "action": { "const": "controller" } },
-        "required": ["action"]
-      },
-      "then": { "required": ["device_id", "key", "pressed"] }
+      "allOf": [
+        {
+          "if": {
+            "properties": { "action": { "const": "controller" } },
+            "required": ["action"]
+          },
+          "then": { "required": ["device_id", "key", "pressed"] }
+        },
+        {
+          "if": {
+            "properties": { "action": { "const": "touch_gate" } },
+            "required": ["action"]
+          },
+          "then": { "required": ["pressed"] }
+        },
+        {
+          "if": {
+            "properties": { "action": { "const": "select_slot" } },
+            "required": ["action"]
+          },
+          "then": { "required": ["slot_id"] }
+        },
+        {
+          "if": {
+            "properties": { "action": { "const": "delete_slot" } },
+            "required": ["action"]
+          },
+          "then": { "required": ["slot_id"] }
+        }
+      ]
     },
     "errorDialogDismissedEvent": {
       "type": "object",
@@ -78,10 +108,14 @@
     "save_state": "MenuAction::SaveState",
     "toggle_pause": "MenuAction::TogglePause",
     "unload": "MenuAction::Unload",
-    "controller": "MenuAction::ControllerInput{device_id,key,pressed}"
+    "create_slot": "MenuAction::CreateSlot",
+    "delete_slot": "MenuAction::DeleteSlot{slot_id}",
+    "select_slot": "MenuAction::SelectSlot{slot_id}",
+    "controller": "MenuAction::ControllerInput{device_id,key,pressed}",
+    "touch_gate": "MenuAction::TouchGate{pressed}"
   },
   "x-kotlin-constants": {
-    "note": "Kotlin senders MUST use the single-source BridgeContract MenuAction/ControllerKey objects; the Rust decoder in gui/frontends/android/src/bridge_events.rs accepts v1 JSON only. A Rust unit test pins this schema version, action table, and key set.",
+    "note": "Kotlin senders MUST use the single-source BridgeContract MenuAction/ControllerKey objects; the Rust bridge decoder accepts v1 event JSON only (the settings projection schema is x-settings-schema-version, independent of the event envelope). A Rust unit test pins this schema version, action table, and key set.",
     "file": "packaging/android/app/src/main/kotlin/io/github/chalharu/nerust/BridgeWire.kt"
   }
 }

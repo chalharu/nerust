@@ -1,5 +1,7 @@
 use super::bridge;
-use crate::bridge_events::{FrontendEvent, decode_frontend_event};
+use crate::bridge_events::{
+    FrontendEvent, SlotListEntry, build_slot_list_json, decode_frontend_event,
+};
 use crate::error_dialog_controller::DialogRequestId;
 use jni::objects::{JObject, JString};
 
@@ -11,6 +13,20 @@ pub(super) fn publish_dialog_dismissed(id: DialogRequestId) {
     )));
 }
 
+/// Shared menu-action publish: MainActivity and SlotActivity decode the
+/// same wire envelope and feed the same lane.
+fn publish_menu_action(
+    env: &jni::Env<'_>,
+    action: JString<'_>,
+) -> jni::errors::Result<Option<FrontendEvent>> {
+    if action.is_null() {
+        Ok(None)
+    } else {
+        let action_str = action.try_to_string(env)?;
+        Ok(decode_frontend_event(&action_str))
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onMenuAction(
     mut env: jni::EnvUnowned<'_>,
@@ -19,16 +35,7 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onMenuAction(
 ) {
     match bridge::with_callback_env(
         &mut env,
-        |env| -> jni::errors::Result<Option<FrontendEvent>> {
-            if action.is_null() {
-                Ok(None)
-            } else {
-                let action_str = action.try_to_string(env)?;
-                let decoded = decode_frontend_event(&action_str);
-
-                Ok(decoded)
-            }
-        },
+        |env| -> jni::errors::Result<Option<FrontendEvent>> { publish_menu_action(env, action) },
     ) {
         jni::Outcome::Ok(Some(event)) => bridge::publish_all(core::slice::from_ref(&event)),
         jni::Outcome::Ok(None) => {}
@@ -36,6 +43,50 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onMenuAction(
         jni::Outcome::Panic(_) => {
             log::error!("Android menu action callback panicked");
         }
+    }
+}
+
+/// Synchronous pause query for the drawer: vault truth published by
+/// `AndroidFrontend::exec`, never the live session (this runs on the Java
+/// main thread). The drawer reads it once per open for Pause/Resume.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_nativeIsEmulationPaused(
+    _env: jni::EnvUnowned<'_>,
+    _activity: JObject<'_>,
+) -> jni::sys::jboolean {
+    bridge::with_settings(|state| state.emulation_paused) as jni::sys::jboolean
+}
+
+/// Synchronous slot-list query for the drawer submenu (MainActivity reads
+/// it when the submenu opens and after every slot op it sends).
+/// The standalone slot screen reads the same vault through its own class.
+pub(super) fn query_slot_list_json() -> String {
+    bridge::with_settings(|state| {
+        build_slot_list_json(
+            &state
+                .slots
+                .iter()
+                .map(|slot| SlotListEntry {
+                    id: slot.slot_id,
+                    saved_at: slot.saved_at,
+                })
+                .collect::<Vec<_>>(),
+            state.active_slot,
+        )
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_nativeSlotList(
+    mut env: jni::EnvUnowned<'_>,
+    _activity: JObject<'_>,
+) -> jni::sys::jstring {
+    let out = query_slot_list_json();
+    match bridge::with_callback_env(&mut env, |env| -> jni::errors::Result<jni::sys::jstring> {
+        Ok(env.new_string(out)?.into_raw())
+    }) {
+        jni::Outcome::Ok(ptr) => ptr,
+        _ => std::ptr::null_mut(),
     }
 }
 
@@ -56,6 +107,26 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onErrorDialog
         jni::Outcome::Err(_) => {}
         jni::Outcome::Panic(_) => {
             log::error!("Android error-dismiss callback panicked");
+        }
+    }
+}
+
+/// Standalone slot screen action: same envelope, same lane as the drawer.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_chalharu_nerust_SlotActivity_sendSlotAction(
+    mut env: jni::EnvUnowned<'_>,
+    _activity: JObject<'_>,
+    action: JString<'_>,
+) {
+    match bridge::with_callback_env(
+        &mut env,
+        |env| -> jni::errors::Result<Option<FrontendEvent>> { publish_menu_action(env, action) },
+    ) {
+        jni::Outcome::Ok(Some(event)) => bridge::publish_all(core::slice::from_ref(&event)),
+        jni::Outcome::Ok(None) => {}
+        jni::Outcome::Err(_) => {}
+        jni::Outcome::Panic(_) => {
+            log::error!("Android slot action callback panicked");
         }
     }
 }

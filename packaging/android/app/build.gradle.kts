@@ -88,6 +88,7 @@ kotlin {
 
 dependencies {
     val composeBomVersion = "2026.09.00"
+    val material3Version = "1.5.0-rc01"
     val composeBom = platform("androidx.compose:compose-bom:$composeBomVersion")
     val documentFileVersion = "1.1.0"
     val junitVersion = "4.13.2"
@@ -97,9 +98,23 @@ dependencies {
     val androidxTestRunnerVersion = androidxTestCoreVersion
     val androidxTestRulesVersion = androidxTestCoreVersion
     val androidxTestExtVersion = "1.3.0"
+    // ComponentActivity for the standalone settings screen (lifecycle +
+    // back dispatcher owners without hand-rolled registries). Pinned to
+    // the version the BOM already resolves so the lockfile stands.
+    val activityComposeVersion = "1.8.2"
+    val orgJsonVersion = "20240303"
 
     implementation(composeBom)
-    implementation("androidx.compose.material3:material3")
+    implementation("androidx.activity:activity-compose:$activityComposeVersion")
+    // Material 3 Expressive (settings screen redesign): pin the 1.5.0 line
+    // where MaterialExpressiveTheme/MotionScheme.expressive() live. Lift to
+    // stable 1.5.x once the BOM manages it. Re-evaluate at material3 1.5.0
+    // stable: 2026-11-12 offline check showed only 1.4.0 + 1.5.0-rc01 cached,
+    // 1.5.0 stable not resolvable offline (lock still enforces rc01).
+    implementation("androidx.compose.material3:material3:$material3Version")
+    // Icons are Material Symbols bundled as vectors (settings + drawer):
+    // the deprecated icons library and -extended (thousands of unused
+    // icons, minify off) stay out, so no icon dependency ships at all.
     implementation("androidx.compose.ui:ui")
     implementation("androidx.documentfile:documentfile:$documentFileVersion")
     implementation("androidx.lifecycle:lifecycle-runtime:$lifecycleVersion")
@@ -107,6 +122,10 @@ dependencies {
     implementation("androidx.savedstate:savedstate:$savedStateVersion")
 
     testImplementation("junit:junit:$junitVersion")
+    // JVM unit tests run without the Android framework (org.json stubs):
+    // the reference implementation lets JSON parsing tests execute.
+    // Test-only: never ships in the APK.
+    testImplementation("org.json:json:$orgJsonVersion")
 
     androidTestImplementation("androidx.test:core:$androidxTestCoreVersion")
     androidTestImplementation("androidx.test:runner:$androidxTestRunnerVersion")

@@ -7,7 +7,7 @@ use nerust_gui_runtime::settings::{
 };
 use nerust_gui_viewmodel::settings::{
     ReadOnlyObservableProperty, SettingsViewModel, StoragePathError, StoragePathValidator,
-    ViewModelError,
+    ValidationIssue, ViewModelError,
     dto::{ChoiceView, choice_position},
 };
 use nerust_settings_core::{
@@ -24,6 +24,16 @@ use std::{
 
 type Setter<T> = Rc<dyn Fn(T) -> Result<(), ViewModelError>>;
 pub(crate) type Apply = Rc<dyn Fn(SettingsSnapshot) -> Result<(), String>>;
+
+/// Validation issues rendered in the draft language at the call site.
+/// The view model only carries structured kinds; text resolves here.
+fn issues_text(language: AppLanguage, issues: &[ValidationIssue]) -> String {
+    issues
+        .iter()
+        .map(|issue| issue.message(language))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ExitChoice {
@@ -120,18 +130,12 @@ impl Editor {
         self.close_prompt.close();
     }
     fn validation_status(&self) {
+        let language = self.vm.general.view.get().language;
         let message = self
             .vm
             .finish()
             .err()
-            .map(|validation| {
-                validation
-                    .issues
-                    .iter()
-                    .map(|issue| issue.message.as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })
+            .map(|validation| issues_text(language, &validation.issues))
             .unwrap_or_default();
         let _ = self.status.update(move |status| *status = message);
     }
@@ -146,6 +150,7 @@ impl Editor {
         let get = forward.clone();
         let closed = self.closed.clone();
         let vm = self.vm.clone();
+        let general = self.vm.general.clone();
         let status = self.status.clone();
         let write = setter.map(|setter| {
             let writer: Rc<dyn Fn(T) -> Result<(), String>> = Rc::new(move |value| {
@@ -153,15 +158,11 @@ impl Editor {
                     return Err("settings editor is closed".into());
                 }
                 let result = setter(value).map_err(|error| error.to_string());
+                let language = general.view.get().language;
                 let message = match &result {
                     Err(error) => error.clone(),
                     Ok(()) => match vm.finish() {
-                        Err(validation) => validation
-                            .issues
-                            .iter()
-                            .map(|issue| issue.message.as_str())
-                            .collect::<Vec<_>>()
-                            .join("\n"),
+                        Err(validation) => issues_text(language, &validation.issues),
                         Ok(_) => String::new(),
                     },
                 };
@@ -200,17 +201,11 @@ impl Editor {
         self.binding(general.view.clone(), |value| value.language, None)
     }
     fn apply(&self, apply: &Apply) -> Result<(), String> {
+        let language = self.vm.general.view.get().language;
         let result = self
             .vm
             .finish()
-            .map_err(|validation| {
-                validation
-                    .issues
-                    .iter()
-                    .map(|issue| issue.message.as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })
+            .map_err(|validation| issues_text(language, &validation.issues))
             .and_then(|snapshot| {
                 apply(snapshot.clone())?;
                 self.baseline.replace(snapshot);

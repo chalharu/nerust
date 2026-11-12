@@ -22,5 +22,18 @@
                 android:name="android.app.lib_name"
                 android:value="main" />
         </activity>
+        <activity
+            android:name="io.github.chalharu.nerust.SlotActivity"
+            android:configChanges="density|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
+            android:exported="false"
+            android:parentActivityName="io.github.chalharu.nerust.MainActivity"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen" />
+        <activity
+            android:name="io.github.chalharu.nerust.SettingsActivity"
+            android:configChanges="density|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:parentActivityName="io.github.chalharu.nerust.MainActivity"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen" />
     </application>
 </manifest>

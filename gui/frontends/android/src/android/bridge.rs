@@ -1,7 +1,7 @@
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::VecDeque,
     sync::{
-        Arc, Mutex,
+        Mutex,
         atomic::{AtomicU64, Ordering},
     },
 };
@@ -9,10 +9,10 @@ use std::{
 use jni::objects::{JIntArray, JObject};
 use jni::refs::Global;
 use nerust_core_traits::peripheral::{AccelerationSample, AccelerometerInputHandle};
+use nerust_persistence::model::StateSlotSummary;
+use nerust_settings_core::model::language::AppLanguage;
 use winit::{event_loop::EventLoopProxy, platform::android::activity::AndroidApp};
 
-use super::settings_model::AndroidSettings;
-use super::settings_schema::SettingDef;
 use crate::bridge_events::FrontendEvent;
 
 /// Worker-thread completion produced by the single picker fetch worker.
@@ -70,26 +70,64 @@ impl PickerSlot {
     }
 }
 
-/// Keyed dialog outcome produced by the settings bridge.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Screen outcome produced by the settings bridge.
+#[derive(Debug, Clone, PartialEq)]
 pub(super) enum SettingsDialogResult {
     Dismissed,
-    Applied(BTreeMap<String, usize>),
+    /// Accepted draft snapshot; validation runs on the event thread.
+    Applied(nerust_gui_runtime::settings::SettingsSnapshot),
 }
 
 /// Single-flight dialog state; lives in the unified bridge vault.
+/// The draft snapshot rides here while the screen is open; commands mutate it
+/// through throwaway view models, so no editor state crosses JNI.
 pub(super) struct SettingsSlot {
     pub(super) flight: crate::settings_flight::SettingsFlight<SettingsDialogResult>,
-    pub(super) cache: Option<AndroidSettings>,
-    pub(super) defs_cache: Option<(AndroidSettings, Arc<Vec<SettingDef>>)>,
+    pub(super) draft: Option<nerust_gui_runtime::settings::SettingsSnapshot>,
+    /// Unedited copy of the draft at open: commands compare against it so
+    /// a change-then-revert (or a no-op clear) reads clean, never dirty.
+    pub(super) pristine: Option<nerust_gui_runtime::settings::SettingsSnapshot>,
+    pub(super) capture: super::settings_views::CaptureSlot,
+    /// Enumerated physical keyboards (Kotlin `InputDevice`, hotplug live).
+    /// Ephemeral device truth: projected into sections, never persisted.
+    pub(super) keyboards: Vec<super::settings_views::KeyboardInfo>,
+    /// Whether the terminal has a touch screen (Kotlin
+    /// `PackageManager`, re-pushed with the keyboard enumeration).
+    /// `None` until the first push: rows behave as before.
+    pub(super) touch_capable: Option<bool>,
+    /// Devices the Auto overlay gate counts (Kotlin `InputDevice`, hotplug
+    /// live). Display-only device truth, never persisted.
+    pub(super) gamepads: Vec<super::settings_views::GamepadInfo>,
+    /// System locale (Kotlin `configuration`, hotplug live), resolved to the
+    /// app's supported set at ingestion: never SystemDefault, `None` until
+    /// the first push. Ephemeral device truth, never persisted.
+    pub(super) system_locale: Option<AppLanguage>,
+    /// Emulation pause flag (Rust event loop, republished after every
+    /// session command). The drawer reads it once per open for the dynamic
+    /// Pause/Resume row; synchronous vault read, never the live session.
+    pub(super) emulation_paused: bool,
+    /// Slot list mirror for the drawer submenu (event loop, republished
+    /// after every session command). Cloned summaries, never a live lock:
+    /// the JNI list query reads this synchronously on the Java thread.
+    pub(super) slots: Vec<StateSlotSummary>,
+    /// Active slot mirror, republished with the list above.
+    pub(super) active_slot: Option<u64>,
 }
 
 impl SettingsSlot {
     pub(super) const fn empty() -> Self {
         Self {
             flight: crate::settings_flight::SettingsFlight::new(),
-            cache: None,
-            defs_cache: None,
+            draft: None,
+            pristine: None,
+            capture: None,
+            keyboards: Vec::new(),
+            touch_capable: None,
+            gamepads: Vec::new(),
+            system_locale: None,
+            emulation_paused: false,
+            slots: Vec::new(),
+            active_slot: None,
         }
     }
 }
@@ -133,6 +171,11 @@ pub(super) mod methods {
     );
     bridge_method!(FINISH_ACTIVITY, "finish", "()V");
     bridge_method!(
+        ON_SLOT_LIST_CHANGED,
+        "onSlotListChanged",
+        "(Ljava/lang/String;)V"
+    );
+    bridge_method!(
         CONFIGURE_CONTROLS_OVERLAY,
         "configureControlsOverlay",
         "(Ljava/lang/String;IZLjava/lang/String;Ljava/lang/String;)V"
@@ -146,6 +189,11 @@ pub(super) mod methods {
     );
     bridge_method!(SET_CARTRIDGE_RUMBLE, "setCartridgeRumble", "(I)V");
     bridge_method!(APPLY_SCREEN_ORIENTATION, "applyScreenOrientation", "(I)V");
+    bridge_method!(
+        APPLY_APP_LANGUAGE,
+        "applyAppLanguage",
+        "(Ljava/lang/String;)V"
+    );
     bridge_method!(
         DELETE_SAF_FILE,
         "deleteSafFile",

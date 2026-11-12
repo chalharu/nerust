@@ -13,7 +13,7 @@ import tomllib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from bridge_schema import load_sibling
+from bridge_schema import load_sibling, require
 
 GEN = load_sibling("generator", "generate-contract.py")
 
@@ -27,11 +27,17 @@ def sample(prop):
 
 
 def _enum_cases(event, name, prop, base):
-    """Accepted members plus unknown-marker rejection."""
+    """First/last members plus unknown-marker rejection.
+
+    Every member is still pinned by the generated constants and the
+    schema/decoder parity checks; probes keep one representative per
+    boundary plus the rejection signal instead of one case per member.
+    """
     if "enum" not in prop:
         return []
+    members = list(dict.fromkeys((prop["enum"][0], prop["enum"][-1])))
     cases = [(f"{event}: {name}={value!r}", dict(base, **{name: value}), True)
-             for value in prop["enum"]]
+             for value in members]
     cases.append((f"{event}: {name}='__unknown__'", dict(base, **{name: "__unknown__"}), False))
     return cases
 
@@ -65,16 +71,17 @@ def _prop_cases(event, name, prop, base, required):
 
 
 def _conditional_cases(event, definition, base):
-    """Conditional-required probes for a gated event."""
-    if "if" not in definition:
-        return []
-    key, condition = next(iter(definition["if"]["properties"].items()))
-    conditional = dict(base, **{key: condition["const"]})
+    """Conditional-required probes for gated events."""
+    gates = definition.get("allOf", [])
+    require("if" not in definition, "legacy top-level if/then shape removed; use allOf")
     cases = []
-    for name in definition["then"]["required"]:
-        payload = dict(conditional)
-        del payload[name]
-        cases.append((f"{event}: {key}={condition['const']} missing {name}", payload, False))
+    for gate in gates:
+        key, condition = next(iter(gate["if"]["properties"].items()))
+        conditional = dict(base, **{key: condition["const"]})
+        for name in gate["then"]["required"]:
+            payload = dict(conditional)
+            del payload[name]
+            cases.append((f"{event}: {key}={condition['const']} missing {name}", payload, False))
     return cases
 
 

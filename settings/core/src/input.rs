@@ -2,6 +2,48 @@ use std::rc::Rc;
 
 use nerust_input_traits::{AttachmentId, ControllerProfile};
 
+use super::model::app_state::PortDeviceSets;
+pub use super::model::app_state::{
+    BUILTIN_KEYBOARD_MEMBER, GAMEPAD_MEMBER_PREFIX, KEYBOARD_MEMBER_PREFIX,
+};
+
+/// Shareable members (keyboards) may sit in several ports at once.
+pub fn member_is_shareable(member: &str) -> bool {
+    member.starts_with(KEYBOARD_MEMBER_PREFIX)
+}
+
+/// Gamepad members: exclusive, one port at a time.
+pub fn member_is_gamepad(member: &str) -> bool {
+    member.starts_with(GAMEPAD_MEMBER_PREFIX)
+}
+
+/// Exclusive members (gamepads) appearing in more than one port.
+/// Returns one entry per offending member: (member, ports).
+pub fn exclusive_member_conflicts(ports: &PortDeviceSets) -> Vec<(String, Vec<String>)> {
+    let mut by_member: std::collections::BTreeMap<&str, Vec<&str>> =
+        std::collections::BTreeMap::new();
+    for (port, members) in ports {
+        for member in members {
+            if !member_is_shareable(member) {
+                by_member
+                    .entry(member.as_str())
+                    .or_default()
+                    .push(port.as_str());
+            }
+        }
+    }
+    by_member
+        .into_iter()
+        .filter(|(_, ports)| ports.len() > 1)
+        .map(|(member, ports)| {
+            (
+                member.to_string(),
+                ports.into_iter().map(str::to_string).collect(),
+            )
+        })
+        .collect()
+}
+
 /// Clear other occupied slots in the selected profile's multi-port set in place.
 pub fn clear_multi_port_conflicts(
     slot: AttachmentId,
@@ -105,5 +147,31 @@ mod tests {
         assert!(assignments[0].1.is_some(), "unrelated slot untouched");
         assert!(assignments[1].1.is_some());
         assert!(assignments[2].1.is_none());
+    }
+
+    #[test]
+    fn keyboards_share_ports_gamepads_do_not() {
+        use super::{exclusive_member_conflicts, member_is_shareable};
+        use crate::model::app_state::PortDeviceSets;
+        assert!(member_is_shareable("kbd:builtin"));
+        assert!(member_is_shareable("kbd:05ac:024f"));
+        assert!(!member_is_shareable("pad:deadbeef"));
+        let ports: PortDeviceSets = [
+            (
+                "p1".to_string(),
+                vec!["kbd:builtin".to_string(), "pad:aa".to_string()],
+            ),
+            (
+                "p2".to_string(),
+                vec!["kbd:builtin".to_string(), "pad:aa".to_string()],
+            ),
+        ]
+        .into_iter()
+        .collect();
+        // The shared keyboard is fine; the gamepad in both ports conflicts.
+        let conflicts = exclusive_member_conflicts(&ports);
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].0, "pad:aa");
+        assert_eq!(conflicts[0].1, vec!["p1".to_string(), "p2".to_string()]);
     }
 }

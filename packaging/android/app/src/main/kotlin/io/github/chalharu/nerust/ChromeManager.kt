@@ -1,5 +1,6 @@
 package io.github.chalharu.nerust
 
+import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.os.SystemClock
@@ -28,6 +29,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
@@ -46,8 +48,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 
@@ -59,21 +61,32 @@ internal const val FPS_OVERLAY_TAG = "nerust-fps-overlay"
 internal const val DRAWER_TITLE = "Nerust"
 
 private data class DrawerAction(
-    val label: String,
+    val labelRes: Int,
     val action: String,
+    val iconRes: Int,
 )
 
-/** Drawer actions resolve to the single-source [MenuAction] contract. */
+/** Pause row follows the vault truth read once per drawer open: paused
+ * shows Resume + play, running shows Pause + pause. One place so the
+ * Compose row and the e2e content probe can never disagree. */
+private fun isPauseRow(action: DrawerAction): Boolean = action.action == MenuAction.TOGGLE_PAUSE
+
+private fun pauseLabelRes(action: DrawerAction, emulationPaused: Boolean): Int =
+    if (isPauseRow(action) && emulationPaused) R.string.drawer_resume else action.labelRes
+
+private fun pauseIconRes(action: DrawerAction, emulationPaused: Boolean): Int =
+    if (isPauseRow(action) && emulationPaused) R.drawable.ic_drawer_resume else action.iconRes
 private val DRAWER_ACTIONS =
     listOf(
-        DrawerAction("Open ROM", MenuAction.OPEN_ROM),
-        DrawerAction("Settings", MenuAction.OPEN_SETTINGS),
-        DrawerAction("Pause / Resume", MenuAction.TOGGLE_PAUSE),
-        DrawerAction("Save State", MenuAction.SAVE_STATE),
-        DrawerAction("Load State", MenuAction.LOAD_STATE),
-        DrawerAction("Reset", MenuAction.RESET),
-        DrawerAction("Unload ROM", MenuAction.UNLOAD),
-        DrawerAction("Exit", MenuAction.EXIT),
+        DrawerAction(R.string.drawer_open_rom, MenuAction.OPEN_ROM, R.drawable.ic_drawer_open_rom),
+        DrawerAction(R.string.drawer_settings, MenuAction.OPEN_SETTINGS, R.drawable.ic_drawer_settings),
+        DrawerAction(R.string.drawer_pause, MenuAction.TOGGLE_PAUSE, R.drawable.ic_drawer_pause),
+        DrawerAction(R.string.drawer_save_state, MenuAction.SAVE_STATE, R.drawable.ic_drawer_save_state),
+        DrawerAction(R.string.drawer_load_state, MenuAction.LOAD_STATE, R.drawable.ic_drawer_load_state),
+        DrawerAction(R.string.drawer_slots, OPEN_SLOTS, R.drawable.ic_drawer_slots),
+        DrawerAction(R.string.drawer_reset, MenuAction.RESET, R.drawable.ic_drawer_reset),
+        DrawerAction(R.string.drawer_unload_rom, MenuAction.UNLOAD, R.drawable.ic_drawer_unload_rom),
+        DrawerAction(R.string.drawer_exit, MenuAction.EXIT, R.drawable.ic_drawer_exit),
     )
 
 /** Non-dialog chrome: touch overlay, drawer, FPS label, and attach retries.
@@ -83,6 +96,7 @@ class ChromeManager(private val activity: MainActivity) {
     private val restoreControllerOverlayRunnable =
         Runnable {
             controllerOverlayHiddenUntil = 0L
+            pushTouchGate()
             scheduleChromeAttach()
         }
     private var chromeAttachAttempts = 0
@@ -91,6 +105,15 @@ class ChromeManager(private val activity: MainActivity) {
     private var controlsOverlayView: View? = null
     private var controllerOverlayHiddenUntil = 0L
     private var controlsVisibility = "auto"
+    // Last pushed touch-response gate; dedupes so transitions only cross
+    // JNI on change. Unknown starts open like the drawing default.
+    private var lastTouchGatePushed: Boolean? = null
+    // Terminal capability, pushed from MainActivity device truth. Unknown
+    // starts capable: hiding by default would blank phones on day one.
+    private var touchCapable = true
+    // Auto hides while a gamepad is connected; the post-press quiet
+    // window below still covers already-known devices transiently.
+    private var controllerConnected = false
     private var controlsOpacityPercent = 65
     private var controlsHaptics = true
     private var controlsPushedZones: List<PushedOverlayZone> = emptyList()
@@ -113,6 +136,9 @@ class ChromeManager(private val activity: MainActivity) {
 
     fun onResume() {
         chromeAttachEnabled = true
+        // The quiet window may have expired while suspended: re-converge
+        // the response gate with the drawing rule before touches resume.
+        pushTouchGate()
         scheduleChromeAttach()
     }
 
@@ -161,6 +187,32 @@ class ChromeManager(private val activity: MainActivity) {
         scheduleChromeAttach()
     }
 
+    /** Single drawing/response truth: invisible buttons never respond.
+     * Both the popup gate and the Rust `touch_gate` push read this. */
+    private fun isOverlayHidden(): Boolean =
+        controlsVisibility == "hidden" || !touchCapable ||
+            (
+                controlsVisibility == "auto" &&
+                    (
+                        controllerConnected ||
+                            SystemClock.elapsedRealtime() < controllerOverlayHiddenUntil
+                    )
+            )
+
+    /** Touch-response gate for Rust: mirrors the drawing rule so invisible
+     * buttons never respond. Rust releases in-flight presses on close.
+     * Sent on every transition; deduped here. */
+    private fun pushTouchGate() {
+        val respond = !isOverlayHidden()
+        if (lastTouchGatePushed == respond) return
+        lastTouchGatePushed = respond
+        activity.sendMenuAction(
+                menuEvent(MenuAction.TOUCH_GATE) {
+                    put("pressed", respond)
+                },
+            )
+    }
+
     fun configureControlsOverlay(
         visibility: String,
         opacityPercent: Int,
@@ -176,6 +228,7 @@ class ChromeManager(private val activity: MainActivity) {
         controlsOverlayPopup?.dismiss()
         controlsOverlayPopup = null
         controlsOverlayView = null
+        pushTouchGate()
         scheduleChromeAttach()
     }
 
@@ -240,15 +293,29 @@ class ChromeManager(private val activity: MainActivity) {
         lastDrawerStateForTest = "creating"
         Log.i(TAG, "showDrawerOverlay: creating")
 
+        // Pause truth once per open (vault, published after every session
+        // command): the row below follows reality, and the probe with it.
+        // No subscription needed — toggling closes the drawer immediately.
+        val emulationPaused =
+            try {
+                activity.isEmulationPaused()
+            } catch (e: Exception) {
+                Log.e(TAG, "pause query failed, assuming running", e)
+                false
+            }
+
         // Hide the edge-handle popup while the drawer is open.
         drawerChromePopup?.dismiss()
 
+        // One wrapped context per open: the overlay, the probe, and the
+        // edge handle all resolve drawer strings through it.
+        val strings = AppLocale.wrap(activity)
         val overlay =
             ComposeOwnerFrameLayout(activity) { view ->
                 activity.installComposeOwners(view)
             }.apply {
                 tag = DRAWER_OVERLAY_TAG
-                setTag(R.id.nerust_drawer_content_probe, drawerContentDescription())
+                setTag(R.id.nerust_drawer_content_probe, drawerContentDescription(strings, emulationPaused))
                 layoutParams =
                     FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
@@ -256,7 +323,7 @@ class ChromeManager(private val activity: MainActivity) {
                     )
             }
         val drawerContent =
-            ComposeView(activity).apply {
+            ComposeView(strings).apply {
                 tag = DRAWER_COMPOSE_TAG
                 layoutParams =
                     FrameLayout.LayoutParams(
@@ -267,6 +334,7 @@ class ChromeManager(private val activity: MainActivity) {
                 setContent {
                     MaterialTheme {
                         NerustDrawerOverlay(
+                            emulationPaused = emulationPaused,
                             onDismissRequest = { removeDrawerOverlay() },
                             onMenuAction = ::dispatchMenuAction,
                             onScrollState = { drawerScrollState = it },
@@ -327,9 +395,16 @@ class ChromeManager(private val activity: MainActivity) {
     }
 
     fun dispatchMenuAction(action: String) {
+        if (action == OPEN_SLOTS) {
+            // Drawer-local submenu: no wire round-trip, the dialog queries
+            // the vault mirror directly.
+            removeDrawerOverlay()
+            activity.showSlotMenu()
+            return
+        }
         removeDrawerOverlay()
         // Kotlin builds the v1 envelope; Rust decodes JSON only.
-        activity.sendMenuAction(menuEventJson(action))
+        activity.sendMenuAction(menuEvent(action))
     }
 
     fun dismissChromePopups() {
@@ -456,10 +531,7 @@ class ChromeManager(private val activity: MainActivity) {
     }
 
     private fun ensureControlsOverlayPopup(anchor: View): Boolean {
-        if (
-            controlsVisibility == "hidden" ||
-            controlsVisibility == "auto" && SystemClock.elapsedRealtime() < controllerOverlayHiddenUntil
-        ) {
+        if (isOverlayHidden()) {
             return true
         }
         val existing = controlsOverlayPopup
@@ -500,6 +572,7 @@ class ChromeManager(private val activity: MainActivity) {
         controlsOverlayPopup?.dismiss()
         controlsOverlayPopup = null
         controlsOverlayView = null
+        pushTouchGate()
         activity.window.decorView.removeCallbacks(restoreControllerOverlayRunnable)
         activity.window.decorView.postDelayed(
             restoreControllerOverlayRunnable,
@@ -509,6 +582,40 @@ class ChromeManager(private val activity: MainActivity) {
 
     fun noteControllerInput() {
         hideControlsForControllerInput()
+    }
+
+    /** Shared tail for overlay-gate flips: dismiss, push the gate, reattach. */
+    private fun refreshOverlayChrome() {
+        controlsOverlayPopup?.dismiss()
+        controlsOverlayPopup = null
+        controlsOverlayView = null
+        pushTouchGate()
+        scheduleChromeAttach()
+    }
+
+    /** Non-touch terminals never draw buttons; the settings row names the
+     * reason so the choice does not look broken. */
+    fun setTouchCapable(capable: Boolean) {
+        if (touchCapable == capable) return
+        touchCapable = capable
+        if (!capable) {
+            refreshOverlayChrome()
+        } else {
+            pushTouchGate()
+            scheduleChromeAttach()
+        }
+    }
+
+    /** Auto hides while a gamepad is connected and returns on disconnect;
+     * a press still triggers the short quiet window too. */
+    fun setControllerConnected(connected: Boolean) {
+        if (controllerConnected == connected) return
+        controllerConnected = connected
+        if (connected) {
+            activity.window.decorView.removeCallbacks(restoreControllerOverlayRunnable)
+            controllerOverlayHiddenUntil = 0L
+        }
+        refreshOverlayChrome()
     }
 
     private fun ensureDrawerChromePopup(anchor: View): Boolean {
@@ -565,7 +672,7 @@ class ChromeManager(private val activity: MainActivity) {
     private fun createDrawerEdgeHandleOverlay(): View =
         DrawerEdgeSwipeHandleView(activity) { showDrawerOverlay() }.apply {
             tag = DRAWER_EDGE_HANDLE_TAG
-            contentDescription = "Open navigation drawer"
+            contentDescription = AppLocale.wrap(activity).getString(R.string.drawer_open_nav)
             layoutParams =
                 FrameLayout.LayoutParams(
                     dp(DRAWER_EDGE_HANDLE_WIDTH_DP),
@@ -662,8 +769,14 @@ class ChromeManager(private val activity: MainActivity) {
 
     private fun dp(value: Int): Int = (value * activity.resources.displayMetrics.density).toInt()
 
-    private fun drawerContentDescription(): String =
-        (listOf(DRAWER_TITLE) + DRAWER_ACTIONS.map { it.label }).joinToString("\n")
+    private fun drawerContentDescription(strings: Context, emulationPaused: Boolean): String {
+        return (
+            listOf(DRAWER_TITLE) +
+                DRAWER_ACTIONS.map { action ->
+                    strings.getString(pauseLabelRes(action, emulationPaused))
+                }
+        ).joinToString("\n")
+    }
 
     private fun View?.isShownInWindowForTest(): Boolean =
         this != null && visibility == View.VISIBLE && isAttachedToWindow && windowToken != null
@@ -688,6 +801,7 @@ class ChromeManager(private val activity: MainActivity) {
 
 @Composable
 private fun NerustDrawerOverlay(
+    emulationPaused: Boolean,
     onDismissRequest: () -> Unit,
     onMenuAction: (String) -> Unit,
     onScrollState: (ScrollState?) -> Unit = {},
@@ -723,16 +837,12 @@ private fun NerustDrawerOverlay(
                     androidx.compose.material3.Text(
                         text = DRAWER_TITLE,
                         style = MaterialTheme.typography.titleLarge,
-                        modifier = Modifier.padding(start = 24.dp, top = 24.dp, end = 24.dp, bottom = 8.dp),
-                    )
-                    Text(
-                        text = "Open ROMs and control the current session.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 16.dp),
+                        modifier = Modifier.padding(start = 24.dp, top = 24.dp, end = 24.dp, bottom = 16.dp),
                     )
                     DRAWER_ACTIONS.forEachIndexed { index, action ->
                         DrawerActionItem(
-                            label = action.label,
+                            label = stringResource(pauseLabelRes(action, emulationPaused)),
+                            iconRes = pauseIconRes(action, emulationPaused),
                             onClick = {
                                 closeAndRun(action.action)
                             },
@@ -757,15 +867,25 @@ private fun NerustDrawerOverlay(
 @Composable
 private fun DrawerActionItem(
     label: String,
+    iconRes: Int,
     onClick: () -> Unit,
 ) {
+    // No extra semantics: NavigationDrawerItem already exposes the label,
+    // and doubling it makes TalkBack hear the row twice.
     NavigationDrawerItem(
+        // Icon is decorative: the item already carries the label for TalkBack.
+        // Tint follows the drawer content color so bundled black vectors do
+        // not stay black on a dark sheet.
+        icon = {
+            Icon(
+                painter = painterResource(id = iconRes),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        },
         label = { Text(label) },
         selected = false,
         onClick = onClick,
-        modifier =
-            Modifier
-                .semantics { contentDescription = label }
-                .padding(NavigationDrawerItemDefaults.ItemPadding),
+        modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
     )
 }

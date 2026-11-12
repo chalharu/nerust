@@ -57,7 +57,6 @@ pub enum UiText {
     Auto,
     Sharp,
     Nec,
-    None,
     NtscComposite,
     NtscSVideo,
     NtscRgb,
@@ -166,6 +165,8 @@ pub enum UiText {
     Off,
     Always,
     Hidden,
+    NoTouchScreen,
+    InputDeviceRequired,
     ScreenOrientation,
     AutoRotate,
     Portrait,
@@ -184,6 +185,52 @@ pub enum UiText {
     Controls,
     Storage,
     Unknown,
+    NotAssigned,
+    OverlayDetail,
+    ConnectedGamepads,
+    DescVsync,
+    DescOrientation,
+    DescMute,
+    DescSampleRate,
+    DescLatency,
+    DescNotifInfo,
+    DescNotifWarning,
+    DescNotifError,
+    DescNotifErrorModal,
+    DescNotifArea,
+    DescStatusArea,
+    DescOverlayVisibility,
+    DescCartridgeMotion,
+    DescCartridgeRumble,
+    DescOverlayDetail,
+    DescAudioDetail,
+    DescShortcutsLink,
+    DescStoragePolicy,
+    SectionPlay,
+    SectionControllers,
+    SectionSaves,
+    SectionApp,
+    SectionAdvanced,
+    Devices,
+    ControllerType,
+    NoKeyboards,
+    DescNoKeyboards,
+    ResetSettings,
+    ResetScreen,
+    Version,
+    License,
+    BuiltInKeyboard,
+    ExternalKeyboard,
+    GamepadDevice,
+    AlwaysAvailable,
+    Connected,
+    SharesAcrossPlayers,
+    Keyboard,
+    AudioDetail,
+    KeyMapping,
+    Connection,
+    Capabilities,
+    KeyMappingDesc,
 }
 
 pub fn resolve_language(language: AppLanguage) -> AppLanguage {
@@ -291,7 +338,6 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::Auto => ("Auto", "自動"),
         UiText::Sharp => ("Sharp", "Sharp"),
         UiText::Nec => ("Nec", "Nec"),
-        UiText::None => ("None", "なし"),
         UiText::NtscComposite => ("NTSC Composite", "NTSC Composite"),
         UiText::NtscSVideo => ("NTSC S-Video", "NTSC S-Video"),
         UiText::NtscRgb => ("NTSC RGB", "NTSC RGB"),
@@ -301,7 +347,7 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::Cancel => ("Cancel", "キャンセル"),
         UiText::ConflictDetected => (
             "Conflicting bindings must be resolved before saving.",
-            "割当競合を解消してください。",
+            "重複したキー割り当てを解消してください。",
         ),
         UiText::CapturePrompt => ("Press a key…", "キーを押してください…"),
         UiText::InvalidCustomStorageDirectory => (
@@ -427,6 +473,8 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::Off => ("Off", "オフ"),
         UiText::Always => ("Always", "常に表示"),
         UiText::Hidden => ("Hidden", "非表示"),
+        UiText::NoTouchScreen => ("No touch screen", "タッチ画面がありません"),
+        UiText::InputDeviceRequired => ("Input device required", "入力デバイスが必要です"),
         UiText::ScreenOrientation => ("Screen orientation", "画面の向き"),
         UiText::AutoRotate => ("Auto rotate", "自動回転"),
         UiText::Portrait => ("Portrait", "縦向き"),
@@ -435,7 +483,7 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::OverlayOpacity => ("Overlay opacity", "オーバーレイ不透明度"),
         UiText::OverlayScale => ("Overlay scale", "オーバーレイ拡大率"),
         UiText::OverlayVerticalOffset => ("Overlay vertical position", "オーバーレイ垂直位置"),
-        UiText::OverlayHaptics => ("Overlay haptics", "オーバーレイ振動"),
+        UiText::OverlayHaptics => ("Touch feedback", "タッチ操作時の振動"),
         UiText::CartridgeMotion => ("Cartridge motion sensor", "カートリッジモーションセンサー"),
         UiText::CartridgeRumble => ("Cartridge rumble", "カートリッジ振動"),
         UiText::RumbleStrength => ("Rumble strength", "振動の強さ"),
@@ -445,6 +493,67 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::Controls => ("Controls", "操作"),
         UiText::Storage => ("Storage", "ストレージ"),
         UiText::Unknown => ("Unknown", "不明"),
+        UiText::NotAssigned => ("Not assigned", "未割当"),
+        UiText::OverlayDetail => ("Overlay detail", "オーバーレイ詳細"),
+        UiText::DescVsync => ("", ""),
+        UiText::DescOrientation => (
+            "Applies immediately, even mid-game.",
+            "ゲーム中も即時反映されます",
+        ),
+        UiText::DescMute => ("", ""),
+        UiText::DescSampleRate => ("Adjust if audio crackles.", "音割れ対策用"),
+        UiText::DescLatency => ("Less crackle, more delay.", "途切れ防止・遅延増加"),
+        UiText::DescNotifInfo => ("Such as save confirmations.", "保存完了など"),
+        UiText::DescNotifWarning => ("Slowdown or missing files.", "遅延・ファイル不足"),
+        UiText::DescNotifError => ("Halted actions.", "操作停止"),
+        UiText::DescNotifErrorModal => ("Separately from the overlay.", "オーバーレイと別に表示"),
+        UiText::DescNotifArea => ("Overlay or reserved strip.", "重ね表示か専用帯"),
+        UiText::DescStatusArea => (
+            "A shared edge follows the message area.",
+            "同じ辺は通知領域に従います",
+        ),
+        UiText::DescOverlayVisibility => (
+            "Auto hides on gamepads; needs touch.",
+            "パッド接続中は非表示。要タッチ画面",
+        ),
+        UiText::DescCartridgeMotion => ("Only some cartridges.", "一部カートリッジのみ使用します"),
+        UiText::DescCartridgeRumble => (
+            "Only cartridges with rumble use this.",
+            "振動対応カートリッジのみ使用します",
+        ),
+        UiText::DescOverlayDetail => ("Size, position, transparency.", "大きさ・位置・透明度調整"),
+        UiText::ConnectedGamepads => ("Connected gamepads", "接続中のゲームパッド"),
+        UiText::DescAudioDetail => ("Sample rate, latency.", "サンプルレート・遅延"),
+        UiText::DescShortcutsLink => ("Global save-state operations.", "セーブステート全体操作"),
+        UiText::DescStoragePolicy => ("Takes effect on next launch.", "次回起動から有効です"),
+        UiText::SectionPlay => ("Play", "プレイ"),
+        UiText::SectionControllers => ("Controllers", "コントローラー"),
+        UiText::SectionSaves => ("Saves", "保存データ"),
+        UiText::SectionApp => ("App", "アプリ"),
+        UiText::SectionAdvanced => ("Advanced", "詳細"),
+        UiText::Devices => ("Devices", "デバイス"),
+        UiText::ControllerType => ("Controller type", "コントローラー種類"),
+        UiText::NoKeyboards => ("No keyboards connected", "接続キーボードなし"),
+        UiText::DescNoKeyboards => (
+            "Connect a USB or Bluetooth keyboard.",
+            "USB・Bluetoothキーボードを接続",
+        ),
+        UiText::ResetSettings => ("Reset settings", "設定初期化"),
+        UiText::ResetScreen => ("Reset this screen", "この画面初期化"),
+        UiText::Version => ("Version", "バージョン"),
+        UiText::License => ("License", "ライセンス"),
+        UiText::BuiltInKeyboard => ("Built-in Keyboard", "内蔵キーボード"),
+        UiText::ExternalKeyboard => ("External keyboard", "外付けキーボード"),
+        UiText::GamepadDevice => ("Gamepad", "ゲームパッド"),
+        UiText::AlwaysAvailable => ("Always available", "常に利用可能"),
+        UiText::Connected => ("Connected", "接続中"),
+        UiText::SharesAcrossPlayers => ("Shares across players", "複数プレイヤー共有可"),
+        UiText::Keyboard => ("Keyboard", "キーボード"),
+        UiText::AudioDetail => ("Audio details", "音声詳細"),
+        UiText::KeyMapping => ("Key mapping", "キー割り当て"),
+        UiText::Connection => ("Connection", "接続"),
+        UiText::Capabilities => ("Capabilities", "対応機能"),
+        UiText::KeyMappingDesc => ("", ""),
     }
 }
 
@@ -487,6 +596,49 @@ pub fn notification_group_label(language: AppLanguage, level: &str) -> String {
         format!("{level} notifications"),
         format!("{level}通知")
     )
+}
+
+/// Description for a controller-slot choice row: which port the row drives
+/// is in the row label, so the description only states the action.
+pub fn slot_description(language: AppLanguage) -> String {
+    localized!(
+        language,
+        "Controller for this port.".to_string(),
+        "このポートで使うコントローラー".to_string()
+    )
+}
+
+/// Player/device-row summary: "Not assigned" when empty, otherwise
+/// "Name" or "Name +N" (short form is banned: the full first name reads).
+pub fn port_summary(language: AppLanguage, names: &[String]) -> String {
+    match names {
+        [] => text(language, UiText::NotAssigned).to_string(),
+        [first] => first.clone(),
+        // Count suffix is language-neutral, so no per-language branch.
+        [first, rest @ ..] => format!("{first} +{}", rest.len()),
+    }
+}
+
+/// Player/device-row count line: "No devices assigned" / "1 device
+/// assigned" / "N devices assigned" (singular/plural distinguished).
+pub fn port_count_line(language: AppLanguage, count: usize) -> String {
+    match count {
+        0 => localized!(
+            language,
+            "No devices assigned".to_string(),
+            "割り当てデバイスなし".to_string()
+        ),
+        1 => localized!(
+            language,
+            "1 device assigned".to_string(),
+            "1台のデバイスを割り当て".to_string()
+        ),
+        n => localized!(
+            language,
+            format!("{n} devices assigned"),
+            format!("{n}台のデバイスを割り当て")
+        ),
+    }
 }
 
 /// Selected dump row (`was ??` when the old byte is unreadable).
@@ -714,6 +866,8 @@ mod tests {
             Off,
             Always,
             Hidden,
+            NoTouchScreen,
+            InputDeviceRequired,
             ScreenOrientation,
             AutoRotate,
             Portrait,
@@ -732,10 +886,64 @@ mod tests {
             Controls,
             Storage,
             Unknown,
+            NotAssigned,
+            OverlayDetail,
+            DescOrientation,
+            DescSampleRate,
+            DescLatency,
+            DescNotifInfo,
+            DescNotifWarning,
+            DescNotifError,
+            DescNotifErrorModal,
+            DescNotifArea,
+            DescStatusArea,
+            DescOverlayVisibility,
+            DescCartridgeMotion,
+            DescCartridgeRumble,
+            DescOverlayDetail,
+            ConnectedGamepads,
+            DescAudioDetail,
+            DescShortcutsLink,
+            DescStoragePolicy,
+            SectionPlay,
+            SectionControllers,
+            SectionSaves,
+            SectionApp,
+            SectionAdvanced,
+            Devices,
+            ControllerType,
+            NoKeyboards,
+            DescNoKeyboards,
+            ResetSettings,
+            ResetScreen,
+            Version,
+            License,
+            BuiltInKeyboard,
+            ExternalKeyboard,
+            GamepadDevice,
+            AlwaysAvailable,
+            Connected,
+            SharesAcrossPlayers,
+            Keyboard,
+            AudioDetail,
+            KeyMapping,
+            Connection,
+            Capabilities,
         ] {
             assert!(!text(en(), key).is_empty());
             assert!(!text(ja(), key).is_empty());
             assert_ne!(text(en(), key), text(ja(), key));
+        }
+    }
+
+    #[test]
+    fn restating_descriptions_stay_bare() {
+        // Self-evident labels carry no supporting text: the rows render
+        // bare instead of restating the label.
+        use UiText::*;
+        for key in [DescVsync, DescMute, KeyMappingDesc] {
+            assert!(text(en(), key).is_empty());
+            assert!(text(ja(), key).is_empty());
         }
     }
 

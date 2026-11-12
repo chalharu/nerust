@@ -1,10 +1,12 @@
 use nerust_core_traits::touch::{TouchControl, TouchControlRole, TouchOverlayModel};
 use nerust_input_traits::Key;
-use nerust_input_traits::{AbstractKey, ControlId, DigitalInputEvent, InputValue};
+use nerust_input_traits::{
+    AbstractKey, AttachmentId, ControlId, DigitalControlId, DigitalInputEvent, InputValue,
+};
 use nerust_settings_core::model::input::ShortcutAction;
 
 use crate::{
-    session::{KeyboardShortcut, SessionHandle},
+    session::{KeyboardShortcut, SessionHandle, field_press::FieldSource},
     settings::bindings::events::shortcut::shortcut_action_for_key,
 };
 
@@ -98,16 +100,46 @@ fn build_touch_overlay(
 }
 
 impl SessionHandle {
-    /// Called by touch overlay (Android) with a pre-resolved DigitalInputEvent.
-    pub fn apply_input_event(&mut self, event: DigitalInputEvent) {
-        if let Some(&field) = self
-            .emu
-            .field_map()
-            .and_then(|fields| fields.get(&(event.attachment, ControlId::from(event.control))))
-            && let Some(gui_input) = self.emu.input_mut()
-        {
-            let _ = gui_input.set(field, InputValue::Digital(event.is_pressed()));
+    /// Shared press/release tail: the OR/neutral machine resolves updates,
+    /// then they apply to the live input in one place.
+    fn commit_press(
+        &mut self,
+        field: usize,
+        source: FieldSource,
+        dpad: Option<(AttachmentId, DigitalControlId, AbstractKey)>,
+        pressed: bool,
+    ) {
+        let updates = if pressed {
+            self.input.press_state.press(field, source, dpad)
+        } else {
+            self.input.press_state.release(field, source, dpad)
+        };
+        if let Some(gui_input) = self.emu.input_mut() {
+            for &(field, assert) in updates.as_slice() {
+                let _ = gui_input.set(field, InputValue::Digital(assert));
+            }
         }
+    }
+
+    /// Called by touch overlay (Android) with a pre-resolved DigitalInputEvent.
+    /// Routes through the OR/neutral machine so multi-device holds merge and
+    /// opposite dpad directions neutralize instead of sticking.
+    pub fn apply_input_event(&mut self, event: DigitalInputEvent) {
+        let field = self.emu.field_map().and_then(|fields| {
+            fields
+                .get(&(event.attachment, ControlId::from(event.control)))
+                .copied()
+        });
+        let Some(field) = field else {
+            return;
+        };
+        let dpad = self.input.dpad_for(event.attachment, event.control);
+        self.commit_press(
+            field,
+            FieldSource::Control(event.attachment, event.control),
+            dpad,
+            event.is_pressed(),
+        );
     }
 
     pub fn handle_keyboard_key(&mut self, key: Key, pressed: bool) -> Option<KeyboardShortcut> {
@@ -118,10 +150,18 @@ impl SessionHandle {
             false
         };
 
-        if let Some(&field) = self.input.key_field_map.get(&key)
-            && let Some(gui_input) = self.emu.input_mut()
-        {
-            let _ = gui_input.set(field, InputValue::Digital(pressed));
+        // Repeats change nothing (the source already holds the field);
+        // releases always re-sync so a stuck field cannot survive.
+        let changed = (pressed && first_press) || !pressed;
+        if changed && let Some(&field) = self.input.key_field_map.get(&key) {
+            // Copy ids out: no allocation on the hot path.
+            let dpad = self
+                .input
+                .key_source
+                .get(&key)
+                .copied()
+                .and_then(|(attachment, control)| self.input.dpad_for(attachment, control));
+            self.commit_press(field, FieldSource::Key(key), dpad, pressed);
         }
 
         if first_press {
@@ -140,6 +180,7 @@ impl SessionHandle {
 
     pub fn clear_input(&mut self) {
         self.input.pressed_keys.clear();
+        self.input.press_state.clear();
         if let Some(gui_input) = self.emu.input_mut() {
             gui_input.clear();
         }

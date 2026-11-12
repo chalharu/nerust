@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_title">Settings</string>
+    <string name="settings_back">Back</string>
+    <string name="settings_cancel">Cancel</string>
+    <string name="settings_clear">Clear</string>
+    <string name="settings_close">Close settings</string>
+    <string name="settings_save">Save</string>
+    <string name="settings_error_title">Error</string>
+    <string name="settings_ok">OK</string>
+    <string name="settings_on">On</string>
+    <string name="settings_off">Off</string>
+    <string name="settings_update_retry">Please try again. If it keeps happening, reopen settings.</string>
+    <string name="settings_discard_title">Discard changes?</string>
+    <string name="settings_discard_message">Unsaved settings will be lost.</string>
+    <string name="settings_discard_confirm">Discard</string>
+    <string name="settings_keep_editing">Keep editing</string>
+    <string name="settings_tap_to_assign">Tap to assign</string>
+    <string name="settings_details">Details</string>
+    <string name="settings_search_hint">Search settings</string>
+    <string name="settings_search_empty">No results for \"%1$s\"</string>
+    <string name="settings_reset_all_title">Reset all settings?</string>
+    <string name="settings_reset_all_message">Every setting returns to its default. This cannot be undone.</string>
+    <string name="settings_reset_screen_title">Reset this screen?</string>
+    <string name="settings_reset_screen_message">Only this screen returns to its defaults.</string>
+    <string name="settings_reset_confirm">Reset</string>
+    <string name="settings_reset_screen">Reset screen</string>
+    <string name="settings_needs_attention">Needs attention before saving</string>
+    <plurals name="settings_count">
+        <item quantity="one">%d setting</item>
+        <item quantity="other">%d settings</item>
+    </plurals>
+    <string name="drawer_open_rom">Open ROM</string>
+    <string name="drawer_settings">Settings</string>
+    <string name="drawer_pause">Pause</string>
+    <string name="drawer_resume">Resume</string>
+    <string name="drawer_save_state">Save State</string>
+    <string name="drawer_load_state">Load State</string>
+    <string name="drawer_slots">Slots</string>
+    <string name="slot_title">Slot %1$d</string>
+    <string name="slot_empty">Empty</string>
+    <string name="slot_unknown_time">Unknown</string>
+    <string name="slot_active">Active</string>
+    <string name="slot_new">New slot</string>
+    <string name="slot_new_hint">Save to a new slot</string>
+    <string name="slot_select">Select</string>
+    <string name="slot_delete">Delete</string>
+    <string name="slot_delete_title">Delete %1$s?</string>
+    <string name="slot_delete_message">%1$s (%2$s) will be permanently deleted. This cannot be undone.</string>
+    <string name="drawer_reset">Reset</string>
+    <string name="drawer_unload_rom">Unload ROM</string>
+    <string name="drawer_exit">Exit</string>
+    <string name="drawer_open_nav">Open navigation drawer</string>
+</resources>

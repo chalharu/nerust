@@ -2,6 +2,7 @@ use std::{collections::HashMap, rc::Rc, sync::Arc};
 
 use crate::settings::catalog::FactoryCatalog;
 use crate::settings::topology_adapter::build_topology;
+use nerust_input_traits::{InputAssignments, InputPorts};
 use nerust_settings_core::bindings::{BindingIndex, conflicting_keys_indexed};
 use nerust_settings_core::model::snapshot::SettingsSnapshot;
 use nerust_system_traits::factory::CoreFactory;
@@ -109,14 +110,14 @@ fn validate_storage_policy(state: &super::EditorState, issues: &mut Vec<super::V
             if let Err(e) = state.storage_validator.validate(path) {
                 issues.push(super::ValidationIssue {
                     scope: super::ValidationScope::Persistence,
-                    message: e.to_string(),
+                    kind: super::ValidationIssueKind::Storage(e.to_string()),
                 });
             }
         }
         Err(error) => {
             issues.push(super::ValidationIssue {
                 scope: super::ValidationScope::Persistence,
-                message: error.to_string(),
+                kind: super::ValidationIssueKind::Storage(error.to_string()),
             });
         }
         Ok(None) => {}
@@ -127,19 +128,19 @@ fn validate_audio_settings(state: &super::EditorState, issues: &mut Vec<super::V
     if !(0..=100).contains(&state.draft.local.audio.master_volume_percent) {
         issues.push(super::ValidationIssue {
             scope: super::ValidationScope::Audio,
-            message: "Master volume must be between 0 and 100".into(),
+            kind: super::ValidationIssueKind::VolumeOutOfRange,
         });
     }
     if !(1..=192_000).contains(&state.draft.local.audio.sample_rate) {
         issues.push(super::ValidationIssue {
             scope: super::ValidationScope::Audio,
-            message: "Sample rate must be between 1 and 192000".into(),
+            kind: super::ValidationIssueKind::SampleRateOutOfRange,
         });
     }
     if !(10..=200).contains(&state.draft.local.audio.latency_ms) {
         issues.push(super::ValidationIssue {
             scope: super::ValidationScope::Audio,
-            message: "Audio latency must be between 10 and 200 ms".into(),
+            kind: super::ValidationIssueKind::LatencyOutOfRange,
         });
     }
 }
@@ -149,20 +150,20 @@ fn validate_notification_settings(
     issues: &mut Vec<super::ValidationIssue>,
 ) {
     // Durations guard against 0ms (invisible) and absurd holds.
-    for (value, name) in [
+    for (value, kind) in [
         (
             state.draft.local.notifications.info_duration_ms,
-            "Info notification duration",
+            super::ValidationIssueKind::InfoDurationOutOfRange,
         ),
         (
             state.draft.local.notifications.warning_duration_ms,
-            "Warning notification duration",
+            super::ValidationIssueKind::WarningDurationOutOfRange,
         ),
     ] {
         if !(1_000..=30_000).contains(&value) {
             issues.push(super::ValidationIssue {
                 scope: super::ValidationScope::Notifications,
-                message: format!("{name} must be between 1000 and 30000 ms"),
+                kind,
             });
         }
     }
@@ -222,31 +223,43 @@ fn validate_factory_settings(
     if unknown_slots > 0 {
         issues.push(super::ValidationIssue {
             scope: super::ValidationScope::Input(sid.clone_box()),
-            message: format!(
-                "{}: {} unknown slot ID(s)",
-                factory.display_name(),
-                unknown_slots
-            ),
+            kind: super::ValidationIssueKind::UnknownSlots {
+                system: factory.display_name().to_string(),
+                count: unknown_slots,
+            },
         });
     }
     if unknown_profiles > 0 {
         issues.push(super::ValidationIssue {
             scope: super::ValidationScope::Input(sid.clone_box()),
-            message: format!(
-                "{}: {} unknown controller profile ID(s)",
-                factory.display_name(),
-                unknown_profiles
-            ),
+            kind: super::ValidationIssueKind::UnknownProfiles {
+                system: factory.display_name().to_string(),
+                count: unknown_profiles,
+            },
         });
     }
     let has_controller = assignments.iter().any(|(_, c)| c.is_some());
     if !has_controller {
         issues.push(super::ValidationIssue {
             scope: super::ValidationScope::Input(sid.clone_box()),
-            message: format!(
-                "{}: At least one controller must be assigned",
-                factory.display_name()
-            ),
+            kind: super::ValidationIssueKind::NoController {
+                system: factory.display_name().to_string(),
+            },
+        });
+    }
+    // Combinations the UI must never draft (e.g. NES P1 famicom set plus
+    // a P2 pad) fail here too, so the rule holds for every frontend and
+    // for hand-edited files — not just for screens that disable the
+    // conflicting choices.
+    if let Err(error) =
+        InputAssignments::new(assignments.clone()).placement_plan(input_factory as &dyn InputPorts)
+    {
+        issues.push(super::ValidationIssue {
+            scope: super::ValidationScope::Input(sid.clone_box()),
+            kind: super::ValidationIssueKind::Placement {
+                system: factory.display_name().to_string(),
+                detail: error.to_string(),
+            },
         });
     }
     let topology = build_topology(&assignments, input_factory.slots());
@@ -279,7 +292,10 @@ fn validate_factory_settings(
     for (key, labels) in &conflicts {
         issues.push(super::ValidationIssue {
             scope: super::ValidationScope::Input(sid.clone_box()),
-            message: format!("{}: {}", key.label(), labels.join(", ")),
+            kind: super::ValidationIssueKind::KeyConflict {
+                key: key.label().to_string(),
+                labels: labels.join(", "),
+            },
         });
     }
 }
@@ -289,10 +305,27 @@ fn validator(state: &super::EditorState) -> super::ValidationState {
     validate_storage_policy(state, &mut issues);
     validate_audio_settings(state, &mut issues);
     validate_notification_settings(state, &mut issues);
+    validate_port_devices(state, &mut issues);
     for factory in state.catalog.all() {
         validate_factory_settings(state, factory, &mut issues);
     }
     super::ValidationState { issues }
+}
+
+/// Global port device sets: exclusive members (gamepads) must not sit in
+/// two ports at once. Keyboards share freely, so they never issue here.
+fn validate_port_devices(state: &super::EditorState, issues: &mut Vec<super::ValidationIssue>) {
+    for (member, ports) in
+        nerust_settings_core::input::exclusive_member_conflicts(&state.draft.app_state.port_devices)
+    {
+        issues.push(super::ValidationIssue {
+            scope: super::ValidationScope::Controllers,
+            kind: super::ValidationIssueKind::ExclusiveMember {
+                member,
+                ports: ports.join(", "),
+            },
+        });
+    }
 }
 
 #[cfg(test)]
@@ -388,10 +421,12 @@ mod tests {
 
         // Check that the issue mentions unknown profile
         let err = editor.finish().unwrap_err();
-        let has_unknown_profile = err
-            .issues
-            .iter()
-            .any(|i| i.message.contains("unknown controller profile"));
+        let has_unknown_profile = err.issues.iter().any(|i| {
+            matches!(
+                i.kind,
+                crate::settings::ValidationIssueKind::UnknownProfiles { .. }
+            )
+        });
         assert!(
             has_unknown_profile,
             "validator should flag unknown profile ID"

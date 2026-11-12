@@ -16,9 +16,7 @@ mod saf;
 mod settings;
 mod settings_apply;
 mod settings_bridge;
-mod settings_codec;
-mod settings_model;
-mod settings_schema;
+mod settings_views;
 mod storage;
 mod touch_layout;
 mod touch_tracker;
@@ -65,7 +63,6 @@ use self::{
     lifecycle::Lifecycle,
     peripheral_sync::PeripheralSync,
     render_sync::RenderSync,
-    settings::AndroidSettings,
     storage::AndroidStorage,
 };
 use crate::{
@@ -103,21 +100,15 @@ pub(super) fn register_main_activity_natives(
                     as *mut c_void,
             ),
             jni::NativeMethod::from_raw_parts(
-                jni_str!("onSettingsDialogResult"),
-                jni_str!("(Ljava/lang/String;)V"),
-                settings_bridge::Java_io_github_chalharu_nerust_MainActivity_onSettingsDialogResult
-                    as *mut c_void,
-            ),
-            jni::NativeMethod::from_raw_parts(
-                jni_str!("nativeSettingsAreaVisible"),
-                jni_str!("(II)Z"),
-                settings_bridge::Java_io_github_chalharu_nerust_MainActivity_nativeSettingsAreaVisible
-                    as *mut c_void,
-            ),
-            jni::NativeMethod::from_raw_parts(
                 jni_str!("onActivityDestroyed"),
                 jni_str!("(Z)V"),
                 bridge::Java_io_github_chalharu_nerust_MainActivity_onActivityDestroyed
+                    as *mut c_void,
+            ),
+            jni::NativeMethod::from_raw_parts(
+                jni_str!("pushSystemLocale"),
+                jni_str!("(Ljava/lang/String;)V"),
+                settings_bridge::Java_io_github_chalharu_nerust_MainActivity_pushSystemLocale
                     as *mut c_void,
             ),
             jni::NativeMethod::from_raw_parts(
@@ -127,6 +118,17 @@ pub(super) fn register_main_activity_natives(
                     as *mut c_void,
             ),
             jni::NativeMethod::from_raw_parts(
+                jni_str!("nativeIsEmulationPaused"),
+                jni_str!("()Z"),
+                menu::Java_io_github_chalharu_nerust_MainActivity_nativeIsEmulationPaused
+                    as *mut c_void,
+            ),
+            jni::NativeMethod::from_raw_parts(
+                jni_str!("nativeSlotList"),
+                jni_str!("()Ljava/lang/String;"),
+                menu::Java_io_github_chalharu_nerust_MainActivity_nativeSlotList as *mut c_void,
+            ),
+            jni::NativeMethod::from_raw_parts(
                 jni_str!("onSystemInsetsChanged"),
                 jni_str!("([I)V"),
                 bridge::Java_io_github_chalharu_nerust_MainActivity_onSystemInsetsChanged
@@ -134,7 +136,46 @@ pub(super) fn register_main_activity_natives(
             ),
         ]
     };
-    unsafe { env.register_native_methods(class, &methods) }
+    unsafe { env.register_native_methods(class, &methods)? };
+
+    // The standalone slot screen reads the same vault and feeds the same
+    // menu lane from its own activity class.
+    let slot_class = env.find_class(jni_str!("io/github/chalharu/nerust/SlotActivity"))?;
+    let slot_methods = unsafe {
+        [jni::NativeMethod::from_raw_parts(
+            jni_str!("sendSlotAction"),
+            jni_str!("(Ljava/lang/String;)V"),
+            menu::Java_io_github_chalharu_nerust_SlotActivity_sendSlotAction as *mut c_void,
+        )]
+    };
+    unsafe { env.register_native_methods(slot_class, &slot_methods)? };
+
+    // The standalone settings screen talks to the same vault from its own
+    // activity class, so the same callbacks are bound there too.
+    let settings_class = env.find_class(jni_str!("io/github/chalharu/nerust/SettingsActivity"))?;
+    let settings_methods = unsafe {
+        [
+            jni::NativeMethod::from_raw_parts(
+                jni_str!("onSettingsDialogResult"),
+                jni_str!("(Ljava/lang/String;)V"),
+                settings_bridge::Java_io_github_chalharu_nerust_SettingsActivity_onSettingsDialogResult
+                    as *mut c_void,
+            ),
+            jni::NativeMethod::from_raw_parts(
+                jni_str!("nativeSettingsCommand"),
+                jni_str!("(Ljava/lang/String;)Ljava/lang/String;"),
+                settings_bridge::Java_io_github_chalharu_nerust_SettingsActivity_nativeSettingsCommand
+                    as *mut c_void,
+            ),
+            jni::NativeMethod::from_raw_parts(
+                jni_str!("nativeHardwareKey"),
+                jni_str!("(IZ)Ljava/lang/String;"),
+                settings_bridge::Java_io_github_chalharu_nerust_SettingsActivity_nativeHardwareKey
+                    as *mut c_void,
+            ),
+        ]
+    };
+    unsafe { env.register_native_methods(settings_class, &settings_methods) }
 }
 
 pub(super) fn run(
@@ -331,6 +372,17 @@ impl AndroidFrontend {
             }
         }
         let restore_pending = storage.has_restore_pending();
+        // Stateless settings screen: the view model is rebuilt per JNI call
+        // against the vault draft, so only factories and probed rates are shared.
+        settings::install_vm_deps(
+            system_registry.all().to_vec(),
+            session
+                .audio_registry()
+                .supported_rates()
+                .iter()
+                .copied()
+                .collect(),
+        );
         let frontend = Self {
             app,
             core: SessionCore {
@@ -364,15 +416,17 @@ impl AndroidFrontend {
         Ok(frontend)
     }
 
-    /// Update settings for the asynchronous, event-loop-owned dialog request.
+    /// Refresh orientation from the live snapshot; the screen itself is
+    /// stateless and rebuilt from the snapshot on every open.
     fn refresh_dialog_caches(&self) {
-        let mut current = AndroidSettings::from_snapshot(
-            self.core.session.settings_snapshot(),
-            self.core.session.factories(),
+        settings::apply_screen_orientation(
+            &self.app,
+            self.core
+                .session
+                .settings_snapshot()
+                .local
+                .screen_orientation,
         );
-        current.prioritize_system(self.core.session.active_system_id());
-        settings::update_cached_settings(&current);
-        settings::apply_screen_orientation(&self.app, current.screen_orientation);
     }
 
     fn handle_picker_result(&mut self, event_loop: &ActiveEventLoop, result: RomPickerResult) {
@@ -559,14 +613,8 @@ impl AndroidFrontend {
     }
 
     fn request_settings_dialog(&mut self) {
-        let mut current = settings::cloned_cached_settings().unwrap_or_else(|| {
-            AndroidSettings::from_snapshot(
-                self.core.session.settings_snapshot(),
-                self.core.session.factories(),
-            )
-        });
-        current.prioritize_system(self.core.session.active_system_id());
-        match settings::request_show_settings_dialog(&self.app, &current) {
+        let snapshot = self.core.session.settings_snapshot().clone();
+        match settings::request_show_settings_dialog(&self.app, &snapshot) {
             Ok(true) => {}
             Ok(false) => {
                 log::debug!("Android settings dialog already open");
@@ -595,6 +643,35 @@ impl AndroidFrontend {
                         key,
                         pressed,
                     );
+                }
+                MenuAction::CreateSlot => {
+                    let _ = self.exec(SessionCommand::CreateSlot);
+                }
+                MenuAction::DeleteSlot(slot_id) => {
+                    let _ = self.exec(SessionCommand::DeleteSlot(slot_id));
+                    // Event-driven refresh: the vault mirror is current now,
+                    // so push it. No Kotlin polling.
+                    let fresh = menu::query_slot_list_json();
+                    bridge::post_to_activity(
+                        &self.app,
+                        "push refreshed slot list",
+                        move |env, activity| {
+                            let fresh = env.new_string(fresh)?;
+                            bridge::call_bridge_method(
+                                env,
+                                &activity,
+                                &bridge::methods::ON_SLOT_LIST_CHANGED,
+                                &[jni::objects::JValue::Object(fresh.as_ref())],
+                            )?;
+                            Ok(())
+                        },
+                        None,
+                    );
+                }
+                MenuAction::TouchGate { respond } => {
+                    self.chrome
+                        .input
+                        .set_touch_respond(&mut self.core.session, &self.app, respond);
                 }
                 MenuAction::Exit => {
                     self.unload_for_exit();
@@ -650,6 +727,9 @@ impl AndroidFrontend {
                 MenuAction::Reset => self.reset(),
                 MenuAction::SaveState => {
                     let _ = self.exec(SessionCommand::SaveActiveSlotOrNew);
+                }
+                MenuAction::SelectSlot(slot_id) => {
+                    let _ = self.exec(SessionCommand::SelectActiveSlot(slot_id));
                 }
                 MenuAction::TogglePause => self.toggle_pause(),
             },
@@ -724,6 +804,15 @@ impl AndroidFrontend {
                 if o.needs_redraw {
                     self.flow.render_sync.request_redraw(&mut self.core.shell);
                 }
+                // Single choke point for every pause mutation (drawer toggle,
+                // shortcuts, auto-pause, error dialogs): republish so the
+                // drawer query below never reads stale truth. The slot list
+                // rides along: cloned summaries, no I/O on this path.
+                bridge::with_settings(|state| {
+                    state.emulation_paused = self.core.session.tick_metrics().paused;
+                    state.slots = self.core.session.slots().to_vec();
+                    state.active_slot = self.core.session.active_slot_id();
+                });
                 Some(o)
             }
             Err(error) => {
@@ -852,7 +941,9 @@ impl ApplicationHandler for AndroidFrontend {
         picker::reset_transient();
         settings::reset_transient();
         // Transient UI dies with the activity: release the gate, requeue the head.
-        // The settings bridge pending id dies with its dialog.
+        // The suspend releases the settings gate for reopening, but the
+        // remembered request id still accepts the standalone screen's late
+        // result (the opaque settings activity stops us by design).
         self.chrome
             .osd
             .with_modal(|queue| self.flow.dialogs.on_suspended(queue));
@@ -953,7 +1044,9 @@ impl ApplicationHandler for AndroidFrontend {
         // One snapshot borrow per pass: poll and the dialog gate share it.
         // The `Arc` outlives the session borrow, so no field clone is needed.
         let snapshot = self.core.session.settings_arc();
-        let language = snapshot.shared.general.language;
+        // Raw choice would leave SystemDefault to the env fallback
+        // (English on Android): resolve through the vault like settings.
+        let language = settings::display_language(snapshot.shared.general.language);
         if self.chrome.osd.poll(
             &mut self.core.session,
             &snapshot.local.notifications,
