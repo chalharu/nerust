@@ -24,6 +24,7 @@
     <string name="settings_reset_screen_title">Reset this screen?</string>
     <string name="settings_reset_screen_message">Only this screen returns to its defaults.</string>
     <string name="settings_reset_confirm">Reset</string>
+    <string name="settings_reset_screen">Reset screen</string>
     <string name="settings_used_in">Used in %1$s</string>
     <string name="settings_used_elsewhere">Used in another slot</string>
     <string name="settings_needs_attention">Needs attention before saving</string>

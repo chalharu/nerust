@@ -618,6 +618,12 @@ internal fun NerustSettingsDialogCard(
         )
         }
 
+    // The screen reset lives in the top bar next to save; its button row
+    // stays out of the list. reset.all keeps its own row.
+    val screenResetKey =
+        activeSection?.rows?.firstOrNull {
+            it.kind == "button" && it.key != "reset.all" && it.key.startsWith("reset.")
+        }?.key
     NerustExpressiveHost {
         Scaffold(
             topBar = {
@@ -629,6 +635,7 @@ internal fun NerustSettingsDialogCard(
                     onNavigateUp = ::navigateUp,
                     onCancel = ::requestCancel,
                     onSave = onSave,
+                    onResetScreen = screenResetKey?.let { key -> { pendingResetKey = key } },
                 )
             },
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -669,6 +676,7 @@ private fun SettingsTopBar(
     onNavigateUp: () -> Unit,
     onCancel: () -> Unit,
     onSave: () -> Unit,
+    onResetScreen: (() -> Unit)?,
 ) {
     TopAppBar(
         title = {
@@ -701,8 +709,20 @@ private fun SettingsTopBar(
             }
         },
         actions = {
-            FilledTonalButton(onClick = onSave, enabled = canSave) {
-                Text(stringResource(R.string.settings_save))
+            // Screen reset sits next to save: same bar, same confirm flow.
+            if (onResetScreen != null) {
+                IconButton(onClick = onResetScreen) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_drawer_reset),
+                        contentDescription = stringResource(R.string.settings_reset_screen),
+                    )
+                }
+            }
+            IconButton(onClick = onSave, enabled = canSave) {
+                Icon(
+                    painter = painterResource(id = R.drawable.ic_settings_save),
+                    contentDescription = stringResource(R.string.settings_save),
+                )
             }
         },
         colors =
@@ -1294,7 +1314,20 @@ private fun SettingsSectionList(
     actions: SettingsRowActions,
 ) {
     // Split rows into groups at header rows; each group renders as one card.
-    val groups = remember(section) { splitSectionGroups(section.rows) }
+    // Per-screen reset moved to the top bar (reset.all keeps its row).
+    // Capture rows without a device share one note instead of repeating
+    // the reason on every row; each row still shows its binding.
+    val listRows =
+        remember(section) {
+            section.rows.filterNot { it.kind == "button" && it.key != "reset.all" }
+        }
+    val noInputNote =
+        remember(section) {
+            section.rows
+                .firstOrNull { it.kind == "capture" && !it.enabled }
+                ?.reason?.takeIf { it.isNotBlank() }
+        }
+    val groups = remember(listRows) { splitSectionGroups(listRows) }
     val onLabel = stringResource(R.string.settings_on)
     val offLabel = stringResource(R.string.settings_off)
     LazyColumn(
@@ -1303,6 +1336,16 @@ private fun SettingsSectionList(
         contentPadding = PaddingValues(vertical = 12.dp),
     ) {
         settingsBannerItems(banners = banners, onCancelCapture = actions.onCancelCapture)
+        if (noInputNote != null) {
+            item(key = "${section.id}#no-input") {
+                Text(
+                    text = noInputNote,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+            }
+        }
         groups.forEachIndexed { groupIndex, group ->
             if (group.title.isNotBlank()) {
                 item(key = "${section.id}#$groupIndex") {
@@ -1478,19 +1521,16 @@ private fun SettingsButtonRow(
     row: SettingsRow,
     onRun: () -> Unit,
 ) {
-    // A single full-width action: label plus supporting text, no chevron,
-    // no value. Kotlin confirms first; Rust restores defaults on confirm.
-    TextButton(
-        onClick = onRun,
+    // A single action row: label plus a trailing icon that runs it.
+    // Kotlin confirms first; Rust restores defaults on confirm.
+    Row(
         modifier =
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 4.dp),
+                .padding(start = 24.dp, top = 4.dp, bottom = 4.dp, end = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.Start,
-        ) {
+        Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = row.label,
                 style = MaterialTheme.typography.titleMedium,
@@ -1502,6 +1542,12 @@ private fun SettingsButtonRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+        }
+        IconButton(onClick = onRun) {
+            Icon(
+                painter = painterResource(id = R.drawable.ic_drawer_reset),
+                contentDescription = row.label,
+            )
         }
     }
 }
@@ -1575,9 +1621,8 @@ private fun SettingsCaptureRow(
     // capture, the trailing button clears. Nested clickables would let a
     // Clear tap also start a capture. No container label: each sibling
     // speaks for itself, so TalkBack never hears the row twice.
-    // A disabled row (no input device) drops the
-    // tap target and names the reason; Clear stays, unbinding needs no
-    // input device.
+    // The binding stays visible with no device (the reason moves to one
+    // screen note); clearing an empty binding is disabled everywhere.
     Row(
         modifier =
             Modifier
@@ -1594,17 +1639,18 @@ private fun SettingsCaptureRow(
                     .padding(vertical = 4.dp),
         ) {
             Text(text = row.label, style = MaterialTheme.typography.titleMedium)
+            val value = row.text.ifBlank { stringResource(R.string.settings_tap_to_assign) }
             Text(
-                text =
-                    if (row.enabled) {
-                        row.text.ifBlank { stringResource(R.string.settings_tap_to_assign) }
-                    } else {
-                        row.reason
-                    },
+                text = if (row.enabled) value else row.text,
                 style = MaterialTheme.typography.bodyMedium,
             )
         }
-        TextButton(onClick = onClear) { Text(stringResource(R.string.settings_clear)) }
+        IconButton(onClick = onClear, enabled = row.text.isNotBlank()) {
+            Icon(
+                painter = painterResource(id = R.drawable.ic_settings_close),
+                contentDescription = stringResource(R.string.settings_clear),
+            )
+        }
     }
 }
 
