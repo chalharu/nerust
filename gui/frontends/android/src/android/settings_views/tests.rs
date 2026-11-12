@@ -700,7 +700,7 @@ fn desktop_only_shortcuts_stay_out_of_android() {
 }
 
 #[test]
-fn capture_rows_disable_without_keyboard() {
+fn capture_rows_disable_without_input_device() {
     let (_snapshot, payload) = test_payload_with_keyboards(&[]);
     let captures: Vec<_> = payload
         .sections
@@ -710,7 +710,7 @@ fn capture_rows_disable_without_keyboard() {
         .collect();
     assert!(!captures.is_empty(), "capture rows exist to disable");
     for row in &captures {
-        assert!(!row.enabled, "{} disables without a keyboard", row.key);
+        assert!(!row.enabled, "{} disables without an input device", row.key);
         assert!(!row.reason.is_empty(), "{} names the reason", row.key);
     }
     let (_snapshot, payload) = test_payload();
@@ -726,7 +726,35 @@ fn capture_rows_disable_without_keyboard() {
 }
 
 #[test]
-fn start_capture_rejected_without_keyboard() {
+fn gamepad_alone_reopens_capture() {
+    // Controller sources route to capture, so a connected pad suffices
+    // even with no keyboard: pad buttons fall through when unmapped,
+    // mapped keys (dpad) capture into the shared vocabulary.
+    let gamepads = vec![GamepadInfo {
+        name: "Pad".to_string(),
+    }];
+    let (_snapshot, payload) = with_test_deps(|| {
+        let snapshot = default_snapshot();
+        let json =
+            open_payload(&snapshot, &[], None, &gamepads, None).expect("open payload builds");
+        let payload: ViewPayload = serde_json::from_str(&json).expect("payload parses");
+        (snapshot, payload)
+    });
+    let captures: Vec<_> = payload
+        .sections
+        .iter()
+        .flat_map(|section| &section.rows)
+        .filter(|row| row.kind == super::RowKind::Capture)
+        .collect();
+    assert!(!captures.is_empty(), "capture rows exist to enable");
+    assert!(
+        captures.iter().all(|row| row.enabled),
+        "a connected pad re-enables capture"
+    );
+}
+
+#[test]
+fn start_capture_rejected_without_input_device() {
     let (mut snapshot, _) = test_payload_with_keyboards(&[]);
     let mut capture: CaptureSlot = None;
     let key = "controls.shortcut.TogglePause";
@@ -748,10 +776,10 @@ fn start_capture_rejected_without_keyboard() {
             &mut Vec::new(),
             &mut None,
         )
-        .expect_err("start without a keyboard must fail")
+        .expect_err("start with no input device must fail")
     });
     assert!(
-        error.contains("Keyboard"),
+        error.contains("Input device"),
         "fail loud with the reason: {error}"
     );
     assert!(capture.is_none(), "no prompt strands");

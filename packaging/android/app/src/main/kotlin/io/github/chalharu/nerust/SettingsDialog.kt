@@ -1502,7 +1502,7 @@ private fun SettingsCaptureRow(
     // capture, the trailing button clears. Nested clickables would let a
     // Clear tap also start a capture. No container label: each sibling
     // speaks for itself, so TalkBack never hears the row twice.
-    // A disabled row (no keyboard: capture is keyboard-only) drops the
+    // A disabled row (no input device) drops the
     // tap target and names the reason; Clear stays, unbinding needs no
     // input device.
     Row(

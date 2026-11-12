@@ -205,7 +205,12 @@ class SettingsActivity :
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (isControllerSource(event.source)) return super.dispatchKeyEvent(event)
+        // Capture wait takes every hardware key first, keyboard and pad
+        // alike; unmapped keys fall through to the platform. Outside
+        // capture, controller sources keep platform behavior.
+        if (isControllerSource(event.source) && navActions?.isCapturing != true) {
+            return super.dispatchKeyEvent(event)
+        }
         return routeSettingsKeyEvent(event.keyCode, event.action) ||
             super.dispatchKeyEvent(event)
     }
