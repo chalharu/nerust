@@ -224,7 +224,7 @@ impl InputDept {
     /// input paths share one gate instead of copy-pasting it.
     fn dpad_for(&self, attachment: &str, control: &str) -> Option<(String, String, AbstractKey)> {
         let abs = self.abstract_for(attachment, control)?;
-        crate::session::field_press::dpad_pair(abs)?;
+        field_press::dpad_pair(abs)?;
         Some((attachment.to_string(), control.to_string(), abs))
     }
 
