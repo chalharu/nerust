@@ -84,6 +84,9 @@ pub(super) enum SettingsDialogResult {
 pub(super) struct SettingsSlot {
     pub(super) flight: crate::settings_flight::SettingsFlight<SettingsDialogResult>,
     pub(super) draft: Option<nerust_gui_runtime::settings::SettingsSnapshot>,
+    /// Unedited copy of the draft at open: commands compare against it so
+    /// a change-then-revert (or a no-op clear) reads clean, never dirty.
+    pub(super) pristine: Option<nerust_gui_runtime::settings::SettingsSnapshot>,
     pub(super) capture: super::settings_views::CaptureSlot,
     /// Enumerated physical keyboards (Kotlin `InputDevice`, hotplug live).
     /// Ephemeral device truth: projected into sections, never persisted.
@@ -116,6 +119,7 @@ impl SettingsSlot {
         Self {
             flight: crate::settings_flight::SettingsFlight::new(),
             draft: None,
+            pristine: None,
             capture: None,
             keyboards: Vec::new(),
             touch_capable: None,
