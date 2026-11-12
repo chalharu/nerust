@@ -406,6 +406,9 @@ internal fun settingsRowDisplayValue(
 private const val TAG = "SettingsDialog"
 private const val COMMAND_FAILED = "command failed"
 
+/** Scope key restoring every setting; per-screen keys stay in their rows. */
+private const val RESET_ALL_KEY = "reset.all"
+
 /** Shared card shape for settings surfaces; one allocation, not six. */
 private val SettingsCardShape = RoundedCornerShape(28.dp)
 
@@ -622,7 +625,7 @@ internal fun NerustSettingsDialogCard(
     // stays out of the list. reset.all keeps its own row.
     val screenResetKey =
         activeSection?.rows?.firstOrNull {
-            it.kind == "button" && it.key != "reset.all" && it.key.startsWith("reset.")
+            it.kind == "button" && it.key != RESET_ALL_KEY && it.key.startsWith("reset.")
         }?.key
     NerustExpressiveHost {
         Scaffold(
@@ -751,7 +754,7 @@ private fun SettingsExitDialogs(
         )
     }
     resetKey?.let { key ->
-        val isAll = key == "reset.all"
+        val isAll = key == RESET_ALL_KEY
         SettingsConfirmDialog(
             title =
                 stringResource(
@@ -1051,7 +1054,7 @@ private fun resetDirtyKeys(
     key: String,
 ): Set<String> =
     when {
-        op == "reset_section" && key == "reset.all" ->
+        op == "reset_section" && key == RESET_ALL_KEY ->
             sections.flatMap { section -> section.rows.map { it.key } }.toSet()
         op == "reset_section" ->
             sections
@@ -1319,7 +1322,7 @@ private fun SettingsSectionList(
     // the reason on every row; each row still shows its binding.
     val listRows =
         remember(section) {
-            section.rows.filterNot { it.kind == "button" && it.key != "reset.all" }
+            section.rows.filterNot { it.kind == "button" && it.key != RESET_ALL_KEY }
         }
     val noInputNote =
         remember(section) {
