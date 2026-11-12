@@ -43,41 +43,41 @@ pub(crate) fn dpad_pair(abs: AbstractKey) -> Option<(DpadAxis, AbstractKey)> {
 pub(crate) struct FieldPressState {
     holders: HashMap<usize, HashSet<FieldSource>>,
     /// (attachment, control) → field, learned from live events.
-    control_field: HashMap<(String, String), usize>,
+    /// Copy ids: no allocation on the input hot path.
+    control_field: HashMap<(AttachmentId, DigitalControlId), usize>,
     /// Pressed dpad controls per attachment and abstract.
-    dpad_held: HashMap<String, HashMap<AbstractKey, HashSet<String>>>,
+    dpad_held: HashMap<AttachmentId, HashMap<AbstractKey, HashSet<DigitalControlId>>>,
     /// Axes held in opposition per attachment: both fields stay down.
-    neutral: HashSet<(String, DpadAxis)>,
+    neutral: HashSet<(AttachmentId, DpadAxis)>,
 }
 
 impl FieldPressState {
-    /// Press a field. `dpad` carries attachment, control id string, and
-    /// abstract for direction buttons. Returns (field, assert) updates.
+    /// Press a field. `dpad` carries Copy ids plus the abstract for
+    /// direction buttons. Returns (field, assert) updates.
     pub(crate) fn press(
         &mut self,
         field: usize,
         source: FieldSource,
-        dpad: Option<(String, String, AbstractKey)>,
+        dpad: Option<(AttachmentId, DigitalControlId, AbstractKey)>,
     ) -> Vec<(usize, bool)> {
         self.holders.entry(field).or_default().insert(source);
         let Some((attachment, control, abs)) = dpad else {
             return vec![(field, true)];
         };
-        self.control_field
-            .insert((attachment.clone(), control.clone()), field);
+        self.control_field.insert((attachment, control), field);
         let Some((axis, opposite)) = dpad_pair(abs) else {
             return vec![(field, true)];
         };
         self.dpad_held
-            .entry(attachment.clone())
+            .entry(attachment)
             .or_default()
             .entry(abs)
             .or_default()
             .insert(control);
-        if self.is_abstract_held(&attachment, opposite) {
+        if self.is_abstract_held(attachment, opposite) {
             // Opposite held: neutralize the axis, both fields release.
-            self.neutral.insert((attachment.clone(), axis));
-            match self.peer_field(&attachment, opposite) {
+            self.neutral.insert((attachment, axis));
+            match self.peer_field(attachment, opposite) {
                 Some(peer) => vec![(field, false), (peer, false)],
                 None => vec![(field, false)],
             }
@@ -91,7 +91,7 @@ impl FieldPressState {
         &mut self,
         field: usize,
         source: FieldSource,
-        dpad: Option<(String, String, AbstractKey)>,
+        dpad: Option<(AttachmentId, DigitalControlId, AbstractKey)>,
     ) -> Vec<(usize, bool)> {
         if let Some(holders) = self.holders.get_mut(&field) {
             holders.remove(&source);
@@ -128,14 +128,14 @@ impl FieldPressState {
             }
             return vec![(field, self.is_held(field))];
         }
-        if !self.neutral.contains(&(attachment.clone(), axis)) {
+        if !self.neutral.contains(&(attachment, axis)) {
             return vec![(field, self.is_held(field))];
         }
         // This side fully left. Resolve the pair: the still-held opposite
         // re-asserts, or the axis simply unblocks.
-        self.neutral.remove(&(attachment.clone(), axis));
-        if self.is_abstract_held(&attachment, opposite) {
-            match self.peer_field(&attachment, opposite) {
+        self.neutral.remove(&(attachment, axis));
+        if self.is_abstract_held(attachment, opposite) {
+            match self.peer_field(attachment, opposite) {
                 Some(peer) => vec![(field, false), (peer, true)],
                 None => vec![(field, false)],
             }
@@ -158,17 +158,15 @@ impl FieldPressState {
             .is_some_and(|holders| !holders.is_empty())
     }
 
-    fn is_abstract_held(&self, attachment: &str, abs: AbstractKey) -> bool {
+    fn is_abstract_held(&self, attachment: AttachmentId, abs: AbstractKey) -> bool {
         self.dpad_held
-            .get(attachment)
+            .get(&attachment)
             .is_some_and(|held| held.get(&abs).is_some_and(|ctrls| !ctrls.is_empty()))
     }
 
-    fn peer_field(&self, attachment: &str, abs: AbstractKey) -> Option<usize> {
-        let ctrl = self.dpad_held.get(attachment)?.get(&abs)?.iter().next()?;
-        self.control_field
-            .get(&(attachment.to_string(), ctrl.clone()))
-            .copied()
+    fn peer_field(&self, attachment: AttachmentId, abs: AbstractKey) -> Option<usize> {
+        let ctrl = self.dpad_held.get(&attachment)?.get(&abs)?.iter().next()?;
+        self.control_field.get(&(attachment, *ctrl)).copied()
     }
 }
 
@@ -176,24 +174,16 @@ impl FieldPressState {
 mod tests {
     use super::*;
 
-    const ATT: &str = "test.slot";
-    const LEFT_CTRL: &str = "test.left";
-    const RIGHT_CTRL: &str = "test.right";
+    const ATT: AttachmentId = AttachmentId::new("test.slot");
+    const LEFT_CTRL: DigitalControlId = DigitalControlId::new("test.left");
+    const RIGHT_CTRL: DigitalControlId = DigitalControlId::new("test.right");
 
-    fn left() -> (String, String, AbstractKey) {
-        (
-            ATT.to_string(),
-            LEFT_CTRL.to_string(),
-            AbstractKey::DpadLeft,
-        )
+    fn left() -> (AttachmentId, DigitalControlId, AbstractKey) {
+        (ATT, LEFT_CTRL, AbstractKey::DpadLeft)
     }
 
-    fn right() -> (String, String, AbstractKey) {
-        (
-            ATT.to_string(),
-            RIGHT_CTRL.to_string(),
-            AbstractKey::DpadRight,
-        )
+    fn right() -> (AttachmentId, DigitalControlId, AbstractKey) {
+        (ATT, RIGHT_CTRL, AbstractKey::DpadRight)
     }
 
     #[test]
@@ -240,14 +230,14 @@ mod tests {
         let left_b = FieldSource::Key(Key::KeyB);
         let right_key = FieldSource::Key(Key::ArrowRight);
         let left_b_ctrl = (
-            ATT.to_string(),
-            "test.left.b".to_string(),
+            ATT,
+            DigitalControlId::new("test.left.b"),
             AbstractKey::DpadLeft,
         );
         assert_eq!(state.press(10, left_a, Some(left())), vec![(10, true)]);
         // Same direction, second source: still asserted, no neutral.
         assert_eq!(
-            state.press(10, left_b, Some(left_b_ctrl.clone())),
+            state.press(10, left_b, Some(left_b_ctrl)),
             vec![(10, true)]
         );
         // Opposite presses: neutral.
@@ -259,7 +249,7 @@ mod tests {
         assert_eq!(state.release(10, left_a, Some(left())), vec![(10, false)]);
         // Last left source lets go: right re-asserts.
         assert_eq!(
-            state.release(10, left_b, Some(left_b_ctrl.clone())),
+            state.release(10, left_b, Some(left_b_ctrl)),
             vec![(10, false), (11, true)]
         );
     }

@@ -196,18 +196,15 @@ pub(super) struct GamepadInfo {
 
 /// One settings edit from Kotlin: row key plus op. `set` reads the choice
 /// index or the slider number; capture ops act on the row's opaque target;
-/// `keyboards`/`gamepads` upsert the vault's enumerated device lists from
-/// `payload`; `reset_section` restores one screen (or `all`) to defaults.
-/// `payload` is op-specific JSON (`keyboards`/`gamepads` only today).
+/// `device_truth` upserts the vault's enumerated device lists from
+/// `payload` (`keyboards` + `capable` + `gamepads`, `lang` optional);
+/// `reset_section` restores one screen (or `all`) to defaults.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum WireOp {
     #[default]
     Set,
-    Keyboards,
-    Touch,
-    Gamepads,
-    Locale,
+    DeviceTruth,
     ResetSection,
     CancelCapture,
     ClearBinding,
@@ -438,13 +435,16 @@ pub(super) fn apply_command_to(
     with_vm_deps(|deps| {
         let i18n = I18n::resolve(snapshot.shared.general.language, *system_locale);
         match command.op {
-            WireOp::Keyboards => {
-                apply_keyboards_command(keyboards, &command)?;
+            WireOp::DeviceTruth => {
+                apply_device_truth_command(
+                    keyboards,
+                    touch_capable,
+                    gamepads,
+                    system_locale,
+                    &command,
+                )?;
                 prune_missing_builtin(snapshot, keyboards);
             }
-            WireOp::Touch => apply_touch_command(touch_capable, &command)?,
-            WireOp::Gamepads => apply_gamepads_command(gamepads, &command)?,
-            WireOp::Locale => apply_locale_command(system_locale, &command)?,
             WireOp::ResetSection => {
                 let vm = build_vm(snapshot, deps, i18n)?;
                 let truth = Projection {
@@ -762,76 +762,58 @@ fn apply_capture_command(
     }
 }
 
-/// Record whether the terminal has a touch screen (Kotlin
-/// `PackageManager`, re-pushed with the keyboard enumeration). `None`
-/// means unknown: rows behave as before, the runtime keeps showing.
-fn apply_touch_command(
-    touch_capable: &mut Option<bool>,
-    command: &WireCommand,
-) -> Result<(), String> {
-    let raw = command
-        .payload
-        .get("capable")
-        .cloned()
-        .ok_or_else(|| "touch op misses capable".to_string())?;
-    let capable: bool = serde_json::from_value(raw).map_err(|error| error.to_string())?;
-    *touch_capable = Some(capable);
-    Ok(())
-}
-
-/// Upsert the vault's enumerated physical-keyboard list (Kotlin
-/// `InputDevice` enumeration, hotplug refresh included). Not a draft
-/// mutation: the list is ephemeral device truth, never persisted.
-fn apply_keyboards_command(
+/// Single device-truth push (Kotlin `InputDevice` enumeration, hotplug
+/// refresh included): keyboards, touch capability, counted gamepads, and
+/// the terminal locale in one op, one re-projection. Ephemeral truth,
+/// never persisted; the draft is untouched. `lang` is optional (unknown
+/// terminal locale keeps the previous push); the rest fail loud.
+fn apply_device_truth_command(
     keyboards: &mut Vec<KeyboardInfo>,
+    touch_capable: &mut Option<bool>,
+    gamepads: &mut Vec<GamepadInfo>,
+    system_locale: &mut Option<AppLanguage>,
     command: &WireCommand,
 ) -> Result<(), String> {
+    let keyboards_raw = command
+        .payload
+        .get("keyboards")
+        .ok_or_else(|| "device_truth op misses keyboards".to_string())?;
     let list: Vec<KeyboardInfo> =
-        serde_json::from_value(command.payload.clone()).map_err(|error| error.to_string())?;
+        serde_json::from_value(keyboards_raw.clone()).map_err(|error| error.to_string())?;
     for info in &list {
         if info.member.is_empty() {
             return Err("keyboard member id must not be empty".to_string());
         }
     }
     *keyboards = list;
-    Ok(())
-}
-
-/// Upsert the vault's system locale (Kotlin `configuration`, re-pushed
-/// with the keyboard enumeration). The tag resolves to the supported set
-/// once, here at the boundary; projections pass the `Locale` around, never
-/// the raw string.
-fn apply_locale_command(
-    system_locale: &mut Option<AppLanguage>,
-    command: &WireCommand,
-) -> Result<(), String> {
-    let raw = command
+    let capable_raw = command
         .payload
-        .get("lang")
-        .and_then(|lang| lang.as_str())
-        .ok_or_else(|| "locale op misses lang".to_string())?;
-    if raw.is_empty() {
-        return Err("locale lang must not be empty".to_string());
-    }
-    *system_locale = Some(system_language_from_tag(raw));
-    Ok(())
-}
-
-/// Upsert the vault's counted-gamepad list (Kotlin `InputDevice`, same
-/// rule as the runtime Auto gate). Display-only device truth: projected
-/// into the overlay detail screen, never persisted.
-fn apply_gamepads_command(
-    gamepads: &mut Vec<GamepadInfo>,
-    command: &WireCommand,
-) -> Result<(), String> {
-    let list: Vec<GamepadInfo> =
-        serde_json::from_value(command.payload.clone()).map_err(|error| error.to_string())?;
-    for info in &list {
+        .get("capable")
+        .ok_or_else(|| "device_truth op misses capable".to_string())?;
+    *touch_capable = Some(
+        serde_json::from_value(capable_raw.clone()).map_err(|error| error.to_string())?,
+    );
+    let gamepads_raw = command
+        .payload
+        .get("gamepads")
+        .ok_or_else(|| "device_truth op misses gamepads".to_string())?;
+    let names: Vec<GamepadInfo> =
+        serde_json::from_value(gamepads_raw.clone()).map_err(|error| error.to_string())?;
+    for info in &names {
         if info.name.is_empty() {
             return Err("gamepad name must not be empty".to_string());
         }
     }
-    *gamepads = list;
+    *gamepads = names;
+    if let Some(raw) = command.payload.get("lang") {
+        let tag = raw
+            .as_str()
+            .ok_or_else(|| "device_truth lang must be a string".to_string())?;
+        if tag.is_empty() {
+            return Err("device_truth lang must not be empty".to_string());
+        }
+        *system_locale = Some(system_language_from_tag(tag));
+    }
     Ok(())
 }
 
@@ -3174,11 +3156,16 @@ mod tests {
         let before = snapshot.clone();
         let mut locale: Option<AppLanguage> = None;
         let command_json = serde_json::to_string(&WireCommand {
-            key: "locale".to_string(),
+            key: "device_truth".to_string(),
             index: 0,
             number: 0,
-            op: WireOp::Locale,
-            payload: serde_json::json!({ "lang": "ja" }),
+            op: WireOp::DeviceTruth,
+            payload: serde_json::json!({
+                "keyboards": serde_json::to_value(test_keyboards()).unwrap(),
+                "capable": true,
+                "gamepads": [],
+                "lang": "ja",
+            }),
         })
         .unwrap();
         let out = with_test_deps(|| {
@@ -3208,12 +3195,20 @@ mod tests {
             "fresh locale re-projects immediately"
         );
         // Empty and missing tags fail loud instead of clearing silently.
-        for bad in [serde_json::json!({ "lang": "" }), serde_json::json!({})] {
+        for bad in [
+            serde_json::json!({
+                "keyboards": [],
+                "capable": true,
+                "gamepads": [],
+                "lang": "",
+            }),
+            serde_json::json!({ "keyboards": [], "capable": true }),
+        ] {
             let bad_json = serde_json::to_string(&WireCommand {
-                key: "locale".to_string(),
+                key: "device_truth".to_string(),
                 index: 0,
                 number: 0,
-                op: WireOp::Locale,
+                op: WireOp::DeviceTruth,
                 payload: bad,
             })
             .unwrap();
@@ -3593,16 +3588,15 @@ mod tests {
         );
         let mut keyboards = Vec::new();
         let command_json = serde_json::to_string(&WireCommand {
-            key: "keyboards".to_string(),
+            key: "device_truth".to_string(),
             index: 0,
             number: 0,
-            op: WireOp::Keyboards,
-            payload: serde_json::to_value(vec![KeyboardInfo {
-                member: "kbd:usb-1".to_string(),
-                name: "USB Keyboard".to_string(),
-                builtin: false,
-            }])
-            .unwrap(),
+            op: WireOp::DeviceTruth,
+            payload: serde_json::json!({
+                "keyboards": [{ "member": "kbd:usb-1", "name": "USB Keyboard", "builtin": false }],
+                "capable": true,
+                "gamepads": [],
+            }),
         })
         .unwrap();
         with_test_deps(|| {
@@ -3637,11 +3631,11 @@ mod tests {
             apply_command_to(
                 &mut snapshot,
                 &serde_json::to_string(&WireCommand {
-                    key: "keyboards".to_string(),
+                    key: "device_truth".to_string(),
                     index: 0,
                     number: 0,
-                    op: WireOp::Keyboards,
-                    payload: serde_json::Value::Array(vec![]),
+                    op: WireOp::DeviceTruth,
+                    payload: serde_json::json!({ "keyboards": [], "capable": true, "gamepads": [] }),
                 })
                 .unwrap(),
                 &mut None,
@@ -3674,11 +3668,15 @@ mod tests {
         let before = snapshot.clone();
         let mut keyboards = Vec::new();
         let command_json = serde_json::to_string(&WireCommand {
-            key: "keyboards".to_string(),
+            key: "device_truth".to_string(),
             index: 0,
             number: 0,
-            op: WireOp::Keyboards,
-            payload: serde_json::to_value(test_keyboards()).unwrap(),
+            op: WireOp::DeviceTruth,
+            payload: serde_json::json!({
+                "keyboards": serde_json::to_value(test_keyboards()).unwrap(),
+                "capable": true,
+                "gamepads": [],
+            }),
         })
         .unwrap();
         let out = with_test_deps(|| {
@@ -3718,11 +3716,15 @@ mod tests {
         let before = snapshot.clone();
         let mut gamepads = Vec::new();
         let command_json = serde_json::to_string(&WireCommand {
-            key: "gamepads".to_string(),
+            key: "device_truth".to_string(),
             index: 0,
             number: 0,
-            op: WireOp::Gamepads,
-            payload: serde_json::to_value(test_gamepads()).unwrap(),
+            op: WireOp::DeviceTruth,
+            payload: serde_json::json!({
+                "keyboards": serde_json::to_value(test_keyboards()).unwrap(),
+                "capable": true,
+                "gamepads": serde_json::to_value(test_gamepads()).unwrap(),
+            }),
         })
         .unwrap();
         let out = with_test_deps(|| {
@@ -3747,11 +3749,15 @@ mod tests {
             status.text
         );
         let bad = serde_json::to_string(&WireCommand {
-            key: "gamepads".to_string(),
+            key: "device_truth".to_string(),
             index: 0,
             number: 0,
-            op: WireOp::Gamepads,
-            payload: serde_json::json!([{ "name": "" }]),
+            op: WireOp::DeviceTruth,
+            payload: serde_json::json!({
+                "keyboards": [],
+                "capable": true,
+                "gamepads": [{ "name": "" }],
+            }),
         })
         .unwrap();
         with_test_deps(|| {
@@ -3786,11 +3792,15 @@ mod tests {
         let (mut snapshot, _) = test_payload();
         if let Some(value) = capable {
             let command_json = serde_json::to_string(&WireCommand {
-                key: "touch".to_string(),
+                key: "device_truth".to_string(),
                 index: 0,
                 number: 0,
-                op: WireOp::Touch,
-                payload: serde_json::json!({ "capable": value }),
+                op: WireOp::DeviceTruth,
+                payload: serde_json::json!({
+                    "keyboards": serde_json::to_value(test_keyboards()).unwrap(),
+                    "capable": value,
+                    "gamepads": [],
+                }),
             })
             .unwrap();
             let mut touch = None;

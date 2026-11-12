@@ -1,6 +1,8 @@
 use nerust_core_traits::touch::{TouchControl, TouchControlRole, TouchOverlayModel};
 use nerust_input_traits::Key;
-use nerust_input_traits::{AbstractKey, ControlId, DigitalInputEvent, InputValue};
+use nerust_input_traits::{
+    AbstractKey, AttachmentId, ControlId, DigitalControlId, DigitalInputEvent, InputValue,
+};
 use nerust_settings_core::model::input::ShortcutAction;
 
 use crate::{
@@ -104,7 +106,7 @@ impl SessionHandle {
         &mut self,
         field: usize,
         source: FieldSource,
-        dpad: Option<(String, String, AbstractKey)>,
+        dpad: Option<(AttachmentId, DigitalControlId, AbstractKey)>,
         pressed: bool,
     ) {
         let updates = if pressed {
@@ -131,9 +133,7 @@ impl SessionHandle {
         let Some(field) = field else {
             return;
         };
-        let attachment = event.attachment.as_str().to_string();
-        let control = event.control.as_str().to_string();
-        let dpad = self.input.dpad_for(&attachment, &control);
+        let dpad = self.input.dpad_for(event.attachment, event.control);
         self.commit_press(
             field,
             FieldSource::Control(event.attachment, event.control),
@@ -154,9 +154,13 @@ impl SessionHandle {
         // releases always re-sync so a stuck field cannot survive.
         let changed = (pressed && first_press) || !pressed;
         if changed && let Some(&field) = self.input.key_field_map.get(&key) {
-            let source_info = self.input.key_source.get(&key).cloned();
-            let dpad = source_info
-                .and_then(|(attachment, control)| self.input.dpad_for(&attachment, &control));
+            // Copy ids out: no allocation on the hot path.
+            let dpad = self
+                .input
+                .key_source
+                .get(&key)
+                .copied()
+                .and_then(|(attachment, control)| self.input.dpad_for(attachment, control));
             self.commit_press(field, FieldSource::Key(key), dpad, pressed);
         }
 

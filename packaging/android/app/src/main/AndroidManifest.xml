@@ -27,7 +27,6 @@
             android:configChanges="density|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
             android:exported="false"
             android:parentActivityName="io.github.chalharu.nerust.MainActivity"
-            android:screenOrientation="locked"
             android:theme="@android:style/Theme.NoTitleBar.Fullscreen" />
     </application>
 </manifest>

@@ -29,6 +29,13 @@ def sources():
         "activity": (GEN.KOTLIN / "MainActivity.kt").read_text()
         + "\n"
         + (GEN.KOTLIN / "SettingsActivity.kt").read_text(),
+        "callsites": (GEN.KOTLIN / "MainActivity.kt").read_text()
+        + "\n"
+        + (GEN.KOTLIN / "SettingsActivity.kt").read_text()
+        + "\n"
+        + (GEN.KOTLIN / "ChromeManager.kt").read_text()
+        + "\n"
+        + (GEN.KOTLIN / "BridgeContract.kt").read_text(),
         "table": (src / "android/bridge.rs").read_text(),
         "registration": (src / "android.rs").read_text(),
         "callbacks": [(src / f"android/{name}.rs").read_text()
@@ -269,69 +276,121 @@ def validate_decoder(definitions, decoder):
             "decoder must validate the same JSON value before typed dispatch")
 
 
-def _producer_arg_types(args):
-    """Producer parameters mapped to schema kinds."""
-    arg_types = {}
-    for arg in args.split(","):
-        if arg.strip():
-            match = re.fullmatch(r'\s*(\w+):\s*(String|Int|Boolean)\s*', arg)
-            require(match, "unsupported producer parameter")
-            arg_types[match[1]] = {"String": "string", "Int": "integer", "Boolean": "boolean"}[match[2]]
-    return arg_types
-
-
 def _producer_puts(body):
     """Producer field assignments emitted into the JSON object."""
     puts = re.findall(r'\.put\("(\w+)",\s*("[^"\n]*"|[\w.]+)\)', body)
-    require(re.sub(r'\.put\("(\w+)",\s*("[^"\n]*"|[\w.]+)\)', '', body).strip() == '',
-            "unsupported producer expression")
+    rest = re.sub(r'\.put\("(\w+)",\s*("[^"\n]*"|[\w.]+)\)', '', body).strip()
+    require(rest == '' or rest == '.apply(extras)', "unsupported producer expression")
     return puts
 
 
-def _check_producer_event(name, puts, arg_types, definitions):
-    """Producer fields, types, and envelope against the schema."""
-    fields = {}
-    for key, value in puts:
-        require(key not in fields, "duplicate producer field")
-        kind = arg_types.get(value)
-        if value == "BRIDGE_EVENT_VERSION":
-            kind = "integer"
-        elif value.startswith(('"', "MenuAction.")):
-            kind = "string"
-        require(kind is not None, f"unsupported producer value: {value}")
-        fields[key] = kind
+def _balanced_call(text, start):
+    """Call text from the opening paren at `start` through its match."""
+    require(text[start] == "(", "producer call must open with a paren")
+    depth = 0
+    in_string = None
+    index = start
+    while index < len(text):
+        char = text[index]
+        if in_string:
+            if char == in_string and text[index - 1] != "\\":
+                in_string = None
+        elif char in ('"', "'"):
+            in_string = char
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return text[start:index + 1]
+        index += 1
+    raise ContractError("unbalanced producer call")
+
+
+def _balanced_braces(text, start):
+    """Brace block from the opening brace at `start` through its match."""
+    require(text[start] == "{", "extras block must open with a brace")
+    depth = 0
+    in_string = None
+    index = start
+    while index < len(text):
+        char = text[index]
+        if in_string:
+            if char == in_string and text[index - 1] != "\\":
+                in_string = None
+        elif char in ('"', "'"):
+            in_string = char
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:index + 1]
+        index += 1
+    raise ContractError("unbalanced extras block")
+
+
+def _menu_event_calls(kotlin):
+    """Every `menuEvent(...)` call text across the Kotlin sources, trailing
+    extras lambdas included."""
+    calls = []
+    for match in re.finditer(r'menuEvent\s*\(', kotlin):
+        paren = match.end() - 1
+        call = _balanced_call(kotlin, paren)
+        rest = kotlin[paren + len(call):]
+        gap = re.match(r'\s*', rest).group(0)
+        if kotlin[paren + len(call) + len(gap):paren + len(call) + len(gap) + 1] == "{":
+            call += gap + _balanced_braces(kotlin, paren + len(call) + len(gap))
+        calls.append(call)
+    require(calls, "no menuEvent producers found")
+    return calls
+
+
+def validate_producer(definitions, producer, kotlin):
+    producer = uncomment(producer)
+    match = re.search(r'internal fun menuEvent\s*\(', producer)
+    require(match, "unparsed event producers")
+    require(not re.search(r'internal fun \w+Event\w*Json\s*\(', producer), "obsolete typed builders remain")
+    args = _balanced_call(producer, match.end() - 1)[1:-1]
+    after = producer[match.end() - 1 + len(_balanced_call(producer, match.end() - 1)):]
+    body_match = re.match(r'\s*:\s*String\s*=\s*JSONObject\(\)(.*?)\.toString\(\)', after, re.DOTALL)
+    require(body_match, "unparsed event producers")
+    name, body = "menuEvent", body_match.group(1)
+    require(re.fullmatch(r'\s*action:\s*String\s*,\s*extras:\s*JSONObject\.\(\)\s*->\s*Unit\s*=\s*\{\}\s*',
+                         args),
+            "unified producer must take (action, extras)")
+    puts = _producer_puts(body)
+    require(dict(puts).get("v") == "BRIDGE_EVENT_VERSION"
+            and dict(puts).get("type") == '"menu"'
+            and dict(puts).get("action") == "action",
+            "producer envelope/version drift")
+    require(re.search(r'\.apply\(extras\)\s*$', body.strip()), "producer must apply extras last")
     menu = definitions["menu"]
     required = set(menu["required"])
-    gated_action = {"controllerEventJson": "controller", "touchGateEventJson": "touch_gate"}.get(name)
-    if gated_action is not None:
-        gates = menu.get("allOf", [])
-        if "then" in menu:
-            gates = [{"if": menu["if"], "then": menu["then"]}]
-        for gate in gates:
-            condition = gate.get("if", {}).get("properties", {}).get("action", {})
-            if condition.get("const") == gated_action:
-                required |= set(gate["then"]["required"])
-    require(required <= fields.keys() <= menu["properties"].keys(), "producer fields differ from schema")
-    require(all(GEN.field_type(menu["properties"][key]) == kind for key, kind in fields.items()),
-            "producer field type differs from schema")
-    require(dict(puts).get("v") == "BRIDGE_EVENT_VERSION" and dict(puts).get("type") == '"menu"',
-            "producer envelope/version drift")
-    expected_action = {"menuEventJson": "action",
-                       "touchGateEventJson": "MenuAction.TOUCH_GATE",
-                       "controllerEventJson": "MenuAction.CONTROLLER"}[name]
-    require(dict(puts).get("action") == expected_action, "producer action drift")
-
-
-def validate_producer(definitions, producer):
-    producer = uncomment(producer)
-    builders = re.findall(r'internal fun (\w+)\(([^()]*)\): String\s*=\s*JSONObject\(\)(.*?)\.toString\(\)',
-                          producer, re.DOTALL)
-    require({name for name, _, _ in builders} == {"menuEventJson", "touchGateEventJson", "controllerEventJson"},
-            "unparsed event producers")
-    for name, args, body in builders:
-        _check_producer_event(name, _producer_puts(body), _producer_arg_types(args), definitions)
-    require(not re.search(r'menuEventJson\(\s*MenuAction\.(CONTROLLER|TOUCH_GATE)', producer),
-            "generic menuEventJson must not emit gated actions; use the typed builders")
+    for call in _menu_event_calls(uncomment(kotlin)):
+        pairs = re.findall(r'(?<![\w.])put\("(\w+)",\s*("[^"\n]*"|[\w.]+|\S+?)\)', call)
+        for key, value in pairs:
+            require(re.fullmatch(r'"[^"\n]*"|[\w.]+', value) is not None,
+                    f"unsupported extras value: {value}")
+        puts_in_call = {key for key, _ in pairs}
+        if "MenuAction.TOUCH_GATE" in call:
+            gate = [g for g in menu.get("allOf", [])
+                    if g.get("if", {}).get("properties", {}).get("action", {}).get("const") == "touch_gate"]
+            require(gate, "schema must gate touch_gate extras")
+            require(set(gate[0]["then"]["required"]) <= puts_in_call,
+                    "touch_gate call misses gated fields")
+            require(not (puts_in_call & {"device_id", "key"}), "touch_gate call carries controller fields")
+        elif "MenuAction.CONTROLLER" in call:
+            gate = [g for g in menu.get("allOf", [])
+                    if g.get("if", {}).get("properties", {}).get("action", {}).get("const") == "controller"]
+            require(gate, "schema must gate controller extras")
+            require(set(gate[0]["then"]["required"]) <= puts_in_call,
+                    "controller call misses gated fields")
+        else:
+            require(not (puts_in_call & {"pressed", "device_id", "key"}),
+                    "plain menuEvent must not carry gated fields")
+    require("menuEventJson" not in kotlin and "touchGateEventJson" not in kotlin
+            and "controllerEventJson" not in kotlin, "obsolete typed builders remain")
 
 
 def verify(schema, source):
@@ -340,7 +399,7 @@ def verify(schema, source):
         generated = GEN.outputs(schema)[GEN.RUST / "src/bridge_contract.rs"]
         require(source["generated"] == generated, "generated structural validation is stale or modified")
         validate_decoder(definitions, source["decoder"])
-        validate_producer(definitions, source["producer"])
+        validate_producer(definitions, source["producer"], source["callsites"])
         require("register_native_methods(class, &methods)" in source["registration"],
                 "registration table is not registered")
         require("register_native_methods(settings_class, &settings_methods)" in source["registration"],
