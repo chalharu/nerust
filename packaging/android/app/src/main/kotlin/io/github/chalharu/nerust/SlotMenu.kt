@@ -1,8 +1,11 @@
 package io.github.chalharu.nerust
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -33,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -274,6 +278,7 @@ private fun SlotDismissableRow(
     )
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SlotMenuRow(
     row: SlotEntry,
@@ -281,10 +286,14 @@ private fun SlotMenuRow(
     onDelete: () -> Unit,
 ) {
     // Delete lives behind swipe and long-press only: no permanent trash
-    // icon. The long-press menu opens at the touch point (DropdownMenu
-    // offset), not at the row edge.
+    // icon. Tap and swipe stay on the standard detectors; the long-press
+    // menu opens at the touch point: one observer records the down
+    // position without consuming anything (a consuming detector would
+    // starve both tap and the ancestor swipe), and the menu offset
+    // subtracts the row height DropdownMenu adds below its anchor.
     var showMenu by remember { mutableStateOf(false) }
     var menuOffset by remember { mutableStateOf(DpOffset.Zero) }
+    var rowHeightPx by remember { mutableStateOf(0) }
     val density = LocalDensity.current
     Box {
         ListItem(
@@ -292,17 +301,20 @@ private fun SlotMenuRow(
             supportingContent = { Text(text = slotSubtitle(row)) },
             modifier =
                 Modifier
-                    .clickable(onClick = onSelect)
+                    .onSizeChanged { rowHeightPx = it.height }
+                    .combinedClickable(
+                        onClick = onSelect,
+                        onLongClick = { showMenu = true },
+                    )
                     .pointerInput(row.id) {
-                        detectTapGestures(
-                            onLongPress = { point ->
-                                menuOffset =
-                                    with(density) {
-                                        DpOffset(point.x.toDp(), point.y.toDp())
-                                    }
-                                showMenu = true
-                            },
-                        )
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            val y = (down.position.y - rowHeightPx).coerceAtLeast(0f)
+                            menuOffset =
+                                with(density) {
+                                    DpOffset(down.position.x.toDp(), y.toDp())
+                                }
+                        }
                     },
         )
         DropdownMenu(
