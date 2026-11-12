@@ -192,15 +192,33 @@ private fun parseSettingsRow(row: JSONObject?): SettingsRow? {
     }
 }
 
-/** Single command builder: `payload` is op-specific JSON (`keyboards` uses
- * an array, `touch` an object, `set` omits it). One function, not two
- * overloads: Any? covers both shapes without duplicating the envelope. */
+/** Typed command builders: `payload` is op-specific JSON (`device_truth`
+ *  uses an object, nothing else carries one today). Two overloads instead of
+ *  one `Any?` so a raw String can never be silently mis-encoded: passing a
+ *  String fails to compile. */
 internal fun settingsCommandJson(
     key: String,
     index: Int,
     number: Long,
     op: String = "set",
-    payload: Any? = null,
+    payload: JSONObject? = null,
+): String {
+    val doc =
+        JSONObject()
+            .put("key", key)
+            .put("index", index)
+            .put("number", number)
+            .put("op", op)
+    if (payload != null) doc.put("payload", payload)
+    return doc.toString()
+}
+
+internal fun settingsCommandJson(
+    key: String,
+    index: Int,
+    number: Long,
+    op: String,
+    payload: JSONArray?,
 ): String {
     val doc =
         JSONObject()
@@ -416,6 +434,9 @@ internal fun NerustSettingsDialogCard(
         }
     }
 
+    /** Every edit rides one command on the shared background lane; the
+     *  payload apply (and dirty marking) posts back to the main thread.
+     *  The wire format is unchanged, only the thread moves. */
     fun sendCommand(
         key: String,
         index: Int,
@@ -424,18 +445,29 @@ internal fun NerustSettingsDialogCard(
         mutating: Boolean = true,
         payload: JSONArray? = null,
     ) {
-        val raw =
-            try {
-                onCommand(settingsCommandJson(key, index, number, op, payload))
-                    ?: throw IllegalStateException("settings bridge returned null")
-            } catch (e: Exception) {
-                Log.e(TAG, "settings bridge call failed", e)
-                commandError = e.message ?: COMMAND_FAILED
-                return
+        val command =
+            if (payload == null) {
+                settingsCommandJson(key, index, number, op)
+            } else {
+                settingsCommandJson(key, index, number, op, payload)
             }
-        if (!applyPayloadJson(raw, mutating)) return
-        if (!mutating) return
-        dirtyKeys = resetDirtyKeys(sections, dirtyKeys, op, key)
+        BridgeIo.runIo {
+            val raw =
+                try {
+                    onCommand(command)
+                        ?: throw IllegalStateException("settings bridge returned null")
+                } catch (e: Exception) {
+                    Log.e(TAG, "settings bridge call failed", e)
+                    val message = e.message ?: COMMAND_FAILED
+                    BridgeIo.postMain { commandError = message }
+                    return@runIo
+                }
+            BridgeIo.postMain {
+                if (!applyPayloadJson(raw, mutating)) return@postMain
+                if (!mutating) return@postMain
+                dirtyKeys = resetDirtyKeys(sections, dirtyKeys, op, key)
+            }
+        }
     }
 
     val activeSection = backStack.lastOrNull()?.let { id -> sections.find { it.id == id } }

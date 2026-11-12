@@ -1,6 +1,14 @@
 //! Settings wire tests: payload shape, capture round-trips, review allowlists.
-use super::*;
+use super::{capture::*, commands::*, open_payload, projection::*, wire::*};
 use std::sync::Arc;
+
+use crate::bridge_contract::SETTINGS_SCHEMA_VERSION;
+use nerust_gui_runtime::settings::SettingsSnapshot;
+use nerust_settings_core::{
+    i18n::{UiText, text as ui_text},
+    model::language::AppLanguage,
+};
+use nerust_system_traits::factory::CoreFactory;
 
 use nerust_gba_factory::GbaFactory;
 use nerust_gba_settings::GbaSettings;
@@ -80,9 +88,8 @@ fn test_payload() -> (SettingsSnapshot, ViewPayload) {
 fn test_payload_with_keyboards(keyboards: &[KeyboardInfo]) -> (SettingsSnapshot, ViewPayload) {
     with_test_deps(|| {
         let snapshot = default_snapshot();
-        let json =
+        let payload: ViewPayload =
             open_payload(&snapshot, keyboards, None, &[], None).expect("open payload builds");
-        let payload: ViewPayload = serde_json::from_str(&json).expect("payload parses");
         assert_eq!(payload.schema_version, SETTINGS_SCHEMA_VERSION);
         (snapshot, payload)
     })
@@ -106,11 +113,11 @@ fn payload_bare_keys(payload: &ViewPayload) -> Vec<String> {
         .filter(|row| {
             matches!(
                 row.kind,
-                super::RowKind::Choice
-                    | super::RowKind::Toggle
-                    | super::RowKind::Number
-                    | super::RowKind::Group
-                    | super::RowKind::Button
+                RowKind::Choice
+                    | RowKind::Toggle
+                    | RowKind::Number
+                    | RowKind::Group
+                    | RowKind::Button
             ) && row.description.is_empty()
         })
         .map(|row| row.key.clone())
@@ -135,7 +142,7 @@ fn apply(
             payload: serde_json::Value::Null,
         })
         .unwrap();
-        let out = apply_command_to(
+        apply_command_to(
             snapshot,
             &command_json,
             capture,
@@ -144,8 +151,7 @@ fn apply(
             &mut Vec::new(),
             &mut None,
         )
-        .unwrap_or_else(|error| panic!("command failed: {error}"));
-        serde_json::from_str(&out).unwrap()
+        .unwrap_or_else(|error| panic!("command failed: {error}"))
     })
 }
 
@@ -169,7 +175,7 @@ fn overlay_always_roundtrip_through_finish() {
     let (mut snapshot, _) = test_payload();
     let next = set(&mut snapshot, "controls.overlay_visibility", 0, 0);
     assert_eq!(row(&next, "controls.overlay_visibility").selected, 0);
-    match super::finish_snapshot(&snapshot, None) {
+    match finish_snapshot(&snapshot, None) {
         Ok(done) => assert_eq!(
             done.local.touch_overlay.visibility,
             TouchOverlayVisibility::Always
@@ -234,7 +240,7 @@ fn system_locale_resolves_system_default_for_display() {
         let label = with_test_deps(|| {
             let json = open_payload(&snapshot, &test_keyboards(), None, &[], system)
                 .expect("open payload builds");
-            let payload: ViewPayload = serde_json::from_str(&json).unwrap();
+            let payload: ViewPayload = json;
             payload
                 .sections
                 .iter()
@@ -280,15 +286,14 @@ fn language_row_selects_the_draft_choice_not_the_display_copy() {
         "default draft leaves the choice to the system"
     );
     let payload: ViewPayload = with_test_deps(|| {
-        let json = open_payload(
+        open_payload(
             &snapshot,
             &test_keyboards(),
             None,
             &[],
             Some(AppLanguage::Japanese),
         )
-        .expect("open payload builds");
-        serde_json::from_str(&json).unwrap()
+        .expect("open payload builds")
     });
     let row = row(&payload, "general.language");
     let selected = row.choices[row.selected].value.clone();
@@ -309,9 +314,7 @@ fn explicit_japanese_under_ja_system_persists_as_japanese() {
     let mut keyboards = test_keyboards();
     let mut locale = Some(AppLanguage::Japanese);
     let payload: ViewPayload = with_test_deps(|| {
-        let json =
-            open_payload(&snapshot, &keyboards, None, &[], locale).expect("open payload builds");
-        serde_json::from_str(&json).unwrap()
+        open_payload(&snapshot, &keyboards, None, &[], locale).expect("open payload builds")
     });
     let language = row(&payload, "general.language");
     let japanese = language
@@ -320,7 +323,7 @@ fn explicit_japanese_under_ja_system_persists_as_japanese() {
         .position(|choice| choice.value == serde_json::json!("japanese"))
         .expect("japanese choice exists");
     let next: ViewPayload = with_test_deps(|| {
-        let out = apply_command_to(
+        apply_command_to(
             &mut snapshot,
             &serde_json::to_string(&WireCommand {
                 key: "general.language".to_string(),
@@ -336,8 +339,7 @@ fn explicit_japanese_under_ja_system_persists_as_japanese() {
             &mut Vec::new(),
             &mut locale,
         )
-        .expect("language set applies");
-        serde_json::from_str(&out).unwrap()
+        .expect("language set applies")
     });
     assert_eq!(
         snapshot.shared.general.language,
@@ -380,7 +382,7 @@ fn display_resolution_never_concretes_the_draft() {
         )
         .expect("volume set applies")
     });
-    let payload: ViewPayload = serde_json::from_str(&out).unwrap();
+    let payload: ViewPayload = out;
     assert_eq!(
         payload
             .sections
@@ -406,7 +408,7 @@ fn display_resolution_never_concretes_the_draft() {
             Some(AppLanguage::Japanese),
         )
         .expect("open payload builds");
-        let probe: ViewPayload = serde_json::from_str(&json).unwrap();
+        let probe: ViewPayload = json;
         probe
             .sections
             .iter()
@@ -437,7 +439,7 @@ fn display_resolution_never_concretes_the_draft() {
         )
         .expect("language set applies")
     });
-    let _payload: ViewPayload = serde_json::from_str(&out).unwrap();
+    let _payload: ViewPayload = out;
     assert_eq!(snapshot.shared.general.language, AppLanguage::English);
 }
 
@@ -474,7 +476,7 @@ fn locale_op_upserts_without_mutating_draft() {
     });
     assert_eq!(snapshot, before, "enumeration never touches the draft");
     assert_eq!(locale, Some(AppLanguage::Japanese));
-    let payload: ViewPayload = serde_json::from_str(&out).unwrap();
+    let payload: ViewPayload = out;
     assert_eq!(
         payload
             .sections
@@ -534,7 +536,7 @@ fn locale_tag_mapping_round_trips() {
         ("en-US", AppLanguage::English),
         ("fr", AppLanguage::English),
     ] {
-        let mapped = super::system_language_from_tag(tag);
+        let mapped = system_language_from_tag(tag);
         assert_eq!(mapped, want, "tag {tag} maps");
         assert_eq!(
             I18n::resolve(AppLanguage::SystemDefault, Some(mapped)).language(),
@@ -542,9 +544,9 @@ fn locale_tag_mapping_round_trips() {
             "tag {tag} resolves for display"
         );
     }
-    assert_eq!(super::app_language_tag(AppLanguage::Japanese), "ja");
-    assert_eq!(super::app_language_tag(AppLanguage::English), "en");
-    assert_eq!(super::app_language_tag(AppLanguage::SystemDefault), "");
+    assert_eq!(app_language_tag(AppLanguage::Japanese), "ja");
+    assert_eq!(app_language_tag(AppLanguage::English), "en");
+    assert_eq!(app_language_tag(AppLanguage::SystemDefault), "");
 }
 
 #[test]
@@ -577,18 +579,12 @@ fn zero_based_top_level_hides_machine_names() {
             .unwrap_or_else(|| panic!("{id} exists"));
         assert!(!machine.visible, "{id} hides under Advanced");
         assert!(
-            machine
-                .rows
-                .iter()
-                .any(|row| row.kind == super::RowKind::Choice),
+            machine.rows.iter().any(|row| row.kind == RowKind::Choice),
             "{id} keeps its fields"
         );
         assert!(
-            machine
-                .rows
-                .iter()
-                .any(|row| row.kind == super::RowKind::Group
-                    && row.target == format!("input.{}", id.trim_start_matches("system."))),
+            machine.rows.iter().any(|row| row.kind == RowKind::Group
+                && row.target == format!("input.{}", id.trim_start_matches("system."))),
             "{id} links to its controller screen"
         );
     }
@@ -612,10 +608,7 @@ fn machine_sections_link_to_hidden_controller_screens() {
         "slots live on the controller screen"
     );
     assert!(
-        input
-            .rows
-            .iter()
-            .all(|row| row.kind != super::RowKind::Capture),
+        input.rows.iter().all(|row| row.kind != RowKind::Capture),
         "bindings moved out of the controller screen"
     );
     let keys = payload
@@ -625,9 +618,7 @@ fn machine_sections_link_to_hidden_controller_screens() {
         .expect("key mapping screen exists");
     assert!(!keys.visible, "key mapping screens hide from categories");
     assert!(
-        keys.rows
-            .iter()
-            .any(|row| row.kind == super::RowKind::Capture),
+        keys.rows.iter().any(|row| row.kind == RowKind::Capture),
         "keyboard bindings are capturable rows"
     );
     assert!(
@@ -658,7 +649,7 @@ fn machine_sections_link_to_hidden_controller_screens() {
                 .sections
                 .iter()
                 .flat_map(|section| &section.rows)
-                .any(|row| row.kind == super::RowKind::Group && row.target == id),
+                .any(|row| row.kind == RowKind::Group && row.target == id),
             "controllers links to {id}"
         );
     }
@@ -676,7 +667,7 @@ fn machine_sections_link_to_hidden_controller_screens() {
         shortcuts
             .rows
             .iter()
-            .filter(|row| row.kind == super::RowKind::Capture)
+            .filter(|row| row.kind == RowKind::Capture)
             .count()
             == 6,
         "shortcuts rows are capturable"
@@ -706,7 +697,7 @@ fn capture_rows_disable_without_input_device() {
         .sections
         .iter()
         .flat_map(|section| &section.rows)
-        .filter(|row| row.kind == super::RowKind::Capture)
+        .filter(|row| row.kind == RowKind::Capture)
         .collect();
     assert!(!captures.is_empty(), "capture rows exist to disable");
     for row in &captures {
@@ -719,7 +710,7 @@ fn capture_rows_disable_without_input_device() {
             .sections
             .iter()
             .flat_map(|section| &section.rows)
-            .filter(|row| row.kind == super::RowKind::Capture)
+            .filter(|row| row.kind == RowKind::Capture)
             .all(|row| row.enabled),
         "keyboards present re-enable capture"
     );
@@ -737,14 +728,14 @@ fn gamepad_alone_reopens_capture() {
         let snapshot = default_snapshot();
         let json =
             open_payload(&snapshot, &[], None, &gamepads, None).expect("open payload builds");
-        let payload: ViewPayload = serde_json::from_str(&json).expect("payload parses");
+        let payload: ViewPayload = json;
         (snapshot, payload)
     });
     let captures: Vec<_> = payload
         .sections
         .iter()
         .flat_map(|section| &section.rows)
-        .filter(|row| row.kind == super::RowKind::Capture)
+        .filter(|row| row.kind == RowKind::Capture)
         .collect();
     assert!(!captures.is_empty(), "capture rows exist to enable");
     assert!(
@@ -884,7 +875,7 @@ fn devices_screen_lists_keyboards_with_membership_switches() {
         .iter()
         .find(|row| row.key == "devices.p1.kbd:builtin")
         .expect("built-in keyboard row exists");
-    assert_eq!(builtin.kind, super::RowKind::Toggle);
+    assert_eq!(builtin.kind, RowKind::Toggle);
     assert_eq!(
         builtin.selected, 1,
         "built-in keyboard drives p1 by default"
@@ -910,7 +901,7 @@ fn devices_screen_lists_keyboards_with_membership_switches() {
                 detail
                     .rows
                     .iter()
-                    .any(|row| row.kind == super::RowKind::Group
+                    .any(|row| row.kind == RowKind::Group
                         && row.target == format!("keys.{system}")),
                 "{member} links to the {system} key table"
             );
@@ -1039,7 +1030,7 @@ fn phantom_builtin_never_surfaces_without_hardware() {
         )
         .expect("empty enumeration applies")
     });
-    let payload: ViewPayload = serde_json::from_str(&off).unwrap();
+    let payload: ViewPayload = off;
     assert!(
         snapshot
             .app_state
@@ -1086,7 +1077,7 @@ fn keyboards_op_upserts_enumeration_without_mutating_draft() {
     });
     assert_eq!(snapshot, before, "enumeration never touches the draft");
     assert_eq!(keyboards.len(), 2, "vault holds the enumerated keyboards");
-    let payload: ViewPayload = serde_json::from_str(&out).unwrap();
+    let payload: ViewPayload = out;
     assert!(
         payload
             .sections
@@ -1134,7 +1125,7 @@ fn gamepads_op_upserts_without_mutating_draft() {
     });
     assert_eq!(snapshot, before, "enumeration never touches the draft");
     assert_eq!(gamepads.len(), 1, "vault holds the counted gamepads");
-    let payload: ViewPayload = serde_json::from_str(&out).unwrap();
+    let payload: ViewPayload = out;
     let status = row(&payload, "controls.auto_hide_status");
     assert!(
         status.text.contains("Wireless Controller"),
@@ -1210,15 +1201,13 @@ fn touch_payload(capable: Option<bool>) -> ViewPayload {
             .expect("touch op applies")
         });
         assert_eq!(touch, capable, "vault records touch capability");
-        return serde_json::from_str(&out).unwrap();
+        return out;
     }
     // Unknown capability (old client, unit default): no push arrives,
     // rows behave as before.
     let touch = None;
     with_test_deps(|| {
-        open_payload(&snapshot, &test_keyboards(), touch, &[], None)
-            .map(|json| serde_json::from_str(&json).unwrap())
-            .expect("open payload builds")
+        open_payload(&snapshot, &test_keyboards(), touch, &[], None).expect("open payload builds")
     })
 }
 
@@ -1283,7 +1272,7 @@ fn reset_section_restores_screen_defaults() {
         )
         .expect("reset applies")
     });
-    let payload: ViewPayload = serde_json::from_str(&out).unwrap();
+    let payload: ViewPayload = out;
     assert_eq!(
         row(&payload, "audio.volume").number,
         i64::from(
@@ -1415,7 +1404,7 @@ fn capture_round_trips_through_hardware_keys() {
         sections
             .iter()
             .flat_map(|section| &section.rows)
-            .find(|row| row.kind == super::RowKind::Capture)
+            .find(|row| row.kind == RowKind::Capture)
             .map(|row| (row.key.clone(), row.target.clone()))
             .expect("capture row exists")
     });
@@ -1508,7 +1497,7 @@ fn clear_binding_unbinds_without_keyboard() {
         sections
             .iter()
             .flat_map(|section| &section.rows)
-            .find(|row| row.kind == super::RowKind::Capture)
+            .find(|row| row.kind == RowKind::Capture)
             .map(|row| row.key.clone())
             .expect("capture row exists")
     });
@@ -1546,7 +1535,7 @@ fn number_rows_advertise_vm_accepted_bounds() {
         sections
             .iter()
             .flat_map(|section| &section.rows)
-            .filter(|row| row.kind == super::RowKind::Number)
+            .filter(|row| row.kind == RowKind::Number)
             .map(|row| (row.key.clone(), row.min, row.max))
             .collect()
     });
@@ -1643,13 +1632,16 @@ fn bare_rows_are_reviewed_allowlist() {
     //   (system.*.controllers): label plus choice value, or label plus
     //   chevron in machine context, is self-contained.
     // - player.*.devices: the value line carries the port summary.
+    // - mute/vsync toggles and per-device key-mapping links: self-evident
+    //   labels with no restatement (on/off, or the machine context).
     let mut bare: Vec<String> = payload_bare_keys(&test_payload().1);
     bare.sort();
-    let mut expected = vec![
+    let mut expected: Vec<String> = vec![
         "advanced.gba",
         "advanced.gbc",
         "advanced.nes",
         "app.about",
+        "audio.muted",
         "audio.volume",
         "general.language",
         "controls.cartridge_rumble_strength",
@@ -1678,7 +1670,11 @@ fn bare_rows_are_reviewed_allowlist() {
         "system.nes.controllers",
         "system.nes.core.mmc3_irq_variant",
         "system.nes.video.filter",
-    ];
+        "video.vsync",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect();
     for prefix in [
         "reset.all",
         "reset.audio.detail",
@@ -1700,7 +1696,15 @@ fn bare_rows_are_reviewed_allowlist() {
         "reset.system.gbc",
         "reset.system.nes",
     ] {
-        expected.push(prefix);
+        expected.push(prefix.to_string());
+    }
+    // Per-device key-mapping links (`device.<member>.keys.<system>`): the
+    // machine context is self-contained, so no description. Members and
+    // systems are dynamic, hence generated, not listed above.
+    for member in ["kbd:builtin", "kbd:usb-1"] {
+        for system in ["gba", "gbc", "nes"] {
+            expected.push(format!("device.{member}.keys.{system}"));
+        }
     }
     expected.sort_unstable();
     assert_eq!(bare, expected, "bare rows changed: review the new policy");

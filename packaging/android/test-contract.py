@@ -10,19 +10,25 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from bridge_schema import ContractError, load_sibling
+from bridge_schema import ContractError, gates_by_action, load_sibling
 
 CONTRACT = load_sibling("contract", "generate-contract.py")
 VERIFY = load_sibling("verify_contract", "verify-contract.py")
 DECODER = load_sibling("decoder_contract", "test-decoder-contract.py")
 
 
-def find_gate(menu, action):
-    """Conditional gate for one menu action."""
-    return next(
-        gate for gate in menu["allOf"]
-        if gate["if"]["properties"]["action"]["const"] == action
-    )
+def gated_probe_mutations(schema):
+    """One (gate const, removed field) pair per gated action, schema-derived."""
+    return [(action.lower(), sorted(required)[0])
+            for action, (required, _forbidden) in sorted(gates_by_action(schema).items())]
+
+
+def remove_gated_field(schema, const, field):
+    """Drop one conditional-required field from the gate for `const`."""
+    menu = schema["definitions"]["menuEvent"]
+    gate = next(gate for gate in menu["allOf"]
+                if gate["if"]["properties"]["action"]["const"] == const)
+    gate["then"]["required"].remove(field)
 
 
 class ContractTests(unittest.TestCase):
@@ -173,11 +179,9 @@ class StructureTests(unittest.TestCase):
                 elif mutation in {"minimum", "maximum"}:
                     menu["properties"]["device_id"][mutation] += 1
                 else:
-                    for action, field in (("controller", "device_id"), ("touch_gate", "pressed"),
-                              ("select_slot", "slot_id"), ("delete_slot", "slot_id")):
+                    for const, field in gated_probe_mutations(original):
                         self.schema = copy.deepcopy(original)
-                        menu = self.schema["definitions"]["menuEvent"]
-                        find_gate(menu, action)["then"]["required"].remove(field)
+                        remove_gated_field(self.schema, const, field)
                         with self.assertRaises(VERIFY.ContractError):
                             self.verify()
                     continue
@@ -199,12 +203,10 @@ class StructureTests(unittest.TestCase):
                 elif mutation == "enum":
                     menu["properties"]["key"]["enum"].append("probe")
                 else:
-                    for action, field in (("controller", "device_id"), ("touch_gate", "pressed"),
-                              ("select_slot", "slot_id"), ("delete_slot", "slot_id")):
-                        with self.subTest(gate=action):
+                    for const, field in gated_probe_mutations(original):
+                        with self.subTest(gate=const):
                             changed = copy.deepcopy(original)
-                            menu = changed["definitions"]["menuEvent"]
-                            find_gate(menu, action)["then"]["required"].remove(field)
+                            remove_gated_field(changed, const, field)
                             self.assertNotEqual(CONTRACT.outputs(changed)[path], baseline)
                     continue
 

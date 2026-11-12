@@ -54,8 +54,7 @@ pub(super) fn request_show_settings_dialog(
     let tagged = serde_json::json!({
         "schemaVersion": SETTINGS_SCHEMA_VERSION,
         "requestId": request_id.0,
-        "payload": serde_json::from_str::<serde_json::Value>(&payload)
-            .map_err(|error| error.to_string())?,
+        "payload": payload,
     })
     .to_string();
     bridge::post_to_activity(
@@ -275,15 +274,30 @@ fn err_json(error: impl std::fmt::Display) -> String {
     serde_json::json!({"ok": false, "error": error.to_string()}).to_string()
 }
 
-/// Embed an already-serialized payload object: re-parse, never concatenate.
-/// A payload that is not an object is a bug, so it fails loud as an error.
-fn embed(payload_json: &str, extra: Option<&str>) -> String {
-    match serde_json::from_str::<serde_json::Value>(payload_json) {
-        Ok(payload) => match extra {
-            Some(extra) => format!("{{\"ok\":true,{extra},\"payload\":{payload}}}"),
-            None => format!("{{\"ok\":true,\"payload\":{payload}}}"),
-        },
-        Err(error) => err_json(error),
+/// Success envelope: the payload serializes exactly once at this JNI edge.
+/// The envelope shape is unchanged (`{"ok":true,"payload":{...}}`); only the
+/// old re-parse/concat round-trip is gone.
+fn envelope_ok(payload: &settings_views::ViewPayload) -> Result<String, String> {
+    let json = serde_json::to_string(payload).map_err(|error| error.to_string())?;
+    debug_assert!(json.starts_with('{'), "payload must be JSON");
+    Ok(format!("{{\"ok\":true,\"payload\":{json}}}"))
+}
+
+/// Hardware-key envelope: consumed presses carry the refreshed payload;
+/// ignored keys carry only the flag (Kotlin ignores the payload then).
+fn envelope_key(
+    payload: Option<&settings_views::ViewPayload>,
+    consumed: bool,
+) -> Result<String, String> {
+    match payload {
+        Some(payload) => {
+            let json = serde_json::to_string(payload).map_err(|error| error.to_string())?;
+            debug_assert!(json.starts_with('{'), "payload must be JSON");
+            Ok(format!(
+                "{{\"ok\":true,\"consumed\":{consumed},\"payload\":{json}}}"
+            ))
+        }
+        None => Ok(format!("{{\"ok\":true,\"consumed\":{consumed}}}")),
     }
 }
 
@@ -319,8 +333,7 @@ fn hardware_key(
                 },
             ) {
                 Ok((payload, consumed)) => {
-                    debug_assert!(payload.starts_with('{'), "hardware payload must be JSON");
-                    embed(&payload, Some(&format!("\"consumed\":{consumed}")))
+                    envelope_key(payload.as_ref(), consumed).unwrap_or_else(err_json)
                 }
                 Err(error) => err_json(error),
             }
@@ -365,10 +378,7 @@ fn settings_command(env: &mut jni::EnvUnowned<'_>, command: JString<'_>) -> jni:
                 &mut state.gamepads,
                 &mut state.system_locale,
             ) {
-                Ok(sections) => {
-                    debug_assert!(sections.starts_with('{'), "command payload must be JSON");
-                    embed(&sections, None)
-                }
+                Ok(payload) => envelope_ok(&payload).unwrap_or_else(err_json),
                 Err(error) => err_json(error),
             }
         }),

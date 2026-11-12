@@ -32,9 +32,14 @@ private const val EXTRA_ORIENTATION = "nerust.extra.ORIENTATION"
 class SettingsActivity :
     ComponentActivity(),
     InputManager.InputDeviceListener {
+    @Volatile
     private var navActions: SettingsNavActions? = null
     private var resultSent = false
     private var requestId: Long = -1L
+
+    /** Last pushed scan: identical hotplug/resume bursts skip the JNI push. */
+    @Volatile
+    private var lastDeviceTruth: DeviceTruth? = null
 
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(AppLocale.wrap(newBase))
@@ -162,42 +167,60 @@ class SettingsActivity :
     override fun onInputDeviceChanged(deviceId: Int) = pushDeviceTruth()
 
     /** Push the enumeration through the existing command pipe; Rust
-     * re-projects and the card applies it without marking the draft dirty. */
+     * re-projects and the card applies it without marking the draft dirty.
+     * Scan + JNI run on the shared background lane (never the UI thread);
+     * only the nav apply posts back. Identical scans skip the push via the
+     * last-result cache. Payload shape is unchanged. */
     internal fun pushDeviceTruth() {
-        val scan = scanDeviceTruth(packageManager)
-        val keyboards = JSONArray()
-        scan.keyboards.forEach { row ->
-            keyboards.put(
+        BridgeIo.runIo {
+            val scan =
+                try {
+                    scanDeviceTruth(packageManager)
+                } catch (e: Exception) {
+                    Log.e(TAG, "device scan failed", e)
+                    return@runIo
+                }
+            if (scan == lastDeviceTruth) return@runIo
+            lastDeviceTruth = scan
+            val keyboards = JSONArray()
+            scan.keyboards.forEach { row ->
+                keyboards.put(
+                    JSONObject()
+                        .put("member", row.member)
+                        .put("name", row.name)
+                        .put("builtin", row.builtin),
+                )
+            }
+            val gamepads = JSONArray()
+            scan.gamepadNames.forEach { gamepads.put(JSONObject().put("name", it)) }
+            val payload =
                 JSONObject()
-                    .put("member", row.member)
-                    .put("name", row.name)
-                    .put("builtin", row.builtin),
-            )
+                    .put("keyboards", keyboards)
+                    .put("capable", scan.touchCapable)
+                    .put("gamepads", gamepads)
+            AppLocale.savedTag(this@SettingsActivity).ifEmpty { AppLocale.currentTag().orEmpty() }
+                .takeIf { it.isNotEmpty() }?.let { payload.put("lang", it) }
+            pushOp("device truth", "device_truth", payload)
         }
-        val gamepads = JSONArray()
-        scan.gamepadNames.forEach { gamepads.put(JSONObject().put("name", it)) }
-        val payload =
-            JSONObject()
-                .put("keyboards", keyboards)
-                .put("capable", scan.touchCapable)
-                .put("gamepads", gamepads)
-        AppLocale.savedTag(this).ifEmpty { AppLocale.currentTag().orEmpty() }
-            .takeIf { it.isNotEmpty() }?.let { payload.put("lang", it) }
-        pushOp("device truth", "device_truth", payload)
     }
 
     /** One push through the command pipe; Rust re-projects and the card
-     * applies it without marking the draft dirty. */
-    private fun pushOp(label: String, op: String, payload: Any) {
-        val nav = navActions ?: return
-        val raw =
-            try {
-                nativeSettingsCommand(settingsCommandJson(op, 0, 0, op, payload))
-            } catch (e: Exception) {
-                Log.e(TAG, "$label push failed", e)
-                return
-            }
-        raw?.let { nav.refreshPayload(it) }
+     * applies it without marking the draft dirty. JNI runs on the shared
+     * background lane; only the nav apply posts back to the main thread. */
+    private fun pushOp(label: String, op: String, payload: JSONObject) {
+        if (navActions == null) return
+        val command = settingsCommandJson(op, 0, 0, op, payload)
+        BridgeIo.runIo {
+            val raw =
+                try {
+                    nativeSettingsCommand(command)
+                } catch (e: Exception) {
+                    Log.e(TAG, "$label push failed", e)
+                    return@runIo
+                }
+            if (raw == null) return@runIo
+            BridgeIo.postMain { navActions?.refreshPayload(raw) }
+        }
     }
 
     override fun onDestroy() {

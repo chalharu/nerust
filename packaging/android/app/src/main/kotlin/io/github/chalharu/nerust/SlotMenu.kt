@@ -1,7 +1,5 @@
 package io.github.chalharu.nerust
 
-import android.os.Handler
-import android.os.Looper
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -73,9 +71,11 @@ internal fun formatSlotTime(millis: Long): String =
 
 private val SLOT_TIME_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
 
-/** List holder with bounded refresh: after a slot op the event thread
- * republishes the vault mirror, so re-query until the payload moves past
- * the last seen one (20 x 100ms), then publish. Stops with the dialog. */
+/** Bounded refresh: after a slot op the event thread republishes the
+ * vault mirror, so re-query off the main thread until the payload moves
+ * past the last seen one (3 tries, 100/200/400ms backoff), then publish.
+ * Query work never touches the main looper; only the state assign lands
+ * there. Stops with the dialog. */
 internal class SlotMenuState(
     initialRaw: String,
     initial: List<SlotEntry>,
@@ -83,12 +83,12 @@ internal class SlotMenuState(
     var rows: List<SlotEntry> by mutableStateOf(initial)
         private set
     private var lastRaw = initialRaw
-    private val handler = Handler(Looper.getMainLooper())
+
+    @Volatile
     private var stopped = false
 
     fun stop() {
         stopped = true
-        handler.removeCallbacksAndMessages(null)
     }
 
     fun refreshAfter(query: () -> String?) {
@@ -96,23 +96,28 @@ internal class SlotMenuState(
     }
 
     private fun poll(query: () -> String?, attempt: Int) {
-        if (stopped || attempt >= 20) return
-        handler.postDelayed({
-            if (stopped) return@postDelayed
+        if (stopped || attempt >= SLOT_REFRESH_DELAYS_MS.size) return
+        BridgeIo.scheduleIo(SLOT_REFRESH_DELAYS_MS[attempt]) {
+            if (stopped) return@scheduleIo
             val raw = try {
                 query()
             } catch (_: Exception) {
                 null
             }
-            if (raw != null && raw != lastRaw) {
-                lastRaw = raw
-                rows = parseSlotList(raw)
-            } else {
-                poll(query, attempt + 1)
+            BridgeIo.postMain {
+                if (stopped) return@postMain
+                if (raw != null && raw != lastRaw) {
+                    lastRaw = raw
+                    rows = parseSlotList(raw)
+                } else {
+                    poll(query, attempt + 1)
+                }
             }
-        }, 100)
+        }
     }
 }
+
+private val SLOT_REFRESH_DELAYS_MS = longArrayOf(100L, 200L, 400L)
 
 @Composable
 internal fun SlotMenuDialog(
