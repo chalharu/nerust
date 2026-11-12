@@ -113,8 +113,8 @@ pub(super) struct RowWire {
     #[serde(default = "default_true")]
     pub visible: bool,
     /// Whether the row accepts input. Capture rows disable this when no
-    /// keyboard is connected (capture is keyboard-only); `reason` explains
-    /// why so Kotlin never invents copy.
+    /// input device is connected; `reason` explains why so Kotlin never
+    /// invents copy.
     #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(default)]
@@ -750,10 +750,10 @@ fn apply_capture_command(
             Ok(())
         }
         WireOp::StartCapture => {
-            // Backstop for the disabled row: no keyboard means no key will
-            // ever arrive, so fail here instead of stranding a prompt.
-            if truth.keyboards.is_empty() {
-                return Err(truth.i18n.text(UiText::KeyboardRequired));
+            // Backstop for the disabled row: with no input device no key
+            // will ever arrive, so fail here instead of stranding a prompt.
+            if truth.keyboards.is_empty() && truth.gamepads.is_empty() {
+                return Err(truth.i18n.text(UiText::InputDeviceRequired));
             }
             vm.capture
                 .start_capture(target.clone())
@@ -1425,7 +1425,7 @@ fn group_row(key: &str, label: String, description: String, target: &str) -> Row
 
 /// Key-capture row: tap starts capture, Clear unbinds, Cancel aborts.
 /// `description` stays empty: the value line already names the binding.
-/// Disabled rows (no keyboard connected) keep Clear: unbinding needs no
+/// Disabled rows (no input device connected) keep Clear: unbinding needs no
 /// input device. `reason` carries the localized why.
 fn capture_row(
     key: &str,
@@ -1512,7 +1512,12 @@ fn build_sections(
     sections.extend(build_player_sections(vm, snapshot, i18n, truth.keyboards));
     sections.extend(build_system_sections(vm, i18n));
     sections.extend(build_input_sections(vm, i18n));
-    sections.extend(build_keys_sections(vm, i18n, truth.keyboards));
+    sections.extend(build_keys_sections(
+        vm,
+        i18n,
+        truth.keyboards,
+        truth.gamepads,
+    ));
     // Canonical order owned by Rust; dynamic device sections (device.*)
     // keep build order after the known taxonomy.
     sections.sort_by_key(|section| {
@@ -2132,16 +2137,18 @@ fn overlay_detail_section(
 /// Global shortcuts screen: one capture row per binding plus reset.
 /// Fullscreen and debugger are desktop-only (window chrome the phone has
 /// no equivalent for): their rows never reach Android, though the shared
-/// bindings persist for desktop. Capture needs a keyboard; without one
-/// the rows disable with a reason instead of opening a dead prompt.
+/// bindings persist for desktop. Capture takes any mapped hardware key,
+/// keyboard or pad; with neither device connected the rows disable with
+/// a reason instead of opening a dead prompt.
 fn shortcuts_section(
     vm: &SettingsViewModel,
     i18n: I18n,
     keyboards: &[KeyboardInfo],
+    gamepads: &[GamepadInfo],
 ) -> SectionWire {
     let shortcuts_view = vm.shortcuts.view.get();
-    let capture_open = !keyboards.is_empty();
-    let reason = i18n.text(UiText::KeyboardRequired);
+    let capture_open = !keyboards.is_empty() || !gamepads.is_empty();
+    let reason = i18n.text(UiText::InputDeviceRequired);
     // Shortcut targets encode a system only as a decoding hint; every
     // global shortcut decodes identically, so the first system suffices.
     let shortcut_system = vm
@@ -2196,7 +2203,7 @@ fn build_controllers_sections(
     vec![
         controllers_quick_section(snapshot, i18n, keyboards, touch_capable),
         overlay_detail_section(&snapshot.local.touch_overlay, gamepads, i18n),
-        shortcuts_section(vm, i18n, keyboards),
+        shortcuts_section(vm, i18n, keyboards, gamepads),
     ]
 }
 
@@ -2648,15 +2655,16 @@ fn build_device_sections(
 }
 /// One key-mapping screen per machine: the shared single keyboard table
 /// (per-device split is future work). Reached from each keyboard device
-/// detail screen; the controller screens hold slots only. Capture needs a
-/// keyboard; without one the rows disable with a reason.
+/// detail screen; the controller screens hold slots only. Capture takes
+/// any mapped hardware key; with no input device the rows disable.
 fn build_keys_sections(
     vm: &SettingsViewModel,
     i18n: I18n,
     keyboards: &[KeyboardInfo],
+    gamepads: &[GamepadInfo],
 ) -> Vec<SectionWire> {
-    let capture_open = !keyboards.is_empty();
-    let reason = i18n.text(UiText::KeyboardRequired);
+    let capture_open = !keyboards.is_empty() || !gamepads.is_empty();
+    let reason = i18n.text(UiText::InputDeviceRequired);
     vm.inputs()
         .iter()
         .map(|input| {
