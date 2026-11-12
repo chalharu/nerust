@@ -8,10 +8,11 @@ import android.view.MotionEvent
 
 /** Key-event sources that divert to the gamepad path. Shared by gameplay
  * (MainActivity) and capture (SettingsActivity) so the two can never
- * disagree about what counts as a controller. */
+ * disagree about what counts as a controller. Bare SOURCE_DPAD is not a
+ * controller signal (TV remotes, keyboard clusters); real gamepad
+ * direction input always carries the joystick class. */
 internal fun isControllerSource(source: Int): Boolean =
     source and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
-        source and InputDevice.SOURCE_DPAD == InputDevice.SOURCE_DPAD ||
         source and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
 
 /** One-device verdict for the Auto gate. A counted device must expose the

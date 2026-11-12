@@ -86,6 +86,30 @@ impl FieldPressState {
         }
     }
 
+    /// Drop one dpad hold. None only when the attachment holds nothing at
+    /// all (the pair is unchanged); missing direction inside a held
+    /// attachment counts as still held, as before.
+    fn remove_dpad_hold(
+        &mut self,
+        attachment: AttachmentId,
+        abs: AbstractKey,
+        control: DigitalControlId,
+    ) -> Option<bool> {
+        let held = self.dpad_held.get_mut(&attachment)?;
+        let Some(ctrls) = held.get_mut(&abs) else {
+            return Some(true);
+        };
+        ctrls.remove(&control);
+        let still_held = !ctrls.is_empty();
+        if ctrls.is_empty() {
+            held.remove(&abs);
+        }
+        if held.is_empty() {
+            self.dpad_held.remove(&attachment);
+        }
+        Some(still_held)
+    }
+
     /// Release a field. Returns (field, assert) updates to apply.
     pub(crate) fn release(
         &mut self,
@@ -105,21 +129,9 @@ impl FieldPressState {
         let Some((axis, opposite)) = dpad_pair(abs) else {
             return vec![(field, self.is_held(field))];
         };
-        let mut side_still_held = false;
-        if let Some(held) = self.dpad_held.get_mut(&attachment) {
-            if let Some(ctrls) = held.get_mut(&abs) {
-                ctrls.remove(&control);
-                side_still_held = !ctrls.is_empty();
-                if ctrls.is_empty() {
-                    held.remove(&abs);
-                }
-            } else {
-                side_still_held = true;
-            }
-            if held.is_empty() {
-                self.dpad_held.remove(&attachment);
-            }
-        }
+        let side_still_held = self
+            .remove_dpad_hold(attachment, abs, control)
+            .unwrap_or(false);
         if side_still_held {
             // Same direction still held by another source: the pair is
             // unchanged, so a neutral pair stays neutral.

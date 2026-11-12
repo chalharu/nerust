@@ -95,9 +95,6 @@ def _require_conditional(definition, props):
     """Optional gates requiring extra fields for enum values."""
     gates = definition.get("allOf", [])
     require(type(gates) is list)
-    if "if" in definition or "then" in definition:
-        require("if" in definition and "then" in definition and not gates)
-        gates = [{"if": definition["if"], "then": definition["then"]}]
     for gate in gates:
         _require_gate(gate, props)
 

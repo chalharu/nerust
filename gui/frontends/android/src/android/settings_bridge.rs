@@ -51,10 +51,13 @@ pub(super) fn request_show_settings_dialog(
     let Some((request_id, payload)) = payload else {
         return Ok(false);
     };
-    let tagged = format!(
-        "{{\"schemaVersion\":{SETTINGS_SCHEMA_VERSION},\"requestId\":{},\"payload\":{payload}}}",
-        request_id.0
-    );
+    let tagged = serde_json::json!({
+        "schemaVersion": SETTINGS_SCHEMA_VERSION,
+        "requestId": request_id.0,
+        "payload": serde_json::from_str::<serde_json::Value>(&payload)
+            .map_err(|error| error.to_string())?,
+    })
+    .to_string();
     bridge::post_to_activity(
         app,
         "show Android settings screen",
@@ -153,11 +156,6 @@ fn publish_result(request_id: SettingsRequestId, result: SettingsDialogResult) {
     bridge::wake();
 }
 
-/// Id-conditional variant: a stale callback must not clear the live flight.
-fn resolve_pending_as_dismissed_for(request_id: SettingsRequestId) {
-    publish_result(request_id, SettingsDialogResult::Dismissed);
-}
-
 pub(super) fn take_result() -> Option<SettingsDialogResult> {
     bridge::with_settings(|state| state.flight.take())
 }
@@ -220,7 +218,7 @@ fn on_settings_dialog_result(env: &mut jni::EnvUnowned<'_>, result: JString<'_>)
                 );
                 // The payload parsed, so its id is trustworthy:
                 // clear only its own flight, never a newer rerequest.
-                resolve_pending_as_dismissed_for(payload.request_id);
+                publish_result(payload.request_id, SettingsDialogResult::Dismissed);
             }
             Err(error) => {
                 log::error!("failed to parse Android settings result: {error}");
@@ -272,6 +270,23 @@ pub extern "system" fn Java_io_github_chalharu_nerust_SettingsActivity_nativeHar
     hardware_key(&mut env, keycode, pressed)
 }
 
+/// Fail envelope: every JNI error tail shares one shape.
+fn err_json(error: impl std::fmt::Display) -> String {
+    serde_json::json!({"ok": false, "error": error.to_string()}).to_string()
+}
+
+/// Embed an already-serialized payload object: re-parse, never concatenate.
+/// A payload that is not an object is a bug, so it fails loud as an error.
+fn embed(payload_json: &str, extra: Option<&str>) -> String {
+    match serde_json::from_str::<serde_json::Value>(payload_json) {
+        Ok(payload) => match extra {
+            Some(extra) => format!("{{\"ok\":true,{extra},\"payload\":{payload}}}"),
+            None => format!("{{\"ok\":true,\"payload\":{payload}}}"),
+        },
+        Err(error) => err_json(error),
+    }
+}
+
 fn hardware_key(
     env: &mut jni::EnvUnowned<'_>,
     keycode: jni::sys::jint,
@@ -283,7 +298,7 @@ fn hardware_key(
     let out = match parsed {
         jni::Outcome::Ok((keycode, pressed)) => bridge::with_settings(|state| {
             let Some(draft) = state.draft.as_mut() else {
-                return serde_json::json!({"ok": false, "error": "no settings draft"}).to_string();
+                return err_json("no settings draft");
             };
             if state.capture.is_none() {
                 return serde_json::json!({"ok": true, "consumed": false}).to_string();
@@ -305,12 +320,12 @@ fn hardware_key(
             ) {
                 Ok((payload, consumed)) => {
                     debug_assert!(payload.starts_with('{'), "hardware payload must be JSON");
-                    format!("{{\"ok\":true,\"consumed\":{consumed},\"payload\":{payload}}}")
+                    embed(&payload, Some(&format!("\"consumed\":{consumed}")))
                 }
-                Err(error) => serde_json::json!({"ok": false, "error": error}).to_string(),
+                Err(error) => err_json(error),
             }
         }),
-        _ => serde_json::json!({"ok": false, "error": "jni decode failed"}).to_string(),
+        _ => err_json("jni decode failed"),
     };
     match bridge::with_callback_env(&mut *env, |env| -> jni::errors::Result<jni::sys::jstring> {
         Ok(env.new_string(out)?.into_raw())
@@ -339,7 +354,7 @@ fn settings_command(env: &mut jni::EnvUnowned<'_>, command: JString<'_>) -> jni:
     let out = match parsed {
         jni::Outcome::Ok(command_json) => bridge::with_settings(|state| {
             let Some(draft) = state.draft.as_mut() else {
-                return serde_json::json!({"ok": false, "error": "no settings draft"}).to_string();
+                return err_json("no settings draft");
             };
             match settings_views::apply_command_to(
                 draft,
@@ -352,12 +367,12 @@ fn settings_command(env: &mut jni::EnvUnowned<'_>, command: JString<'_>) -> jni:
             ) {
                 Ok(sections) => {
                     debug_assert!(sections.starts_with('{'), "command payload must be JSON");
-                    format!("{{\"ok\":true,\"payload\":{sections}}}")
+                    embed(&sections, None)
                 }
-                Err(error) => serde_json::json!({"ok": false, "error": error}).to_string(),
+                Err(error) => err_json(error),
             }
         }),
-        _ => serde_json::json!({"ok": false, "error": "jni decode failed"}).to_string(),
+        _ => err_json("jni decode failed"),
     };
     match bridge::with_callback_env(&mut *env, |env| -> jni::errors::Result<jni::sys::jstring> {
         Ok(env.new_string(out)?.into_raw())
