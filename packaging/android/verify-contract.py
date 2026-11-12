@@ -302,28 +302,31 @@ def _check_producer_event(name, puts, arg_types, definitions):
         fields[key] = kind
     menu = definitions["menu"]
     required = set(menu["required"])
-    if name == "controllerEventJson":
+    gated_action = {"controllerEventJson": "controller", "touchGateEventJson": "touch_gate"}.get(name)
+    if gated_action is not None:
         gates = menu.get("allOf", [])
         if "then" in menu:
             gates = [{"if": menu["if"], "then": menu["then"]}]
         for gate in gates:
             condition = gate.get("if", {}).get("properties", {}).get("action", {})
-            if condition.get("const") == "controller":
+            if condition.get("const") == gated_action:
                 required |= set(gate["then"]["required"])
     require(required <= fields.keys() <= menu["properties"].keys(), "producer fields differ from schema")
     require(all(GEN.field_type(menu["properties"][key]) == kind for key, kind in fields.items()),
             "producer field type differs from schema")
     require(dict(puts).get("v") == "BRIDGE_EVENT_VERSION" and dict(puts).get("type") == '"menu"',
             "producer envelope/version drift")
-    require(dict(puts).get("action") == ("action" if name == "menuEventJson" else "MenuAction.CONTROLLER"),
-            "producer action drift")
+    expected_action = {"menuEventJson": "action",
+                       "touchGateEventJson": "MenuAction.TOUCH_GATE",
+                       "controllerEventJson": "MenuAction.CONTROLLER"}[name]
+    require(dict(puts).get("action") == expected_action, "producer action drift")
 
 
 def validate_producer(definitions, producer):
     producer = uncomment(producer)
     builders = re.findall(r'internal fun (\w+)\(([^()]*)\): String\s*=\s*JSONObject\(\)(.*?)\.toString\(\)',
                           producer, re.DOTALL)
-    require({name for name, _, _ in builders} == {"menuEventJson", "controllerEventJson"},
+    require({name for name, _, _ in builders} == {"menuEventJson", "touchGateEventJson", "controllerEventJson"},
             "unparsed event producers")
     for name, args, body in builders:
         _check_producer_event(name, _producer_puts(body), _producer_arg_types(args), definitions)

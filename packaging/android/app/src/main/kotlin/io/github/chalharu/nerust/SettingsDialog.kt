@@ -1121,8 +1121,7 @@ private fun SettingsCategoryList(
         itemsIndexed(visibleSections, key = { _, section -> section.id }) { _, section ->
             // Summaries show inline-editable rows plus group rows that carry
             // a value (player/device summaries); bare chevrons stay out.
-            val onLabel = stringResource(R.string.settings_on)
-            val offLabel = stringResource(R.string.settings_off)
+            // on/off labels ride the hoisted composable resolutions above.
             val summary =
                 section.rows
                     .filter {
