@@ -1750,6 +1750,64 @@ fn bare_rows_are_reviewed_allowlist() {
 }
 
 #[test]
+fn revert_to_original_leaves_draft_untouched() {
+    // Dirty is draft-vs-pristine: a flip-flop must read clean so the
+    // screen never asks to save nothing.
+    let (mut snapshot, _) = test_payload();
+    let pristine = snapshot.clone();
+    set(&mut snapshot, "audio.volume", 0, 77);
+    assert_ne!(snapshot, pristine, "edits still dirty the draft");
+    set(
+        &mut snapshot,
+        "audio.volume",
+        0,
+        i64::from(
+            HostBackendLocalSettings::default()
+                .audio
+                .master_volume_percent,
+        ),
+    );
+    assert_eq!(snapshot, pristine, "revert reads clean");
+}
+
+#[test]
+fn clearing_an_empty_binding_leaves_draft_untouched() {
+    // Unassigned shortcut + Clear: the second clear hits an empty binding,
+    // so the VM round-trips nothing and the draft must not move (no
+    // phantom dirty).
+    let (mut snapshot, payload) = test_payload();
+    let key = payload
+        .sections
+        .iter()
+        .flat_map(|section| &section.rows)
+        .find(|row| row.kind == RowKind::Capture)
+        .map(|row| row.key.clone())
+        .expect("capture row exists");
+    let mut capture: CaptureSlot = None;
+    let mut keyboards = test_keyboards();
+    apply(
+        &mut snapshot,
+        &mut capture,
+        &mut keyboards,
+        &key,
+        WireOp::ClearBinding,
+        0,
+        0,
+    );
+    let cleared_once = snapshot.clone();
+    apply(
+        &mut snapshot,
+        &mut capture,
+        &mut keyboards,
+        &key,
+        WireOp::ClearBinding,
+        0,
+        0,
+    );
+    assert_eq!(snapshot, cleared_once, "empty clear reads clean");
+}
+
+#[test]
 fn toggle_and_number_commands_round_trip() {
     let (mut snapshot, _) = test_payload();
     let muted = set(&mut snapshot, "audio.muted", 1, 0);

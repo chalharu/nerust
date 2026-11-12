@@ -45,6 +45,7 @@ pub(super) fn request_show_settings_dialog(
     let payload = bridge::with_settings(|state| {
         let request_id = state.flight.begin()?;
         state.draft = Some(snapshot.clone());
+        state.pristine = Some(snapshot.clone());
         state.capture = None;
         Some((request_id, payload))
     });
@@ -54,6 +55,7 @@ pub(super) fn request_show_settings_dialog(
     let tagged = serde_json::json!({
         "schemaVersion": SETTINGS_SCHEMA_VERSION,
         "requestId": request_id.0,
+        "dirty": false,
         "payload": payload,
     })
     .to_string();
@@ -65,6 +67,7 @@ pub(super) fn request_show_settings_dialog(
             // The push failed: drop the stashed draft with the dead flight.
             bridge::with_settings(|state| {
                 state.draft = None;
+                state.pristine = None;
                 state.capture = None;
             });
             publish_result(request_id, SettingsDialogResult::Dismissed)
@@ -195,10 +198,12 @@ fn on_settings_dialog_result(env: &mut jni::EnvUnowned<'_>, result: JString<'_>)
                 let result = bridge::with_settings(|state| {
                     if payload.dismissed {
                         state.draft = None;
+                        state.pristine = None;
                         state.capture = None;
                         Some(SettingsDialogResult::Dismissed)
                     } else {
                         state.capture = None;
+                        state.pristine = None;
                         state
                             .draft
                             .take()
@@ -275,10 +280,12 @@ fn err_json(error: impl std::fmt::Display) -> String {
 }
 
 /// Success envelope: one serialization at this JNI edge, no re-parse or
-/// string concat of an already-built payload.
+/// string concat of an already-built payload. `dirty` compares the draft
+/// against the pristine open copy, so reverts read clean.
 #[derive(serde::Serialize)]
 struct Envelope<'a> {
     ok: bool,
+    dirty: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     consumed: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -288,9 +295,10 @@ struct Envelope<'a> {
 /// Success envelope: the payload serializes exactly once at this JNI edge.
 /// The envelope shape is unchanged (`{"ok":true,"payload":{...}}`); only the
 /// old re-parse/concat round-trip is gone.
-fn envelope_ok(payload: &settings_views::ViewPayload) -> Result<String, String> {
+fn envelope_ok(payload: &settings_views::ViewPayload, dirty: bool) -> Result<String, String> {
     serde_json::to_string(&Envelope {
         ok: true,
+        dirty,
         consumed: None,
         payload: Some(payload),
     })
@@ -302,9 +310,11 @@ fn envelope_ok(payload: &settings_views::ViewPayload) -> Result<String, String> 
 fn envelope_key(
     payload: Option<&settings_views::ViewPayload>,
     consumed: bool,
+    dirty: bool,
 ) -> Result<String, String> {
     serde_json::to_string(&Envelope {
         ok: true,
+        dirty,
         consumed: Some(consumed),
         payload,
     })
@@ -323,6 +333,8 @@ fn hardware_key(
         jni::Outcome::Ok((keycode, pressed)) => {
             // Compute under the lock, serialize outside it: the payload
             // string is the expensive part and needs no vault access.
+            // Dirty compares the draft against the pristine open copy in
+            // a second trivial read lock, so no borrow spans the mutation.
             let applied = bridge::with_settings(|state| {
                 let Some(draft) = state.draft.as_mut() else {
                     return Err("no settings draft".to_string());
@@ -346,12 +358,14 @@ fn hardware_key(
                     ),
                 )
             });
+            let dirty = bridge::with_settings(|state| state.draft != state.pristine);
             match applied {
                 Ok((payload, consumed)) => {
                     if payload.is_some() || consumed {
-                        envelope_key(payload.as_ref(), consumed).unwrap_or_else(err_json)
+                        envelope_key(payload.as_ref(), consumed, dirty).unwrap_or_else(err_json)
                     } else {
-                        serde_json::json!({"ok": true, "consumed": false}).to_string()
+                        serde_json::json!({"ok": true, "consumed": false, "dirty": dirty})
+                            .to_string()
                     }
                 }
                 Err(error) => err_json(error),
@@ -386,6 +400,8 @@ fn settings_command(env: &mut jni::EnvUnowned<'_>, command: JString<'_>) -> jni:
     let out = match parsed {
         jni::Outcome::Ok(command_json) => {
             // Compute under the lock, serialize outside it.
+            // Dirty compares the draft against the pristine open copy in
+            // a second trivial read lock, so no borrow spans the mutation.
             let applied = bridge::with_settings(|state| {
                 let Some(draft) = state.draft.as_mut() else {
                     return Err("no settings draft".to_string());
@@ -400,8 +416,9 @@ fn settings_command(env: &mut jni::EnvUnowned<'_>, command: JString<'_>) -> jni:
                     &mut state.system_locale,
                 )
             });
+            let dirty = bridge::with_settings(|state| state.draft != state.pristine);
             match applied {
-                Ok(payload) => envelope_ok(&payload).unwrap_or_else(err_json),
+                Ok(payload) => envelope_ok(&payload, dirty).unwrap_or_else(err_json),
                 Err(error) => err_json(error),
             }
         }

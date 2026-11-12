@@ -207,7 +207,6 @@ private fun parseSettingsRow(row: JSONObject?): SettingsRow? {
  * screen mutation flows through the two callbacks, which are branch-free. */
 private fun applyPayloadJson(
     raw: String,
-    mutating: Boolean,
     onApplied: (List<SettingsSection>, List<String>, String?, Boolean) -> Unit,
     onError: (String?) -> Unit,
 ): Boolean {
@@ -219,7 +218,14 @@ private fun applyPayloadJson(
         }
         val payload = doc.getJSONObject("payload")
         onError(null)
-        onApplied(parseSettingsSections(payload), parseIssues(payload), parseCapture(payload), mutating)
+        // Dirty is Rust-owned (draft vs pristine): a change-then-revert or
+        // a no-op clear reads clean, never dirty.
+        onApplied(
+            parseSettingsSections(payload),
+            parseIssues(payload),
+            parseCapture(payload),
+            doc.optBoolean("dirty", true),
+        )
         return true
     } catch (e: Exception) {
         Log.e(TAG, "settings command result malformed", e)
@@ -428,19 +434,15 @@ internal fun NerustSettingsDialogCard(
     var dirtyKeys by remember { mutableStateOf(setOf<String>()) }
     var pendingResetKey by remember { mutableStateOf<String?>(null) }
 
-    fun applyPayloadJson(
-        raw: String,
-        mutating: Boolean,
-    ): Boolean =
+    fun applyPayloadJson(raw: String): Boolean =
         applyPayloadJson(
             raw,
-            mutating,
-            onApplied = { s, i, c, d ->
+            onApplied = { s, i, c, dirty ->
                 sections = s
                 issues = i
                 capturePrompt = c
                 previewOrientation(s, onOrientationChanged)
-                isDirty = isDirty || d
+                isDirty = dirty
             },
             onError = { commandError = it },
         )
@@ -469,8 +471,14 @@ internal fun NerustSettingsDialogCard(
                     return@runIo
                 }
             BridgeIo.postMain {
-                val applied = applyPayloadJson(raw, mutating)
-                if (mutating && applied) dirtyKeys = resetDirtyKeys(sections, dirtyKeys, op, key)
+                if (!applyPayloadJson(raw)) return@postMain
+                // Rust owns dirty (draft vs pristine): a revert clears
+                // every dot; a live edit keeps marking its row.
+                if (!isDirty) {
+                    dirtyKeys = emptySet()
+                } else if (mutating) {
+                    dirtyKeys = resetDirtyKeys(sections, dirtyKeys, op, key)
+                }
             }
         }
     }
@@ -516,10 +524,10 @@ internal fun NerustSettingsDialogCard(
                 dismissConfirm = { confirmDiscard = false },
                 cancelCapture = { sendCommand("", 0, 0L, "cancel_capture", mutating = false) },
                 applyPayload = { raw ->
-                    applyPayloadJson(raw, mutating = true)
+                    applyPayloadJson(raw)
                 },
                 refreshPayload = { raw ->
-                    applyPayloadJson(raw, mutating = false)
+                    applyPayloadJson(raw)
                 },
             ),
         )
