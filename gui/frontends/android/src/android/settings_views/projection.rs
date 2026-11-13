@@ -737,14 +737,14 @@ fn gamepads_section(snapshot: &SettingsSnapshot, i18n: I18n) -> SectionWire {
     rows.extend((0..MAX_PADS).flat_map(|index| {
         let port_row = choice_row(
             &format!("controls.gamepads.pad{}", index + 1),
-            format!("Pad {}", index + 1),
+            nerust_settings_core::i18n::pad_label(i18n.language(), index),
             String::new(),
             &port_choices,
             &gamepad.pad_ports[index].slot,
         );
         let trigger_row = toggle_row(
             &format!("controls.gamepads.triggers{}", index + 1),
-            format!("Pad {} triggers", index + 1),
+            nerust_settings_core::i18n::pad_triggers_label(i18n.language(), index),
             String::new(),
             i18n,
             gamepad.pad_ports[index].triggers_as_shoulders,

@@ -65,10 +65,9 @@ fn vid_pid(guid: &str) -> Option<(u16, u16)> {
         .step_by(2)
         .map(|i| u8::from_str_radix(&guid[i..i + 2], 16).ok())
         .collect();
+    // 32 hex chars always collect exactly 16 bytes; a bad digit
+    // short-circuits to `None` above.
     let bytes = bytes?;
-    if bytes.len() != 16 {
-        return None;
-    }
     let vid = u16::from_le_bytes([bytes[4], bytes[5]]);
     let pid = u16::from_le_bytes([bytes[8], bytes[9]]);
     Some((vid, pid))

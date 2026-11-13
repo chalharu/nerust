@@ -66,37 +66,12 @@ mod tests {
 
     #[test]
     fn shortcut_row_combines_key_and_pad_labels() {
-        use std::sync::Arc;
-
-        use nerust_settings_core::model::{
-            app_state::DesktopAppState,
-            input::{ShortcutAction, default_shortcut_bindings},
-            local::HostBackendLocalSettings,
-            shared::DesktopSharedSettings,
-            snapshot::SettingsSnapshot,
-        };
+        use nerust_settings_core::model::input::ShortcutAction;
 
         use super::super::dto::BindingValueView;
-        use crate::settings::editor::NoopStoragePathValidator;
-        use crate::settings::test_support::{TestCoreFactory, TestInputFactory};
+        use crate::settings::test_support::test_vm_with_default_shortcuts;
 
-        let mut shared = DesktopSharedSettings::default();
-        shared.input.shortcuts.keyboard = default_shortcut_bindings();
-        let snapshot = SettingsSnapshot {
-            shared,
-            local: HostBackendLocalSettings::default(),
-            app_state: DesktopAppState::default(),
-        };
-        let factory: Arc<dyn nerust_system_traits::factory::CoreFactory> =
-            Arc::new(TestCoreFactory(TestInputFactory::new()));
-        let vm = crate::settings::SettingsViewModel::new(
-            snapshot,
-            vec![factory],
-            Arc::new([]),
-            std::rc::Rc::new(NoopStoragePathValidator)
-                as std::rc::Rc<dyn crate::settings::editor::StoragePathValidator>,
-        )
-        .unwrap();
+        let vm = test_vm_with_default_shortcuts();
         let rows = vm.shortcuts.view.get().rows;
         let pause = rows
             .iter()

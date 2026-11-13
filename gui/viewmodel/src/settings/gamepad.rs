@@ -1,5 +1,5 @@
 use nerust_input_traits::MAX_PADS;
-use nerust_settings_core::i18n::{I18n, UiText};
+use nerust_settings_core::i18n::{I18n, UiText, pad_label, pad_triggers_label};
 
 use super::{
     dto::{ChoiceView, GamepadTabView, PadPortView},
@@ -122,10 +122,10 @@ fn project_view(state: &super::EditorState) -> GamepadTabView {
                 let port = &gamepad.pad_ports[index];
                 PadPortView {
                     index,
-                    label: format!("Pad {}", index + 1),
+                    label: pad_label(i18n.language(), index),
                     port: port.slot,
                     choices: port_choices.clone(),
-                    trigger_label: format!("Pad {} triggers", index + 1),
+                    trigger_label: pad_triggers_label(i18n.language(), index),
                     trigger_alias: port.triggers_as_shoulders,
                     trigger_choices: trigger_choices.clone(),
                 }

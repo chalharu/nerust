@@ -244,7 +244,12 @@ class MainActivity :
      * survives id reuse and reconnects, the raw id does not. Devices that
      * vanish before a descriptor read contribute nothing. */
     private fun sendDeviceAdded(deviceId: Int) {
-        val descriptor = InputDevice.getDevice(deviceId)?.descriptor ?: return
+        // A vanished device contributes no identity; loud here so a pad
+        // that never registers stays diagnosable in logcat.
+        val descriptor = InputDevice.getDevice(deviceId)?.descriptor ?: run {
+            Log.w(TAG, "device_added without descriptor: deviceId=$deviceId")
+            return
+        }
         sendMenuAction(
             menuEvent(MenuAction.DEVICE_ADDED) {
                 put("device_id", deviceId)

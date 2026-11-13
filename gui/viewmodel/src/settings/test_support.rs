@@ -146,6 +146,33 @@ impl CoreFactory for TestCoreFactory {
     }
 }
 
+/// Helper to create a SettingsViewModel preloaded with the default
+/// shortcut bindings (production seeds them at load; bare fixtures skip
+/// that, so pad-column tests would find no rows to bind).
+pub fn test_vm_with_default_shortcuts() -> SettingsViewModel {
+    use nerust_settings_core::model::input::default_shortcut_bindings;
+    use nerust_settings_core::model::snapshot::SettingsSnapshot;
+    use nerust_settings_core::model::{
+        app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
+    };
+    let mut shared = DesktopSharedSettings::default();
+    shared.input.shortcuts.keyboard = default_shortcut_bindings();
+    let snapshot = SettingsSnapshot {
+        shared,
+        local: HostBackendLocalSettings::default(),
+        app_state: DesktopAppState::default(),
+    };
+    let factory: Arc<dyn CoreFactory> = Arc::new(TestCoreFactory(TestInputFactory::new()));
+    SettingsViewModel::new(
+        snapshot,
+        vec![factory],
+        Arc::new([]),
+        Rc::new(super::editor::NoopStoragePathValidator)
+            as Rc<dyn super::editor::StoragePathValidator>,
+    )
+    .unwrap()
+}
+
 /// Helper to create a SettingsViewModel with a test factory.
 pub fn test_vm() -> SettingsViewModel {
     use nerust_settings_core::model::snapshot::SettingsSnapshot;
