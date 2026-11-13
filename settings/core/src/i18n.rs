@@ -243,7 +243,6 @@ pub trait SystemLocaleSource {
 }
 
 /// Fixed-value source: previews, tests, and the Android vault push.
-#[derive(Debug, Clone, Copy)]
 pub struct FixedLocale(pub Option<AppLanguage>);
 
 impl SystemLocaleSource for FixedLocale {
@@ -255,7 +254,6 @@ impl SystemLocaleSource for FixedLocale {
 /// OS-query source: `sys-locale` reads the platform locale (Win32/macOS
 /// APIs; process env on Unix, including `LANG`), so GUI launches
 /// without `LANG` still resolve correctly.
-#[derive(Debug, Clone, Copy)]
 struct OsLocale;
 
 impl SystemLocaleSource for OsLocale {
@@ -267,7 +265,7 @@ impl SystemLocaleSource for OsLocale {
 /// Saved choice to display language: an explicit choice always wins, so
 /// the source is only queried for `SystemDefault` (concrete Android
 /// snapshots never touch it). Pure apart from the source call.
-fn resolve_locale(choice: AppLanguage, source: &dyn SystemLocaleSource) -> AppLanguage {
+fn resolve_locale(choice: AppLanguage, source: impl SystemLocaleSource) -> AppLanguage {
     match choice {
         AppLanguage::SystemDefault => source.system_language().unwrap_or(AppLanguage::English),
         explicit => explicit,
@@ -277,7 +275,7 @@ fn resolve_locale(choice: AppLanguage, source: &dyn SystemLocaleSource) -> AppLa
 /// Resolved display language plus text accessors. Built once per render
 /// entry from the resolved choice — never from a raw choice — and threaded
 /// through builders/controls instead of re-resolving per string.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub struct I18n {
     language: AppLanguage,
 }
@@ -296,11 +294,11 @@ impl I18n {
 
     /// Edge constructor: saved choice plus an OS query.
     pub fn resolve_os(choice: AppLanguage) -> Self {
-        Self::new(resolve_locale(choice, &OsLocale))
+        Self::new(resolve_locale(choice, OsLocale))
     }
 
     /// Edge constructor with an explicit source (tests, Android vault).
-    pub fn resolve_with(choice: AppLanguage, source: &dyn SystemLocaleSource) -> Self {
+    pub fn resolve_with(choice: AppLanguage, source: impl SystemLocaleSource) -> Self {
         Self::new(resolve_locale(choice, source))
     }
 
@@ -865,9 +863,8 @@ mod tests {
 
     #[test]
     fn explicit_choice_never_falls_back_to_os() {
-        let os = OsLocale;
-        assert_eq!(resolve_locale(AppLanguage::Japanese, &os), ja());
-        assert_eq!(resolve_locale(AppLanguage::English, &os), en());
+        assert_eq!(resolve_locale(AppLanguage::Japanese, OsLocale), ja());
+        assert_eq!(resolve_locale(AppLanguage::English, OsLocale), en());
     }
 
     struct StubSource(Option<AppLanguage>);
@@ -882,21 +879,21 @@ mod tests {
     fn resolve_locale_prefers_choice_over_source() {
         // Explicit choices never query the source, so concrete Android
         // snapshots cost nothing.
-        assert_eq!(resolve_locale(ja(), &StubSource(Some(en()))), ja());
-        assert_eq!(resolve_locale(en(), &StubSource(Some(ja()))), en());
+        assert_eq!(resolve_locale(ja(), StubSource(Some(en()))), ja());
+        assert_eq!(resolve_locale(en(), StubSource(Some(ja()))), en());
         assert_eq!(
-            resolve_locale(AppLanguage::SystemDefault, &StubSource(Some(ja()))),
+            resolve_locale(AppLanguage::SystemDefault, StubSource(Some(ja()))),
             ja()
         );
         assert_eq!(
-            resolve_locale(AppLanguage::SystemDefault, &StubSource(None)),
+            resolve_locale(AppLanguage::SystemDefault, StubSource(None)),
             en()
         );
     }
 
     #[test]
     fn i18n_instance_serves_both_languages() {
-        let ja_i18n = I18n::resolve_with(AppLanguage::SystemDefault, &StubSource(Some(ja())));
+        let ja_i18n = I18n::resolve_with(AppLanguage::SystemDefault, StubSource(Some(ja())));
         assert_eq!(ja_i18n.language(), ja());
         assert_eq!(ja_i18n.text(UiText::Open), "開く");
         assert_eq!(ja_i18n.slot_in_use("P1"), "P1使用中");

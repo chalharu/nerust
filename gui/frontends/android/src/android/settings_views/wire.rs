@@ -286,7 +286,7 @@ pub(super) fn build_vm(
 /// SystemDefault follows the vault-pushed terminal `Locale` (`None`
 /// until pushed keeps the choice for the host fallback).
 pub(crate) fn resolve_display(setting: AppLanguage, system: Option<AppLanguage>) -> I18n {
-    I18n::resolve_with(setting, &FixedLocale(system))
+    I18n::resolve_with(setting, FixedLocale(system))
 }
 
 /// Supported set back to a BCP-47 tag for the save push (empty means
