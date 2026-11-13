@@ -1504,6 +1504,72 @@ fn pad_capture_lands_on_shortcut_rows() {
 }
 
 #[test]
+fn pad_press_on_game_row_leaves_capture_pending() {
+    let (mut snapshot, _) = test_payload();
+    let mut capture: CaptureSlot = None;
+    // A game (binding) capture row on the NES controller screen: pads
+    // never land here, so the press must not eat the capture.
+    let target_key = with_test_deps(|| {
+        let vm = build_vm(
+            &snapshot,
+            &test_deps(),
+            sys_display(AppLanguage::SystemDefault),
+        )
+        .expect("vm builds");
+        let keyboards = test_keyboards();
+        let truth = projection(
+            &keyboards,
+            None,
+            &[],
+            sys_display(AppLanguage::SystemDefault),
+        );
+        let sections = build_sections(&vm, &snapshot, truth);
+        sections
+            .iter()
+            .flat_map(|section| &section.rows)
+            .find(|row| {
+                row.kind == RowKind::Capture
+                    && serde_json::from_str::<serde_json::Value>(&row.target)
+                        .ok()
+                        .and_then(|target| target.get("kind")?.as_str().map(str::to_string))
+                        == Some("binding".to_string())
+            })
+            .map(|row| row.key.clone())
+            .expect("game capture row exists")
+    });
+    let started = apply(
+        &mut snapshot,
+        &mut capture,
+        &mut test_keyboards(),
+        &target_key,
+        WireOp::StartCapture,
+        0,
+        0,
+    );
+    assert!(started.capture.is_some(), "game capture pending");
+    let (_, consumed) = with_test_deps(|| {
+        apply_hardware_key(
+            110,
+            true,
+            &mut snapshot,
+            &mut capture,
+            projection(
+                &test_keyboards(),
+                None,
+                &[],
+                sys_display(AppLanguage::SystemDefault),
+            ),
+        )
+        .expect("pad press probes a game row")
+    });
+    assert!(!consumed, "pad press on a game row is not consumed");
+    assert!(
+        capture.is_some(),
+        "capture stays pending for a keyboard key"
+    );
+}
+
+#[test]
 fn capture_round_trips_through_hardware_keys() {
     let (mut snapshot, _) = test_payload();
     let mut capture: CaptureSlot = None;
