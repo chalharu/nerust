@@ -34,7 +34,7 @@ pub(crate) use commands::{apply_command_to, finish_snapshot};
 #[cfg(target_os = "android")]
 pub(crate) use wire::{
     CaptureSlot, GamepadInfo, KeyboardInfo, ViewPayload, app_language_tag, install_vm_deps,
-    projection, resolve_display, system_language_from_tag,
+    projection, resolve_display,
 };
 
 #[cfg(test)]

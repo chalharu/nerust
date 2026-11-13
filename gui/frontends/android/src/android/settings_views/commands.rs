@@ -8,7 +8,7 @@ use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_viewmodel::settings::SettingsViewModel;
 use nerust_settings_core::{
     editor::CaptureTarget,
-    i18n::UiText,
+    i18n::{UiText, language_from_locale_tag},
     model::{
         app_state::DesktopAppState,
         input::ensure_default_shortcuts,
@@ -27,8 +27,7 @@ use super::projection::{
 use super::wire::{
     CaptureSlot, GamepadInfo, I18n, KeyboardInfo, Projection, RowKind, RowWire, SectionWire,
     ViewPayload, VmDeps, WireCommand, WireOp, build_vm, choice, find_row, pin_draft_language,
-    projection, range_value, resolve_display, sync_snapshot_from_vm, system_language_from_tag,
-    toggle_value, with_vm_deps,
+    projection, range_value, resolve_display, sync_snapshot_from_vm, toggle_value, with_vm_deps,
 };
 
 /// Apply one wire command to the draft snapshot in place, returning the
@@ -276,7 +275,7 @@ fn apply_device_truth_command(
         if tag.is_empty() {
             return Err("device_truth lang must not be empty".to_string());
         }
-        *system_locale = Some(system_language_from_tag(tag));
+        *system_locale = Some(language_from_locale_tag(tag));
     }
     Ok(())
 }

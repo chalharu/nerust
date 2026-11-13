@@ -256,7 +256,7 @@ impl SystemLocaleSource for FixedLocale {
 /// APIs; process env on Unix, including `LANG`), so GUI launches
 /// without `LANG` still resolve correctly.
 #[derive(Debug, Clone, Copy)]
-pub struct OsLocale;
+struct OsLocale;
 
 impl SystemLocaleSource for OsLocale {
     fn system_language(&self) -> Option<AppLanguage> {
@@ -267,7 +267,7 @@ impl SystemLocaleSource for OsLocale {
 /// Saved choice to display language: an explicit choice always wins, so
 /// the source is only queried for `SystemDefault` (concrete Android
 /// snapshots never touch it). Pure apart from the source call.
-pub fn resolve_locale(choice: AppLanguage, source: &dyn SystemLocaleSource) -> AppLanguage {
+fn resolve_locale(choice: AppLanguage, source: &dyn SystemLocaleSource) -> AppLanguage {
     match choice {
         AppLanguage::SystemDefault => source.system_language().unwrap_or(AppLanguage::English),
         explicit => explicit,
@@ -275,7 +275,7 @@ pub fn resolve_locale(choice: AppLanguage, source: &dyn SystemLocaleSource) -> A
 }
 
 /// Resolved display language plus text accessors. Built once per render
-/// entry from [`resolve_locale`] — never from a raw choice — and threaded
+/// entry from the resolved choice — never from a raw choice — and threaded
 /// through builders/controls instead of re-resolving per string.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct I18n {
@@ -663,13 +663,13 @@ macro_rules! localized {
 
 /// History item count (`42 items` / `42件`). The number leads in
 /// both languages (Console / Event Viewer pattern).
-pub fn history_count(language: AppLanguage, count: usize) -> String {
+fn history_count(language: AppLanguage, count: usize) -> String {
     localized!(language, format!("{count} items"), format!("{count}件"))
 }
 
 /// Description for a controller-slot choice row: which port the row drives
 /// is in the row label, so the description only states the action.
-pub fn slot_description(language: AppLanguage) -> String {
+fn slot_description(language: AppLanguage) -> String {
     localized!(
         language,
         "Controller for this port.".to_string(),
@@ -679,7 +679,7 @@ pub fn slot_description(language: AppLanguage) -> String {
 
 /// Player/device-row summary: "Not assigned" when empty, otherwise
 /// "Name" or "Name +N" (short form is banned: the full first name reads).
-pub fn port_summary(language: AppLanguage, names: &[String]) -> String {
+fn port_summary(language: AppLanguage, names: &[String]) -> String {
     match names {
         [] => lookup(language, UiText::NotAssigned).to_string(),
         [first] => first.clone(),
@@ -690,7 +690,7 @@ pub fn port_summary(language: AppLanguage, names: &[String]) -> String {
 
 /// Player/device-row count line: "No devices assigned" / "1 device
 /// assigned" / "N devices assigned" (singular/plural distinguished).
-pub fn port_count_line(language: AppLanguage, count: usize) -> String {
+fn port_count_line(language: AppLanguage, count: usize) -> String {
     match count {
         0 => localized!(
             language,

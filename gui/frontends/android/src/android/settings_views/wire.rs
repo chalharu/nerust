@@ -12,7 +12,7 @@ use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_viewmodel::settings::{SettingsViewModel, StoragePathError, StoragePathValidator};
 use nerust_settings_core::{
     editor::CaptureTarget,
-    i18n::{FixedLocale, UiText, language_from_locale_tag},
+    i18n::{FixedLocale, UiText},
     model::language::AppLanguage,
 };
 use nerust_system_traits::factory::CoreFactory;
@@ -268,9 +268,9 @@ pub(super) fn build_vm(
     i18n: I18n,
 ) -> Result<SettingsViewModel, String> {
     // Display copy only: the VM resolves every label through the snapshot
-    // language, so SystemDefault is concretized here (Android never sets
-    // the LANG env the shared resolver reads). The draft keeps the user's
-    // choice; writebacks restore it via `sync_snapshot_from_vm`.
+    // language, so SystemDefault is concretized here (the OS query sees
+    // no locale on Android). The draft keeps the user's choice;
+    // writebacks restore it via `sync_snapshot_from_vm`.
     let mut resolved = snapshot.clone();
     resolved.shared.general.language = i18n.language();
     SettingsViewModel::new(
@@ -289,16 +289,8 @@ pub(crate) fn resolve_display(setting: AppLanguage, system: Option<AppLanguage>)
     I18n::resolve_with(setting, &FixedLocale(system))
 }
 
-/// Terminal locale tag to the supported set. Delegates to the shared
-/// rule so ingestion and the save push cannot drift from Desktop.
-/// The tag *source* stays Android-side (vault-pushed effective tag:
-/// saved in-app choice wins), which `sys-locale` cannot see.
-pub(crate) fn system_language_from_tag(tag: &str) -> AppLanguage {
-    language_from_locale_tag(tag)
-}
-
 /// Supported set back to a BCP-47 tag for the save push (empty means
-/// the terminal locale). Inverse of `system_language_from_tag`.
+/// the terminal locale). Inverse of the shared tag→language rule.
 pub(crate) fn app_language_tag(language: AppLanguage) -> &'static str {
     match language {
         AppLanguage::Japanese => "ja",
