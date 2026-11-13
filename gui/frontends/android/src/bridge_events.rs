@@ -1,14 +1,14 @@
 //! Typed Kotlin bridge codec: v1 JSON strings into frontend events.
 //! JNI glue stays in `android::menu`; this module is host-testable.
 
-use nerust_input_traits::AbstractKey;
+use nerust_input_traits::StandardButton;
 
 /// Menu button presses from the Kotlin overflow menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MenuAction {
     ControllerInput {
         device_id: i32,
-        key: AbstractKey,
+        button: StandardButton,
         pressed: bool,
     },
     CreateSlot,
@@ -44,17 +44,24 @@ use crate::bridge_contract::{
 
 /// Typed controller-key mapping, checked against the shared JSON schema.
 /// Single source: the decoder reads this table, no parallel match.
-pub(crate) const CONTROLLER_KEY_TABLE: &[(&str, AbstractKey)] = &[
-    ("button1", AbstractKey::Button1),
-    ("button2", AbstractKey::Button2),
-    ("button5", AbstractKey::Button5),
-    ("button6", AbstractKey::Button6),
-    ("start", AbstractKey::Start),
-    ("select", AbstractKey::Select),
-    ("up", AbstractKey::DpadUp),
-    ("down", AbstractKey::DpadDown),
-    ("left", AbstractKey::DpadLeft),
-    ("right", AbstractKey::DpadRight),
+/// Names are bridge ids (stable for compat); positions resolve in Rust so
+/// one OS keycode set serves every vendor layout.
+pub(crate) const CONTROLLER_KEY_TABLE: &[(&str, StandardButton)] = &[
+    ("button1", StandardButton::South),
+    ("button2", StandardButton::East),
+    ("button3", StandardButton::West),
+    ("button4", StandardButton::North),
+    ("button5", StandardButton::LeftShoulder),
+    ("button6", StandardButton::RightShoulder),
+    ("start", StandardButton::Start),
+    ("select", StandardButton::Back),
+    ("guide", StandardButton::Guide),
+    ("up", StandardButton::DpadUp),
+    ("down", StandardButton::DpadDown),
+    ("left", StandardButton::DpadLeft),
+    ("right", StandardButton::DpadRight),
+    ("l3", StandardButton::LeftStick),
+    ("r3", StandardButton::RightStick),
 ];
 
 /// One drawer-submenu row: slot id plus its save instant. Plain data so
@@ -197,19 +204,19 @@ fn decode_json_menu_action(
 }
 
 fn decode_controller_parts(device_id: i32, key: &str, pressed: bool) -> Option<MenuAction> {
-    let Some(key) = controller_key(key) else {
+    let Some(button) = controller_button(key) else {
         log::warn!("ignoring unknown Android controller key: {key}");
         return None;
     };
     Some(MenuAction::ControllerInput {
         device_id,
-        key,
+        button,
         pressed,
     })
 }
 
 /// Single-table key lookup; the schema test keeps it in sync.
-fn controller_key(key: &str) -> Option<AbstractKey> {
+fn controller_button(key: &str) -> Option<StandardButton> {
     CONTROLLER_KEY_TABLE
         .iter()
         .find(|(name, _)| *name == key)
@@ -288,7 +295,7 @@ mod tests {
             )),
             Some(FrontendEvent::Menu(MenuAction::ControllerInput {
                 device_id: 7,
-                key: nerust_input_traits::AbstractKey::Button1,
+                button: nerust_input_traits::StandardButton::South,
                 pressed: true,
             }))
         );
@@ -476,7 +483,7 @@ mod tests {
             .map(|value| value.as_str().expect("key enum entries are strings"))
             .collect();
         assert_eq!(schema_keys.len(), CONTROLLER_KEY_TABLE.len());
-        for (name, key) in CONTROLLER_KEY_TABLE {
+        for (name, button) in CONTROLLER_KEY_TABLE {
             assert!(
                 schema_keys.contains(name),
                 "schema is missing controller key {name}"
@@ -488,7 +495,7 @@ mod tests {
                 decode_frontend_event(&raw),
                 Some(FrontendEvent::Menu(MenuAction::ControllerInput {
                     device_id: 3,
-                    key: *key,
+                    button: *button,
                     pressed: true,
                 })),
                 "key {name} must round-trip"

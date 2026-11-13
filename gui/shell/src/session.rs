@@ -38,7 +38,8 @@ use nerust_gui_runtime::settings::{
     manager::SettingsManager,
 };
 use nerust_input_traits::{
-    AbstractKey, AttachmentId, DigitalControlId, InputAssignments, Key, UnifiedFieldMap,
+    AbstractKey, AttachmentId, DigitalControlId, InputAssignments, SourceButtonId, SourceId,
+    UnifiedFieldMap,
 };
 use nerust_persistence::error::PersistenceError;
 use nerust_render_traits::{FrameBuffer, VideoRenderProfile};
@@ -167,7 +168,9 @@ struct InputDept {
     current_assignments: InputAssignments,
     /// Reverse map: keyboard key → field index, rebuilt on binding/controller change.
     key_field_map: HashMap<nerust_input_traits::Key, usize>,
-    pressed_keys: HashSet<Key>,
+    /// Repeat suppression for every source: one `(source, button)` set, so
+    /// keyboards and pads share the rule instead of each adapter owning one.
+    pressed: HashSet<(SourceId, SourceButtonId)>,
     /// Key → Copy (attachment, control) for dpad-neutral resolution.
     /// Interned at rebuild time so the hot path never allocates.
     key_source: HashMap<nerust_input_traits::Key, (AttachmentId, DigitalControlId)>,
@@ -185,7 +188,7 @@ impl InputDept {
         Self {
             current_assignments,
             key_field_map: HashMap::new(),
-            pressed_keys: HashSet::new(),
+            pressed: HashSet::new(),
             key_source: HashMap::new(),
             interner: IdInterner::default(),
             press_state: field_press::FieldPressState::default(),
@@ -269,6 +272,34 @@ impl InputDept {
                             && id == control
                         {
                             return info.abstract_key;
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// First console control carrying one abstract button, in slot order.
+    /// Pad resolution inverts `abstract_for` over the same traversal:
+    /// first assigned port wins, so multi-port choice stays explicit
+    /// instead of fanning one pad out to every port silently.
+    fn control_for_abstract(
+        &self,
+        abstract_key: AbstractKey,
+    ) -> Option<(AttachmentId, DigitalControlId)> {
+        use nerust_input_traits::ControlId;
+        for (_slot, profile) in self.current_assignments.slots() {
+            let Some(profile) = profile else {
+                continue;
+            };
+            for set in profile.port_sets() {
+                for (port, group) in set.ports.iter().zip(profile.port_groups()) {
+                    for info in *group {
+                        if info.abstract_key == Some(abstract_key)
+                            && let ControlId::Digital(id) = info.id
+                        {
+                            return Some((*port, id));
                         }
                     }
                 }
@@ -483,7 +514,10 @@ struct PreSwitchState {
     system_id: Option<Box<dyn SystemId>>,
     display_name: Option<&'static str>,
     assignments: InputAssignments,
-    pressed: std::collections::HashSet<nerust_input_traits::Key>,
+    pressed: std::collections::HashSet<(
+        nerust_input_traits::SourceId,
+        nerust_input_traits::SourceButtonId,
+    )>,
     persistence: persistence::PersistSnapshot,
     /// Whether the stashed runtime ran: frozen so no battery update slips past the flush.
     /// Rollback resumes it.
@@ -1027,7 +1061,7 @@ impl SessionHandle {
                 &mut self.input.current_assignments,
                 created.applied_assignments,
             ),
-            pressed: std::mem::take(&mut self.input.pressed_keys),
+            pressed: std::mem::take(&mut self.input.pressed),
             persistence: self.media.persistence.snapshot_state(),
             was_running,
         };
@@ -1056,7 +1090,7 @@ impl SessionHandle {
         self.active_system_id = stashed.system_id;
         self.cached_display_name = stashed.display_name;
         self.input.current_assignments = stashed.assignments;
-        self.input.pressed_keys = stashed.pressed;
+        self.input.pressed = stashed.pressed;
         self.media.persistence.restore_state(stashed.persistence);
         self.input.invalidate_topology();
         self.debug_clear_write();

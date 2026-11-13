@@ -119,7 +119,7 @@ def harness(schema):
     lines = [
         'extern crate self as nerust_input_traits;',
         '#[derive(Debug, Clone, Copy, PartialEq, Eq)]',
-        'pub enum AbstractKey { Button1, Button2, Button5, Button6, Start, Select, DpadUp, DpadDown, DpadLeft, DpadRight }',
+        'pub enum StandardButton { South, East, West, North, Back, Guide, Start, LeftStick, RightStick, LeftShoulder, RightShoulder, DpadUp, DpadDown, DpadLeft, DpadRight, Misc1, Paddle1, Paddle2, Paddle3, Paddle4 }',
         'mod error_dialog_controller {',
         '    #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]',
         '    #[serde(transparent)]',

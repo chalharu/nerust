@@ -1,7 +1,7 @@
 use nerust_core_traits::touch::{TouchControl, TouchControlRole, TouchOverlayModel};
-use nerust_input_traits::Key;
 use nerust_input_traits::{
-    AbstractKey, AttachmentId, ControlId, DigitalControlId, DigitalInputEvent, InputValue,
+    AbstractKey, AttachmentId, ControlId, DigitalControlId, DigitalInputEvent, InputValue, Key,
+    SourceButtonId, SourceId, StandardButton,
 };
 use nerust_settings_core::model::input::ShortcutAction;
 
@@ -143,43 +143,108 @@ impl SessionHandle {
     }
 
     pub fn handle_keyboard_key(&mut self, key: Key, pressed: bool) -> Option<KeyboardShortcut> {
+        self.handle_source_button(SourceId::KEYBOARD, SourceButtonId::Key(key), pressed)
+    }
+
+    /// Single entry for every physical source. Repeat suppression is one
+    /// `(source, button)` set: keyboards and pads share the rule, so no
+    /// adapter owns a private pressed set. Pad shortcuts stay unbound
+    /// (keyboard-only `ShortcutSettings` is the follow-up, not this branch).
+    pub fn handle_source_button(
+        &mut self,
+        source: SourceId,
+        button: SourceButtonId,
+        pressed: bool,
+    ) -> Option<KeyboardShortcut> {
         let first_press = if pressed {
-            self.input.pressed_keys.insert(key)
+            self.input.pressed.insert((source, button))
         } else {
-            self.input.pressed_keys.remove(&key);
+            self.input.pressed.remove(&(source, button));
             false
         };
 
         // Repeats change nothing (the source already holds the field);
         // releases always re-sync so a stuck field cannot survive.
         let changed = (pressed && first_press) || !pressed;
-        if changed && let Some(&field) = self.input.key_field_map.get(&key) {
-            // Copy ids out: no allocation on the hot path.
-            let dpad = self
-                .input
-                .key_source
-                .get(&key)
-                .copied()
-                .and_then(|(attachment, control)| self.input.dpad_for(attachment, control));
-            self.commit_press(field, FieldSource::Key(key), dpad, pressed);
-        }
-
-        if first_press {
-            return shortcut_action_for_key(&self.settings.snapshot.shared, key).map(|action| {
-                if matches!(action, ShortcutAction::ToggleFullscreen) {
-                    KeyboardShortcut::ToggleFullscreen
-                } else if matches!(action, ShortcutAction::OpenDebugger) {
-                    KeyboardShortcut::OpenDebugger
-                } else {
-                    KeyboardShortcut::Session(action)
+        match button {
+            SourceButtonId::Key(key) => {
+                if changed && let Some(&field) = self.input.key_field_map.get(&key) {
+                    // Copy ids out: no allocation on the hot path.
+                    let dpad =
+                        self.input.key_source.get(&key).copied().and_then(
+                            |(attachment, control)| self.input.dpad_for(attachment, control),
+                        );
+                    self.commit_press(field, FieldSource::Key(key), dpad, pressed);
                 }
-            });
+
+                if first_press {
+                    return shortcut_action_for_key(&self.settings.snapshot.shared, key).map(
+                        |action| {
+                            if matches!(action, ShortcutAction::ToggleFullscreen) {
+                                KeyboardShortcut::ToggleFullscreen
+                            } else if matches!(action, ShortcutAction::OpenDebugger) {
+                                KeyboardShortcut::OpenDebugger
+                            } else {
+                                KeyboardShortcut::Session(action)
+                            }
+                        },
+                    );
+                }
+                None
+            }
+            SourceButtonId::Pad(std_button) => {
+                if changed {
+                    self.commit_pad_press(source, std_button, pressed);
+                }
+                None
+            }
         }
-        None
+    }
+
+    /// Pad press tail: position button to console control through the live
+    /// assignments. First assigned port wins (multi-port choice is the
+    /// port-assignment follow-up, not a silent second-port fan-out).
+    fn commit_pad_press(&mut self, source: SourceId, button: StandardButton, pressed: bool) {
+        let Some(abstract_key) = button.abstract_key() else {
+            return;
+        };
+        let Some((attachment, control)) = self.input.control_for_abstract(abstract_key) else {
+            return;
+        };
+        let field = self
+            .emu
+            .field_map()
+            .and_then(|fields| fields.get(&(attachment, ControlId::from(control))).copied());
+        let Some(field) = field else {
+            return;
+        };
+        let dpad = self.input.dpad_for(attachment, control);
+        self.commit_press(field, FieldSource::Pad(source, button), dpad, pressed);
+    }
+
+    /// Event-ful release of every held pad button (surface loss): releases
+    /// travel through the OR machine so fields held by other sources stay
+    /// asserted. Keyboards are untouched.
+    pub fn release_pad_presses(&mut self) {
+        let held: Vec<(SourceId, StandardButton)> = self
+            .input
+            .pressed
+            .iter()
+            .filter_map(|(source, button)| match button {
+                SourceButtonId::Pad(std_button) => Some((*source, *std_button)),
+                SourceButtonId::Key(_) => None,
+            })
+            .collect();
+        for (source, button) in held {
+            self.input
+                .pressed
+                .remove(&(source, SourceButtonId::Pad(button)));
+            self.commit_pad_press(source, button, false);
+        }
     }
 
     pub fn clear_input(&mut self) {
-        self.input.pressed_keys.clear();
+        self.input.pressed.clear();
         self.input.press_state.clear();
         if let Some(gui_input) = self.emu.input_mut() {
             gui_input.clear();
@@ -421,6 +486,57 @@ mod tests {
     }
 
     #[test]
+    fn source_buttons_share_one_suppression_set_and_pads_release_alone() {
+        use nerust_input_traits::{PadGuid, SourceButtonId, SourceId, StandardButton};
+        let mut session = crate::session::test_util::test_session();
+        let pad = SourceId::Pad(PadGuid::NIL);
+        let south = SourceButtonId::Pad(StandardButton::South);
+        session.handle_source_button(pad, south, true);
+        session.handle_keyboard_key(Key::KeyA, true);
+        assert!(session.input.pressed.contains(&(pad, south)));
+        // Pad repeats change nothing; the release below still re-syncs.
+        session.handle_source_button(pad, south, true);
+        session.release_pad_presses();
+        assert!(
+            !session
+                .input
+                .pressed
+                .iter()
+                .any(|(_, button)| matches!(button, SourceButtonId::Pad(_)))
+        );
+        assert!(
+            session
+                .input
+                .pressed
+                .contains(&(SourceId::KEYBOARD, SourceButtonId::Key(Key::KeyA)))
+        );
+        session.clear_input();
+    }
+
+    #[test]
+    fn pad_resolution_uses_live_assignments_first_port_wins() {
+        use nerust_input_traits::StandardButton;
+        let mut session = crate::session::test_util::test_session();
+        session.input.current_assignments = InputAssignments::new(vec![(
+            AttachmentId::new("test.topology.slot"),
+            Some(Rc::new(MockTopologyProfile)),
+        )]);
+        let found = session
+            .input
+            .control_for_abstract(StandardButton::South.abstract_key().expect("mapped"));
+        assert_eq!(
+            found.expect("topology control").0,
+            AttachmentId::new("test.topology.slot")
+        );
+        assert!(
+            session
+                .input
+                .control_for_abstract(AbstractKey::Guide)
+                .is_none()
+        );
+    }
+
+    #[test]
     fn unrelated_fullscreen_apply_preserves_physical_key_state() {
         let mut session = crate::session::test_util::test_session();
         session.handle_keyboard_key(Key::KeyA, true);
@@ -431,9 +547,11 @@ mod tests {
             .window
             .fullscreen_default;
         session.set_fullscreen_default(!fullscreen).unwrap();
-        assert!(session.input.pressed_keys.contains(&Key::KeyA));
+        use nerust_input_traits::{SourceButtonId, SourceId};
+        let probe = (SourceId::KEYBOARD, SourceButtonId::Key(Key::KeyA));
+        assert!(session.input.pressed.contains(&probe));
         session.handle_keyboard_key(Key::KeyA, false);
-        assert!(!session.input.pressed_keys.contains(&Key::KeyA));
+        assert!(!session.input.pressed.contains(&probe));
     }
 
     #[test]

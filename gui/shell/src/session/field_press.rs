@@ -9,13 +9,18 @@
 
 use std::collections::{HashMap, HashSet};
 
-use nerust_input_traits::{AbstractKey, AttachmentId, DigitalControlId, Key};
+use nerust_input_traits::{
+    AbstractKey, AttachmentId, DigitalControlId, Key, SourceId, StandardButton,
+};
 
-/// One holder of a field: a keyboard key or a physical control.
+/// One holder of a field: a keyboard key, a resolved control, or a pad
+/// button on its source. Pad presses carry their source so chords across
+/// two pads merge in the OR machine instead of aliasing one holder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum FieldSource {
     Key(Key),
     Control(AttachmentId, DigitalControlId),
+    Pad(SourceId, StandardButton),
 }
 
 /// Dpad axis for neutral resolution.
