@@ -466,6 +466,26 @@ impl SessionHandle {
         self.input.analogs.clear();
     }
 
+    /// Re-assert every held pad button through the live assignments.
+    /// Pair with the keyboard re-assert in `rebind_input`: the live
+    /// fields were just cleared, so both sources survive a settings
+    /// apply without a re-press. Pads re-resolve (ports may have moved);
+    /// Off-parked holds simply assert nothing.
+    pub(super) fn reassert_pad_presses(&mut self) {
+        let held: Vec<(SourceId, StandardButton)> = self
+            .input
+            .pressed
+            .iter()
+            .filter_map(|(source, button)| match button {
+                SourceButtonId::Pad(std_button) => Some((*source, *std_button)),
+                SourceButtonId::Key(_) => None,
+            })
+            .collect();
+        for (source, button) in held {
+            self.commit_pad_press(source, button, true);
+        }
+    }
+
     pub fn clear_input(&mut self) {
         self.input.pressed.clear();
         self.input.analogs.clear();
@@ -933,6 +953,49 @@ mod tests {
         )));
         session.handle_source_axis(pad, GamepadAxis::LeftTrigger, 0.0);
         assert!(session.input.axis_dpad.is_empty());
+        session.clear_input();
+    }
+
+    #[test]
+    fn settings_apply_reasserts_pad_holds_without_repress() {
+        use nerust_input_traits::{SourceButtonId, StandardButton};
+        let mut session = crate::session::test_util::test_session();
+        session.input.current_assignments = InputAssignments::new(vec![(
+            AttachmentId::new("test.topology.slot"),
+            Some(Rc::new(MockTopologyProfile)),
+        )]);
+        let pad = session.pad_source_for(11);
+        session.handle_source_button(pad, SourceButtonId::Pad(StandardButton::South), true);
+        assert!(
+            session
+                .input
+                .pressed
+                .contains(&(pad, SourceButtonId::Pad(StandardButton::South)))
+        );
+        // Unrelated apply clears the live fields; the hold re-asserts
+        // through the new assignments instead of going silent.
+        let fullscreen = session
+            .settings_snapshot()
+            .local
+            .video
+            .window
+            .fullscreen_default;
+        session.set_fullscreen_default(!fullscreen).unwrap();
+        assert!(
+            session
+                .input
+                .pressed
+                .contains(&(pad, SourceButtonId::Pad(StandardButton::South))),
+            "pad holds survive a settings apply like keyboard holds do"
+        );
+        session.handle_source_button(pad, SourceButtonId::Pad(StandardButton::South), false);
+        assert!(
+            !session
+                .input
+                .pressed
+                .iter()
+                .any(|(_, button)| matches!(button, SourceButtonId::Pad(_)))
+        );
         session.clear_input();
     }
 
