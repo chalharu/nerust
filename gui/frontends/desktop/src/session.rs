@@ -739,6 +739,18 @@ mod tests {
     }
 
     #[test]
+    fn application_poll_gamepads_gates_like_key_events() {
+        // Wiring pin: the application gate computes and drains without
+        // pads attached, mirroring the `key_event` smoke path.
+        use nerust_gui_application::Application;
+        let (adapter, _dir) = test_fixture::loaded_adapter();
+        let mut app = Application::new(adapter);
+        let mut cuts = Vec::new();
+        app.poll_gamepads(&mut cuts);
+        assert!(cuts.is_empty());
+    }
+
+    #[test]
     fn pad_poll_drains_empty_without_devices() {
         // CI runners expose no HID pads: the port drains empty under
         // both gates without touching the keyboard path.
