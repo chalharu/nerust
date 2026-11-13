@@ -253,19 +253,14 @@ impl SystemLocaleSource for FixedLocale {
 }
 
 /// OS-query source: `sys-locale` reads the platform locale (Win32/macOS
-/// APIs; process env on Unix), so GUI launches without `LANG` still
-/// resolve correctly. `LANG` stays as the fallback for platforms
-/// `sys-locale` does not cover.
+/// APIs; process env on Unix, including `LANG`), so GUI launches
+/// without `LANG` still resolve correctly.
 #[derive(Debug, Clone, Copy)]
 pub struct OsLocale;
 
 impl SystemLocaleSource for OsLocale {
     fn system_language(&self) -> Option<AppLanguage> {
-        if let Some(locale) = sys_locale::get_locale() {
-            return Some(language_from_locale_tag(&locale));
-        }
-        let lang = std::env::var("LANG").unwrap_or_default();
-        (!lang.is_empty()).then(|| language_from_locale_tag(&lang))
+        sys_locale::get_locale().map(|locale| language_from_locale_tag(&locale))
     }
 }
 
@@ -853,7 +848,7 @@ mod tests {
 
     #[test]
     fn locale_tag_maps_primary_subtag() {
-        // BCP-47 (Android vault, sys-locale) and Unix (LANG fallback) forms.
+        // BCP-47 (Android vault, sys-locale) and Unix (`ja_JP.UTF-8`) forms.
         for tag in [
             "ja",
             "ja-JP",
