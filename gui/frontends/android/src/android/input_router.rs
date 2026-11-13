@@ -48,7 +48,7 @@ impl InputRouter {
     }
 
     pub(super) fn apply_physical_controller_input(
-        &mut self,
+        &self,
         session: &mut SessionHandle,
         device_id: i32,
         button: StandardButton,
@@ -61,7 +61,7 @@ impl InputRouter {
     }
 
     pub(super) fn apply_physical_controller_axis(
-        &mut self,
+        &self,
         session: &mut SessionHandle,
         device_id: i32,
         axis: GamepadAxis,

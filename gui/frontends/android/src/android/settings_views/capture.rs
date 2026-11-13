@@ -5,6 +5,7 @@
 
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_input_traits::{Key, StandardButton};
+use nerust_settings_core::editor::CaptureTarget;
 
 use super::projection::project_fresh;
 use super::wire::{
@@ -37,6 +38,12 @@ pub(crate) fn apply_hardware_key(
             } else {
                 None
             };
+            // Pads only land on shortcut rows: a pad press on a game row
+            // leaves the capture pending for a keyboard key instead of
+            // eating it.
+            if button.is_some() && !matches!(target, CaptureTarget::Shortcut(_)) {
+                return Ok((None, false));
+            }
             if key.is_some() || button.is_some() {
                 let vm = build_vm(snapshot, deps, i18n)?;
                 vm.capture
