@@ -187,6 +187,7 @@ class SettingsActivity :
                 }
             if (scan == lastDeviceTruth) return@runIo
             lastDeviceTruth = scan
+            Log.d(TAG, "device truth scan: keyboards=${scan.keyboards.size} gamepads=${scan.gamepadNames}")
             val keyboards = JSONArray()
             scan.keyboards.forEach { row ->
                 keyboards.put(

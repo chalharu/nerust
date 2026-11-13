@@ -611,10 +611,10 @@ class ChromeManager(private val activity: MainActivity) {
     fun setControllerConnected(connected: Boolean) {
         if (controllerConnected == connected) return
         controllerConnected = connected
-        if (connected) {
-            activity.window.decorView.removeCallbacks(restoreControllerOverlayRunnable)
-            controllerOverlayHiddenUntil = 0L
-        }
+        // Either edge converges the quiet window: connects subsume it, and
+        // disconnects must not hold the overlay hostage past removal.
+        activity.window.decorView.removeCallbacks(restoreControllerOverlayRunnable)
+        controllerOverlayHiddenUntil = 0L
         refreshOverlayChrome()
     }
 
