@@ -74,8 +74,7 @@ pub enum ValidationIssueKind {
 
 impl ValidationIssueKind {
     pub fn message(&self, language: AppLanguage) -> String {
-        let i18n = I18n::resolve_os(language);
-        let japanese = matches!(i18n.language(), AppLanguage::Japanese);
+        let japanese = matches!(I18n::resolve_os(language).language(), AppLanguage::Japanese);
         match self {
             Self::Storage(detail) => detail.clone(),
             Self::VolumeOutOfRange => pick(
