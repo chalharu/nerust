@@ -313,7 +313,7 @@ class MainActivity :
         }
         // Analog holds converge the same way: recenter every axis so the
         // Rust substitute releases even when the device is already gone.
-        controllerAxes.remove(deviceId)?.keys.toList()?.forEach { axis ->
+        controllerAxes.remove(deviceId)?.keys?.toList()?.forEach { axis ->
             sendAnalogInput(deviceId, axis, 0f)
         }
     }
