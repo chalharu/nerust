@@ -198,8 +198,9 @@ class SettingsActivity :
                     .put("keyboards", keyboards)
                     .put("capable", scan.touchCapable)
                     .put("gamepads", gamepads)
-            AppLocale.effectiveTag(this@SettingsActivity)
-                .takeIf { it.isNotEmpty() }?.let { payload.put("lang", it) }
+            // Terminal locale only: Rust applies the saved in-app choice
+            // itself (see MainActivity.pushSystemLocaleToVault).
+            AppLocale.currentTag()?.let { payload.put("lang", it) }
             pushOp("device truth", "device_truth", payload)
         }
     }
