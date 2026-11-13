@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use nerust_core_traits::identity::SystemId;
 use nerust_input_traits::Key;
-use nerust_input_traits::{AttachmentId, DigitalControlId};
+use nerust_input_traits::{AttachmentId, DigitalControlId, StandardButton};
 
 pub const IMPLICIT_PROFILE_ID: &str = "default";
 
@@ -11,7 +11,30 @@ pub const IMPLICIT_PROFILE_ID: &str = "default";
 pub struct InputSettings {
     pub systems: HashMap<Box<dyn SystemId>, SystemInputSettings>,
     pub shortcuts: ShortcutSettings,
+    pub gamepad: GamepadSettings,
 }
+
+/// Pad-level preferences shared by every system: one deadzone for all
+/// sticks plus the connection-order port table. Pad `i` (first-seen order
+/// within a boot) drives slot `pad_ports[i]`; `None` parks the pad.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct GamepadSettings {
+    /// Stick deadzone in percent, `0..=90`. Session clamps on read.
+    pub deadzone_percent: u8,
+    pub pad_ports: [Option<usize>; nerust_input_traits::MAX_PADS],
+}
+
+impl Default for GamepadSettings {
+    fn default() -> Self {
+        Self {
+            deadzone_percent: 15,
+            pad_ports: [Some(0), Some(1), None, None],
+        }
+    }
+}
+
+/// Maximum pads the port table (and the session order) tracks.
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -67,34 +90,44 @@ pub fn default_shortcut_bindings() -> Vec<ShortcutBinding> {
         ShortcutBinding {
             action: ShortcutAction::TogglePause,
             key: Some(Key::Space),
+            // The out-of-box pad button: Guide pauses, everything else
+            // unbound until the user captures it.
+            pad: Some(StandardButton::Guide),
         },
         ShortcutBinding {
             action: ShortcutAction::SaveActiveSlot,
             key: Some(Key::F5),
+            pad: None,
         },
         ShortcutBinding {
             action: ShortcutAction::SelectNextSlot,
             key: Some(Key::F6),
+            pad: None,
         },
         ShortcutBinding {
             action: ShortcutAction::SelectPreviousSlot,
             key: Some(Key::F7),
+            pad: None,
         },
         ShortcutBinding {
             action: ShortcutAction::LoadActiveSlot,
             key: Some(Key::F8),
+            pad: None,
         },
         ShortcutBinding {
             action: ShortcutAction::ToggleFullscreen,
             key: Some(Key::F11),
+            pad: None,
         },
         ShortcutBinding {
             action: ShortcutAction::Reset,
             key: None,
+            pad: None,
         },
         ShortcutBinding {
             action: ShortcutAction::OpenDebugger,
             key: Some(Key::F4),
+            pad: None,
         },
     ]
 }
@@ -112,6 +145,20 @@ pub fn shortcut_key_label(
         .find(|binding| binding.action == action)
         .and_then(|binding| binding.key.as_ref())
         .map(|key| key.label())
+}
+
+/// Display label for an action's current pad binding (`Guide`),
+/// or `None` when the action has none. Same role as
+/// [`shortcut_key_label`], for the pad column.
+pub fn shortcut_pad_label(
+    bindings: &[ShortcutBinding],
+    action: ShortcutAction,
+) -> Option<&'static str> {
+    bindings
+        .iter()
+        .find(|binding| binding.action == action)
+        .and_then(|binding| binding.pad.as_ref())
+        .map(|button| button.label())
 }
 
 /// Migrate persisted shortcuts forward: append defaults for actions
@@ -142,6 +189,7 @@ pub fn ensure_default_shortcuts(settings: &mut ShortcutSettings) {
         settings.keyboard.push(ShortcutBinding {
             action: default.action,
             key,
+            pad: default.pad,
         });
     }
 }
@@ -150,6 +198,8 @@ pub fn ensure_default_shortcuts(settings: &mut ShortcutSettings) {
 pub struct ShortcutBinding {
     pub action: ShortcutAction,
     pub key: Option<Key>,
+    #[serde(default)]
+    pub pad: Option<StandardButton>,
 }
 
 #[derive(
@@ -245,6 +295,7 @@ mod tests {
             keyboard: vec![ShortcutBinding {
                 action: ShortcutAction::TogglePause,
                 key: Some(Key::F4),
+                pad: None,
             }],
         };
         ensure_default_shortcuts(&mut settings);
@@ -274,6 +325,7 @@ mod tests {
         let rebound = vec![ShortcutBinding {
             action: ShortcutAction::OpenDebugger,
             key: Some(Key::F2),
+            pad: None,
         }];
         assert_eq!(
             shortcut_key_label(&rebound, ShortcutAction::OpenDebugger),
@@ -283,6 +335,7 @@ mod tests {
         let unbound = vec![ShortcutBinding {
             action: ShortcutAction::OpenDebugger,
             key: None,
+            pad: None,
         }];
         assert_eq!(
             shortcut_key_label(&unbound, ShortcutAction::OpenDebugger),

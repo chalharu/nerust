@@ -33,30 +33,37 @@ pub fn test_nes_defaults() -> DesktopSharedSettings {
         ShortcutBinding {
             action: ShortcutAction::TogglePause,
             key: Some(Key::Space),
+            pad: None,
         },
         ShortcutBinding {
             action: ShortcutAction::SaveActiveSlot,
             key: Some(Key::F5),
+            pad: None,
         },
         ShortcutBinding {
             action: ShortcutAction::SelectNextSlot,
             key: Some(Key::F6),
+            pad: None,
         },
         ShortcutBinding {
             action: ShortcutAction::SelectPreviousSlot,
             key: Some(Key::F7),
+            pad: None,
         },
         ShortcutBinding {
             action: ShortcutAction::LoadActiveSlot,
             key: Some(Key::F8),
+            pad: None,
         },
         ShortcutBinding {
             action: ShortcutAction::ToggleFullscreen,
             key: Some(Key::F11),
+            pad: None,
         },
         ShortcutBinding {
             action: ShortcutAction::Reset,
             key: None,
+            pad: None,
         },
     ];
     settings

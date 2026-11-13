@@ -12,6 +12,7 @@ use super::{
     audio::AudioSettingsViewModel,
     capture::CaptureViewModel,
     editor::{SettingsEditor, StoragePathValidator},
+    gamepad::GamepadViewModel,
     general::GeneralSettingsViewModel,
     input::InputSettingsViewModel,
     notification::NotificationSettingsViewModel,
@@ -32,6 +33,7 @@ pub struct SettingsViewModel {
     pub notifications: NotificationSettingsViewModel,
     pub capture: CaptureViewModel,
     pub shortcuts: ShortcutsViewModel,
+    pub gamepads: GamepadViewModel,
     systems: Vec<SystemSettingsViewModel>,
     inputs: Vec<InputSettingsViewModel>,
 }
@@ -62,6 +64,7 @@ impl SettingsViewModel {
         let notifications = NotificationSettingsViewModel::new(&editor);
         let capture = CaptureViewModel::new(&editor);
         let shortcuts = ShortcutsViewModel::new(&editor);
+        let gamepads = GamepadViewModel::new(&editor);
         let systems: Vec<SystemSettingsViewModel> = factories
             .iter()
             .map(|f| SystemSettingsViewModel::new(&editor, f))
@@ -81,6 +84,7 @@ impl SettingsViewModel {
             notifications,
             capture,
             shortcuts,
+            gamepads,
             systems,
             inputs,
             editor,

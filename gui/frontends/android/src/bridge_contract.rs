@@ -17,6 +17,7 @@ pub(crate) const ACTION_CREATE_SLOT: &str = "create_slot";
 pub(crate) const ACTION_DELETE_SLOT: &str = "delete_slot";
 pub(crate) const ACTION_SELECT_SLOT: &str = "select_slot";
 pub(crate) const ACTION_CONTROLLER: &str = "controller";
+pub(crate) const ACTION_ANALOG: &str = "analog";
 pub(crate) const ACTION_TOUCH_GATE: &str = "touch_gate";
 
 /// Schema-derived validation before typed dispatch. Missing is not JSON null.
@@ -48,6 +49,7 @@ pub(crate) fn validate_bridge_event(value: &mut serde_json::Value) -> Option<()>
                                     | "delete_slot"
                                     | "select_slot"
                                     | "controller"
+                                    | "analog"
                                     | "touch_gate"
                             )
                         )
@@ -81,6 +83,22 @@ pub(crate) fn validate_bridge_event(value: &mut serde_json::Value) -> Option<()>
                         )
                     }
                     "pressed" => value.is_boolean(),
+                    "axis" => {
+                        matches!(
+                            value.as_str(),
+                            Some(
+                                "left_x"
+                                    | "left_y"
+                                    | "right_x"
+                                    | "right_y"
+                                    | "trigger_l"
+                                    | "trigger_r"
+                            )
+                        )
+                    }
+                    "value" => value
+                        .as_f64()
+                        .is_some_and(|number| (-1.0..=1.0).contains(&number)),
                     "slot_id" => {
                         normalize_bridge_integer(value)?;
                         value
@@ -100,6 +118,11 @@ pub(crate) fn validate_bridge_event(value: &mut serde_json::Value) -> Option<()>
                 object.get("device_id")?;
                 object.get("key")?;
                 object.get("pressed")?;
+            }
+            if object.get("action")?.as_str() == Some("analog") {
+                object.get("device_id")?;
+                object.get("axis")?;
+                object.get("value")?;
             }
             if object.get("action")?.as_str() == Some("touch_gate") {
                 object.get("pressed")?;

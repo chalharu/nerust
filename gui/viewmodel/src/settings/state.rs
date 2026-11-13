@@ -57,6 +57,8 @@ pub enum ViewModelError {
     UnknownSlot(String),
     #[error("unknown controller profile: {0}")]
     UnknownController(String),
+    #[error("unknown pad index: {0}")]
+    UnknownPad(usize),
     #[error("invalid system settings choice")]
     InvalidSystemChoice,
     #[error("capture target is not available in the current topology")]

@@ -65,14 +65,17 @@ def _require_prop(prop):
     """Single property rule this codegen supports."""
     require(set(prop) <= {"type", "const", "enum", "minimum", "maximum"})
     kind = field_type(prop)
-    require(kind in {"integer", "string", "boolean"})
+    require(kind in {"integer", "string", "boolean", "number"})
     if kind == "integer" and "const" not in prop:
         _require_integer_bounds(prop)
+    if kind == "number":
+        require(prop.get("minimum") is not None and prop.get("maximum") is not None)
+        require(type(prop["minimum"]) in {int, float} and type(prop["maximum"]) in {int, float})
     if "enum" in prop:
         _require_enum_values(prop, kind)
     if "const" in prop:
         _require_const_value(prop, kind)
-    require(not ({"minimum", "maximum"} & prop.keys()) or kind == "integer")
+    require(not ({"minimum", "maximum"} & prop.keys()) or kind in {"integer", "number"})
 
 
 def _require_gate(gate, props):
@@ -131,7 +134,7 @@ def event_definitions(schema):
 def field_type(prop):
     require(type(prop) is dict)
     if "type" in prop:
-        require(type(prop["type"]) is str and prop["type"] in {"integer", "string", "boolean"})
+        require(type(prop["type"]) is str and prop["type"] in {"integer", "string", "boolean", "number"})
         return prop["type"]
     require(type(prop.get("const")) in {int, str, bool})
     return {int: "integer", str: "string", bool: "boolean"}[type(prop["const"])]
@@ -155,6 +158,9 @@ def rust_predicate(prop):
         return f'matches!(\n    value.as_str(),\n    Some(\n        {choices}\n    )\n)'
     if kind == "integer":
         return (f'value\n    .as_i64()\n    .is_some_and(|number| '
+                f'({prop["minimum"]}..={prop["maximum"]}).contains(&number))')
+    if kind == "number":
+        return (f'value\n    .as_f64()\n    .is_some_and(|number| '
                 f'({prop["minimum"]}..={prop["maximum"]}).contains(&number))')
     return f'value.is_{ {"string": "string", "boolean": "boolean"}[kind]}()'
 
@@ -233,7 +239,8 @@ def outputs(schema):
     summary = schema["x-saf-summary-bytes"]
     require(all(type(number) is int and 0 < number < 2**31 for number in (version, settings, chunk, summary)))
     actions, keys = menu["action"]["enum"], menu["key"]["enum"]
-    for names in (actions, keys):
+    axes = menu["axis"]["enum"]
+    for names in (actions, keys, axes):
         require(len(names) == len(set(names)))
         require(all(name.isascii() and name.replace("_", "").isalnum() for name in names))
         require(len({name.upper() for name in names}) == len(names))
@@ -260,7 +267,7 @@ def outputs(schema):
           f"internal const val SETTINGS_SCHEMA_VERSION = {settings}",
           f"internal const val SAF_CHUNK_BYTES = {chunk}",
           f"internal const val SAF_SUMMARY_BYTES = {summary}"]
-    for obj, names in [("MenuAction", actions), ("ControllerKey", keys)]:
+    for obj, names in [("MenuAction", actions), ("ControllerKey", keys), ("ControllerAxis", axes)]:
         kt += ["", f"internal object {obj} {{"]
         kt += [f'    const val {name.upper()} = "{name}"' for name in names]
         kt += ["", "    val ALL: Set<String> = setOf("]
