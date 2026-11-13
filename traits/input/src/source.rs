@@ -46,6 +46,34 @@ impl StandardButton {
         self as usize
     }
 
+    /// Inverse of [`index`]: SDL-standard position for one physical number.
+    /// Unknown pads ride this fallback until the DB learns their VID/PID.
+    pub const fn from_index(index: usize) -> Option<Self> {
+        match index {
+            0 => Some(Self::South),
+            1 => Some(Self::East),
+            2 => Some(Self::West),
+            3 => Some(Self::North),
+            4 => Some(Self::Back),
+            5 => Some(Self::Guide),
+            6 => Some(Self::Start),
+            7 => Some(Self::LeftStick),
+            8 => Some(Self::RightStick),
+            9 => Some(Self::LeftShoulder),
+            10 => Some(Self::RightShoulder),
+            11 => Some(Self::DpadUp),
+            12 => Some(Self::DpadDown),
+            13 => Some(Self::DpadLeft),
+            14 => Some(Self::DpadRight),
+            15 => Some(Self::Misc1),
+            16 => Some(Self::Paddle1),
+            17 => Some(Self::Paddle2),
+            18 => Some(Self::Paddle3),
+            19 => Some(Self::Paddle4),
+            _ => None,
+        }
+    }
+
     /// Short UI label, same role as [`Key::label`].
     pub fn label(self) -> &'static str {
         match self {
@@ -125,6 +153,19 @@ impl GamepadAxis {
     /// Array index for normalized state storage.
     pub const fn index(self) -> usize {
         self as usize
+    }
+
+    /// Inverse of [`index`]: SDL-standard axis for one physical number.
+    pub const fn from_index(index: usize) -> Option<Self> {
+        match index {
+            0 => Some(Self::LeftStickX),
+            1 => Some(Self::LeftStickY),
+            2 => Some(Self::RightStickX),
+            3 => Some(Self::RightStickY),
+            4 => Some(Self::LeftTrigger),
+            5 => Some(Self::RightTrigger),
+            _ => None,
+        }
     }
 
     /// Console-agnostic axis for default resolution. Triggers have no
@@ -320,6 +361,18 @@ mod tests {
             axes += 1;
         }
         assert_eq!(axes, GamepadAxis::COUNT);
+    }
+
+    #[test]
+    fn index_round_trips_and_rejects_overflow() {
+        for button in StandardButton::iter() {
+            assert_eq!(StandardButton::from_index(button.index()), Some(button));
+        }
+        assert_eq!(StandardButton::from_index(StandardButton::COUNT), None);
+        for axis in GamepadAxis::iter() {
+            assert_eq!(GamepadAxis::from_index(axis.index()), Some(axis));
+        }
+        assert_eq!(GamepadAxis::from_index(GamepadAxis::COUNT), None);
     }
 
     #[test]

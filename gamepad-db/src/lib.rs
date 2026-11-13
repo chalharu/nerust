@@ -49,6 +49,34 @@ impl RawMapping {
             .find(|(logical, _, _)| *logical == button)
             .map(|(_, index, mask)| (*index, *mask))
     }
+
+    /// Logical button for one physical button index. Inverts the SDL
+    /// table so HID readers (SDL-indexed) resolve without re-parsing.
+    pub fn button_for_index(self, physical: u8) -> Option<StandardButton> {
+        self.buttons
+            .iter()
+            .find(|(_, index)| *index == physical)
+            .map(|(logical, _)| *logical)
+    }
+
+    /// Logical axis for one physical axis index.
+    pub fn axis_for_index(self, physical: u8) -> Option<GamepadAxis> {
+        self.axes
+            .iter()
+            .find(|(_, index)| *index == physical)
+            .map(|(logical, _)| *logical)
+    }
+
+    /// Every logical button held by one hat state. Diagonals match two
+    /// entries, so callers collect instead of taking the first.
+    pub fn hat_buttons(self, hat: u8, value: u8, out: &mut Vec<StandardButton>) {
+        out.extend(
+            self.hats
+                .iter()
+                .filter(|(_, index, mask)| *index == hat && value & mask != 0)
+                .map(|(logical, _, _)| *logical),
+        );
+    }
 }
 
 /// Find the mapping for one USB device. `None` means unknown pad
@@ -118,6 +146,26 @@ mod tests {
         assert_eq!(pro.hat(StandardButton::DpadUp), Some((0, 1)));
         assert!(pro.hat(StandardButton::South).is_none());
         assert!(MAPPINGS.iter().all(|m| !m.buttons.is_empty()));
+    }
+
+    #[test]
+    fn reverse_lookups_invert_the_forward_tables() {
+        // Xbox 360 ships on every platform table, so this runs un-gated.
+        let pad = resolve(0x045e, 0x028e).expect("xbox 360");
+        assert_eq!(pad.button_for_index(0), Some(StandardButton::South));
+        assert_eq!(pad.button_for_index(99), None);
+        assert_eq!(pad.axis_for_index(0), Some(GamepadAxis::LeftStickX));
+        assert_eq!(pad.axis_for_index(9), None);
+        let mut held = Vec::new();
+        pad.hat_buttons(0, 1, &mut held);
+        assert_eq!(held, vec![StandardButton::DpadUp]);
+        held.clear();
+        pad.hat_buttons(0, 3, &mut held);
+        assert!(held.contains(&StandardButton::DpadUp));
+        assert!(held.contains(&StandardButton::DpadRight));
+        held.clear();
+        pad.hat_buttons(1, 1, &mut held);
+        assert!(held.is_empty());
     }
 
     #[test]
