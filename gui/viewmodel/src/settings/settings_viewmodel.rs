@@ -4,6 +4,7 @@ use crate::settings::catalog::FactoryCatalog;
 use crate::settings::topology_adapter::build_topology;
 use nerust_input_traits::{InputAssignments, InputPorts};
 use nerust_settings_core::bindings::{BindingIndex, conflicting_keys_indexed};
+use nerust_settings_core::model::input::ShortcutAction;
 use nerust_settings_core::model::snapshot::SettingsSnapshot;
 use nerust_system_traits::factory::CoreFactory;
 
@@ -320,20 +321,20 @@ fn validator(state: &super::EditorState) -> super::ValidationState {
 /// Global pad-shortcut conflicts: one button driving two or more actions.
 /// Labels come from the shortcut descriptors, so the message names the
 /// rows the user must disambiguate. Same blocking semantics as keyboard
-/// key conflicts.
+/// key conflicts. Eight actions: a linear scan beats a map here.
 fn validate_pad_shortcuts(state: &super::EditorState, issues: &mut Vec<super::ValidationIssue>) {
-    use std::collections::HashMap;
-    let labels: HashMap<_, _> = nerust_settings_core::bindings::descriptors::shortcut_descriptors()
-        .iter()
-        .map(|desc| (desc.action, desc.label))
-        .collect();
+    let descriptors = nerust_settings_core::bindings::descriptors::shortcut_descriptors();
+    let label = |action: ShortcutAction| {
+        descriptors
+            .iter()
+            .find(|desc| desc.action == action)
+            .map(|desc| desc.label)
+            .unwrap_or("?")
+    };
     for (button, actions) in nerust_settings_core::model::input::pad_shortcut_conflicts(
         &state.draft.shared.input.shortcuts.keyboard,
     ) {
-        let names: Vec<&str> = actions
-            .iter()
-            .map(|action| labels.get(action).copied().unwrap_or("?"))
-            .collect();
+        let names: Vec<&str> = actions.iter().map(|action| label(*action)).collect();
         issues.push(super::ValidationIssue {
             scope: super::ValidationScope::Controllers,
             kind: super::ValidationIssueKind::PadConflict {

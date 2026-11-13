@@ -179,15 +179,16 @@ struct InputDept {
     /// `(source, axis, button)`. Distinct from `pressed` so a hat release
     /// cannot strand a still-deflected stick (or vice versa).
     axis_dpad: HashSet<(SourceId, GamepadAxis, StandardButton)>,
-    /// Pad connection order within this boot, keyed by stable device
-    /// descriptors (`InputDevice.getDescriptor()`), falling back to
-    /// transient `t:{device_id}` keys when no connect event arrived yet.
-    /// Descriptors survive device-id reuse and reconnects, so a pad keeps
-    /// its index (and its persisted port) across both.
-    pad_order: Vec<String>,
-    /// Live Android device id to order key. Dropped on disconnect; the
+    /// Pad connection order within this boot: `pad_order[i]` is pad `i`
+    /// for the persisted `pad_ports` table. Order holds `PadGuid`s minted
+    /// from stable device descriptors (falling back to transient ids when
+    /// no connect event arrived yet). Descriptors survive device-id reuse
+    /// and reconnects, so a pad keeps its index (and its persisted port)
+    /// across both. Guids are `Copy`: the input hot path never allocates.
+    pad_order: Vec<PadGuid>,
+    /// Live frontend device id to pad guid. Dropped on disconnect; the
     /// order entry stays so a reconnect reuses the index.
-    device_ids: HashMap<i32, String>,
+    device_ids: HashMap<i32, PadGuid>,
     /// Key → Copy (attachment, control) for dpad-neutral resolution.
     /// Interned at rebuild time so the hot path never allocates.
     key_source: HashMap<nerust_input_traits::Key, (AttachmentId, DigitalControlId)>,
@@ -332,12 +333,13 @@ impl InputDept {
         None
     }
 
-    /// Stable pad GUID for one order key. FNV-1a (deterministic across
-    /// runs, unlike SipHash): the same descriptor always maps to the same
-    /// source, which is what makes suppression and slots continuous.
-    fn guid_for_key(key: &str) -> PadGuid {
+    /// Stable pad GUID for one device descriptor. FNV-1a (deterministic
+    /// across runs, unlike SipHash): the same descriptor always maps to
+    /// the same source, which is what makes suppression and slots
+    /// continuous.
+    fn guid_for_descriptor(descriptor: &str) -> PadGuid {
         let mut hash: u64 = 0xcbf29ce484222325;
-        for byte in key.bytes() {
+        for byte in descriptor.bytes() {
             hash ^= u64::from(byte);
             hash = hash.wrapping_mul(0x100000001b3);
         }
@@ -346,30 +348,36 @@ impl InputDept {
         PadGuid(bytes)
     }
 
-    /// First-seen order index of one stable key, registering newcomers.
+    /// Transient pad GUID for one frontend device id, used before any
+    /// connect event arrives. A disjoint `TRNS` namespace (never hashed),
+    /// so it cannot collide with a descriptor GUID.
+    fn guid_for_transient(device_id: i32) -> PadGuid {
+        let mut bytes = *b"TRNS\0\0\0\0\0\0\0\0\0\0\0\0";
+        bytes[4..8].copy_from_slice(&device_id.to_le_bytes());
+        PadGuid(bytes)
+    }
+
+    /// First-seen order index of one pad GUID, registering newcomers.
     /// Pads past the table park: the persisted prefs cannot name them,
     /// so they resolve to `None` instead of aliasing the last pad.
-    fn pad_index_for_key(&mut self, key: &str) -> Option<usize> {
-        if let Some(index) = self.pad_order.iter().position(|known| known == key) {
+    fn pad_index_for_guid(&mut self, guid: PadGuid) -> Option<usize> {
+        if let Some(index) = self.pad_order.iter().position(|known| *known == guid) {
             return Some(index);
         }
         if self.pad_order.len() >= nerust_input_traits::MAX_PADS {
             return None;
         }
         let index = self.pad_order.len();
-        self.pad_order.push(key.to_string());
+        self.pad_order.push(guid);
         Some(index)
     }
 
     /// First-seen index of one pad. Keyboards take no port; unknown pads
-    /// resolve through the order table by GUID.
+    /// (past the table) resolve to `None` and park.
     fn pad_index(&self, source: SourceId) -> Option<usize> {
         match source {
             SourceId::Keyboard(_) => None,
-            SourceId::Pad(guid) => self
-                .pad_order
-                .iter()
-                .position(|key| Self::guid_for_key(key) == guid),
+            SourceId::Pad(guid) => self.pad_order.iter().position(|known| *known == guid),
         }
     }
 

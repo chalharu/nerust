@@ -5,15 +5,6 @@ use crate::model::{
 use nerust_core_traits::identity::SystemId;
 use nerust_input_traits::{Key, StandardButton};
 
-/// One captured physical input: a keyboard key or a pad button.
-/// Pad capture only lands on shortcut targets (game bindings stay
-/// keyboard-only: no pad-binding schema exists yet).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CapturedInput {
-    Key(Key),
-    Pad(StandardButton),
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CaptureTarget {
     Binding {
