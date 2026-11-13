@@ -231,6 +231,31 @@ pub enum UiText {
     Connection,
     Capabilities,
     KeyMappingDesc,
+    NotificationPaused,
+    NotificationResumed,
+    NotificationReset,
+    NotificationSlotCreated,
+    NotificationSavesUnavailable,
+    SlotEmpty,
+    SlotMissing,
+    SlotStorageFailure,
+    SlotCorrupt,
+    SlotIncompatible,
+    SlotUnavailable,
+    SlotVerbSaved,
+    SlotVerbLoaded,
+    SlotVerbDeleted,
+    SlotVerbSelected,
+    CommandOriginPicker,
+    CommandOriginRestore,
+    CommandOriginHost,
+    OutcomeUnknown,
+    ValidationVolumeRange,
+    ValidationSampleRateRange,
+    ValidationLatencyRange,
+    ValidationInfoDuration,
+    ValidationWarningDuration,
+    ValidationNoController,
 }
 
 /// How the terminal locale is obtained: the one axis frontends differ
@@ -333,20 +358,6 @@ impl I18n {
             AppLanguage::Japanese => format!("{owner}使用中"),
             _ => format!("Used in {owner}"),
         }
-    }
-}
-
-/// Locale tag to the supported set (`ja` primary subtag → Japanese,
-/// everything else → English). Accepts BCP-47 (`ja-JP`) and Unix
-/// (`ja_JP.UTF-8`) forms. Pure: unit-tested, no env access.
-pub fn language_from_locale_tag(tag: &str) -> AppLanguage {
-    let primary = tag.split(['.', '@']).next().unwrap_or_default();
-    let primary = primary.replace('_', "-");
-    let subtag = primary.split('-').next().unwrap_or_default();
-    if subtag.eq_ignore_ascii_case("ja") {
-        AppLanguage::Japanese
-    } else {
-        AppLanguage::English
     }
 }
 
@@ -636,6 +647,49 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::Connection => ("Connection", "接続"),
         UiText::Capabilities => ("Capabilities", "対応機能"),
         UiText::KeyMappingDesc => ("", ""),
+        UiText::NotificationPaused => ("Paused", "一時停止しました"),
+        UiText::NotificationResumed => ("Resumed", "再開しました"),
+        UiText::NotificationReset => ("Reset", "リセットしました"),
+        UiText::NotificationSlotCreated => ("Slot created", "スロットを作成しました"),
+        UiText::NotificationSavesUnavailable => ("Saves unavailable", "保存機能が利用できません"),
+        UiText::SlotEmpty => ("slot is empty", "空きスロットです"),
+        UiText::SlotMissing => ("no data", "データがありません"),
+        UiText::SlotStorageFailure => ("storage failure", "保存に失敗しました"),
+        UiText::SlotCorrupt => ("data is corrupt", "データが壊れています"),
+        UiText::SlotIncompatible => ("incompatible data", "互換性がありません"),
+        UiText::SlotUnavailable => ("unavailable", "利用できません"),
+        UiText::SlotVerbSaved => ("Saved to", "保存しました"),
+        UiText::SlotVerbLoaded => ("Loaded", "読み込みました"),
+        UiText::SlotVerbDeleted => ("Deleted", "削除しました"),
+        UiText::SlotVerbSelected => ("Selected", "選択しました"),
+        UiText::CommandOriginPicker => ("Picker", "選択"),
+        UiText::CommandOriginRestore => ("Restore", "復元"),
+        UiText::CommandOriginHost => ("Bridge", "通知"),
+        UiText::OutcomeUnknown => (
+            "Operation outcome unknown. Check the current state before retrying.",
+            "操作結果を確認できません。状態を確認してから再操作してください。",
+        ),
+        UiText::ValidationVolumeRange => (
+            "Master volume must be between 0 and 100",
+            "主音量は0～100で指定してください",
+        ),
+        UiText::ValidationSampleRateRange => (
+            "Sample rate must be between 1 and 192000",
+            "サンプルレートは1～192000で指定してください",
+        ),
+        UiText::ValidationLatencyRange => (
+            "Audio latency must be between 10 and 200 ms",
+            "音声遅延は10～200 msで指定してください",
+        ),
+        UiText::ValidationInfoDuration => (
+            "Info notification duration must be between 1000 and 30000 ms",
+            "情報通知表示時間は1000～30000 msで指定してください",
+        ),
+        UiText::ValidationWarningDuration => (
+            "Warning notification duration must be between 1000 and 30000 ms",
+            "警告通知表示時間は1000～30000 msで指定してください",
+        ),
+        UiText::ValidationNoController => ("No controller assigned", "コントローラー未割当"),
     }
 }
 
@@ -662,6 +716,93 @@ macro_rules! localized {
 /// both languages (Console / Event Viewer pattern).
 fn history_count(language: AppLanguage, count: usize) -> String {
     localized!(language, format!("{count} items"), format!("{count}件"))
+}
+/// Slot-bound event sentence (`Saved to slot 7` / `スロット7に保存しました`).
+/// The verb arrives resolved (see the `SlotVerb*` keys); word order follows
+/// the locale here so callers never branch on language.
+pub fn slot_event(language: AppLanguage, slot: Option<u64>, verb: &str) -> String {
+    match slot {
+        Some(id) => localized!(
+            language,
+            format!("{verb} slot {id}"),
+            format!("スロット{id}に{verb}")
+        ),
+        None => verb.to_string(),
+    }
+}
+
+/// Slot failure sentence (`Slot 7: no data` / `スロット7: データがありません`).
+/// Takes the already-localized reason so only the template branches here.
+pub fn slot_failure(language: AppLanguage, slot: Option<u64>, what: &str) -> String {
+    match slot {
+        Some(id) => localized!(
+            language,
+            format!("Slot {id}: {what}"),
+            format!("スロット{id}: {what}")
+        ),
+        None => what.to_string(),
+    }
+}
+
+/// Bare command failure (`{id} failed[: detail]`). Origin prefixes ride on
+/// the `CommandOrigin*` keys; only the Command origin formats here.
+pub fn command_failed(language: AppLanguage, id: &str, detail: &str) -> String {
+    localized!(
+        language,
+        if detail.is_empty() {
+            format!("{id} failed")
+        } else {
+            format!("{id} failed: {detail}")
+        },
+        if detail.is_empty() {
+            format!("{id} に失敗しました")
+        } else {
+            format!("{id} に失敗しました: {detail}")
+        }
+    )
+}
+
+/// Validation lines with locale-dependent word order. The static tails
+/// (ranges, `ValidationNoController`) are table keys; only templates
+/// whose argument order differs per language live here.
+pub fn unknown_slots(language: AppLanguage, system: &str, count: u32) -> String {
+    localized!(
+        language,
+        format!("{system}: {count} unknown slot ID(s)"),
+        format!("{system}: 不明スロットID{count}件")
+    )
+}
+
+/// Validation lines with locale-dependent word order.
+pub fn unknown_profiles(language: AppLanguage, system: &str, count: u32) -> String {
+    localized!(
+        language,
+        format!("{system}: {count} unknown controller profile ID(s)"),
+        format!("{system}: 不明コントローラープロファイルID{count}件")
+    )
+}
+
+/// Validation lines with locale-dependent word order.
+pub fn exclusive_member(language: AppLanguage, member: &str, ports: &str) -> String {
+    localized!(
+        language,
+        format!("{member} is on multiple ports ({ports})"),
+        format!("{member}は複数ポートに割当済み ({ports})")
+    )
+}
+
+/// Locale tag to the supported set (`ja` primary subtag → Japanese,
+/// everything else → English). Accepts BCP-47 (`ja-JP`) and Unix
+/// (`ja_JP.UTF-8`) forms. Pure: unit-tested, no env access.
+pub fn language_from_locale_tag(tag: &str) -> AppLanguage {
+    let primary = tag.split(['.', '@']).next().unwrap_or_default();
+    let primary = primary.replace('_', "-");
+    let subtag = primary.split('-').next().unwrap_or_default();
+    if subtag.eq_ignore_ascii_case("ja") {
+        AppLanguage::Japanese
+    } else {
+        AppLanguage::English
+    }
 }
 
 /// Description for a controller-slot choice row: which port the row drives
@@ -1035,6 +1176,31 @@ mod tests {
             KeyMapping,
             Connection,
             Capabilities,
+            NotificationPaused,
+            NotificationResumed,
+            NotificationReset,
+            NotificationSlotCreated,
+            NotificationSavesUnavailable,
+            SlotEmpty,
+            SlotMissing,
+            SlotStorageFailure,
+            SlotCorrupt,
+            SlotIncompatible,
+            SlotUnavailable,
+            SlotVerbSaved,
+            SlotVerbLoaded,
+            SlotVerbDeleted,
+            SlotVerbSelected,
+            CommandOriginPicker,
+            CommandOriginRestore,
+            CommandOriginHost,
+            OutcomeUnknown,
+            ValidationVolumeRange,
+            ValidationSampleRateRange,
+            ValidationLatencyRange,
+            ValidationInfoDuration,
+            ValidationWarningDuration,
+            ValidationNoController,
         ] {
             assert!(!en_text.text(key).is_empty());
             assert!(!ja_text.text(key).is_empty());
@@ -1118,6 +1284,43 @@ mod tests {
         assert_eq!(
             tile_hover(ja(), "Tiles", 21, 44, 13, 0x150),
             "Tiles タイル #21 (px 44,13, +0x0150)"
+        );
+        assert_eq!(slot_event(en(), Some(7), "Saved to"), "Saved to slot 7");
+        assert_eq!(
+            slot_event(ja(), Some(7), "保存しました"),
+            "スロット7に保存しました"
+        );
+        assert_eq!(slot_event(en(), None, "Saved to"), "Saved to");
+        assert_eq!(slot_failure(en(), Some(7), "no data"), "Slot 7: no data");
+        assert_eq!(
+            slot_failure(ja(), Some(7), "データがありません"),
+            "スロット7: データがありません"
+        );
+        assert_eq!(slot_failure(en(), None, "no data"), "no data");
+        assert_eq!(command_failed(en(), "slot", ""), "slot failed");
+        assert_eq!(command_failed(en(), "slot", "gone"), "slot failed: gone");
+        assert_eq!(command_failed(ja(), "slot", ""), "slot に失敗しました");
+        assert_eq!(
+            command_failed(ja(), "slot", "gone"),
+            "slot に失敗しました: gone"
+        );
+        assert_eq!(unknown_slots(en(), "s", 2), "s: 2 unknown slot ID(s)");
+        assert_eq!(unknown_slots(ja(), "s", 2), "s: 不明スロットID2件");
+        assert_eq!(
+            unknown_profiles(en(), "s", 2),
+            "s: 2 unknown controller profile ID(s)"
+        );
+        assert_eq!(
+            unknown_profiles(ja(), "s", 2),
+            "s: 不明コントローラープロファイルID2件"
+        );
+        assert_eq!(
+            exclusive_member(en(), "m", "p1"),
+            "m is on multiple ports (p1)"
+        );
+        assert_eq!(
+            exclusive_member(ja(), "m", "p1"),
+            "mは複数ポートに割当済み (p1)"
         );
     }
 }

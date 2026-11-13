@@ -45,12 +45,7 @@ impl StatusMessage {
             Self::Resume => i18n.text(ui_msg::UiText::Resume),
             Self::NothingToWrite => i18n.text(ui_msg::UiText::NothingToWrite),
             Self::NoCore => i18n.text(ui_msg::UiText::NoCore),
-            Self::OutcomeUnknown => match language {
-                AppLanguage::Japanese => {
-                    "操作結果を確認できません。状態を確認してから再操作してください。".into()
-                }
-                _ => "Operation outcome unknown. Check the current state before retrying.".into(),
-            },
+            Self::OutcomeUnknown => i18n.text(ui_msg::UiText::OutcomeUnknown),
             Self::Stepped(count) => ui_msg::stepped(language, *count),
             Self::WroteMemory { addr, value } => ui_msg::wrote_memory(language, *addr, *value),
             Self::RegisterWrote { name, value } => ui_msg::register_wrote(language, name, *value),

@@ -3,7 +3,7 @@
 
 use std::collections::VecDeque;
 
-use nerust_settings_core::i18n::I18n;
+use nerust_settings_core::i18n::{I18n, UiText};
 use nerust_settings_core::model::language::AppLanguage;
 
 use crate::session::error::SlotOpFailure;
@@ -302,101 +302,82 @@ fn level_key(level: NotificationLevel, i18n: I18n) -> String {
 }
 
 /// Template fill for one domain message in one language.
+/// Pure domain mapping: keys and detail args select shared templates,
+/// so no arm branches on language here.
 fn render_message(message: &Message, i18n: I18n) -> String {
+    use nerust_settings_core::i18n::{self as core_i18n, UiText};
     match message.key {
-        MessageKey::Paused => bilingual(i18n, "Paused", "一時停止しました"),
-        MessageKey::Resumed => bilingual(i18n, "Resumed", "再開しました"),
-        MessageKey::Reset => bilingual(i18n, "Reset", "リセットしました"),
-        MessageKey::SlotCreated => bilingual(i18n, "Slot created", "スロットを作成しました"),
-        MessageKey::SlotSaved => slot_text(message.slot, i18n, "Saved to", "保存しました"),
-        MessageKey::SlotLoaded => slot_text(message.slot, i18n, "Loaded", "読み込みました"),
-        MessageKey::SlotDeleted => slot_text(message.slot, i18n, "Deleted", "削除しました"),
-        MessageKey::SlotSelected => slot_text(message.slot, i18n, "Selected", "選択しました"),
-        MessageKey::SavesUnavailable => {
-            bilingual(i18n, "Saves unavailable", "保存機能が利用できません")
-        }
+        MessageKey::Paused => i18n.text(UiText::NotificationPaused),
+        MessageKey::Resumed => i18n.text(UiText::NotificationResumed),
+        MessageKey::Reset => i18n.text(UiText::NotificationReset),
+        MessageKey::SlotCreated => i18n.text(UiText::NotificationSlotCreated),
+        MessageKey::SlotSaved => core_i18n::slot_event(
+            i18n.language(),
+            message.slot,
+            &i18n.text(UiText::SlotVerbSaved),
+        ),
+        MessageKey::SlotLoaded => core_i18n::slot_event(
+            i18n.language(),
+            message.slot,
+            &i18n.text(UiText::SlotVerbLoaded),
+        ),
+        MessageKey::SlotDeleted => core_i18n::slot_event(
+            i18n.language(),
+            message.slot,
+            &i18n.text(UiText::SlotVerbDeleted),
+        ),
+        MessageKey::SlotSelected => core_i18n::slot_event(
+            i18n.language(),
+            message.slot,
+            &i18n.text(UiText::SlotVerbSelected),
+        ),
+        MessageKey::SavesUnavailable => i18n.text(UiText::NotificationSavesUnavailable),
         MessageKey::SlotFailed => {
             let reason = message.reason.unwrap_or(SlotOpFailure::Unavailable);
-            slot_failed_text(message.slot, reason, i18n)
+            core_i18n::slot_failure(
+                i18n.language(),
+                message.slot,
+                &i18n.text(reason_key(reason)),
+            )
         }
         MessageKey::CommandFailed => {
             let origin = message.origin.unwrap_or(FailureOrigin::Command);
-            command_failed_text(origin, message.id, &message.detail, i18n)
+            match origin {
+                FailureOrigin::Command => {
+                    core_i18n::command_failed(i18n.language(), message.id, &message.detail)
+                }
+                other => {
+                    let prefix = i18n.text(origin_key(other));
+                    if message.detail.is_empty() {
+                        prefix
+                    } else {
+                        format!("{prefix}: {}", message.detail)
+                    }
+                }
+            }
         }
     }
 }
 
-fn command_failed_text(origin: FailureOrigin, id: &str, detail: &str, i18n: I18n) -> String {
-    let prefix = match (origin, i18n.language()) {
-        (FailureOrigin::Command, AppLanguage::Japanese) => {
-            return if detail.is_empty() {
-                format!("{id} に失敗しました")
-            } else {
-                format!("{id} に失敗しました: {detail}")
-            };
-        }
-        (FailureOrigin::Command, _) => {
-            return if detail.is_empty() {
-                format!("{id} failed")
-            } else {
-                format!("{id} failed: {detail}")
-            };
-        }
-        (FailureOrigin::Selection, AppLanguage::Japanese) => "選択",
-        (FailureOrigin::Selection, _) => "Picker",
-        (FailureOrigin::Restore, AppLanguage::Japanese) => "復元",
-        (FailureOrigin::Restore, _) => "Restore",
-        (FailureOrigin::Host, AppLanguage::Japanese) => "通知",
-        (FailureOrigin::Host, _) => "Bridge",
-    };
-    if detail.is_empty() {
-        prefix.to_string()
-    } else {
-        format!("{prefix}: {detail}")
-    }
-}
-
-fn slot_failed_text(slot: Option<u64>, reason: SlotOpFailure, i18n: I18n) -> String {
-    let what = failure_reason_text(reason, i18n);
-    match (slot, i18n.language()) {
-        (Some(id), AppLanguage::Japanese) => format!("スロット{id}: {what}"),
-        (Some(id), _) => format!("Slot {id}: {what}"),
-        (None, _) => what.to_string(),
-    }
-}
-
-fn failure_reason_text(reason: SlotOpFailure, i18n: I18n) -> &'static str {
+/// Domain mapping from failure reason to table key: no language branch.
+fn reason_key(reason: SlotOpFailure) -> UiText {
     match reason {
-        SlotOpFailure::Empty => bilingual_str(i18n, "slot is empty", "空きスロットです"),
-        SlotOpFailure::Missing => bilingual_str(i18n, "no data", "データがありません"),
-        SlotOpFailure::Storage => bilingual_str(i18n, "storage failure", "保存に失敗しました"),
-        SlotOpFailure::Corrupt => bilingual_str(i18n, "data is corrupt", "データが壊れています"),
-        SlotOpFailure::Incompatible => {
-            bilingual_str(i18n, "incompatible data", "互換性がありません")
-        }
-        SlotOpFailure::Unavailable => bilingual_str(i18n, "unavailable", "利用できません"),
+        SlotOpFailure::Empty => UiText::SlotEmpty,
+        SlotOpFailure::Missing => UiText::SlotMissing,
+        SlotOpFailure::Storage => UiText::SlotStorageFailure,
+        SlotOpFailure::Corrupt => UiText::SlotCorrupt,
+        SlotOpFailure::Incompatible => UiText::SlotIncompatible,
+        SlotOpFailure::Unavailable => UiText::SlotUnavailable,
     }
 }
 
-/// Pick the language side. Splitting this out (instead of inline
-/// `i18n.language()` matches per arm) keeps `render_message` under the complexity budget.
-fn bilingual(i18n: I18n, en: &str, ja_text: &str) -> String {
-    bilingual_str(i18n, en, ja_text).to_string()
-}
-
-fn slot_text(slot: Option<u64>, i18n: I18n, en: &str, ja: &str) -> String {
-    match (slot, i18n.language()) {
-        (Some(id), AppLanguage::Japanese) => format!("スロット{id}に{ja}"),
-        (Some(id), _) => format!("{en} slot {id}"),
-        (None, AppLanguage::Japanese) => ja.to_string(),
-        (None, _) => en.to_string(),
-    }
-}
-
-fn bilingual_str<'a>(i18n: I18n, en: &'a str, ja_text: &'a str) -> &'a str {
-    match i18n.language() {
-        AppLanguage::Japanese => ja_text,
-        _ => en,
+/// Domain mapping from failure origin to prefix key: no language branch.
+fn origin_key(origin: FailureOrigin) -> UiText {
+    match origin {
+        FailureOrigin::Command => unreachable!("Command formats through command_failed"),
+        FailureOrigin::Selection => UiText::CommandOriginPicker,
+        FailureOrigin::Restore => UiText::CommandOriginRestore,
+        FailureOrigin::Host => UiText::CommandOriginHost,
     }
 }
 
