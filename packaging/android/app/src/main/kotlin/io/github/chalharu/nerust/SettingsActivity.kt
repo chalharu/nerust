@@ -172,6 +172,11 @@ class SettingsActivity :
      * only the nav apply posts back. Identical scans skip the push via the
      * last-result cache. Payload shape is unchanged. */
     internal fun pushDeviceTruth() {
+        // The card only exists after the first composition publish. Caching
+        // a scan the card can never receive would suppress the real first
+        // push (identical-scan skip), stranding device-dependent rows
+        // (connected pads, capture enablement) empty until the next hotplug.
+        if (navActions == null) return
         BridgeIo.runIo {
             val scan =
                 try {
