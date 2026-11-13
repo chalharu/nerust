@@ -140,6 +140,7 @@ class MainActivity :
         sensorController.onResume()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
         (getSystemService(INPUT_SERVICE) as InputManager).registerInputDeviceListener(this, null)
+        sendInitialDeviceAdded()
         refreshControllerPresence()
         chromeManager.scheduleChromeAttach()
     }
@@ -227,6 +228,18 @@ class MainActivity :
         return true
     }
 
+    /** Single controller-event producer: press, release, and removal
+     * synthesis share one extras shape. */
+    private fun sendControllerInput(deviceId: Int, key: String, pressed: Boolean) {
+        sendMenuAction(
+            menuEvent(MenuAction.CONTROLLER) {
+                put("device_id", deviceId)
+                put("key", key)
+                put("pressed", pressed)
+            },
+        )
+    }
+
     /** Stable device identity for Rust port assignment: the OS descriptor
      * survives id reuse and reconnects, the raw id does not. Devices that
      * vanish before a descriptor read contribute nothing. */
@@ -261,11 +274,13 @@ class MainActivity :
     }
 
     /** Edge-detect per direction with one epsilon: motion streams at
-     * sensor rate, and Rust only wants crossings. */
+     * sensor rate, and Rust only wants crossings. Neutral first-sends
+     * stay local: Rust treats a missing axis as neutral already. */
     private fun updateControllerAxis(deviceId: Int, axis: String, value: Float) {
         val axes = controllerAxes.getOrPut(deviceId) { mutableMapOf() }
         val last = axes[axis]
         if (last != null && kotlin.math.abs(value - last) < CONTROLLER_AXIS_EPSILON) return
+        if (last == null && value == 0f) return
         axes[axis] = value
         if (value != 0f) {
             sensorController.lastControllerDeviceId = deviceId
@@ -306,6 +321,21 @@ class MainActivity :
     /** Mirror of the Rust tracker for edge-detect and device-removal synthesis; focus loss converges via session clear. */
     private fun releaseAllControllers() {
         controllerPressed.keys.toList().forEach(::releaseController)
+    }
+
+    /** Boot sweep: pads connected before resume never fire
+     * `onInputDeviceAdded`, so enumerate them once. Listener registration
+     * comes first; a racing add re-sends the same descriptor, and Rust
+     * collapses duplicates to one index. */
+    private fun sendInitialDeviceAdded() {
+        for (deviceId in InputDevice.getDeviceIds()) {
+            val device = InputDevice.getDevice(deviceId) ?: continue
+            if (device.supportsSource(InputDevice.SOURCE_GAMEPAD) ||
+                device.supportsSource(InputDevice.SOURCE_JOYSTICK)
+            ) {
+                sendDeviceAdded(deviceId)
+            }
+        }
     }
 
     override fun onInputDeviceAdded(deviceId: Int) {
