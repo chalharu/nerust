@@ -3,6 +3,7 @@ mod capture;
 pub(crate) mod catalog;
 pub mod dto;
 mod editor;
+mod gamepad;
 mod general;
 mod input;
 mod notification;
@@ -30,6 +31,7 @@ pub use validation::{ValidationIssue, ValidationIssueKind, ValidationScope, Vali
 
 pub use audio::AudioSettingsViewModel;
 pub use capture::CaptureViewModel;
+pub use gamepad::GamepadViewModel;
 pub use general::GeneralSettingsViewModel;
 pub use input::InputSettingsViewModel;
 pub use notification::NotificationSettingsViewModel;

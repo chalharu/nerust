@@ -205,6 +205,28 @@ pub struct InputConflictView {
     pub message: String,
 }
 
+// ── Gamepads ─────────────────────────────────────────────────────────
+
+/// Global gamepads screen: deadzone plus one port row per pad.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GamepadTabView {
+    pub label: String,
+    pub deadzone_label: String,
+    pub deadzone_desc: String,
+    pub deadzone: u8,
+    pub deadzone_choices: Vec<ChoiceView<u8>>,
+    pub pads: Vec<PadPortView>,
+}
+
+/// One connection-order pad and its assigned player port.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PadPortView {
+    pub index: usize,
+    pub label: String,
+    pub port: Option<usize>,
+    pub choices: Vec<ChoiceView<Option<usize>>>,
+}
+
 // ── Capture ──────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq)]

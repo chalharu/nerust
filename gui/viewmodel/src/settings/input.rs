@@ -5,7 +5,7 @@ use nerust_input_traits::{AttachmentId, ControllerProfile, SlotInfo};
 use nerust_settings_core::{
     bindings::descriptors::KeyboardBindingDescriptor,
     bindings::{conflicting_keys, descriptors::keyboard_binding_sections},
-    editor::{CaptureTarget, current_binding_label},
+    editor::{CaptureTarget, current_binding_label, current_pad_binding},
     i18n::{I18n, UiText},
     input::clear_multi_port_conflicts,
 };
@@ -195,9 +195,16 @@ pub(super) fn binding_value(
     if state.capture_target.as_ref() == Some(target) {
         BindingValueView::Capturing(i18n.text(UiText::CapturePrompt))
     } else {
-        match current_binding_label(&state.draft, target) {
-            Some(label) => BindingValueView::Bound(label.to_string()),
-            None => BindingValueView::Unbound(i18n.text(UiText::Unbound)),
+        // Shortcut rows show both columns (`Space` + `Guide`); a lone pad
+        // shows its own label, never an empty pair.
+        let pad = matches!(target, CaptureTarget::Shortcut(_))
+            .then(|| current_pad_binding(&state.draft, target))
+            .flatten();
+        match (current_binding_label(&state.draft, target), pad) {
+            (Some(key), Some(pad)) => BindingValueView::Bound(format!("{key} + {}", pad.label())),
+            (Some(key), None) => BindingValueView::Bound(key.to_string()),
+            (None, Some(pad)) => BindingValueView::Bound(pad.label().to_string()),
+            (None, None) => BindingValueView::Unbound(i18n.text(UiText::Unbound)),
         }
     }
 }

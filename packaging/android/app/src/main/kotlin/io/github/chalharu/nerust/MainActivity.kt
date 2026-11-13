@@ -70,6 +70,7 @@ class MainActivity :
     private val registryController = SavedStateRegistryController.create(this)
     private val store = ViewModelStore()
     private val controllerPressed = mutableMapOf<Int, MutableSet<String>>()
+    private val controllerAxes = mutableMapOf<Int, MutableMap<String, Float>>()
     private val sensorController = SensorController(this)
     private val chromeManager = ChromeManager(this)
     private val dialogManager = DialogManager(this)
@@ -211,29 +212,46 @@ class MainActivity :
         }
         val hatX = event.getAxisValue(MotionEvent.AXIS_HAT_X)
         val hatY = event.getAxisValue(MotionEvent.AXIS_HAT_Y)
-        // The left stick doubles the hat: whichever passes threshold first
-        // wins per direction, and the edge-detect below converges them.
-        val stickX = event.getAxisValue(MotionEvent.AXIS_X)
-        val stickY = event.getAxisValue(MotionEvent.AXIS_Y)
-        // Right stick and analog triggers ride no digital direction: they
-        // wait for the analog transport follow-up instead of aliasing dpad.
-        updateControllerInput(event.deviceId, ControllerKey.LEFT, hatX < -CONTROLLER_AXIS_THRESHOLD || stickX < -CONTROLLER_AXIS_THRESHOLD)
-        updateControllerInput(event.deviceId, ControllerKey.RIGHT, hatX > CONTROLLER_AXIS_THRESHOLD || stickX > CONTROLLER_AXIS_THRESHOLD)
-        updateControllerInput(event.deviceId, ControllerKey.UP, hatY < -CONTROLLER_AXIS_THRESHOLD || stickY < -CONTROLLER_AXIS_THRESHOLD)
-        updateControllerInput(event.deviceId, ControllerKey.DOWN, hatY > CONTROLLER_AXIS_THRESHOLD || stickY > CONTROLLER_AXIS_THRESHOLD)
+        // The hat is genuinely digital; sticks ride analog floats and Rust
+        // derives dpad from them, so Kotlin never digitizes sticks here.
+        updateControllerInput(event.deviceId, ControllerKey.LEFT, hatX < -CONTROLLER_AXIS_THRESHOLD)
+        updateControllerInput(event.deviceId, ControllerKey.RIGHT, hatX > CONTROLLER_AXIS_THRESHOLD)
+        updateControllerInput(event.deviceId, ControllerKey.UP, hatY < -CONTROLLER_AXIS_THRESHOLD)
+        updateControllerInput(event.deviceId, ControllerKey.DOWN, hatY > CONTROLLER_AXIS_THRESHOLD)
+        updateControllerAxis(event.deviceId, ControllerAxis.LEFT_X, event.getAxisValue(MotionEvent.AXIS_X))
+        updateControllerAxis(event.deviceId, ControllerAxis.LEFT_Y, event.getAxisValue(MotionEvent.AXIS_Y))
+        updateControllerAxis(event.deviceId, ControllerAxis.RIGHT_X, event.getAxisValue(MotionEvent.AXIS_Z))
+        updateControllerAxis(event.deviceId, ControllerAxis.RIGHT_Y, event.getAxisValue(MotionEvent.AXIS_RZ))
+        updateControllerAxis(event.deviceId, ControllerAxis.TRIGGER_L, event.getAxisValue(MotionEvent.AXIS_LTRIGGER))
+        updateControllerAxis(event.deviceId, ControllerAxis.TRIGGER_R, event.getAxisValue(MotionEvent.AXIS_RTRIGGER))
         return true
     }
 
-    /** Single controller-event producer: press, release, and removal
-     * synthesis share one extras shape. */
-    private fun sendControllerInput(deviceId: Int, key: String, pressed: Boolean) {
+    /** Single analog-event producer: floats ride the same envelope;
+     * deadzone and dpad substitution live in Rust, never here. */
+    private fun sendAnalogInput(deviceId: Int, axis: String, value: Float) {
         sendMenuAction(
-            menuEvent(MenuAction.CONTROLLER) {
+            menuEvent(MenuAction.ANALOG) {
                 put("device_id", deviceId)
-                put("key", key)
-                put("pressed", pressed)
+                put("axis", axis)
+                put("value", value)
             },
         )
+    }
+
+    /** Edge-detect per direction with one epsilon: motion streams at
+     * sensor rate, and Rust only wants crossings. */
+    private fun updateControllerAxis(deviceId: Int, axis: String, value: Float) {
+        val axes = controllerAxes.getOrPut(deviceId) { mutableMapOf() }
+        val last = axes[axis]
+        if (last != null && kotlin.math.abs(value - last) < CONTROLLER_AXIS_EPSILON) return
+        axes[axis] = value
+        if (value != 0f) {
+            sensorController.lastControllerDeviceId = deviceId
+            chromeManager.noteControllerInput()
+            sensorController.noteControllerInput()
+        }
+        sendAnalogInput(deviceId, axis, value)
     }
 
     private fun updateControllerInput(
@@ -256,6 +274,11 @@ class MainActivity :
     private fun releaseController(deviceId: Int) {
         controllerPressed.remove(deviceId)?.toList()?.forEach { key ->
             sendControllerInput(deviceId, key, false)
+        }
+        // Analog holds converge the same way: recenter every axis so the
+        // Rust substitute releases even when the device is already gone.
+        controllerAxes.remove(deviceId)?.keys.toList()?.forEach { axis ->
+            sendAnalogInput(deviceId, axis, 0f)
         }
     }
 
@@ -817,6 +840,7 @@ class MainActivity :
         }
 
         private const val CONTROLLER_AXIS_THRESHOLD = 0.5f
+        private const val CONTROLLER_AXIS_EPSILON = 0.01f
         private const val ROM_PICKER_REQUEST_CODE = 0x4E45
         private const val DIRECTORY_PICKER_REQUEST_CODE = 0x4E46
 

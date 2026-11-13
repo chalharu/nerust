@@ -18,7 +18,11 @@ mod tests {
     use nerust_input_traits::Key;
 
     fn binding(action: ShortcutAction, key: Option<Key>) -> ShortcutBinding {
-        ShortcutBinding { action, key }
+        ShortcutBinding {
+            action,
+            key,
+            pad: None,
+        }
     }
 
     #[test]

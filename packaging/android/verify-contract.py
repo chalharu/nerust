@@ -266,6 +266,7 @@ def validate_decoder(definitions, decoder):
                 kind = kind[7:-1]
             types = {"u32": "integer", "i32": "integer", "i64": "integer",
                      "u64": "integer", "String": "string", "bool": "boolean",
+                     "f32": "number", "f64": "number",
                      "crate::error_dialog_controller::DialogRequestId": "integer"}
             require(kind in types, f"unsupported decoder field type: {kind}")
             props[name] = (types[kind], not optional)

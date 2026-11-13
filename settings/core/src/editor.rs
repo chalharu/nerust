@@ -3,7 +3,16 @@ use crate::model::{
     snapshot::SettingsSnapshot,
 };
 use nerust_core_traits::identity::SystemId;
-use nerust_input_traits::Key;
+use nerust_input_traits::{Key, StandardButton};
+
+/// One captured physical input: a keyboard key or a pad button.
+/// Pad capture only lands on shortcut targets (game bindings stay
+/// keyboard-only: no pad-binding schema exists yet).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CapturedInput {
+    Key(Key),
+    Pad(StandardButton),
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CaptureTarget {
@@ -52,6 +61,25 @@ pub fn current_binding_label(
     current_binding_key(snapshot, target).map(|key| key.label())
 }
 
+/// Current pad button for a shortcut target, if any. Game binding rows
+/// never carry pads, so this is `None` for them by construction.
+pub fn current_pad_binding(
+    snapshot: &SettingsSnapshot,
+    target: &CaptureTarget,
+) -> Option<StandardButton> {
+    match target {
+        CaptureTarget::Shortcut(action) => snapshot
+            .shared
+            .input
+            .shortcuts
+            .keyboard
+            .iter()
+            .find(|binding| &binding.action == action)
+            .and_then(|binding| binding.pad),
+        CaptureTarget::Binding { .. } => None,
+    }
+}
+
 pub fn apply_capture_target(
     snapshot: &mut SettingsSnapshot,
     target: &CaptureTarget,
@@ -93,6 +121,35 @@ pub fn apply_capture_target(
             {
                 binding.key = key;
             }
+        }
+    }
+}
+
+/// Apply one captured pad button. Only shortcut targets take pads;
+/// game binding rows keep their keyboard binding untouched and report
+/// `false` so callers can route the press elsewhere.
+pub fn apply_capture_pad_target(
+    snapshot: &mut SettingsSnapshot,
+    target: &CaptureTarget,
+    button: Option<StandardButton>,
+) -> bool {
+    match target {
+        CaptureTarget::Shortcut(action) => {
+            if let Some(binding) = snapshot
+                .shared
+                .input
+                .shortcuts
+                .keyboard
+                .iter_mut()
+                .find(|b| b.action == *action)
+            {
+                binding.pad = button;
+            }
+            true
+        }
+        CaptureTarget::Binding { .. } => {
+            log::warn!("ignoring pad capture on a game binding row");
+            false
         }
     }
 }
@@ -195,6 +252,38 @@ mod tests {
     }
 
     #[test]
+    fn pad_capture_lands_on_shortcuts_never_on_bindings() {
+        use crate::model::input::default_shortcut_bindings;
+        use nerust_input_traits::StandardButton;
+        let mut snapshot = snapshot_with_binding("test.att", "test.ctrl", Key::KeyZ);
+        snapshot.shared.input.shortcuts.keyboard = default_shortcut_bindings();
+        let shortcut = CaptureTarget::Shortcut(ShortcutAction::TogglePause);
+        assert!(apply_capture_pad_target(
+            &mut snapshot,
+            &shortcut,
+            Some(StandardButton::Start)
+        ));
+        assert_eq!(
+            current_pad_binding(&snapshot, &shortcut),
+            Some(StandardButton::Start)
+        );
+        assert!(apply_capture_pad_target(&mut snapshot, &shortcut, None));
+        assert_eq!(current_pad_binding(&snapshot, &shortcut), None);
+        let binding = CaptureTarget::Binding {
+            system: Box::new(TestSysId),
+            attachment: "test.att".into(),
+            control: "test.ctrl".into(),
+        };
+        assert!(!apply_capture_pad_target(
+            &mut snapshot,
+            &binding,
+            Some(StandardButton::Start)
+        ));
+        assert_eq!(current_pad_binding(&snapshot, &binding), None);
+        assert_eq!(current_binding_key(&snapshot, &binding), Some(Key::KeyZ));
+    }
+
+    #[test]
     fn current_binding_key_returns_none_for_missing() {
         let snapshot = snapshot_with_binding("test.att", "test.ctrl", Key::KeyZ);
         let target = CaptureTarget::Binding {
@@ -240,6 +329,7 @@ mod tests {
                         keyboard: vec![ShortcutBinding {
                             action: ShortcutAction::TogglePause,
                             key: None,
+                            pad: None,
                         }],
                     },
                     ..Default::default()
