@@ -66,6 +66,35 @@ impl StandardButton {
             Self::Paddle4 => "P4",
         }
     }
+
+    /// Console-agnostic button for default binding resolution. Stick clicks,
+    /// misc, and paddles have no console counterpart yet, so they stay
+    /// unbound instead of guessing.
+    pub fn abstract_key(self) -> Option<crate::AbstractKey> {
+        use crate::AbstractKey as A;
+        match self {
+            Self::South => Some(A::Button1),
+            Self::East => Some(A::Button2),
+            Self::West => Some(A::Button3),
+            Self::North => Some(A::Button4),
+            Self::LeftShoulder => Some(A::Button5),
+            Self::RightShoulder => Some(A::Button6),
+            Self::Back => Some(A::Select),
+            Self::Guide => Some(A::Guide),
+            Self::Start => Some(A::Start),
+            Self::DpadUp => Some(A::DpadUp),
+            Self::DpadDown => Some(A::DpadDown),
+            Self::DpadLeft => Some(A::DpadLeft),
+            Self::DpadRight => Some(A::DpadRight),
+            Self::LeftStick
+            | Self::RightStick
+            | Self::Misc1
+            | Self::Paddle1
+            | Self::Paddle2
+            | Self::Paddle3
+            | Self::Paddle4 => None,
+        }
+    }
 }
 
 /// Analog axes: two sticks plus two triggers. Digital-only consoles sample
@@ -108,6 +137,12 @@ pub enum SourceButtonId {
 pub enum SourceId {
     Keyboard(u32),
     Pad(PadGuid),
+}
+
+impl SourceId {
+    /// The shared hardware keyboard. Keyboards ride one namespace;
+    /// pads and touch take `Pad` with per-device GUIDs.
+    pub const KEYBOARD: Self = Self::Keyboard(0);
 }
 
 /// Opaque 128-bit pad identity (SDL GUID bytes). Virtual pads use reserved values.
@@ -265,6 +300,33 @@ mod tests {
             axes += 1;
         }
         assert_eq!(axes, GamepadAxis::COUNT);
+    }
+
+    #[test]
+    fn button_positions_map_to_console_keys_without_guessing() {
+        use crate::AbstractKey as A;
+        for (button, key) in [
+            (StandardButton::South, A::Button1),
+            (StandardButton::East, A::Button2),
+            (StandardButton::West, A::Button3),
+            (StandardButton::North, A::Button4),
+            (StandardButton::LeftShoulder, A::Button5),
+            (StandardButton::RightShoulder, A::Button6),
+            (StandardButton::Back, A::Select),
+            (StandardButton::Guide, A::Guide),
+            (StandardButton::Start, A::Start),
+            (StandardButton::DpadUp, A::DpadUp),
+        ] {
+            assert_eq!(button.abstract_key(), Some(key));
+        }
+        for button in [
+            StandardButton::LeftStick,
+            StandardButton::RightStick,
+            StandardButton::Misc1,
+            StandardButton::Paddle1,
+        ] {
+            assert_eq!(button.abstract_key(), None);
+        }
     }
 
     #[test]

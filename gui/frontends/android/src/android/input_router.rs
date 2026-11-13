@@ -2,13 +2,10 @@
 //! State lives in trackers; every JNI push routes through [`ChromePort`].
 
 use nerust_gui_shell::session::SessionHandle;
-use nerust_input_traits::AbstractKey;
+use nerust_input_traits::{PadGuid, SourceButtonId, SourceId, StandardButton};
 use winit::{event::Touch, platform::android::activity::AndroidApp};
 
-use super::{
-    chrome_port, key_tracker::PhysicalKeyTracker, touch_layout::ProfileTouchOverlay,
-    touch_tracker::TouchTracker,
-};
+use super::{chrome_port, touch_layout::ProfileTouchOverlay, touch_tracker::TouchTracker};
 
 /// Last pushed chrome state: rebuilds skip the JNI push when unchanged.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -25,7 +22,6 @@ struct PushedOverlay {
 pub(super) struct InputRouter {
     overlay: Option<ProfileTouchOverlay>,
     tracker: TouchTracker,
-    keys: PhysicalKeyTracker,
     overlay_revision: u64,
     pushed: Option<PushedOverlay>,
     /// Live touch-response gate from Kotlin: drawing and responding share
@@ -39,7 +35,6 @@ impl InputRouter {
         Self {
             overlay: None,
             tracker: TouchTracker::new(),
-            keys: PhysicalKeyTracker::new(),
             overlay_revision: 0,
             pushed: None,
             touch_respond: true,
@@ -52,34 +47,30 @@ impl InputRouter {
         self.tracker.reset(session, app);
     }
 
-    /// Release every physically held button before forgetting it.
-    /// The overlay model is cached by revision and shared by every key.
-    pub(super) fn release_physical_tracking(&mut self, session: &mut SessionHandle) {
-        // Cached by revision: one clone per release, shared by every key.
-        let model = session
-            .touch_overlay_model_cached(self.overlay_revision)
-            .clone();
-        self.keys.release_all(session, &model);
-    }
-
-    /// Forget transient presses on focus loss without touching the
-    /// emulator (the session already cleared its own input; Kotlin releases converge to no-ops).
-    pub(super) fn forget_physical_pressed(&mut self) {
-        self.keys.forget();
+    /// Pad source for one Android device id. The id is transient (the OS
+    /// reuses it across reconnects), so disconnect releases converge first
+    /// (Kotlin `releaseController`); this is routing, never persistence.
+    fn pad_source(device_id: i32) -> SourceId {
+        let mut bytes = [0u8; 16];
+        bytes[..4].copy_from_slice(&device_id.to_le_bytes());
+        bytes[4..8].copy_from_slice(b"ANDR");
+        SourceId::Pad(PadGuid(bytes))
     }
 
     pub(super) fn apply_physical_controller_input(
         &mut self,
         session: &mut SessionHandle,
         device_id: i32,
-        key: AbstractKey,
+        button: StandardButton,
         pressed: bool,
     ) {
-        // Cached by revision: one model build per layout, shared by every key.
-        let model = session
-            .touch_overlay_model_cached(self.overlay_revision)
-            .clone();
-        self.keys.apply(session, &model, device_id, key, pressed);
+        // Single session entry: repeat suppression and the OR merge live
+        // in the session, so no adapter owns a private pressed set.
+        session.handle_source_button(
+            Self::pad_source(device_id),
+            SourceButtonId::Pad(button),
+            pressed,
+        );
     }
 
     /// Rebuild the hit-zone overlay for the current window size and push it to Kotlin.
