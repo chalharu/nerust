@@ -235,15 +235,33 @@ pub enum UiText {
 
 pub fn resolve_language(language: AppLanguage) -> AppLanguage {
     match language {
-        AppLanguage::SystemDefault => {
-            let locale = std::env::var("LANG").unwrap_or_default().to_lowercase();
-            if locale.starts_with("ja") {
-                AppLanguage::Japanese
-            } else {
-                AppLanguage::English
-            }
-        }
+        AppLanguage::SystemDefault => system_language(),
         other => other,
+    }
+}
+
+/// OS locale mapped onto the supported set. `sys-locale` queries the
+/// platform (Win32/macOS locale APIs; process env on Unix), so GUI
+/// launches without `LANG` still resolve correctly. `LANG` stays as
+/// the fallback for platforms `sys-locale` does not cover.
+fn system_language() -> AppLanguage {
+    if let Some(locale) = sys_locale::get_locale() {
+        return language_from_locale_tag(&locale);
+    }
+    language_from_locale_tag(&std::env::var("LANG").unwrap_or_default())
+}
+
+/// Locale tag to the supported set (`ja` primary subtag → Japanese,
+/// everything else → English). Accepts BCP-47 (`ja-JP`) and Unix
+/// (`ja_JP.UTF-8`) forms. Pure: unit-tested, no env access.
+pub fn language_from_locale_tag(tag: &str) -> AppLanguage {
+    let primary = tag.split(['.', '@']).next().unwrap_or_default();
+    let primary = primary.replace('_', "-");
+    let subtag = primary.split('-').next().unwrap_or_default();
+    if subtag.eq_ignore_ascii_case("ja") {
+        AppLanguage::Japanese
+    } else {
+        AppLanguage::English
     }
 }
 
@@ -797,6 +815,29 @@ mod tests {
 
     fn ja() -> AppLanguage {
         AppLanguage::Japanese
+    }
+
+    #[test]
+    fn locale_tag_maps_primary_subtag() {
+        // BCP-47 (Android vault, sys-locale) and Unix (LANG fallback) forms.
+        for tag in [
+            "ja",
+            "ja-JP",
+            "ja_JP.UTF-8",
+            "JA-jp",
+            "ja@calendar=japanese",
+        ] {
+            assert_eq!(language_from_locale_tag(tag), ja(), "{tag}");
+        }
+        for tag in ["", "C", "C.UTF-8", "en", "en-US", "fr-FR", "de_DE.UTF-8"] {
+            assert_eq!(language_from_locale_tag(tag), en(), "{tag}");
+        }
+    }
+
+    #[test]
+    fn explicit_choice_never_falls_back_to_os() {
+        assert_eq!(resolve_language(AppLanguage::Japanese), ja());
+        assert_eq!(resolve_language(AppLanguage::English), en());
     }
 
     #[test]

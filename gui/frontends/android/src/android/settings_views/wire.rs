@@ -12,7 +12,10 @@ use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_viewmodel::settings::{SettingsViewModel, StoragePathError, StoragePathValidator};
 use nerust_settings_core::{
     editor::CaptureTarget,
-    i18n::{UiText, port_count_line, port_summary, slot_description, text as ui_text},
+    i18n::{
+        UiText, language_from_locale_tag, port_count_line, port_summary, slot_description,
+        text as ui_text,
+    },
     model::language::AppLanguage,
 };
 use nerust_system_traits::factory::CoreFactory;
@@ -327,14 +330,12 @@ impl I18n {
     }
 }
 
-/// Terminal locale tag to the supported set. Both directions of the
-/// tag mapping live here so ingestion and the save push cannot drift.
+/// Terminal locale tag to the supported set. Delegates to the shared
+/// rule so ingestion and the save push cannot drift from Desktop.
+/// The tag *source* stays Android-side (vault-pushed effective tag:
+/// saved in-app choice wins), which `sys-locale` cannot see.
 pub(crate) fn system_language_from_tag(tag: &str) -> AppLanguage {
-    if tag.starts_with("ja") {
-        AppLanguage::Japanese
-    } else {
-        AppLanguage::English
-    }
+    language_from_locale_tag(tag)
 }
 
 /// Supported set back to a BCP-47 tag for the save push (empty means
