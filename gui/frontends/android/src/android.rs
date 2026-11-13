@@ -654,6 +654,15 @@ impl AndroidFrontend {
                         value,
                     );
                 }
+                MenuAction::DeviceAdded {
+                    device_id,
+                    descriptor,
+                } => {
+                    self.core.session.note_pad_connected(device_id, &descriptor);
+                }
+                MenuAction::DeviceRemoved { device_id } => {
+                    self.core.session.note_pad_disconnected(device_id);
+                }
                 MenuAction::CreateSlot => {
                     let _ = self.exec(SessionCommand::CreateSlot);
                 }

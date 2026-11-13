@@ -225,6 +225,9 @@ pub struct PadPortView {
     pub label: String,
     pub port: Option<usize>,
     pub choices: Vec<ChoiceView<Option<usize>>>,
+    pub trigger_label: String,
+    pub trigger_alias: bool,
+    pub trigger_choices: Vec<ChoiceView<bool>>,
 }
 
 // ── Capture ──────────────────────────────────────────────────────────

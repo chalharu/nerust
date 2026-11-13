@@ -182,6 +182,50 @@ impl SessionHandle {
         self.input.pad_slot(source, &ports)
     }
 
+    /// Stable source for one Android device id: the connect-time
+    /// descriptor when the connect event arrived, else a transient id key.
+    /// The router builds every pad source here, never from raw ids, so a
+    /// reconnected pad (reused id) keeps its order index and slot.
+    pub fn pad_source_for(&mut self, device_id: i32) -> SourceId {
+        let key = self
+            .input
+            .device_ids
+            .get(&device_id)
+            .cloned()
+            .unwrap_or_else(|| format!("transient:{device_id}"));
+        self.input.pad_index_for_key(&key);
+        SourceId::Pad(crate::session::InputDept::guid_for_key(&key))
+    }
+
+    /// Connect-time device registration: descriptor to order index.
+    /// Later input from any reused device id resolves to the same pad.
+    /// A transient placeholder for this id (input before connect) collapses
+    /// into the descriptor entry; holds keyed by it converge on the next
+    /// focus-loss clear.
+    pub fn note_pad_connected(&mut self, device_id: i32, descriptor: &str) {
+        if descriptor.is_empty() {
+            return;
+        }
+        self.input
+            .device_ids
+            .insert(device_id, descriptor.to_string());
+        // Collapse a transient placeholder for this id, but never move an
+        // existing descriptor: reconnects reuse the original index.
+        self.input
+            .pad_order
+            .retain(|key| *key != format!("transient:{device_id}"));
+        if !self.input.pad_order.iter().any(|key| key == descriptor) {
+            self.input.pad_order.push(descriptor.to_string());
+        }
+    }
+
+    /// Disconnect-time cleanup: drop the id mapping (Kotlin already
+    /// synthesized the releases). The order entry stays so a reconnect
+    /// reuses the index instead of drifting to a new pad.
+    pub fn note_pad_disconnected(&mut self, device_id: i32) {
+        self.input.device_ids.remove(&device_id);
+    }
+
     /// Single entry for every physical source. Repeat suppression is one
     /// `(source, button)` set: keyboards and pads share the rule, so no
     /// adapter owns a private pressed set. Pad shortcuts stay unbound
@@ -257,9 +301,18 @@ impl SessionHandle {
         self.commit_press(field, FieldSource::Pad(source, button), dpad, pressed);
     }
 
-    /// Stick direction for one post-deadzone axis value. Triggers never
-    /// substitute: they have no dpad counterpart to stand in for.
-    fn stick_dpad_button(axis: GamepadAxis, value: f32) -> Option<StandardButton> {
+    /// Full-press level turning a trigger into a digital press when the
+    /// pad opts into shoulder doubling. Post-deadzone units.
+    const TRIGGER_FULL_PRESS: f32 = 0.9;
+
+    /// Substitute direction for one post-deadzone axis value. Sticks stand
+    /// in for dpad on digital-only consoles; triggers only when the pad
+    /// opts into shoulder doubling, else they stay analog-only.
+    fn substitute_button(
+        axis: GamepadAxis,
+        value: f32,
+        triggers_as_shoulders: bool,
+    ) -> Option<StandardButton> {
         use StandardButton::{DpadDown, DpadLeft, DpadRight, DpadUp};
         match axis {
             GamepadAxis::LeftStickX | GamepadAxis::RightStickX => {
@@ -280,13 +333,18 @@ impl SessionHandle {
                     None
                 }
             }
-            GamepadAxis::LeftTrigger | GamepadAxis::RightTrigger => None,
+            GamepadAxis::LeftTrigger => (triggers_as_shoulders
+                && value >= Self::TRIGGER_FULL_PRESS)
+                .then_some(StandardButton::LeftShoulder),
+            GamepadAxis::RightTrigger => (triggers_as_shoulders
+                && value >= Self::TRIGGER_FULL_PRESS)
+                .then_some(StandardButton::RightShoulder),
         }
     }
 
     /// Analog axis entry: deadzone, store, analog-field set, and the
-    /// stick dpad substitute for digital-only consoles. Triggers store
-    /// only (no console exposes them); the substitute needs an assigned
+    /// digital substitute (stick dpad on digital-only consoles, trigger
+    /// shoulders when the pad opts in). The substitute needs an assigned
     /// slot, so Off-port pads park their floats silently.
     pub fn handle_source_axis(&mut self, source: SourceId, axis: GamepadAxis, value: f32) {
         let slot = self.pad_slot_for(source);
@@ -298,6 +356,7 @@ impl SessionHandle {
             .gamepad
             .deadzone_percent
             .clamp(0, 90);
+        let gamepad = self.settings.snapshot.shared.input.gamepad.clone();
         let value =
             nerust_gamepad_db::apply_deadzone(value.clamp(-1.0, 1.0), f32::from(percent) / 100.0)
                 .clamp(-1.0, 1.0);
@@ -316,20 +375,27 @@ impl SessionHandle {
         {
             let _ = gui_input.set(field, InputValue::Analog(value));
         }
-        self.sync_stick_dpad(source, axis, value, slot);
+        let alias = self
+            .input
+            .pad_index(source)
+            .and_then(|index| gamepad.pad_ports.get(index))
+            .is_some_and(|port| port.triggers_as_shoulders);
+        self.sync_axis_substitute(source, axis, value, slot, alias);
     }
 
-    /// Edge-sync one stick's dpad substitute: press the newly deflected
-    /// direction, release the stale one. Axis holders stay distinct from
-    /// button holders, so hat and stick merge instead of aliasing.
-    fn sync_stick_dpad(
+    /// Edge-sync one axis substitute: press the newly deflected button,
+    /// release the stale one. Axis holders stay distinct from button
+    /// holders, so hat and stick (or shoulder and trigger) merge instead
+    /// of aliasing.
+    fn sync_axis_substitute(
         &mut self,
         source: SourceId,
         axis: GamepadAxis,
         value: f32,
         slot: Option<usize>,
+        triggers_as_shoulders: bool,
     ) {
-        let want = slot.and(Self::stick_dpad_button(axis, value));
+        let want = slot.and(Self::substitute_button(axis, value, triggers_as_shoulders));
         let stale: Vec<StandardButton> = self
             .input
             .axis_dpad
@@ -349,7 +415,8 @@ impl SessionHandle {
         }
     }
 
-    /// One stick-derived dpad commit through the pad's assigned slot.
+    /// One axis-derived commit through the pad's assigned slot: stick
+    /// dpad directions and aliased trigger shoulders alike.
     fn commit_axis_dpad(
         &mut self,
         source: SourceId,
@@ -657,9 +724,9 @@ mod tests {
 
     #[test]
     fn source_buttons_share_one_suppression_set_and_pads_release_alone() {
-        use nerust_input_traits::{PadGuid, SourceButtonId, SourceId, StandardButton};
+        use nerust_input_traits::{SourceButtonId, StandardButton};
         let mut session = crate::session::test_util::test_session();
-        let pad = SourceId::Pad(PadGuid::NIL);
+        let pad = session.pad_source_for(11);
         let south = SourceButtonId::Pad(StandardButton::South);
         session.handle_source_button(pad, south, true);
         session.handle_keyboard_key(Key::KeyA, true);
@@ -718,10 +785,10 @@ mod tests {
 
     #[test]
     fn pad_guide_triggers_pause_shortcut() {
-        use nerust_input_traits::{PadGuid, SourceButtonId, SourceId, StandardButton};
+        use nerust_input_traits::{SourceButtonId, StandardButton};
         use nerust_settings_core::model::input::{ShortcutAction, ShortcutBinding};
         let mut session = crate::session::test_util::test_session();
-        let pad = SourceId::Pad(PadGuid::NIL);
+        let pad = session.pad_source_for(11);
         // Unbound pad buttons drive gameplay (None), never a shortcut.
         assert!(
             session
@@ -746,13 +813,13 @@ mod tests {
 
     #[test]
     fn axis_events_store_deadzoned_values_and_substitute_stick_dpad() {
-        use nerust_input_traits::{GamepadAxis, PadGuid, SourceId, StandardButton};
+        use nerust_input_traits::{GamepadAxis, StandardButton};
         let mut session = crate::session::test_util::test_session();
         session.input.current_assignments = InputAssignments::new(vec![(
             AttachmentId::new("test.topology.slot"),
             Some(Rc::new(MockTopologyProfile)),
         )]);
-        let pad = SourceId::Pad(PadGuid::NIL);
+        let pad = session.pad_source_for(11);
         session.handle_source_axis(pad, GamepadAxis::LeftStickX, 0.5);
         let stored = session
             .input
@@ -794,16 +861,16 @@ mod tests {
 
     #[test]
     fn off_port_pads_park_their_substitute() {
-        use nerust_input_traits::{GamepadAxis, PadGuid, SourceId};
+        use nerust_input_traits::GamepadAxis;
         let mut session = crate::session::test_util::test_session();
         session.input.current_assignments = InputAssignments::new(vec![(
             AttachmentId::new("test.topology.slot"),
             Some(Rc::new(MockTopologyProfile)),
         )]);
         let mut next = session.settings_snapshot().clone();
-        next.shared.input.gamepad.pad_ports = [None, None, None, None];
+        next.shared.input.gamepad.pad_ports = Default::default();
         session.apply_settings(next).unwrap();
-        let pad = SourceId::Pad(PadGuid::NIL);
+        let pad = session.pad_source_for(11);
         session.handle_source_axis(pad, GamepadAxis::LeftStickX, 0.8);
         assert!(
             session
@@ -811,6 +878,73 @@ mod tests {
                 .analogs
                 .contains_key(&(pad, GamepadAxis::LeftStickX))
         );
+        assert!(session.input.axis_dpad.is_empty());
+        session.clear_input();
+    }
+
+    #[test]
+    fn connect_collapses_transient_placeholders() {
+        let mut session = crate::session::test_util::test_session();
+        // Input before the connect event parks on a transient key.
+        let transient = session.pad_source_for(7);
+        // The connect collapses it: the same pad on a reused id resolves
+        // to one descriptor source, with no placeholder left behind.
+        session.note_pad_connected(7, "pad-desc-A");
+        session.note_pad_connected(9, "pad-desc-A");
+        assert_eq!(session.pad_source_for(9), session.pad_source_for(7));
+        assert_ne!(transient, session.pad_source_for(7));
+        assert!(
+            !session
+                .input
+                .pad_order
+                .iter()
+                .any(|key| key == "transient:7")
+        );
+        session.clear_input();
+    }
+
+    #[test]
+    fn descriptor_identity_survives_id_reuse_and_reconnects() {
+        let mut session = crate::session::test_util::test_session();
+        session.note_pad_connected(5, "pad-desc-A");
+        let first = session.pad_source_for(5);
+        session.note_pad_disconnected(5);
+        // Same descriptor on a reused id resolves to the same pad.
+        session.note_pad_connected(9, "pad-desc-A");
+        assert_eq!(session.pad_source_for(9), first);
+        // A different descriptor is a different pad.
+        session.note_pad_connected(9, "pad-desc-B");
+        assert_ne!(session.pad_source_for(9), first);
+        // Unknown ids park on transient keys, never on a real pad.
+        let transient = session.pad_source_for(77);
+        assert_ne!(transient, first);
+        session.clear_input();
+    }
+
+    #[test]
+    fn trigger_alias_doubles_shoulders_only_when_opted_in() {
+        use nerust_input_traits::{GamepadAxis, StandardButton};
+        let mut session = crate::session::test_util::test_session();
+        session.input.current_assignments = InputAssignments::new(vec![(
+            AttachmentId::new("test.topology.slot"),
+            Some(Rc::new(MockTopologyProfile)),
+        )]);
+        let pad = session.pad_source_for(11);
+        // Default prefs: analog-only, full press stores but asserts nothing.
+        session.handle_source_axis(pad, GamepadAxis::LeftTrigger, 1.0);
+        assert!(session.input.axis_dpad.is_empty());
+        // Opt pad 0 into shoulder doubling: full press now holds the
+        // shoulder through a distinct axis holder.
+        let mut next = session.settings_snapshot().clone();
+        next.shared.input.gamepad.pad_ports[0].triggers_as_shoulders = true;
+        session.apply_settings(next).unwrap();
+        session.handle_source_axis(pad, GamepadAxis::LeftTrigger, 1.0);
+        assert!(session.input.axis_dpad.contains(&(
+            pad,
+            GamepadAxis::LeftTrigger,
+            StandardButton::LeftShoulder
+        )));
+        session.handle_source_axis(pad, GamepadAxis::LeftTrigger, 0.0);
         assert!(session.input.axis_dpad.is_empty());
         session.clear_input();
     }
