@@ -50,7 +50,24 @@ impl GamepadViewModel {
             return Err(super::editor::ViewModelError::UnknownPad(pad));
         }
         self.editor.transact(|state| {
-            state.draft_mut().shared.input.gamepad.pad_ports[pad] = port;
+            state.draft_mut().shared.input.gamepad.pad_ports[pad].slot = port;
+            Ok(())
+        })
+    }
+
+    /// Trigger doubling for one pad: shoulders when true, analog-only
+    /// when false. Same guard as the port setter.
+    pub fn set_trigger_alias(
+        &self,
+        pad: usize,
+        as_shoulders: bool,
+    ) -> Result<(), super::editor::ViewModelError> {
+        if pad >= MAX_PADS {
+            return Err(super::editor::ViewModelError::UnknownPad(pad));
+        }
+        self.editor.transact(|state| {
+            state.draft_mut().shared.input.gamepad.pad_ports[pad].triggers_as_shoulders =
+                as_shoulders;
             Ok(())
         })
     }
@@ -76,18 +93,33 @@ fn project_view(state: &super::EditorState) -> GamepadTabView {
             })
             .collect(),
         pads: (0..MAX_PADS)
-            .map(|index| PadPortView {
-                index,
-                label: format!("Pad {}", index + 1),
-                port: gamepad.pad_ports[index],
-                choices: [
-                    (None, i18n.text(UiText::Off)),
-                    (Some(0), i18n.text(UiText::PlayerOne)),
-                    (Some(1), i18n.text(UiText::PlayerTwo)),
-                ]
-                .into_iter()
-                .map(|(port, label)| ChoiceView { value: port, label })
-                .collect(),
+            .map(|index| {
+                let port = &gamepad.pad_ports[index];
+                PadPortView {
+                    index,
+                    label: format!("Pad {}", index + 1),
+                    port: port.slot,
+                    choices: [
+                        (None, i18n.text(UiText::Off)),
+                        (Some(0), i18n.text(UiText::PlayerOne)),
+                        (Some(1), i18n.text(UiText::PlayerTwo)),
+                    ]
+                    .into_iter()
+                    .map(|(port, label)| ChoiceView { value: port, label })
+                    .collect(),
+                    trigger_label: format!("Pad {} triggers", index + 1),
+                    trigger_alias: port.triggers_as_shoulders,
+                    trigger_choices: [
+                        (false, i18n.text(UiText::Off)),
+                        (true, i18n.text(UiText::On)),
+                    ]
+                    .into_iter()
+                    .map(|(alias, label)| ChoiceView {
+                        value: alias,
+                        label,
+                    })
+                    .collect(),
+                }
             })
             .collect(),
     }

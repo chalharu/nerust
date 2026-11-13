@@ -227,6 +227,27 @@ class MainActivity :
         return true
     }
 
+    /** Stable device identity for Rust port assignment: the OS descriptor
+     * survives id reuse and reconnects, the raw id does not. Devices that
+     * vanish before a descriptor read contribute nothing. */
+    private fun sendDeviceAdded(deviceId: Int) {
+        val descriptor = InputDevice.getDevice(deviceId)?.descriptor ?: return
+        sendMenuAction(
+            menuEvent(MenuAction.DEVICE_ADDED) {
+                put("device_id", deviceId)
+                put("descriptor", descriptor)
+            },
+        )
+    }
+
+    private fun sendDeviceRemoved(deviceId: Int) {
+        sendMenuAction(
+            menuEvent(MenuAction.DEVICE_REMOVED) {
+                put("device_id", deviceId)
+            },
+        )
+    }
+
     /** Single analog-event producer: floats ride the same envelope;
      * deadzone and dpad substitution live in Rust, never here. */
     private fun sendAnalogInput(deviceId: Int, axis: String, value: Float) {
@@ -288,6 +309,7 @@ class MainActivity :
     }
 
     override fun onInputDeviceAdded(deviceId: Int) {
+        sendDeviceAdded(deviceId)
         refreshControllerPresence()
     }
 
@@ -297,6 +319,7 @@ class MainActivity :
 
     override fun onInputDeviceRemoved(deviceId: Int) {
         releaseController(deviceId)
+        sendDeviceRemoved(deviceId)
         sensorController.noteControllerRemoved(deviceId)
         refreshControllerPresence()
     }

@@ -734,14 +734,22 @@ fn gamepads_section(snapshot: &SettingsSnapshot, i18n: I18n) -> SectionWire {
         30,
         "%",
     )];
-    rows.extend((0..MAX_PADS).map(|index| {
-        choice_row(
+    rows.extend((0..MAX_PADS).flat_map(|index| {
+        let port_row = choice_row(
             &format!("controls.gamepads.pad{}", index + 1),
             format!("Pad {}", index + 1),
             String::new(),
             &port_choices,
-            &gamepad.pad_ports[index],
-        )
+            &gamepad.pad_ports[index].slot,
+        );
+        let trigger_row = toggle_row(
+            &format!("controls.gamepads.triggers{}", index + 1),
+            format!("Pad {} triggers", index + 1),
+            String::new(),
+            i18n,
+            gamepad.pad_ports[index].triggers_as_shoulders,
+        );
+        [port_row, trigger_row]
     }));
     rows.push(button_row(
         "reset.controls.gamepads",

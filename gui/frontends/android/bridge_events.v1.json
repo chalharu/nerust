@@ -34,6 +34,8 @@
             "select_slot",
             "controller",
             "analog",
+            "device_added",
+            "device_removed",
             "touch_gate"
           ]
         },
@@ -59,6 +61,7 @@
           ]
         },
         "pressed": { "type": "boolean" },
+        "descriptor": { "type": "string" },
         "axis": {
           "type": "string",
           "enum": [
@@ -88,6 +91,20 @@
             "required": ["action"]
           },
           "then": { "required": ["device_id", "axis", "value"] }
+        },
+        {
+          "if": {
+            "properties": { "action": { "const": "device_added" } },
+            "required": ["action"]
+          },
+          "then": { "required": ["device_id", "descriptor"] }
+        },
+        {
+          "if": {
+            "properties": { "action": { "const": "device_removed" } },
+            "required": ["action"]
+          },
+          "then": { "required": ["device_id"] }
         },
         {
           "if": {
@@ -138,6 +155,8 @@
     "select_slot": "MenuAction::SelectSlot{slot_id}",
     "controller": "MenuAction::ControllerInput{device_id,key,pressed}",
     "analog": "MenuAction::AnalogInput{device_id,axis,value}",
+    "device_added": "MenuAction::DeviceAdded{device_id,descriptor}",
+    "device_removed": "MenuAction::DeviceRemoved{device_id}",
     "touch_gate": "MenuAction::TouchGate{pressed}"
   },
   "x-kotlin-constants": {

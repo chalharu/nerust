@@ -367,11 +367,13 @@ pub(super) fn publish_all(events: &[FrontendEvent]) {
         }
     }
     with_queue(|state| {
+        // Events carry payloads now (descriptors, floats): clone instead
+        // of the old Copy move. Publishes are menu-rate, never hot-path.
         for event in events {
             if matches!(event, FrontendEvent::ErrorDialogDismissed(_)) {
-                state.priority_events.push_back(*event);
+                state.priority_events.push_back(event.clone());
             } else {
-                state.normal_events.push_back(*event);
+                state.normal_events.push_back(event.clone());
             }
         }
     });

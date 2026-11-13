@@ -2,7 +2,7 @@
 //! State lives in trackers; every JNI push routes through [`ChromePort`].
 
 use nerust_gui_shell::session::SessionHandle;
-use nerust_input_traits::{GamepadAxis, PadGuid, SourceButtonId, SourceId, StandardButton};
+use nerust_input_traits::{GamepadAxis, SourceButtonId, StandardButton};
 use winit::{event::Touch, platform::android::activity::AndroidApp};
 
 use super::{chrome_port, touch_layout::ProfileTouchOverlay, touch_tracker::TouchTracker};
@@ -47,16 +47,6 @@ impl InputRouter {
         self.tracker.reset(session, app);
     }
 
-    /// Pad source for one Android device id. The id is transient (the OS
-    /// reuses it across reconnects), so disconnect releases converge first
-    /// (Kotlin `releaseController`); this is routing, never persistence.
-    fn pad_source(device_id: i32) -> SourceId {
-        let mut bytes = [0u8; 16];
-        bytes[..4].copy_from_slice(&device_id.to_le_bytes());
-        bytes[4..8].copy_from_slice(b"ANDR");
-        SourceId::Pad(PadGuid(bytes))
-    }
-
     pub(super) fn apply_physical_controller_input(
         &mut self,
         session: &mut SessionHandle,
@@ -66,11 +56,8 @@ impl InputRouter {
     ) {
         // Single session entry: repeat suppression and the OR merge live
         // in the session, so no adapter owns a private pressed set.
-        session.handle_source_button(
-            Self::pad_source(device_id),
-            SourceButtonId::Pad(button),
-            pressed,
-        );
+        let source = session.pad_source_for(device_id);
+        session.handle_source_button(source, SourceButtonId::Pad(button), pressed);
     }
 
     pub(super) fn apply_physical_controller_axis(
@@ -81,7 +68,8 @@ impl InputRouter {
         value: f32,
     ) {
         // Same source identity as buttons: one pad, one order index.
-        session.handle_source_axis(Self::pad_source(device_id), axis, value);
+        let source = session.pad_source_for(device_id);
+        session.handle_source_axis(source, axis, value);
     }
 
     /// Rebuild the hit-zone overlay for the current window size and push it to Kotlin.

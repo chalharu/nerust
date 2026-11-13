@@ -4,7 +4,7 @@
 use nerust_input_traits::{GamepadAxis, StandardButton};
 
 /// Menu button presses from the Kotlin overflow menu.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum MenuAction {
     ControllerInput {
         device_id: i32,
@@ -15,6 +15,13 @@ pub(crate) enum MenuAction {
         device_id: i32,
         axis: GamepadAxis,
         value: f32,
+    },
+    DeviceAdded {
+        device_id: i32,
+        descriptor: String,
+    },
+    DeviceRemoved {
+        device_id: i32,
     },
     CreateSlot,
     DeleteSlot(u64),
@@ -34,19 +41,21 @@ pub(crate) enum MenuAction {
 }
 
 /// Single Kotlin→Rust event channel: menu presses and dialog dismiss.
-/// `Eq` is absent: analog values ride `f32`, compared by tests exactly
-/// but never hashed or keyed.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// `Eq` and `Copy` are absent: analog values ride `f32`, and device
+/// descriptors ride `String`; compared by tests exactly but never hashed
+/// or keyed.
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum FrontendEvent {
     Menu(MenuAction),
     ErrorDialogDismissed(crate::error_dialog_controller::DialogRequestId),
 }
 
 use crate::bridge_contract::{
-    ACTION_ANALOG, ACTION_CONTROLLER, ACTION_CREATE_SLOT, ACTION_DELETE_SLOT, ACTION_EXIT,
-    ACTION_LOAD_STATE, ACTION_OPEN_ROM, ACTION_OPEN_SETTINGS, ACTION_ORIENTATION_CHANGED,
-    ACTION_RESET, ACTION_SAVE_STATE, ACTION_SELECT_SLOT, ACTION_TOGGLE_PAUSE, ACTION_TOUCH_GATE,
-    ACTION_UNLOAD, BRIDGE_EVENT_VERSION, validate_bridge_event,
+    ACTION_ANALOG, ACTION_CONTROLLER, ACTION_CREATE_SLOT, ACTION_DELETE_SLOT, ACTION_DEVICE_ADDED,
+    ACTION_DEVICE_REMOVED, ACTION_EXIT, ACTION_LOAD_STATE, ACTION_OPEN_ROM, ACTION_OPEN_SETTINGS,
+    ACTION_ORIENTATION_CHANGED, ACTION_RESET, ACTION_SAVE_STATE, ACTION_SELECT_SLOT,
+    ACTION_TOGGLE_PAUSE, ACTION_TOUCH_GATE, ACTION_UNLOAD, BRIDGE_EVENT_VERSION,
+    validate_bridge_event,
 };
 
 /// Typed controller-key mapping, checked against the shared JSON schema.
@@ -119,6 +128,8 @@ enum BridgeEventV1 {
         #[serde(default)]
         value: Option<f32>,
         #[serde(default)]
+        descriptor: Option<String>,
+        #[serde(default)]
         slot_id: Option<i64>,
     },
     ErrorDialogDismissed {
@@ -150,16 +161,20 @@ fn decode_json_event(raw: &str) -> Option<FrontendEvent> {
             pressed,
             axis,
             value,
+            descriptor,
             slot_id,
             ..
         } => decode_json_menu_action(
             &action,
-            device_id,
-            key.as_deref(),
-            pressed,
-            axis.as_deref(),
-            value,
-            slot_id,
+            MenuParts {
+                device_id,
+                key: key.as_deref(),
+                pressed,
+                axis: axis.as_deref(),
+                value,
+                descriptor: descriptor.as_deref(),
+                slot_id,
+            },
         ),
     }
 }
@@ -176,15 +191,28 @@ fn decode_slot_id(slot_id: Option<i64>) -> Option<u64> {
     }
 }
 
-fn decode_json_menu_action(
-    action: &str,
+/// Optional envelope fields for one menu action. Bundled so the decoder
+/// stays under the argument cap as gated fields grow.
+struct MenuParts<'a> {
     device_id: Option<i32>,
-    key: Option<&str>,
+    key: Option<&'a str>,
     pressed: Option<bool>,
-    axis: Option<&str>,
+    axis: Option<&'a str>,
     value: Option<f32>,
+    descriptor: Option<&'a str>,
     slot_id: Option<i64>,
-) -> Option<FrontendEvent> {
+}
+
+fn decode_json_menu_action(action: &str, parts: MenuParts<'_>) -> Option<FrontendEvent> {
+    let MenuParts {
+        device_id,
+        key,
+        pressed,
+        axis,
+        value,
+        descriptor,
+        slot_id,
+    } = parts;
     if action == ACTION_CONTROLLER {
         let (device_id, key, pressed) = match (device_id, key, pressed) {
             (Some(device_id), Some(key), Some(pressed)) => (device_id, key, pressed),
@@ -204,6 +232,28 @@ fn decode_json_menu_action(
             }
         };
         return decode_analog_parts(device_id, axis, value).map(FrontendEvent::Menu);
+    }
+    if action == ACTION_DEVICE_ADDED {
+        let (device_id, descriptor) = match (device_id, descriptor) {
+            (Some(device_id), Some(descriptor)) if !descriptor.is_empty() => {
+                (device_id, descriptor)
+            }
+            _ => {
+                log::warn!("ignoring device bridge event with missing fields");
+                return None;
+            }
+        };
+        return Some(FrontendEvent::Menu(MenuAction::DeviceAdded {
+            device_id,
+            descriptor: descriptor.to_string(),
+        }));
+    }
+    if action == ACTION_DEVICE_REMOVED {
+        let Some(device_id) = device_id else {
+            log::warn!("ignoring device bridge event with missing fields");
+            return None;
+        };
+        return Some(FrontendEvent::Menu(MenuAction::DeviceRemoved { device_id }));
     }
     if action == ACTION_TOUCH_GATE {
         return match pressed {
@@ -302,10 +352,11 @@ pub(crate) fn decode_frontend_event(raw: &str) -> Option<FrontendEvent> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ACTION_ANALOG, ACTION_CREATE_SLOT, ACTION_DELETE_SLOT, ACTION_EXIT, ACTION_LOAD_STATE,
-        ACTION_OPEN_ROM, ACTION_OPEN_SETTINGS, ACTION_ORIENTATION_CHANGED, ACTION_RESET,
-        ACTION_SAVE_STATE, ACTION_SELECT_SLOT, ACTION_TOGGLE_PAUSE, ACTION_TOUCH_GATE,
-        ACTION_UNLOAD, FrontendEvent, MenuAction, decode_frontend_event,
+        ACTION_ANALOG, ACTION_CREATE_SLOT, ACTION_DELETE_SLOT, ACTION_DEVICE_ADDED,
+        ACTION_DEVICE_REMOVED, ACTION_EXIT, ACTION_LOAD_STATE, ACTION_OPEN_ROM,
+        ACTION_OPEN_SETTINGS, ACTION_ORIENTATION_CHANGED, ACTION_RESET, ACTION_SAVE_STATE,
+        ACTION_SELECT_SLOT, ACTION_TOGGLE_PAUSE, ACTION_TOUCH_GATE, ACTION_UNLOAD, FrontendEvent,
+        MenuAction, decode_frontend_event,
     };
     use crate::bridge_contract::BRIDGE_EVENT_VERSION;
 
@@ -512,13 +563,15 @@ mod tests {
             .collect();
         assert_eq!(
             names.len(),
-            15,
+            17,
             "new actions must also be handled by the decoder"
         );
         for action in [
             ACTION_ANALOG,
             ACTION_CREATE_SLOT,
             ACTION_DELETE_SLOT,
+            ACTION_DEVICE_ADDED,
+            ACTION_DEVICE_REMOVED,
             ACTION_EXIT,
             ACTION_LOAD_STATE,
             ACTION_OPEN_ROM,
@@ -533,6 +586,40 @@ mod tests {
             "controller",
         ] {
             assert!(names.contains(&action), "schema is missing action {action}");
+        }
+    }
+
+    /// Device connect/disconnect round-trips with descriptors; empty
+    /// descriptors and missing ids fail loud instead of registering junk.
+    #[test]
+    fn device_events_carry_descriptors() {
+        assert_eq!(
+            decode_frontend_event(&format!(
+                r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"device_added","device_id":7,"descriptor":"93c16c27e6378d0"}}"#
+            )),
+            Some(FrontendEvent::Menu(MenuAction::DeviceAdded {
+                device_id: 7,
+                descriptor: "93c16c27e6378d0".to_string(),
+            }))
+        );
+        assert_eq!(
+            decode_frontend_event(&format!(
+                r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"device_removed","device_id":7}}"#
+            )),
+            Some(FrontendEvent::Menu(MenuAction::DeviceRemoved {
+                device_id: 7
+            }))
+        );
+        for raw in [
+            format!(
+                r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"device_added","device_id":7}}"#
+            ),
+            format!(
+                r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"device_added","device_id":7,"descriptor":""}}"#
+            ),
+            format!(r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"device_removed"}}"#),
+        ] {
+            assert_eq!(decode_frontend_event(&raw), None);
         }
     }
 

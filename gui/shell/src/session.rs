@@ -179,10 +179,15 @@ struct InputDept {
     /// `(source, axis, button)`. Distinct from `pressed` so a hat release
     /// cannot strand a still-deflected stick (or vice versa).
     axis_dpad: HashSet<(SourceId, GamepadAxis, StandardButton)>,
-    /// Pad connection order within this boot: `pad_order[i]` is pad `i`
-    /// for the persisted `pad_ports` table. Transient ids never persist;
-    /// order does the assignment.
-    pad_order: Vec<PadGuid>,
+    /// Pad connection order within this boot, keyed by stable device
+    /// descriptors (`InputDevice.getDescriptor()`), falling back to
+    /// transient `t:{device_id}` keys when no connect event arrived yet.
+    /// Descriptors survive device-id reuse and reconnects, so a pad keeps
+    /// its index (and its persisted port) across both.
+    pad_order: Vec<String>,
+    /// Live Android device id to order key. Dropped on disconnect; the
+    /// order entry stays so a reconnect reuses the index.
+    device_ids: HashMap<i32, String>,
     /// Key → Copy (attachment, control) for dpad-neutral resolution.
     /// Interned at rebuild time so the hot path never allocates.
     key_source: HashMap<nerust_input_traits::Key, (AttachmentId, DigitalControlId)>,
@@ -204,6 +209,7 @@ impl InputDept {
             analogs: HashMap::new(),
             axis_dpad: HashSet::new(),
             pad_order: Vec::new(),
+            device_ids: HashMap::new(),
             key_source: HashMap::new(),
             interner: IdInterner::default(),
             press_state: field_press::FieldPressState::default(),
@@ -326,23 +332,44 @@ impl InputDept {
         None
     }
 
-    /// First-seen index of one pad, registering newcomers. Keyboards take
-    /// no port. Pads past the table park: the persisted prefs cannot name
-    /// them, so they resolve to `None` instead of aliasing pad 4.
-    fn pad_index(&mut self, source: SourceId) -> Option<usize> {
+    /// Stable pad GUID for one order key. FNV-1a (deterministic across
+    /// runs, unlike SipHash): the same descriptor always maps to the same
+    /// source, which is what makes suppression and slots continuous.
+    fn guid_for_key(key: &str) -> PadGuid {
+        let mut hash: u64 = 0xcbf29ce484222325;
+        for byte in key.bytes() {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        let mut bytes = *b"NRST\0\0\0\0\0\0\0\0\0\0\0\0";
+        bytes[4..12].copy_from_slice(&hash.to_le_bytes());
+        PadGuid(bytes)
+    }
+
+    /// First-seen order index of one stable key, registering newcomers.
+    /// Pads past the table park: the persisted prefs cannot name them,
+    /// so they resolve to `None` instead of aliasing the last pad.
+    fn pad_index_for_key(&mut self, key: &str) -> Option<usize> {
+        if let Some(index) = self.pad_order.iter().position(|known| known == key) {
+            return Some(index);
+        }
+        if self.pad_order.len() >= nerust_input_traits::MAX_PADS {
+            return None;
+        }
+        let index = self.pad_order.len();
+        self.pad_order.push(key.to_string());
+        Some(index)
+    }
+
+    /// First-seen index of one pad. Keyboards take no port; unknown pads
+    /// resolve through the order table by GUID.
+    fn pad_index(&self, source: SourceId) -> Option<usize> {
         match source {
             SourceId::Keyboard(_) => None,
-            SourceId::Pad(guid) => {
-                if let Some(index) = self.pad_order.iter().position(|known| *known == guid) {
-                    return Some(index);
-                }
-                if self.pad_order.len() >= nerust_input_traits::MAX_PADS {
-                    return None;
-                }
-                let index = self.pad_order.len();
-                self.pad_order.push(guid);
-                Some(index)
-            }
+            SourceId::Pad(guid) => self
+                .pad_order
+                .iter()
+                .position(|key| Self::guid_for_key(key) == guid),
         }
     }
 
@@ -350,12 +377,12 @@ impl InputDept {
     /// table, clamped to the live slots. `None` parks the source (Off,
     /// keyboards, or pads past the table).
     fn pad_slot(
-        &mut self,
+        &self,
         source: SourceId,
-        ports: &[Option<usize>; nerust_input_traits::MAX_PADS],
+        ports: &[nerust_settings_core::model::input::PadPort; nerust_input_traits::MAX_PADS],
     ) -> Option<usize> {
         let index = self.pad_index(source)?;
-        let slot = (*ports.get(index)?)?;
+        let slot = ports.get(index)?.slot?;
         let live = self.current_assignments.slots().len();
         if live == 0 {
             return None;
