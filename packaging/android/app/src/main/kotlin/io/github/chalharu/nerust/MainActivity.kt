@@ -175,8 +175,15 @@ class MainActivity :
             when (event.keyCode) {
                 KeyEvent.KEYCODE_BUTTON_A -> ControllerKey.BUTTON1
                 KeyEvent.KEYCODE_BUTTON_B -> ControllerKey.BUTTON2
+                KeyEvent.KEYCODE_BUTTON_X -> ControllerKey.BUTTON3
+                KeyEvent.KEYCODE_BUTTON_Y -> ControllerKey.BUTTON4
                 KeyEvent.KEYCODE_BUTTON_L1 -> ControllerKey.BUTTON5
                 KeyEvent.KEYCODE_BUTTON_R1 -> ControllerKey.BUTTON6
+                // L2/R2 stay unconsumed: they are analog triggers (the
+                // stick/trigger motion follow-up), not digital buttons.
+                KeyEvent.KEYCODE_BUTTON_MODE -> ControllerKey.GUIDE
+                KeyEvent.KEYCODE_BUTTON_THUMBL -> ControllerKey.L3
+                KeyEvent.KEYCODE_BUTTON_THUMBR -> ControllerKey.R3
                 KeyEvent.KEYCODE_BUTTON_START -> ControllerKey.START
                 KeyEvent.KEYCODE_BUTTON_SELECT -> ControllerKey.SELECT
                 KeyEvent.KEYCODE_DPAD_UP -> ControllerKey.UP
@@ -202,12 +209,18 @@ class MainActivity :
         if (event.source and InputDevice.SOURCE_JOYSTICK != InputDevice.SOURCE_JOYSTICK) {
             return super.onGenericMotionEvent(event)
         }
-        val horizontal = event.getAxisValue(MotionEvent.AXIS_HAT_X)
-        val vertical = event.getAxisValue(MotionEvent.AXIS_HAT_Y)
-        updateControllerInput(event.deviceId, ControllerKey.LEFT, horizontal < -CONTROLLER_AXIS_THRESHOLD)
-        updateControllerInput(event.deviceId, ControllerKey.RIGHT, horizontal > CONTROLLER_AXIS_THRESHOLD)
-        updateControllerInput(event.deviceId, ControllerKey.UP, vertical < -CONTROLLER_AXIS_THRESHOLD)
-        updateControllerInput(event.deviceId, ControllerKey.DOWN, vertical > CONTROLLER_AXIS_THRESHOLD)
+        val hatX = event.getAxisValue(MotionEvent.AXIS_HAT_X)
+        val hatY = event.getAxisValue(MotionEvent.AXIS_HAT_Y)
+        // The left stick doubles the hat: whichever passes threshold first
+        // wins per direction, and the edge-detect below converges them.
+        val stickX = event.getAxisValue(MotionEvent.AXIS_X)
+        val stickY = event.getAxisValue(MotionEvent.AXIS_Y)
+        // Right stick and analog triggers ride no digital direction: they
+        // wait for the analog transport follow-up instead of aliasing dpad.
+        updateControllerInput(event.deviceId, ControllerKey.LEFT, hatX < -CONTROLLER_AXIS_THRESHOLD || stickX < -CONTROLLER_AXIS_THRESHOLD)
+        updateControllerInput(event.deviceId, ControllerKey.RIGHT, hatX > CONTROLLER_AXIS_THRESHOLD || stickX > CONTROLLER_AXIS_THRESHOLD)
+        updateControllerInput(event.deviceId, ControllerKey.UP, hatY < -CONTROLLER_AXIS_THRESHOLD || stickY < -CONTROLLER_AXIS_THRESHOLD)
+        updateControllerInput(event.deviceId, ControllerKey.DOWN, hatY > CONTROLLER_AXIS_THRESHOLD || stickY > CONTROLLER_AXIS_THRESHOLD)
         return true
     }
 

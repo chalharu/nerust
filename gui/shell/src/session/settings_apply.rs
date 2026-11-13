@@ -304,8 +304,13 @@ impl SessionHandle {
         }
         self.rebuild_key_field_map();
         // One borrow of the live port for the whole re-assert loop.
+        // Keyboard holds only: pads re-resolve through assignments, which
+        // just changed, so their fields are stale by definition.
         if let Some(input) = self.emu.input_mut() {
-            for key in &self.input.pressed_keys {
+            for (_, button) in &self.input.pressed {
+                let nerust_input_traits::SourceButtonId::Key(key) = button else {
+                    continue;
+                };
                 if let Some(&field) = self.input.key_field_map.get(key) {
                     let _ = input.set(field, nerust_input_traits::InputValue::Digital(true));
                 }

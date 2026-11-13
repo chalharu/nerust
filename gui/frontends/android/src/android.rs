@@ -4,7 +4,6 @@ mod dialog_coordinator;
 mod error_dialog;
 mod foreground_controller;
 mod input_router;
-mod key_tracker;
 mod lifecycle;
 mod media_loader;
 mod menu;
@@ -528,7 +527,6 @@ impl AndroidFrontend {
         self.chrome
             .input
             .reset_touch_tracking(&mut self.core.session, &self.app);
-        self.chrome.input.forget_physical_pressed();
         // Pure decision; the frontend executes marker and session I/O.
         // A fetch killed by the suspend reset keeps the marker for resume refetch.
         let saved_hidden = self.core.session.save_hidden_lifecycle_state();
@@ -565,9 +563,9 @@ impl AndroidFrontend {
         self.chrome
             .input
             .reset_touch_tracking(&mut self.core.session, &self.app);
-        self.chrome
-            .input
-            .release_physical_tracking(&mut self.core.session);
+        // Surface loss releases pads event-fully (other sources holding
+        // the same field stay asserted); keyboards keep their holds.
+        self.core.session.release_pad_presses();
         self.core.shell.needs_redraw = true;
     }
 
@@ -634,13 +632,13 @@ impl AndroidFrontend {
             FrontendEvent::Menu(action) => match action {
                 MenuAction::ControllerInput {
                     device_id,
-                    key,
+                    button,
                     pressed,
                 } => {
                     self.chrome.input.apply_physical_controller_input(
                         &mut self.core.session,
                         device_id,
-                        key,
+                        button,
                         pressed,
                     );
                 }
@@ -968,7 +966,6 @@ impl ApplicationHandler for AndroidFrontend {
             WindowEvent::Focused(false) => {
                 log::info!("window_event: focus lost");
                 self.core.session.clear_input();
-                self.chrome.input.forget_physical_pressed();
             }
             WindowEvent::Resized(size) => {
                 log::info!("window_event: resized to {}x{}", size.width, size.height);

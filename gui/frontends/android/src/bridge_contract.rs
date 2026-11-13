@@ -64,14 +64,19 @@ pub(crate) fn validate_bridge_event(value: &mut serde_json::Value) -> Option<()>
                             Some(
                                 "button1"
                                     | "button2"
+                                    | "button3"
+                                    | "button4"
                                     | "button5"
                                     | "button6"
                                     | "start"
                                     | "select"
+                                    | "guide"
                                     | "up"
                                     | "down"
                                     | "left"
                                     | "right"
+                                    | "l3"
+                                    | "r3"
                             )
                         )
                     }

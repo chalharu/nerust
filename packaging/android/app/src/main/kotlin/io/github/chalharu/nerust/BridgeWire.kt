@@ -43,25 +43,35 @@ internal object MenuAction {
 internal object ControllerKey {
     const val BUTTON1 = "button1"
     const val BUTTON2 = "button2"
+    const val BUTTON3 = "button3"
+    const val BUTTON4 = "button4"
     const val BUTTON5 = "button5"
     const val BUTTON6 = "button6"
     const val START = "start"
     const val SELECT = "select"
+    const val GUIDE = "guide"
     const val UP = "up"
     const val DOWN = "down"
     const val LEFT = "left"
     const val RIGHT = "right"
+    const val L3 = "l3"
+    const val R3 = "r3"
 
     val ALL: Set<String> = setOf(
         BUTTON1,
         BUTTON2,
+        BUTTON3,
+        BUTTON4,
         BUTTON5,
         BUTTON6,
         START,
         SELECT,
+        GUIDE,
         UP,
         DOWN,
         LEFT,
         RIGHT,
+        L3,
+        R3,
     )
 }
