@@ -83,7 +83,7 @@ pub(super) fn request_show_settings_dialog(
 /// The resolved value is never persisted; the draft keeps the choice.
 pub(super) fn display_language(choice: AppLanguage) -> AppLanguage {
     let system = bridge::with_settings(|state| state.system_locale);
-    settings_views::I18n::resolve(choice, system).language()
+    settings_views::resolve_display(choice, system).language()
 }
 
 /// Publish the saved in-app language without opening the screen.
@@ -351,7 +351,7 @@ fn hardware_key(
                         &state.keyboards,
                         state.touch_capable,
                         &state.gamepads,
-                        settings_views::I18n::resolve(
+                        settings_views::resolve_display(
                             draft.shared.general.language,
                             state.system_locale,
                         ),

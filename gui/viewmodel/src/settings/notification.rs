@@ -3,7 +3,7 @@ use super::{
     editor::{SettingsEditor, ViewModelError},
     property::ReadOnlyObservableProperty,
 };
-use nerust_settings_core::i18n::{UiText, text as ui_text};
+use nerust_settings_core::i18n::{I18n, UiText};
 use nerust_settings_core::model::local::{
     NotificationAreaMode, NotificationColor, NotificationPosition,
 };
@@ -129,7 +129,7 @@ impl NotificationSettingsViewModel {
 
 fn project_view(state: &super::EditorState) -> NotificationView {
     let n = &state.draft.local.notifications;
-    let lang = state.draft.shared.general.language;
+    let i18n = I18n::resolve_os(state.draft.shared.general.language);
     NotificationView {
         info_enabled: n.info_enabled,
         info_duration_ms: n.info_duration_ms,
@@ -137,23 +137,23 @@ fn project_view(state: &super::EditorState) -> NotificationView {
         color_choices: vec![
             ChoiceView {
                 value: NotificationColor::White,
-                label: ui_text(lang, UiText::ColorWhite).to_string(),
+                label: i18n.text(UiText::ColorWhite).to_string(),
             },
             ChoiceView {
                 value: NotificationColor::Yellow,
-                label: ui_text(lang, UiText::ColorYellow).to_string(),
+                label: i18n.text(UiText::ColorYellow).to_string(),
             },
             ChoiceView {
                 value: NotificationColor::Red,
-                label: ui_text(lang, UiText::ColorRed).to_string(),
+                label: i18n.text(UiText::ColorRed).to_string(),
             },
             ChoiceView {
                 value: NotificationColor::Green,
-                label: ui_text(lang, UiText::ColorGreen).to_string(),
+                label: i18n.text(UiText::ColorGreen).to_string(),
             },
             ChoiceView {
                 value: NotificationColor::Cyan,
-                label: ui_text(lang, UiText::ColorCyan).to_string(),
+                label: i18n.text(UiText::ColorCyan).to_string(),
             },
         ],
         warning_enabled: n.warning_enabled,
@@ -168,19 +168,19 @@ fn project_view(state: &super::EditorState) -> NotificationView {
         position_choices: vec![
             ChoiceView {
                 value: NotificationPosition::TopLeft,
-                label: ui_text(lang, UiText::PosTopLeft).to_string(),
+                label: i18n.text(UiText::PosTopLeft).to_string(),
             },
             ChoiceView {
                 value: NotificationPosition::TopRight,
-                label: ui_text(lang, UiText::PosTopRight).to_string(),
+                label: i18n.text(UiText::PosTopRight).to_string(),
             },
             ChoiceView {
                 value: NotificationPosition::BottomLeft,
-                label: ui_text(lang, UiText::PosBottomLeft).to_string(),
+                label: i18n.text(UiText::PosBottomLeft).to_string(),
             },
             ChoiceView {
                 value: NotificationPosition::BottomRight,
-                label: ui_text(lang, UiText::PosBottomRight).to_string(),
+                label: i18n.text(UiText::PosBottomRight).to_string(),
             },
         ],
         area_mode: n.area_mode,
@@ -188,11 +188,11 @@ fn project_view(state: &super::EditorState) -> NotificationView {
         area_mode_choices: vec![
             ChoiceView {
                 value: NotificationAreaMode::Overlay,
-                label: ui_text(lang, UiText::AreaOverlay).to_string(),
+                label: i18n.text(UiText::AreaOverlay).to_string(),
             },
             ChoiceView {
                 value: NotificationAreaMode::Strip,
-                label: ui_text(lang, UiText::AreaStrip).to_string(),
+                label: i18n.text(UiText::AreaStrip).to_string(),
             },
         ],
     }

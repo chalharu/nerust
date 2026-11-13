@@ -234,21 +234,118 @@ pub enum UiText {
 }
 
 pub fn resolve_language(language: AppLanguage) -> AppLanguage {
-    match language {
-        AppLanguage::SystemDefault => system_language(),
-        other => other,
+    resolve_locale(language, &OsLocale)
+}
+
+/// How the terminal locale is obtained: the one axis frontends differ
+/// on (Desktop queries the OS; Android pushes the Kotlin `Locale`
+/// through the vault). The tag→language rule stays shared, so both
+/// paths resolve identically.
+pub trait SystemLocaleSource {
+    /// Terminal language, or `None` when unknown (falls back to English).
+    fn system_language(&self) -> Option<AppLanguage>;
+}
+
+/// Fixed-value source: previews, tests, and the Android vault push.
+#[derive(Debug, Clone, Copy)]
+pub struct FixedLocale(pub Option<AppLanguage>);
+
+impl SystemLocaleSource for FixedLocale {
+    fn system_language(&self) -> Option<AppLanguage> {
+        self.0
     }
 }
 
-/// OS locale mapped onto the supported set. `sys-locale` queries the
-/// platform (Win32/macOS locale APIs; process env on Unix), so GUI
-/// launches without `LANG` still resolve correctly. `LANG` stays as
-/// the fallback for platforms `sys-locale` does not cover.
-fn system_language() -> AppLanguage {
-    if let Some(locale) = sys_locale::get_locale() {
-        return language_from_locale_tag(&locale);
+/// OS-query source: `sys-locale` reads the platform locale (Win32/macOS
+/// APIs; process env on Unix), so GUI launches without `LANG` still
+/// resolve correctly. `LANG` stays as the fallback for platforms
+/// `sys-locale` does not cover.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OsLocale;
+
+impl SystemLocaleSource for OsLocale {
+    fn system_language(&self) -> Option<AppLanguage> {
+        if let Some(locale) = sys_locale::get_locale() {
+            return Some(language_from_locale_tag(&locale));
+        }
+        let lang = std::env::var("LANG").unwrap_or_default();
+        (!lang.is_empty()).then(|| language_from_locale_tag(&lang))
     }
-    language_from_locale_tag(&std::env::var("LANG").unwrap_or_default())
+}
+
+/// Saved choice to display language: an explicit choice always wins, so
+/// the source is only queried for `SystemDefault` (concrete Android
+/// snapshots never touch it). Pure apart from the source call.
+pub fn resolve_locale(choice: AppLanguage, source: &dyn SystemLocaleSource) -> AppLanguage {
+    match choice {
+        AppLanguage::SystemDefault => source.system_language().unwrap_or(AppLanguage::English),
+        explicit => explicit,
+    }
+}
+
+/// Resolved display language plus text accessors. Built once per render
+/// entry from [`resolve_locale`] — never from a raw choice — and threaded
+/// through builders/controls instead of re-resolving per string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct I18n {
+    language: AppLanguage,
+}
+
+impl I18n {
+    /// Build from an already-resolved language. Resolution and text
+    /// lookup stay separate: edges resolve, controls only read.
+    pub fn new(resolved: AppLanguage) -> Self {
+        debug_assert_ne!(
+            resolved,
+            AppLanguage::SystemDefault,
+            "resolve the choice before building I18n",
+        );
+        Self { language: resolved }
+    }
+
+    /// Edge constructor: saved choice plus an OS query.
+    pub fn resolve_os(choice: AppLanguage) -> Self {
+        Self::new(resolve_locale(choice, &OsLocale))
+    }
+
+    /// Edge constructor with an explicit source (tests, Android vault).
+    pub fn resolve_with(choice: AppLanguage, source: &dyn SystemLocaleSource) -> Self {
+        Self::new(resolve_locale(choice, source))
+    }
+
+    pub fn language(self) -> AppLanguage {
+        self.language
+    }
+
+    pub fn text(self, key: UiText) -> String {
+        text(self.language, key).to_string()
+    }
+
+    pub fn port_summary(self, names: &[String]) -> String {
+        port_summary(self.language, names)
+    }
+
+    pub fn port_count_line(self, count: usize) -> String {
+        port_count_line(self.language, count)
+    }
+
+    pub fn slot_description(self) -> String {
+        slot_description(self.language)
+    }
+
+    /// History item count (`42 items` / `42件`).
+    pub fn history_count(self, count: usize) -> String {
+        history_count(self.language, count)
+    }
+
+    /// Full disabled-choice sentence, formatted here so word order
+    /// follows the locale.
+    pub fn slot_in_use(self, owner: &str) -> String {
+        match self.language {
+            AppLanguage::Japanese => format!("{owner}使用中"),
+            _ => format!("Used in {owner}"),
+        }
+    }
 }
 
 /// Locale tag to the supported set (`ja` primary subtag → Japanese,
@@ -838,6 +935,43 @@ mod tests {
     fn explicit_choice_never_falls_back_to_os() {
         assert_eq!(resolve_language(AppLanguage::Japanese), ja());
         assert_eq!(resolve_language(AppLanguage::English), en());
+    }
+
+    struct StubSource(Option<AppLanguage>);
+
+    impl SystemLocaleSource for StubSource {
+        fn system_language(&self) -> Option<AppLanguage> {
+            self.0
+        }
+    }
+
+    #[test]
+    fn resolve_locale_prefers_choice_over_source() {
+        // Explicit choices never query the source, so concrete Android
+        // snapshots cost nothing.
+        assert_eq!(resolve_locale(ja(), &StubSource(Some(en()))), ja());
+        assert_eq!(resolve_locale(en(), &StubSource(Some(ja()))), en());
+        assert_eq!(
+            resolve_locale(AppLanguage::SystemDefault, &StubSource(Some(ja()))),
+            ja()
+        );
+        assert_eq!(
+            resolve_locale(AppLanguage::SystemDefault, &StubSource(None)),
+            en()
+        );
+    }
+
+    #[test]
+    fn i18n_instance_serves_both_languages() {
+        let ja_i18n = I18n::resolve_with(AppLanguage::SystemDefault, &StubSource(Some(ja())));
+        assert_eq!(ja_i18n.language(), ja());
+        assert_eq!(ja_i18n.text(UiText::Open), "開く");
+        assert_eq!(ja_i18n.slot_in_use("P1"), "P1使用中");
+
+        let en_i18n = I18n::resolve_os(AppLanguage::English);
+        assert_eq!(en_i18n.language(), en());
+        assert_eq!(en_i18n.text(UiText::Open), "Open");
+        assert_eq!(en_i18n.slot_in_use("P1"), "Used in P1");
     }
 
     #[test]

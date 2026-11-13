@@ -3,6 +3,7 @@
 
 use std::time::Instant;
 
+use nerust_settings_core::i18n::I18n;
 use nerust_settings_core::model::language::AppLanguage;
 
 use super::notification::UiNotification;
@@ -96,7 +97,9 @@ impl OsdManager {
             // Adopted only here: dropped/modal paths pay no clone or render.
             let group = n.message.replace_group();
             let message = n.message;
-            let renderer = super::notification::NotificationRenderer { language };
+            let renderer = super::notification::NotificationRenderer {
+                i18n: I18n::resolve_os(language),
+            };
             let base: std::sync::Arc<str> = renderer.render_message(&message).into();
             let item = OsdItem {
                 row: counted_row(

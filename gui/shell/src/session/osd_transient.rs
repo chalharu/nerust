@@ -4,6 +4,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use nerust_settings_core::i18n::I18n;
 use nerust_settings_core::model::local::NotificationSettings;
 
 use crate::session::notification::{NotificationLevel, ReplaceGroup};
@@ -160,7 +161,9 @@ impl TransientQueue {
         u32,
         NotificationLevel,
     )> {
-        let renderer = crate::session::notification::NotificationRenderer { language };
+        let renderer = crate::session::notification::NotificationRenderer {
+            i18n: I18n::resolve_os(language),
+        };
         let mut modal = Vec::new();
         let mut update = |item: &mut OsdItem, showing: bool| {
             if !policy.enabled(item.level) {

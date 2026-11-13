@@ -1,4 +1,4 @@
-use nerust_settings_core::{i18n::resolve_language, model::language::AppLanguage};
+use nerust_settings_core::{i18n::I18n, model::language::AppLanguage};
 
 /// Overall validation state for the settings view model.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,7 +74,8 @@ pub enum ValidationIssueKind {
 
 impl ValidationIssueKind {
     pub fn message(&self, language: AppLanguage) -> String {
-        let japanese = matches!(resolve_language(language), AppLanguage::Japanese);
+        let i18n = I18n::resolve_os(language);
+        let japanese = matches!(i18n.language(), AppLanguage::Japanese);
         match self {
             Self::Storage(detail) => detail.clone(),
             Self::VolumeOutOfRange => pick(

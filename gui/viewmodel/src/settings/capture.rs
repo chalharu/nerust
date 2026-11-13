@@ -1,7 +1,7 @@
 use nerust_input_traits::Key;
 use nerust_settings_core::{
     editor::CaptureTarget,
-    i18n::{UiText, text as ui_text},
+    i18n::{I18n, UiText},
 };
 
 use super::{
@@ -68,14 +68,13 @@ impl CaptureViewModel {
 }
 
 fn project_view(state: &super::EditorState) -> CaptureStateView {
+    let i18n = I18n::resolve_os(state.draft.shared.general.language);
     CaptureStateView {
         target: state.capture_target.clone(),
         prompt: state
             .capture_target
             .as_ref()
-            .map(|_| {
-                ui_text(state.draft.shared.general.language, UiText::CapturePrompt).to_string()
-            })
+            .map(|_| i18n.text(UiText::CapturePrompt).to_string())
             .unwrap_or_default(),
     }
 }

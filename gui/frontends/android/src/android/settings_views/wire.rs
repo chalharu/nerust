@@ -12,10 +12,7 @@ use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_viewmodel::settings::{SettingsViewModel, StoragePathError, StoragePathValidator};
 use nerust_settings_core::{
     editor::CaptureTarget,
-    i18n::{
-        UiText, language_from_locale_tag, port_count_line, port_summary, slot_description,
-        text as ui_text,
-    },
+    i18n::{UiText, language_from_locale_tag},
     model::language::AppLanguage,
 };
 use nerust_system_traits::factory::CoreFactory;
@@ -278,56 +275,19 @@ pub(super) fn build_vm(
     .map_err(|error| error.to_string())
 }
 
-/// Resolved display language plus text accessors: constructed once per
-/// projection from the draft choice and the vault system `Locale`, then
-/// threaded through every builder instead of a bare locale or language.
-/// The VM working copy is normalized with the same value, so labels from
-/// both layers agree.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct I18n {
-    language: AppLanguage,
-}
+use nerust_settings_core::i18n::FixedLocale;
+/// Shared resolved-language instance, re-exported so every builder names
+/// one type. Constructed once per projection from the draft choice and
+/// the vault system `Locale`, then threaded through every builder instead
+/// of a bare locale or language. The VM working copy is normalized with
+/// the same value, so labels from both layers agree.
+pub(crate) use nerust_settings_core::i18n::I18n;
 
-impl I18n {
-    /// Resolve the display language: an explicit choice wins, SystemDefault
-    /// follows the vault-pushed `Locale` (`None` until pushed keeps the
-    /// choice for the host fallback).
-    pub(crate) fn resolve(setting: AppLanguage, system: Option<AppLanguage>) -> Self {
-        let language = match (setting, system) {
-            (AppLanguage::SystemDefault, Some(system)) => system,
-            _ => setting,
-        };
-        Self { language }
-    }
-
-    pub(crate) fn language(self) -> AppLanguage {
-        self.language
-    }
-
-    pub(super) fn text(self, key: UiText) -> String {
-        ui_text(self.language, key).to_string()
-    }
-
-    pub(super) fn port_summary(self, names: &[String]) -> String {
-        port_summary(self.language, names)
-    }
-
-    pub(super) fn port_count_line(self, count: usize) -> String {
-        port_count_line(self.language, count)
-    }
-
-    pub(super) fn slot_description(self) -> String {
-        slot_description(self.language)
-    }
-
-    /// Full disabled-choice sentence, formatted Rust-side so word order
-    /// follows the locale (Kotlin renders it verbatim).
-    pub(super) fn slot_in_use(self, owner: &str) -> String {
-        match self.language {
-            AppLanguage::Japanese => format!("{owner}使用中"),
-            _ => format!("Used in {owner}"),
-        }
-    }
+/// Display language for one projection: an explicit draft choice wins,
+/// SystemDefault follows the vault-pushed terminal `Locale` (`None`
+/// until pushed keeps the choice for the host fallback).
+pub(crate) fn resolve_display(setting: AppLanguage, system: Option<AppLanguage>) -> I18n {
+    I18n::resolve_with(setting, &FixedLocale(system))
 }
 
 /// Terminal locale tag to the supported set. Delegates to the shared

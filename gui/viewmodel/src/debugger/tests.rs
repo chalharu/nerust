@@ -1,5 +1,6 @@
 use super::*;
 use nerust_core_traits::debugger::{DisasmLine, HexRow};
+use nerust_settings_core::i18n::I18n;
 
 fn cached(rows: bool) -> DisplayCache {
     DisplayCache {
@@ -50,11 +51,18 @@ fn ppu_hover_hint_is_canonical() {
 fn tile_hover_text_matches_viewers() {
     use nerust_settings_core::model::language::AppLanguage;
     assert_eq!(
-        tile_hover_text(AppLanguage::English, "Pattern left", 128, 128, 88.0, 26.0),
+        tile_hover_text(
+            I18n::new(AppLanguage::English),
+            "Pattern left",
+            128,
+            128,
+            88.0,
+            26.0
+        ),
         "Pattern left tile #21 (px 44,13, +0x0150)"
     );
     let clamped = tile_hover_text(
-        AppLanguage::Japanese,
+        I18n::new(AppLanguage::Japanese),
         "Pattern right",
         128,
         128,

@@ -5,6 +5,7 @@ use super::{
     notification::{Message, NotificationLevel, NotificationRenderer, append_count},
     osd_transient::TransientPolicy,
 };
+use nerust_settings_core::i18n::I18n;
 use nerust_settings_core::model::language::AppLanguage;
 
 #[derive(Debug)]
@@ -29,7 +30,10 @@ impl ModalLine {
                 let (policy, language) = presentation?;
                 policy.enabled(*level).then(|| {
                     append_count(
-                        NotificationRenderer { language }.render_message(message),
+                        NotificationRenderer {
+                            i18n: I18n::resolve_os(language),
+                        }
+                        .render_message(message),
                         *count,
                     )
                 })

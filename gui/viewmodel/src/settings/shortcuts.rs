@@ -1,8 +1,8 @@
 use nerust_settings_core::{
     bindings::descriptors::{ShortcutDescriptor, shortcut_descriptors},
     editor::CaptureTarget,
-    i18n::{UiText, text as ui_text},
-    model::{language::AppLanguage, snapshot::SettingsSnapshot},
+    i18n::{I18n, UiText},
+    model::snapshot::SettingsSnapshot,
 };
 
 use super::{
@@ -34,13 +34,13 @@ impl ShortcutsViewModel {
 }
 
 fn project_view(state: &EditorState) -> BindingSectionView {
-    let language = state.draft.shared.general.language;
+    let i18n = I18n::resolve_os(state.draft.shared.general.language);
     let shortcut_rows: Vec<BindingRowView> = shortcut_descriptors()
         .iter()
-        .map(|desc| project_shortcut_row(&state.draft, desc, language, &state.capture_target))
+        .map(|desc| project_shortcut_row(&state.draft, desc, i18n, &state.capture_target))
         .collect();
     BindingSectionView {
-        label: ui_text(language, UiText::Shortcuts).to_string(),
+        label: i18n.text(UiText::Shortcuts).to_string(),
         rows: shortcut_rows,
     }
 }
@@ -48,11 +48,11 @@ fn project_view(state: &EditorState) -> BindingSectionView {
 fn project_shortcut_row(
     draft: &SettingsSnapshot,
     desc: &ShortcutDescriptor,
-    language: AppLanguage,
+    i18n: I18n,
     capture_target: &Option<CaptureTarget>,
 ) -> BindingRowView {
     let target = CaptureTarget::Shortcut(desc.action);
-    let value = binding_value(draft, &target, capture_target, language);
+    let value = binding_value(draft, &target, capture_target, i18n);
     BindingRowView {
         target,
         label: desc.label.to_string(),

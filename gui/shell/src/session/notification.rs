@@ -3,6 +3,7 @@
 
 use std::collections::VecDeque;
 
+use nerust_settings_core::i18n::I18n;
 use nerust_settings_core::model::language::AppLanguage;
 
 use crate::session::error::SlotOpFailure;
@@ -202,7 +203,10 @@ impl Message {
 
     /// Localized text via the single renderer adapter.
     pub fn text(&self, language: AppLanguage) -> String {
-        NotificationRenderer { language }.render_message(self)
+        NotificationRenderer {
+            i18n: I18n::resolve_os(language),
+        }
+        .render_message(self)
     }
 
     /// Key-only message with no args.
@@ -270,65 +274,61 @@ impl Message {
 /// Single localization adapter: the only place turning keys into text.
 #[derive(Debug, Clone, Copy)]
 pub struct NotificationRenderer {
-    /// Target language for every rendered string.
-    pub language: AppLanguage,
+    /// Resolved display language for every rendered string.
+    pub i18n: I18n,
 }
 
 impl NotificationRenderer {
     /// Render one domain message: the single format point shared
     /// by the row and the coalescing key.
     pub fn render_message(&self, message: &Message) -> String {
-        render_message(message, self.language)
+        render_message(message, self.i18n)
     }
 
     /// Render one stable level name in the adapter language.
     pub fn level_name(&self, level: NotificationLevel) -> &'static str {
-        level_key(level, self.language)
+        level_key(level, self.i18n)
     }
 }
 
 /// Stable level key; only the renderer resolves it per language.
-fn level_key(level: NotificationLevel, language: AppLanguage) -> &'static str {
-    use nerust_settings_core::i18n::{UiText, text as ui_text};
+fn level_key(level: NotificationLevel, i18n: I18n) -> &'static str {
+    use nerust_settings_core::i18n::{UiText, text};
+    let language = i18n.language();
     match level {
-        NotificationLevel::Info => ui_text(language, UiText::NotificationInfo),
-        NotificationLevel::Warning => ui_text(language, UiText::NotificationWarning),
-        NotificationLevel::Error => ui_text(language, UiText::Error),
+        NotificationLevel::Info => text(language, UiText::NotificationInfo),
+        NotificationLevel::Warning => text(language, UiText::NotificationWarning),
+        NotificationLevel::Error => text(language, UiText::Error),
     }
 }
 
 /// Template fill for one domain message in one language.
-fn render_message(message: &Message, language: AppLanguage) -> String {
+fn render_message(message: &Message, i18n: I18n) -> String {
     match message.key {
-        MessageKey::Paused => bilingual(language, "Paused", "一時停止しました"),
-        MessageKey::Resumed => bilingual(language, "Resumed", "再開しました"),
-        MessageKey::Reset => bilingual(language, "Reset", "リセットしました"),
-        MessageKey::SlotCreated => bilingual(language, "Slot created", "スロットを作成しました"),
-        MessageKey::SlotSaved => slot_text(message.slot, language, "Saved to", "保存しました"),
-        MessageKey::SlotLoaded => slot_text(message.slot, language, "Loaded", "読み込みました"),
-        MessageKey::SlotDeleted => slot_text(message.slot, language, "Deleted", "削除しました"),
-        MessageKey::SlotSelected => slot_text(message.slot, language, "Selected", "選択しました"),
+        MessageKey::Paused => bilingual(i18n, "Paused", "一時停止しました"),
+        MessageKey::Resumed => bilingual(i18n, "Resumed", "再開しました"),
+        MessageKey::Reset => bilingual(i18n, "Reset", "リセットしました"),
+        MessageKey::SlotCreated => bilingual(i18n, "Slot created", "スロットを作成しました"),
+        MessageKey::SlotSaved => slot_text(message.slot, i18n, "Saved to", "保存しました"),
+        MessageKey::SlotLoaded => slot_text(message.slot, i18n, "Loaded", "読み込みました"),
+        MessageKey::SlotDeleted => slot_text(message.slot, i18n, "Deleted", "削除しました"),
+        MessageKey::SlotSelected => slot_text(message.slot, i18n, "Selected", "選択しました"),
         MessageKey::SavesUnavailable => {
-            bilingual(language, "Saves unavailable", "保存機能が利用できません")
+            bilingual(i18n, "Saves unavailable", "保存機能が利用できません")
         }
         MessageKey::SlotFailed => {
             let reason = message.reason.unwrap_or(SlotOpFailure::Unavailable);
-            slot_failed_text(message.slot, reason, language)
+            slot_failed_text(message.slot, reason, i18n)
         }
         MessageKey::CommandFailed => {
             let origin = message.origin.unwrap_or(FailureOrigin::Command);
-            command_failed_text(origin, message.id, &message.detail, language)
+            command_failed_text(origin, message.id, &message.detail, i18n)
         }
     }
 }
 
-fn command_failed_text(
-    origin: FailureOrigin,
-    id: &str,
-    detail: &str,
-    language: AppLanguage,
-) -> String {
-    let prefix = match (origin, language) {
+fn command_failed_text(origin: FailureOrigin, id: &str, detail: &str, i18n: I18n) -> String {
+    let prefix = match (origin, i18n.language()) {
         (FailureOrigin::Command, AppLanguage::Japanese) => {
             return if detail.is_empty() {
                 format!("{id} に失敗しました")
@@ -357,38 +357,36 @@ fn command_failed_text(
     }
 }
 
-fn slot_failed_text(slot: Option<u64>, reason: SlotOpFailure, language: AppLanguage) -> String {
-    let what = failure_reason_text(reason, language);
-    match (slot, language) {
+fn slot_failed_text(slot: Option<u64>, reason: SlotOpFailure, i18n: I18n) -> String {
+    let what = failure_reason_text(reason, i18n);
+    match (slot, i18n.language()) {
         (Some(id), AppLanguage::Japanese) => format!("スロット{id}: {what}"),
         (Some(id), _) => format!("Slot {id}: {what}"),
         (None, _) => what.to_string(),
     }
 }
 
-fn failure_reason_text(reason: SlotOpFailure, language: AppLanguage) -> &'static str {
+fn failure_reason_text(reason: SlotOpFailure, i18n: I18n) -> &'static str {
     match reason {
-        SlotOpFailure::Empty => bilingual_str(language, "slot is empty", "空きスロットです"),
-        SlotOpFailure::Missing => bilingual_str(language, "no data", "データがありません"),
-        SlotOpFailure::Storage => bilingual_str(language, "storage failure", "保存に失敗しました"),
-        SlotOpFailure::Corrupt => {
-            bilingual_str(language, "data is corrupt", "データが壊れています")
-        }
+        SlotOpFailure::Empty => bilingual_str(i18n, "slot is empty", "空きスロットです"),
+        SlotOpFailure::Missing => bilingual_str(i18n, "no data", "データがありません"),
+        SlotOpFailure::Storage => bilingual_str(i18n, "storage failure", "保存に失敗しました"),
+        SlotOpFailure::Corrupt => bilingual_str(i18n, "data is corrupt", "データが壊れています"),
         SlotOpFailure::Incompatible => {
-            bilingual_str(language, "incompatible data", "互換性がありません")
+            bilingual_str(i18n, "incompatible data", "互換性がありません")
         }
-        SlotOpFailure::Unavailable => bilingual_str(language, "unavailable", "利用できません"),
+        SlotOpFailure::Unavailable => bilingual_str(i18n, "unavailable", "利用できません"),
     }
 }
 
 /// Pick the language side. Splitting this out (instead of inline
 /// `language` matches per arm) keeps `text()` under the complexity budget.
-fn bilingual(language: AppLanguage, en: &str, ja_text: &str) -> String {
-    bilingual_str(language, en, ja_text).to_string()
+fn bilingual(i18n: I18n, en: &str, ja_text: &str) -> String {
+    bilingual_str(i18n, en, ja_text).to_string()
 }
 
-fn slot_text(slot: Option<u64>, language: AppLanguage, en: &str, ja: &str) -> String {
-    match (slot, language) {
+fn slot_text(slot: Option<u64>, i18n: I18n, en: &str, ja: &str) -> String {
+    match (slot, i18n.language()) {
         (Some(id), AppLanguage::Japanese) => format!("スロット{id}に{ja}"),
         (Some(id), _) => format!("{en} slot {id}"),
         (None, AppLanguage::Japanese) => ja.to_string(),
@@ -396,8 +394,8 @@ fn slot_text(slot: Option<u64>, language: AppLanguage, en: &str, ja: &str) -> St
     }
 }
 
-fn bilingual_str<'a>(language: AppLanguage, en: &'a str, ja_text: &'a str) -> &'a str {
-    match language {
+fn bilingual_str<'a>(i18n: I18n, en: &'a str, ja_text: &'a str) -> &'a str {
+    match i18n.language() {
         AppLanguage::Japanese => ja_text,
         _ => en,
     }
@@ -612,11 +610,8 @@ impl NotificationCenter {
 
 /// Single text source for history rows and OSD labels: base
 /// text plus the `×N` suffix for coalesced repeats.
-pub fn render_text(message: &Message, count: u32, language: AppLanguage) -> String {
-    append_count(
-        NotificationRenderer { language }.render_message(message),
-        count,
-    )
+pub fn render_text(message: &Message, count: u32, i18n: I18n) -> String {
+    append_count(NotificationRenderer { i18n }.render_message(message), count)
 }
 
 /// Suffix rule shared by [`render_text`] and OSD rows (which keep
@@ -645,6 +640,7 @@ mod tests {
         FailureOrigin, MAX_PENDING, Message, NotificationCenter, NotificationLevel, ReplaceGroup,
         render_text,
     };
+    use nerust_settings_core::i18n::I18n;
     use nerust_settings_core::model::language::AppLanguage;
 
     #[test]
@@ -792,14 +788,29 @@ mod tests {
     #[test]
     fn render_text_adds_count_suffix() {
         assert_eq!(
-            render_text(&Message::paused(), 1, AppLanguage::English),
+            render_text(
+                &Message::paused(),
+                1,
+                I18n::resolve_os(AppLanguage::English)
+            ),
             "Paused"
         );
         assert_eq!(
-            render_text(&Message::paused(), 3, AppLanguage::English),
+            render_text(
+                &Message::paused(),
+                3,
+                I18n::resolve_os(AppLanguage::English)
+            ),
             "Paused ×3"
         );
-        assert!(render_text(&Message::saved_slot(7), 2, AppLanguage::Japanese).contains("×2"));
+        assert!(
+            render_text(
+                &Message::saved_slot(7),
+                2,
+                I18n::resolve_os(AppLanguage::Japanese)
+            )
+            .contains("×2")
+        );
     }
 
     #[test]
@@ -844,7 +855,7 @@ mod message_key_tests {
     #[test]
     fn renderer_is_the_single_format_point() {
         let renderer = NotificationRenderer {
-            language: AppLanguage::English,
+            i18n: I18n::resolve_os(AppLanguage::English),
         };
         for message in [
             Message::paused(),
@@ -877,7 +888,7 @@ mod key_tests {
     #[test]
     fn renderer_is_the_single_format_point() {
         let renderer = NotificationRenderer {
-            language: AppLanguage::English,
+            i18n: I18n::resolve_os(AppLanguage::English),
         };
         assert_eq!(renderer.render_message(&Message::paused()), "Paused");
         assert!(!renderer.render_message(&Message::saved_slot(7)).is_empty());
@@ -919,7 +930,7 @@ mod notification_cov_tests {
         assert_eq!(message.slot, None);
         assert_eq!(message.key, MessageKey::SlotSaved);
         let renderer = NotificationRenderer {
-            language: AppLanguage::Japanese,
+            i18n: I18n::resolve_os(AppLanguage::Japanese),
         };
         assert!(!renderer.level_name(NotificationLevel::Warning).is_empty());
         assert_eq!(append_count("a".to_string(), 1), "a");

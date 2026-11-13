@@ -27,8 +27,8 @@ use super::projection::{
 use super::wire::{
     CaptureSlot, GamepadInfo, I18n, KeyboardInfo, Projection, RowKind, RowWire, SectionWire,
     ViewPayload, VmDeps, WireCommand, WireOp, build_vm, choice, find_row, pin_draft_language,
-    projection, range_value, sync_snapshot_from_vm, system_language_from_tag, toggle_value,
-    with_vm_deps,
+    projection, range_value, resolve_display, sync_snapshot_from_vm, system_language_from_tag,
+    toggle_value, with_vm_deps,
 };
 
 /// Apply one wire command to the draft snapshot in place, returning the
@@ -50,7 +50,7 @@ pub(crate) fn apply_command_to(
     let command: WireCommand =
         serde_json::from_str(command_json).map_err(|error| error.to_string())?;
     with_vm_deps(|deps| {
-        let i18n = I18n::resolve(snapshot.shared.general.language, *system_locale);
+        let i18n = resolve_display(snapshot.shared.general.language, *system_locale);
         let truth = projection(keyboards, *touch_capable, gamepads, i18n);
         match command.op {
             WireOp::DeviceTruth => {
@@ -139,7 +139,7 @@ fn project_after_snapshot_edit(
     gamepads: &[GamepadInfo],
     system_locale: Option<AppLanguage>,
 ) -> Result<ViewPayload, String> {
-    let i18n = I18n::resolve(snapshot.shared.general.language, system_locale);
+    let i18n = resolve_display(snapshot.shared.general.language, system_locale);
     let truth = projection(keyboards, touch_capable, gamepads, i18n);
     project_fresh(snapshot, deps, capture, truth)
 }
@@ -540,7 +540,7 @@ pub(crate) fn finish_snapshot(
     system_locale: Option<AppLanguage>,
 ) -> Result<SettingsSnapshot, Vec<String>> {
     with_vm_deps(|deps| {
-        let i18n = I18n::resolve(snapshot.shared.general.language, system_locale);
+        let i18n = resolve_display(snapshot.shared.general.language, system_locale);
         let vm = build_vm(snapshot, deps, i18n)?;
         vm.finish()
             .map(|mut done| {

@@ -257,19 +257,19 @@ fn system_locale_resolves_system_default_for_display() {
         assert_eq!(label, want, "locale {system:?} resolves the display");
     }
     assert_eq!(
-        I18n::resolve(AppLanguage::SystemDefault, Some(AppLanguage::Japanese)).language(),
+        resolve_display(AppLanguage::SystemDefault, Some(AppLanguage::Japanese)).language(),
         AppLanguage::Japanese
     );
     assert_eq!(
-        I18n::resolve(AppLanguage::SystemDefault, Some(AppLanguage::English)).language(),
+        resolve_display(AppLanguage::SystemDefault, Some(AppLanguage::English)).language(),
         AppLanguage::English
     );
     assert_eq!(
-        I18n::resolve(AppLanguage::English, Some(AppLanguage::Japanese)).language(),
+        resolve_display(AppLanguage::English, Some(AppLanguage::Japanese)).language(),
         AppLanguage::English
     );
     assert_eq!(
-        I18n::resolve(AppLanguage::English, None).language(),
+        resolve_display(AppLanguage::English, None).language(),
         AppLanguage::English
     );
 }
@@ -539,7 +539,7 @@ fn locale_tag_mapping_round_trips() {
         let mapped = system_language_from_tag(tag);
         assert_eq!(mapped, want, "tag {tag} maps");
         assert_eq!(
-            I18n::resolve(AppLanguage::SystemDefault, Some(mapped)).language(),
+            resolve_display(AppLanguage::SystemDefault, Some(mapped)).language(),
             want,
             "tag {tag} resolves for display"
         );
@@ -1429,7 +1429,7 @@ fn capture_round_trips_through_hardware_keys() {
         let vm = build_vm(
             &snapshot,
             &test_deps(),
-            I18n::resolve(AppLanguage::SystemDefault, None),
+            resolve_display(AppLanguage::SystemDefault, None),
         )
         .expect("vm builds");
         let keyboards = test_keyboards();
@@ -1437,7 +1437,7 @@ fn capture_round_trips_through_hardware_keys() {
             &keyboards,
             None,
             &[],
-            I18n::resolve(AppLanguage::SystemDefault, None),
+            resolve_display(AppLanguage::SystemDefault, None),
         );
         let sections = build_sections(&vm, &snapshot, truth);
         sections
@@ -1471,7 +1471,7 @@ fn capture_round_trips_through_hardware_keys() {
                 &test_keyboards(),
                 None,
                 &[],
-                I18n::resolve(AppLanguage::SystemDefault, None),
+                resolve_display(AppLanguage::SystemDefault, None),
             ),
         )
         .expect("hardware key release probes")
@@ -1488,7 +1488,7 @@ fn capture_round_trips_through_hardware_keys() {
                 &test_keyboards(),
                 None,
                 &[],
-                I18n::resolve(AppLanguage::SystemDefault, None),
+                resolve_display(AppLanguage::SystemDefault, None),
             ),
         )
         .expect("unknown keycode probes")
@@ -1505,7 +1505,7 @@ fn capture_round_trips_through_hardware_keys() {
                 &test_keyboards(),
                 None,
                 &[],
-                I18n::resolve(AppLanguage::SystemDefault, None),
+                resolve_display(AppLanguage::SystemDefault, None),
             ),
         )
         .expect("hardware key applies")
@@ -1522,7 +1522,7 @@ fn clear_binding_unbinds_without_keyboard() {
         let vm = build_vm(
             &snapshot,
             &test_deps(),
-            I18n::resolve(AppLanguage::SystemDefault, None),
+            resolve_display(AppLanguage::SystemDefault, None),
         )
         .expect("vm builds");
         let keyboards = test_keyboards();
@@ -1530,7 +1530,7 @@ fn clear_binding_unbinds_without_keyboard() {
             &keyboards,
             None,
             &[],
-            I18n::resolve(AppLanguage::SystemDefault, None),
+            resolve_display(AppLanguage::SystemDefault, None),
         );
         let sections = build_sections(&vm, &snapshot, truth);
         sections
@@ -1560,7 +1560,7 @@ fn number_rows_advertise_vm_accepted_bounds() {
         let vm = build_vm(
             &snapshot,
             &test_deps(),
-            I18n::resolve(AppLanguage::SystemDefault, None),
+            resolve_display(AppLanguage::SystemDefault, None),
         )
         .expect("vm builds");
         let keyboards = test_keyboards();
@@ -1568,7 +1568,7 @@ fn number_rows_advertise_vm_accepted_bounds() {
             &keyboards,
             None,
             &[],
-            I18n::resolve(AppLanguage::SystemDefault, None),
+            resolve_display(AppLanguage::SystemDefault, None),
         );
         let sections = build_sections(&vm, &snapshot, truth);
         sections
@@ -1604,10 +1604,10 @@ fn empty_slots_surface_live_issues() {
         let vm = build_vm(
             &snapshot,
             &test_deps(),
-            I18n::resolve(AppLanguage::SystemDefault, None),
+            resolve_display(AppLanguage::SystemDefault, None),
         )
         .expect("vm builds");
-        draft_issues(&vm, I18n::resolve(AppLanguage::SystemDefault, None))
+        draft_issues(&vm, resolve_display(AppLanguage::SystemDefault, None))
     });
     assert!(
         probed.iter().any(|issue| issue.contains("controller")),
@@ -1618,10 +1618,10 @@ fn empty_slots_surface_live_issues() {
         let vm = build_vm(
             &snapshot,
             &test_deps(),
-            I18n::resolve(AppLanguage::Japanese, None),
+            resolve_display(AppLanguage::Japanese, None),
         )
         .expect("vm builds");
-        draft_issues(&vm, I18n::resolve(AppLanguage::Japanese, None))
+        draft_issues(&vm, resolve_display(AppLanguage::Japanese, None))
     });
     assert!(
         japanese
