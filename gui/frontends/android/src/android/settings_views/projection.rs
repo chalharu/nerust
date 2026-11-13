@@ -107,7 +107,13 @@ pub(super) fn build_sections(
         truth.touch_capable,
         truth.gamepads,
     ));
-    sections.extend(build_player_sections(vm, snapshot, i18n, truth.keyboards));
+    sections.extend(build_player_sections(
+        vm,
+        snapshot,
+        i18n,
+        truth.keyboards,
+        truth.gamepads,
+    ));
     sections.extend(build_system_sections(vm, i18n));
     sections.extend(build_input_sections(vm, i18n));
     sections.extend(build_keys_sections(
@@ -566,13 +572,14 @@ fn controllers_quick_section(
     snapshot: &SettingsSnapshot,
     i18n: I18n,
     keyboards: &[KeyboardInfo],
+    gamepads: &[GamepadInfo],
     touch_capable: Option<bool>,
 ) -> SectionWire {
     let overlay = &snapshot.local.touch_overlay;
     let mut quick_rows = Vec::new();
     for (index, port) in PLAYER_PORTS.iter().enumerate() {
         let player_id = player_id(index);
-        let names = port_member_names(port, snapshot, keyboards, i18n);
+        let names = port_member_names(port, snapshot, keyboards, gamepads, i18n);
         quick_rows.push(group_row(
             &format!("controllers.{player_id}"),
             player_label(index, i18n),
@@ -715,8 +722,14 @@ fn overlay_detail_section(
 
 /// Gamepads screen: stick deadzone plus one port row per pad.
 /// Ports are player slots, not devices: pads are connection-ordered and
-/// transient, so the table (not device ids) is what persists.
-fn gamepads_section(snapshot: &SettingsSnapshot, i18n: I18n) -> SectionWire {
+/// transient, so the table (not device ids) is what persists. Connected
+/// names ride the row description by connection-order index, so Pad 1
+/// names the first-seen pad while it stays connected.
+fn gamepads_section(
+    snapshot: &SettingsSnapshot,
+    i18n: I18n,
+    gamepads: &[GamepadInfo],
+) -> SectionWire {
     use nerust_input_traits::MAX_PADS;
     let gamepad = &snapshot.shared.input.gamepad;
     let port_choices = [
@@ -735,10 +748,11 @@ fn gamepads_section(snapshot: &SettingsSnapshot, i18n: I18n) -> SectionWire {
         "%",
     )];
     rows.extend((0..MAX_PADS).flat_map(|index| {
+        let connected = gamepads.get(index).map(|info| info.name.clone()).unwrap_or_default();
         let port_row = choice_row(
             &format!("controls.gamepads.pad{}", index + 1),
             nerust_settings_core::i18n::pad_label(i18n.language(), index),
-            String::new(),
+            connected,
             &port_choices,
             &gamepad.pad_ports[index].slot,
         );
@@ -832,10 +846,10 @@ fn build_controllers_sections(
     gamepads: &[GamepadInfo],
 ) -> Vec<SectionWire> {
     vec![
-        controllers_quick_section(snapshot, i18n, keyboards, touch_capable),
+        controllers_quick_section(snapshot, i18n, keyboards, gamepads, touch_capable),
         overlay_detail_section(&snapshot.local.touch_overlay, gamepads, i18n),
         shortcuts_section(vm, i18n, keyboards, gamepads),
-        gamepads_section(snapshot, i18n),
+        gamepads_section(snapshot, i18n, gamepads),
     ]
 }
 
@@ -965,12 +979,14 @@ fn slot_rows(view: &nerust_gui_viewmodel::settings::dto::InputTabView, i18n: I18
 
 /// Player screens (one per global port): the Devices row opens the device
 /// picker, the Controller-type row opens the per-machine type list.
-/// Summaries read from the port device set, never from machine sections.
+/// Summaries read from the port device set plus pad-port assignments,
+/// never from machine sections.
 fn build_player_sections(
     vm: &SettingsViewModel,
     snapshot: &SettingsSnapshot,
     i18n: I18n,
     keyboards: &[KeyboardInfo],
+    gamepads: &[GamepadInfo],
 ) -> Vec<SectionWire> {
     let mut sections = Vec::new();
     for (index, port) in PLAYER_PORTS.iter().enumerate() {
@@ -978,7 +994,7 @@ fn build_player_sections(
         let devices_id = devices_id(port);
         let types_id = types_id(index);
         let label = player_label(index, i18n);
-        let names = port_member_names(port, snapshot, keyboards, i18n);
+        let names = port_member_names(port, snapshot, keyboards, gamepads, i18n);
         sections.push(SectionWire {
             id: player_id.clone(),
             label: label.clone(),
@@ -1053,6 +1069,7 @@ fn build_player_sections(
             &label,
             snapshot,
             keyboards,
+            gamepads,
             i18n,
         ));
     }
@@ -1093,24 +1110,28 @@ fn type_profile_summary(
         .unwrap_or_else(|| i18n.text(UiText::NotAssigned))
 }
 
-/// Display names for a port's member ids in set order. Unknown members
-/// fall back to a generic label so a stale id never renders blank.
+/// Display names for a port in set order: keyboards from the port device
+/// set plus gamepads from the pad-port table. Unknown members fall back
+/// to a generic label so a stale id never renders blank. Gamepad names
+/// resolve by connection-order index (Pad N = Nth connected pad); an
+/// assigned but disconnected pad keeps its `Pad N` label so the
+/// assignment stays visible.
 fn port_member_names(
     port: &str,
     snapshot: &SettingsSnapshot,
     keyboards: &[KeyboardInfo],
+    gamepads: &[GamepadInfo],
     i18n: I18n,
 ) -> Vec<String> {
     // Effective members only: rows render solely while the terminal
     // enumerates them, so every screen shares one enumeration truth.
     // Otherwise a reconnectable USB keyboard would read as assigned on
     // the player screens while the device list reports none connected.
-    // Unplugged USB descriptors stay assigned (reconnect restores them);
-    // gamepads always count (no enumeration to check against yet).
+    // Unplugged USB descriptors stay assigned (reconnect restores them).
     let builtin_present = keyboards
         .iter()
         .any(|info| info.member == BUILTIN_KEYBOARD_MEMBER);
-    snapshot
+    let mut names: Vec<String> = snapshot
         .app_state
         .port_devices
         .get(port)
@@ -1129,7 +1150,18 @@ fn port_member_names(
                 .map(|member| keyboard_member_name(member, keyboards, i18n))
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    let port_index = PLAYER_PORTS.iter().position(|known| *known == port);
+    if let Some(port_index) = port_index {
+        for (pad_index, pad) in snapshot.shared.input.gamepad.pad_ports.iter().enumerate() {
+            if pad.slot == Some(port_index) {
+                if let Some(info) = gamepads.get(pad_index) {
+                    names.push(info.name.clone());
+                }
+            }
+        }
+    }
+    names
 }
 
 /// Drop the built-in membership when fresh enumeration reports no
@@ -1176,14 +1208,18 @@ fn keyboard_member_name(member: &str, keyboards: &[KeyboardInfo], i18n: I18n) ->
 /// Device picker: the dynamic keyboard enumeration (built-in row when
 /// present, one row per external descriptor, BT/USB agnostic, virtual
 /// devices excluded — classified Kotlin-side). Row tap toggles port
-/// membership; Details opens the device screen. Gamepad rows appear here
-/// once the gamepad backend lands; the gamepad group is omitted until then.
+/// membership; Details opens the device screen. Gamepads are
+/// connection-order pads assigned under Controls > Gamepads, so this
+/// screen lists the connected pads with their player assignment plus a
+/// link there instead of port toggles (toggling here would edit a map
+/// the session never reads).
 fn build_devices_section(
     port: &str,
     devices_id: &str,
     player: &str,
     snapshot: &SettingsSnapshot,
     keyboards: &[KeyboardInfo],
+    gamepads: &[GamepadInfo],
     i18n: I18n,
 ) -> SectionWire {
     let members = snapshot.app_state.port_devices.get(port);
@@ -1218,6 +1254,58 @@ fn build_devices_section(
         row.detail_target = format!("device.{}", info.member);
         rows.push(row);
     }
+    rows.push(header_row(i18n.text(UiText::Gamepads)));
+    if gamepads.is_empty() {
+        rows.push(info_row(
+            &format!("{devices_id}.pads.none"),
+            i18n.text(UiText::NotAssigned),
+            String::new(),
+            String::new(),
+        ));
+    }
+    let port_index = PLAYER_PORTS.iter().position(|known| *known == port);
+    for (pad_index, info) in gamepads.iter().enumerate() {
+        let assigned = port_index.is_some_and(|port_index| {
+            snapshot
+                .shared
+                .input
+                .gamepad
+                .pad_ports
+                .get(pad_index)
+                .is_some_and(|pad| pad.slot == Some(port_index))
+        });
+        let status = if assigned {
+            player.to_string()
+        } else {
+            snapshot
+                .shared
+                .input
+                .gamepad
+                .pad_ports
+                .get(pad_index)
+                .and_then(|pad| pad.slot)
+                .and_then(|slot| PLAYER_PORTS.get(slot))
+                .map(|other| {
+                    player_label(
+                        PLAYER_PORTS.iter().position(|known| known == other).unwrap_or(0),
+                        i18n,
+                    )
+                })
+                .unwrap_or_else(|| i18n.text(UiText::NotAssigned))
+        };
+        rows.push(info_row(
+            &format!("{devices_id}.{}", info.member),
+            info.name.clone(),
+            String::new(),
+            status,
+        ));
+    }
+    rows.push(group_row(
+        &format!("{devices_id}.gamepads"),
+        i18n.text(UiText::Gamepads),
+        String::new(),
+        "controls.gamepads",
+    ));
     rows.push(button_row(
         &format!("reset.{devices_id}"),
         i18n.text(UiText::ResetScreen),

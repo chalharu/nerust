@@ -182,10 +182,12 @@ pub(crate) struct KeyboardInfo {
 }
 
 /// One gamepad the Auto overlay gate counts (Kotlin `InputDevice`,
-/// same rule as the runtime gate). Names only: Rust displays them in the
-/// overlay detail screen so users see why Auto hides, without logcat.
+/// same rule as the runtime gate). Member is the stable port-set id
+/// (`pad:<descriptor>`); name is the OS display string. Display-only
+/// device truth, never persisted.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct GamepadInfo {
+    pub member: String,
     pub name: String,
 }
 
