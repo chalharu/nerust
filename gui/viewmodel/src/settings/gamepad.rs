@@ -46,13 +46,7 @@ impl GamepadViewModel {
         pad: usize,
         port: Option<usize>,
     ) -> Result<(), super::editor::ViewModelError> {
-        if pad >= MAX_PADS {
-            return Err(super::editor::ViewModelError::UnknownPad(pad));
-        }
-        self.editor.transact(|state| {
-            state.draft_mut().shared.input.gamepad.pad_ports[pad].slot = port;
-            Ok(())
-        })
+        self.update_pad(pad, |port_state| port_state.slot = port)
     }
 
     /// Trigger doubling for one pad: shoulders when true, analog-only
@@ -62,12 +56,23 @@ impl GamepadViewModel {
         pad: usize,
         as_shoulders: bool,
     ) -> Result<(), super::editor::ViewModelError> {
+        self.update_pad(pad, |port_state| {
+            port_state.triggers_as_shoulders = as_shoulders
+        })
+    }
+
+    /// One guarded write to a pad's port state; both setters share the
+    /// range check so neither duplicates it.
+    fn update_pad(
+        &self,
+        pad: usize,
+        update: impl FnOnce(&mut nerust_settings_core::model::input::PadPort),
+    ) -> Result<(), super::editor::ViewModelError> {
         if pad >= MAX_PADS {
             return Err(super::editor::ViewModelError::UnknownPad(pad));
         }
         self.editor.transact(|state| {
-            state.draft_mut().shared.input.gamepad.pad_ports[pad].triggers_as_shoulders =
-                as_shoulders;
+            update(&mut state.draft_mut().shared.input.gamepad.pad_ports[pad]);
             Ok(())
         })
     }
@@ -80,6 +85,26 @@ const DEADZONE_STEPS: [u8; 7] = [0, 5, 10, 15, 20, 25, 30];
 fn project_view(state: &super::EditorState) -> GamepadTabView {
     let i18n = I18n::resolve_os(state.draft.shared.general.language);
     let gamepad = &state.draft.shared.input.gamepad;
+    // Port and trigger options are identical for every pad: build once,
+    // clone per row.
+    let port_choices: Vec<ChoiceView<Option<usize>>> = [
+        (None, i18n.text(UiText::Off)),
+        (Some(0), i18n.text(UiText::PlayerOne)),
+        (Some(1), i18n.text(UiText::PlayerTwo)),
+    ]
+    .into_iter()
+    .map(|(port, label)| ChoiceView { value: port, label })
+    .collect();
+    let trigger_choices: Vec<ChoiceView<bool>> = [
+        (false, i18n.text(UiText::Off)),
+        (true, i18n.text(UiText::On)),
+    ]
+    .into_iter()
+    .map(|(alias, label)| ChoiceView {
+        value: alias,
+        label,
+    })
+    .collect();
     GamepadTabView {
         label: i18n.text(UiText::Gamepads),
         deadzone_label: i18n.text(UiText::Deadzone),
@@ -99,26 +124,10 @@ fn project_view(state: &super::EditorState) -> GamepadTabView {
                     index,
                     label: format!("Pad {}", index + 1),
                     port: port.slot,
-                    choices: [
-                        (None, i18n.text(UiText::Off)),
-                        (Some(0), i18n.text(UiText::PlayerOne)),
-                        (Some(1), i18n.text(UiText::PlayerTwo)),
-                    ]
-                    .into_iter()
-                    .map(|(port, label)| ChoiceView { value: port, label })
-                    .collect(),
+                    choices: port_choices.clone(),
                     trigger_label: format!("Pad {} triggers", index + 1),
                     trigger_alias: port.triggers_as_shoulders,
-                    trigger_choices: [
-                        (false, i18n.text(UiText::Off)),
-                        (true, i18n.text(UiText::On)),
-                    ]
-                    .into_iter()
-                    .map(|(alias, label)| ChoiceView {
-                        value: alias,
-                        label,
-                    })
-                    .collect(),
+                    trigger_choices: trigger_choices.clone(),
                 }
             })
             .collect(),

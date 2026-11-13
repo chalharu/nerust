@@ -28,23 +28,26 @@ pub(crate) fn apply_hardware_key(
         // Borrow first: releases and unmapped keys (volume, Back, ...) must
         // not pay a target+prompt clone on the hot path.
         if pressed && let Some((target, _)) = capture.as_ref() {
+            // Keyboards win on overlap (none today): one shared tail
+            // applies whichever side mapped, so the two columns never fork.
             let target = target.clone();
-            if let Some(key) = android_keycode_to_key(keycode) {
+            let key = android_keycode_to_key(keycode);
+            let button = if key.is_none() {
+                android_keycode_to_pad(keycode)
+            } else {
+                None
+            };
+            if key.is_some() || button.is_some() {
                 let vm = build_vm(snapshot, deps, i18n)?;
                 vm.capture
                     .start_capture(target)
                     .map_err(|error| error.to_string())?;
-                vm.capture.apply_captured_key(key);
-                sync_snapshot_from_vm(snapshot, &vm, i18n);
-                *capture = None;
-                return Ok((Some(project_fresh(snapshot, deps, capture, truth)?), true));
-            }
-            if let Some(button) = android_keycode_to_pad(keycode) {
-                let vm = build_vm(snapshot, deps, i18n)?;
-                vm.capture
-                    .start_capture(target)
-                    .map_err(|error| error.to_string())?;
-                vm.capture.apply_captured_pad(button);
+                if let Some(key) = key {
+                    vm.capture.apply_captured_key(key);
+                }
+                if let Some(button) = button {
+                    vm.capture.apply_captured_pad(button);
+                }
                 sync_snapshot_from_vm(snapshot, &vm, i18n);
                 *capture = None;
                 return Ok((Some(project_fresh(snapshot, deps, capture, truth)?), true));

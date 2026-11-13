@@ -169,20 +169,6 @@ pub fn shortcut_key_label(
         .map(|key| key.label())
 }
 
-/// Display label for an action's current pad binding (`Guide`),
-/// or `None` when the action has none. Same role as
-/// [`shortcut_key_label`], for the pad column.
-pub fn shortcut_pad_label(
-    bindings: &[ShortcutBinding],
-    action: ShortcutAction,
-) -> Option<&'static str> {
-    bindings
-        .iter()
-        .find(|binding| binding.action == action)
-        .and_then(|binding| binding.pad.as_ref())
-        .map(|button| button.label())
-}
-
 /// Pad shortcut conflicts: one button driving two or more actions.
 /// Keyboard conflicts ride `conflicting_keys`; pads are global (no system
 /// topology), so they get their own map. First binding still wins at

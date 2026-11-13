@@ -566,6 +566,19 @@ pub(crate) fn finish_snapshot(
     .map_err(|error| vec![error])
 }
 
+/// 1-based pad suffix (`pad3` → `2`). Rejects out-of-range keys before
+/// the view-model guard, so a tampered wire key fails loud here.
+fn gamepad_index(key: &str, prefix: &str) -> Result<usize, String> {
+    let index: usize = key
+        .strip_prefix(prefix)
+        .and_then(|suffix| suffix.parse().ok())
+        .ok_or_else(|| format!("bad gamepad key: {key}"))?;
+    (1..=nerust_input_traits::MAX_PADS)
+        .contains(&index)
+        .then_some(index - 1)
+        .ok_or_else(|| format!("bad gamepad key: {key}"))
+}
+
 fn apply_view_model_command(
     vm: &SettingsViewModel,
     deps: &VmDeps,
@@ -651,52 +664,18 @@ fn apply_view_model_command(
                 .set_deadzone(value)
                 .map_err(|error| error.to_string())
         }
-        "controls.gamepads.pad1" => {
+        key if key.starts_with("controls.gamepads.pad") => {
+            let pad = gamepad_index(key, "controls.gamepads.pad")?;
             let value: Option<usize> = choice(row, command.index)?;
             vm.gamepads
-                .set_pad_port(0, value)
+                .set_pad_port(pad, value)
                 .map_err(|error| error.to_string())
         }
-        "controls.gamepads.pad2" => {
-            let value: Option<usize> = choice(row, command.index)?;
-            vm.gamepads
-                .set_pad_port(1, value)
-                .map_err(|error| error.to_string())
-        }
-        "controls.gamepads.pad3" => {
-            let value: Option<usize> = choice(row, command.index)?;
-            vm.gamepads
-                .set_pad_port(2, value)
-                .map_err(|error| error.to_string())
-        }
-        "controls.gamepads.pad4" => {
-            let value: Option<usize> = choice(row, command.index)?;
-            vm.gamepads
-                .set_pad_port(3, value)
-                .map_err(|error| error.to_string())
-        }
-        "controls.gamepads.triggers1" => {
+        key if key.starts_with("controls.gamepads.triggers") => {
+            let pad = gamepad_index(key, "controls.gamepads.triggers")?;
             let value = toggle_value(row, command.index)?;
             vm.gamepads
-                .set_trigger_alias(0, value)
-                .map_err(|error| error.to_string())
-        }
-        "controls.gamepads.triggers2" => {
-            let value = toggle_value(row, command.index)?;
-            vm.gamepads
-                .set_trigger_alias(1, value)
-                .map_err(|error| error.to_string())
-        }
-        "controls.gamepads.triggers3" => {
-            let value = toggle_value(row, command.index)?;
-            vm.gamepads
-                .set_trigger_alias(2, value)
-                .map_err(|error| error.to_string())
-        }
-        "controls.gamepads.triggers4" => {
-            let value = toggle_value(row, command.index)?;
-            vm.gamepads
-                .set_trigger_alias(3, value)
+                .set_trigger_alias(pad, value)
                 .map_err(|error| error.to_string())
         }
         "notifications.error_enabled" => {
