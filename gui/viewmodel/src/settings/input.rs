@@ -196,10 +196,9 @@ pub(super) fn binding_value(
         BindingValueView::Capturing(i18n.text(UiText::CapturePrompt))
     } else {
         // Shortcut rows show both columns (`Space` + `Guide`); a lone pad
-        // shows its own label, never an empty pair.
-        let pad = matches!(target, CaptureTarget::Shortcut(_))
-            .then(|| current_pad_binding(&state.draft, target))
-            .flatten();
+        // shows its own label, never an empty pair. Game rows never carry
+        // pads (`current_pad_binding` is `None` for them by construction).
+        let pad = current_pad_binding(&state.draft, target);
         match (current_binding_label(&state.draft, target), pad) {
             (Some(key), Some(pad)) => BindingValueView::Bound(format!("{key} + {}", pad.label())),
             (Some(key), None) => BindingValueView::Bound(key.to_string()),

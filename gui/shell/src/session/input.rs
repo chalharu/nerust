@@ -160,8 +160,8 @@ impl SessionHandle {
 
     /// Pad shortcut lookup: the pad column of the unified binding, or
     /// `None` when the button drives gameplay instead. First binding wins;
-    /// conflict surfacing needs a global tab (shortcuts have no per-tab
-    /// conflicts surface), so that stays a follow-up.
+    /// shared buttons surface as pad conflicts and block submit until
+    /// disambiguated.
     fn shortcut_for_pad(&self, button: StandardButton) -> Option<KeyboardShortcut> {
         self.settings
             .snapshot
@@ -178,23 +178,24 @@ impl SessionHandle {
     /// pads. `None` parks the source (Off, keyboards on the axis path,
     /// or pads past the persisted table).
     fn pad_slot_for(&mut self, source: SourceId) -> Option<usize> {
-        let ports = self.settings.snapshot.shared.input.gamepad.pad_ports;
-        self.input.pad_slot(source, &ports)
+        let ports = &self.settings.snapshot.shared.input.gamepad.pad_ports;
+        self.input.pad_slot(source, ports)
     }
 
-    /// Stable source for one Android device id: the connect-time
+    /// Stable source for one frontend device id: the connect-time
     /// descriptor when the connect event arrived, else a transient id key.
     /// The router builds every pad source here, never from raw ids, so a
-    /// reconnected pad (reused id) keeps its order index and slot.
+    /// reconnected pad (reused id) keeps its order index and slot. No
+    /// allocation: both namespaces are `Copy` GUIDs.
     pub fn pad_source_for(&mut self, device_id: i32) -> SourceId {
-        let key = self
+        let guid = self
             .input
             .device_ids
             .get(&device_id)
-            .cloned()
-            .unwrap_or_else(|| format!("transient:{device_id}"));
-        self.input.pad_index_for_key(&key);
-        SourceId::Pad(crate::session::InputDept::guid_for_key(&key))
+            .copied()
+            .unwrap_or_else(|| super::InputDept::guid_for_transient(device_id));
+        self.input.pad_index_for_guid(guid);
+        SourceId::Pad(guid)
     }
 
     /// Connect-time device registration: descriptor to order index.
@@ -206,16 +207,14 @@ impl SessionHandle {
         if descriptor.is_empty() {
             return;
         }
-        self.input
-            .device_ids
-            .insert(device_id, descriptor.to_string());
+        let guid = super::InputDept::guid_for_descriptor(descriptor);
+        self.input.device_ids.insert(device_id, guid);
         // Collapse a transient placeholder for this id, but never move an
         // existing descriptor: reconnects reuse the original index.
-        self.input
-            .pad_order
-            .retain(|key| *key != format!("transient:{device_id}"));
-        if !self.input.pad_order.iter().any(|key| key == descriptor) {
-            self.input.pad_order.push(descriptor.to_string());
+        let transient = super::InputDept::guid_for_transient(device_id);
+        self.input.pad_order.retain(|known| *known != transient);
+        if !self.input.pad_order.contains(&guid) {
+            self.input.pad_order.push(guid);
         }
     }
 
@@ -228,8 +227,8 @@ impl SessionHandle {
 
     /// Single entry for every physical source. Repeat suppression is one
     /// `(source, button)` set: keyboards and pads share the rule, so no
-    /// adapter owns a private pressed set. Pad shortcuts stay unbound
-    /// (keyboard-only `ShortcutSettings` is the follow-up, not this branch).
+    /// adapter owns a private pressed set. Unbound pad buttons drive
+    /// gameplay; bound ones resolve through the shortcut pad column.
     pub fn handle_source_button(
         &mut self,
         source: SourceId,
@@ -278,27 +277,8 @@ impl SessionHandle {
     /// Pad press tail: position button to the pad's assigned console
     /// control. Off-port pads never reach here (the slot gate parks them).
     fn commit_pad_press(&mut self, source: SourceId, button: StandardButton, pressed: bool) {
-        // Off-port (and over-table) pads park here: without an assigned
-        // slot there is no control to drive.
-        let Some(slot) = self.pad_slot_for(source) else {
-            return;
-        };
-        let Some(abstract_key) = button.abstract_key() else {
-            return;
-        };
-        let Some((attachment, control)) = self.input.control_for_abstract(abstract_key, Some(slot))
-        else {
-            return;
-        };
-        let field = self
-            .emu
-            .field_map()
-            .and_then(|fields| fields.get(&(attachment, ControlId::from(control))).copied());
-        let Some(field) = field else {
-            return;
-        };
-        let dpad = self.input.dpad_for(attachment, control);
-        self.commit_press(field, FieldSource::Pad(source, button), dpad, pressed);
+        let slot = self.pad_slot_for(source);
+        self.commit_holder_press(FieldSource::Pad(source, button), button, slot, pressed);
     }
 
     /// Full-press level turning a trigger into a digital press when the
@@ -356,7 +336,6 @@ impl SessionHandle {
             .gamepad
             .deadzone_percent
             .clamp(0, 90);
-        let gamepad = self.settings.snapshot.shared.input.gamepad.clone();
         let value =
             nerust_gamepad_db::apply_deadzone(value.clamp(-1.0, 1.0), f32::from(percent) / 100.0)
                 .clamp(-1.0, 1.0);
@@ -378,7 +357,15 @@ impl SessionHandle {
         let alias = self
             .input
             .pad_index(source)
-            .and_then(|index| gamepad.pad_ports.get(index))
+            .and_then(|index| {
+                self.settings
+                    .snapshot
+                    .shared
+                    .input
+                    .gamepad
+                    .pad_ports
+                    .get(index)
+            })
             .is_some_and(|port| port.triggers_as_shoulders);
         self.sync_axis_substitute(source, axis, value, slot, alias);
     }
@@ -396,31 +383,34 @@ impl SessionHandle {
         triggers_as_shoulders: bool,
     ) {
         let want = slot.and(Self::substitute_button(axis, value, triggers_as_shoulders));
-        let stale: Vec<StandardButton> = self
+        // One axis holds at most one substitute (presses are edge-synced),
+        // so a single find converges without heap work on the hot path.
+        if let Some(stale) = self
             .input
             .axis_dpad
             .iter()
-            .filter(|(held_source, held_axis, _)| *held_source == source && *held_axis == axis)
+            .find(|(held_source, held_axis, _)| *held_source == source && *held_axis == axis)
             .map(|(_, _, button)| *button)
             .filter(|button| Some(*button) != want)
-            .collect();
-        for button in stale {
-            self.input.axis_dpad.remove(&(source, axis, button));
-            self.commit_axis_dpad(source, axis, button, slot, false);
+        {
+            self.input.axis_dpad.remove(&(source, axis, stale));
+            self.commit_holder_press(FieldSource::Axis(source, axis), stale, slot, false);
         }
         if let Some(button) = want
             && self.input.axis_dpad.insert((source, axis, button))
         {
-            self.commit_axis_dpad(source, axis, button, slot, true);
+            self.commit_holder_press(FieldSource::Axis(source, axis), button, slot, true);
         }
     }
 
-    /// One axis-derived commit through the pad's assigned slot: stick
-    /// dpad directions and aliased trigger shoulders alike.
-    fn commit_axis_dpad(
+    /// One digital commit through the pad's assigned slot: face buttons
+    /// and axis substitutes share the resolve and differ only in the
+    /// OR-machine holder, so hat and stick merge instead of aliasing.
+    /// Off-port (and over-table) pads park here: without an assigned
+    /// slot there is no control to drive.
+    fn commit_holder_press(
         &mut self,
-        source: SourceId,
-        axis: GamepadAxis,
+        holder: FieldSource,
         button: StandardButton,
         slot: Option<usize>,
         pressed: bool,
@@ -443,13 +433,13 @@ impl SessionHandle {
             return;
         };
         let dpad = self.input.dpad_for(attachment, control);
-        self.commit_press(field, FieldSource::Axis(source, axis), dpad, pressed);
+        self.commit_press(field, holder, dpad, pressed);
     }
 
     /// Event-ful release of every held pad button (surface loss): releases
     /// travel through the OR machine so fields held by other sources stay
-    /// asserted. Stick-derived holds release too, and stored analogs for
-    /// pads drop (keyboards are untouched throughout).
+    /// asserted. Stick-derived holds release too, and stored analogs drop
+    /// (only pads ever store them; keyboards have no axis path).
     pub fn release_pad_presses(&mut self) {
         let held: Vec<(SourceId, StandardButton)> = self
             .input
@@ -471,11 +461,9 @@ impl SessionHandle {
         for (source, axis, button) in derived {
             self.input.axis_dpad.remove(&(source, axis, button));
             let slot = self.pad_slot_for(source);
-            self.commit_axis_dpad(source, axis, button, slot, false);
+            self.commit_holder_press(FieldSource::Axis(source, axis), button, slot, false);
         }
-        self.input
-            .analogs
-            .retain(|(source, _), _| matches!(source, SourceId::Keyboard(_)));
+        self.input.analogs.clear();
     }
 
     pub fn clear_input(&mut self) {
@@ -897,8 +885,7 @@ mod tests {
             !session
                 .input
                 .pad_order
-                .iter()
-                .any(|key| key == "transient:7")
+                .contains(&crate::session::InputDept::guid_for_transient(7))
         );
         session.clear_input();
     }

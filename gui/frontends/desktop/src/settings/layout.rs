@@ -1,7 +1,10 @@
 use super::{Editor, choice};
-use nerust_gui_viewmodel::settings::dto::{BindingSectionView, BindingValueView};
 #[cfg(test)]
-use nerust_gui_viewmodel::settings::dto::{ChoiceView, choice_position};
+use nerust_gui_viewmodel::settings::dto::choice_position;
+use nerust_gui_viewmodel::settings::{
+    ViewModelError,
+    dto::{BindingSectionView, BindingValueView, ChoiceView, GamepadTabView, PadPortView},
+};
 use nerust_settings_core::{editor::CaptureTarget, i18n::UiText};
 use panechord::{Binding, Choice, Command, Keyed, Store, Viewport};
 use std::{cell::RefCell, rc::Rc};
@@ -405,6 +408,69 @@ pub(super) fn inputs(
 
 /// Global gamepads page: one port choice per connection-order pad plus the
 /// stick deadzone. No slot chrome (ports are global, not per-system).
+/// One pad choice row: port and trigger rows differ only in projectors
+/// and write-back, so one generic builds both. Missing rows fall back to
+/// `Default` (Off / analog-only / empty label), matching the per-row code.
+fn pad_choice_row<T: Clone + PartialEq + Eq + Default + 'static>(
+    editor: &Rc<Editor>,
+    index: usize,
+    key: String,
+    items: impl Fn(&PadPortView) -> Vec<ChoiceView<T>> + 'static,
+    selected: impl Fn(&PadPortView) -> T + 'static,
+    label: impl Fn(&PadPortView) -> String + 'static,
+    write: impl Fn(T) -> Result<(), ViewModelError> + 'static,
+) -> Keyed<ChoiceRow> {
+    let view = editor.vm.gamepads.view.clone();
+    let read_items = editor.binding(
+        view.clone(),
+        move |value: &GamepadTabView| {
+            value
+                .pads
+                .iter()
+                .find(|row| row.index == index)
+                .map(&items)
+                .unwrap_or_default()
+        },
+        None,
+    );
+    let read_selected = editor.binding(
+        view.clone(),
+        move |value: &GamepadTabView| {
+            value
+                .pads
+                .iter()
+                .find(|row| row.index == index)
+                .map(&selected)
+                .unwrap_or_default()
+        },
+        Some(Rc::new(write) as Rc<dyn Fn(T) -> Result<(), ViewModelError>>),
+    );
+    let selection = choice(read_items, read_selected);
+    Keyed::new(
+        key,
+        Store::new(
+            ChoiceRow {
+                label: editor.binding(
+                    view,
+                    move |value: &GamepadTabView| {
+                        value
+                            .pads
+                            .iter()
+                            .find(|row| row.index == index)
+                            .map(&label)
+                            .unwrap_or_default()
+                    },
+                    None,
+                ),
+                choices: selection.items,
+                selected: selection.selected,
+                enabled: Binding::constant(true),
+            },
+            editor.executor.clone(),
+        ),
+    )
+}
+
 fn gamepads_page(editor: &Rc<Editor>) -> Keyed<InputPage> {
     let vm = &editor.vm;
     let executor = editor.executor.clone();
@@ -415,105 +481,24 @@ fn gamepads_page(editor: &Rc<Editor>) -> Keyed<InputPage> {
         .flat_map(|pad| {
             let index = pad.index;
             let gamepads = vm.gamepads.clone();
-            let items = editor.binding(
-                vm.gamepads.view.clone(),
-                move |value| {
-                    value
-                        .pads
-                        .iter()
-                        .find(|row| row.index == index)
-                        .map(|row| row.choices.clone())
-                        .unwrap_or_default()
-                },
-                None,
-            );
-            let selected = editor.binding(
-                vm.gamepads.view.clone(),
-                move |value| {
-                    value
-                        .pads
-                        .iter()
-                        .find(|row| row.index == index)
-                        .and_then(|row| row.port)
-                },
-                Some(Rc::new(move |port: Option<usize>| {
-                    gamepads.set_pad_port(index, port)
-                })),
-            );
-            let selection = choice(items, selected);
-            let port_row = Keyed::new(
+            let port_row = pad_choice_row(
+                editor,
+                index,
                 format!("pad-{index}"),
-                Store::new(
-                    ChoiceRow {
-                        label: editor.binding(
-                            vm.gamepads.view.clone(),
-                            move |value| {
-                                value
-                                    .pads
-                                    .iter()
-                                    .find(|row| row.index == index)
-                                    .map(|row| row.label.clone())
-                                    .unwrap_or_default()
-                            },
-                            None,
-                        ),
-                        choices: selection.items,
-                        selected: selection.selected,
-                        enabled: Binding::constant(true),
-                    },
-                    executor.clone(),
-                ),
+                |row| row.choices.clone(),
+                |row| row.port,
+                |row| row.label.clone(),
+                move |port| gamepads.set_pad_port(index, port),
             );
             let triggers = vm.gamepads.clone();
-            let trigger_items = editor.binding(
-                vm.gamepads.view.clone(),
-                move |value| {
-                    value
-                        .pads
-                        .iter()
-                        .find(|row| row.index == index)
-                        .map(|row| row.trigger_choices.clone())
-                        .unwrap_or_default()
-                },
-                None,
-            );
-            let trigger_selected = editor.binding(
-                vm.gamepads.view.clone(),
-                move |value| {
-                    value
-                        .pads
-                        .iter()
-                        .find(|row| row.index == index)
-                        .map(|row| row.trigger_alias)
-                        .unwrap_or_default()
-                },
-                Some(Rc::new(move |alias: bool| {
-                    triggers.set_trigger_alias(index, alias)
-                })),
-            );
-            let trigger_selection = choice(trigger_items, trigger_selected);
-            let trigger_row = Keyed::new(
+            let trigger_row = pad_choice_row(
+                editor,
+                index,
                 format!("pad-{index}-triggers"),
-                Store::new(
-                    ChoiceRow {
-                        label: editor.binding(
-                            vm.gamepads.view.clone(),
-                            move |value| {
-                                value
-                                    .pads
-                                    .iter()
-                                    .find(|row| row.index == index)
-                                    .map(|row| row.trigger_label.clone())
-                                    .unwrap_or_default()
-                            },
-                            None,
-                        ),
-                        choices: trigger_selection.items,
-                        selected: trigger_selection.selected,
-                        enabled: Binding::constant(true),
-                    },
-                    executor.clone(),
-                ),
+                |row| row.trigger_choices.clone(),
+                |row| row.trigger_alias,
+                |row| row.trigger_label.clone(),
+                move |alias| triggers.set_trigger_alias(index, alias),
             );
             [port_row, trigger_row]
         })
