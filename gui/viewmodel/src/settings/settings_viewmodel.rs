@@ -468,42 +468,27 @@ mod tests {
 
     #[test]
     fn validator_flags_shared_pad_shortcuts() {
-        use std::sync::Arc;
-
         use nerust_input_traits::StandardButton;
-        use nerust_settings_core::model::{
-            app_state::DesktopAppState,
-            input::{ShortcutAction, default_shortcut_bindings},
-            local::HostBackendLocalSettings,
-            shared::DesktopSharedSettings,
-            snapshot::SettingsSnapshot,
-        };
+        use nerust_settings_core::model::input::ShortcutAction;
 
-        use crate::settings::test_support::{TestCoreFactory, TestInputFactory};
+        use crate::settings::test_support::test_vm_with_default_shortcuts;
 
-        let mut shared = DesktopSharedSettings::default();
-        let mut bindings = default_shortcut_bindings();
-        bindings
-            .iter_mut()
-            .find(|binding| binding.action == ShortcutAction::Reset)
-            .expect("reset row")
-            .pad = Some(StandardButton::Guide);
-        shared.input.shortcuts.keyboard = bindings;
-        let snapshot = SettingsSnapshot {
-            shared,
-            local: HostBackendLocalSettings::default(),
-            app_state: DesktopAppState::default(),
-        };
-        let factory: Arc<dyn nerust_system_traits::factory::CoreFactory> =
-            Arc::new(TestCoreFactory(TestInputFactory::new()));
-        let vm = crate::settings::SettingsViewModel::new(
-            snapshot,
-            vec![factory],
-            Arc::new([]),
-            std::rc::Rc::new(crate::settings::NoopStoragePathValidator)
-                as std::rc::Rc<dyn crate::settings::editor::StoragePathValidator>,
-        )
-        .unwrap();
+        let vm = test_vm_with_default_shortcuts();
+        vm.editor
+            .transact(|state| {
+                state
+                    .draft_mut()
+                    .shared
+                    .input
+                    .shortcuts
+                    .keyboard
+                    .iter_mut()
+                    .find(|binding| binding.action == ShortcutAction::Reset)
+                    .expect("reset row")
+                    .pad = Some(StandardButton::Guide);
+                Ok(())
+            })
+            .unwrap();
         let err = vm.finish().expect_err("shared Guide must block submit");
         assert!(
             err.issues.iter().any(|issue| matches!(
