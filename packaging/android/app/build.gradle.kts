@@ -101,7 +101,7 @@ dependencies {
     // ComponentActivity for the standalone settings screen (lifecycle +
     // back dispatcher owners without hand-rolled registries). Pinned to
     // the version the BOM already resolves so the lockfile stands.
-    val activityComposeVersion = "1.8.2"
+    val activityComposeVersion = "1.9.3"
     val orgJsonVersion = "20240303"
 
     implementation(composeBom)
