@@ -173,11 +173,11 @@ nerust_core_traits = { path = "traits/core" }
 nerust_crash_guard = { path = "crash-guard" }
 nerust_desktop = { path = "gui/frontends/desktop" }
 nerust_emu_thread = { path = "gui/emu-thread" }
+nerust_gamepad_db = { path = "gamepad-db" }
 nerust_gba_core = { path = "console/gba/core" }
 nerust_gba_device = { path = "console/gba/device" }
 nerust_gba_factory = { path = "console/gba/factory" }
 nerust_gba_settings = { path = "console/gba/settings" }
-nerust_gamepad_db = { path = "gamepad-db" }
 nerust_gbc_core = { path = "console/gbc/core" }
 nerust_gbc_device = { path = "console/gbc/device" }
 nerust_gbc_factory = { path = "console/gbc/factory" }
