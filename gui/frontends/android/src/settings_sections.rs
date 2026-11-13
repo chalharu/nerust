@@ -4,7 +4,7 @@
 //! Top-level taxonomy is purpose-based (zero-based IA): machine sections
 //! hide under Advanced, controller screens hide behind player ports.
 
-use nerust_settings_core::i18n::{I18n, UiText, text};
+use nerust_settings_core::i18n::I18n;
 
 /// Canonical settings section ids in payload order: visible top-level
 /// first, hidden navigation targets after.
@@ -39,19 +39,19 @@ pub(crate) const SETTINGS_SECTION_IDS: &[&str] = &[
 /// Canonical section id→label table, returned as static strings.
 /// Unknown ids fall back to a static rather than a formatted guess.
 /// System names are proper nouns, identical in both languages.
-pub(crate) fn section_label(id: &str, i18n: I18n) -> &'static str {
-    let language = i18n.language();
+pub(crate) fn section_label(id: &str, i18n: I18n) -> String {
+    use nerust_settings_core::i18n::UiText;
     match id {
-        "play" => text(language, UiText::SectionPlay),
-        "controllers" => text(language, UiText::SectionControllers),
-        "saves" => text(language, UiText::SectionSaves),
-        "notifications" => text(language, UiText::Notifications),
-        "app" => text(language, UiText::SectionApp),
-        "advanced" => text(language, UiText::SectionAdvanced),
-        "system.nes" => "Nintendo Entertainment System",
-        "system.gbc" => "Game Boy Color",
-        "system.gba" => "Game Boy Advance",
-        _ => text(language, UiText::Unknown),
+        "play" => i18n.text(UiText::SectionPlay),
+        "controllers" => i18n.text(UiText::SectionControllers),
+        "saves" => i18n.text(UiText::SectionSaves),
+        "notifications" => i18n.text(UiText::Notifications),
+        "app" => i18n.text(UiText::SectionApp),
+        "advanced" => i18n.text(UiText::SectionAdvanced),
+        "system.nes" => "Nintendo Entertainment System".to_string(),
+        "system.gbc" => "Game Boy Color".to_string(),
+        "system.gba" => "Game Boy Advance".to_string(),
+        _ => i18n.text(UiText::Unknown),
     }
 }
 

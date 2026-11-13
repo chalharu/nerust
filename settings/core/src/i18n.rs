@@ -233,10 +233,6 @@ pub enum UiText {
     KeyMappingDesc,
 }
 
-pub fn resolve_language(language: AppLanguage) -> AppLanguage {
-    resolve_locale(language, &OsLocale)
-}
-
 /// How the terminal locale is obtained: the one axis frontends differ
 /// on (Desktop queries the OS; Android pushes the Kotlin `Locale`
 /// through the vault). The tag→language rule stays shared, so both
@@ -318,7 +314,7 @@ impl I18n {
     }
 
     pub fn text(self, key: UiText) -> String {
-        text(self.language, key).to_string()
+        lookup(self.language, key).to_string()
     }
 
     pub fn port_summary(self, names: &[String]) -> String {
@@ -362,9 +358,12 @@ pub fn language_from_locale_tag(tag: &str) -> AppLanguage {
     }
 }
 
-pub fn text(language: AppLanguage, key: UiText) -> &'static str {
+/// Static-string kernel behind [`I18n::text`]. Takes an already-resolved
+/// language; every caller threads one through, so this never resolves.
+/// `SystemDefault` cannot occur by construction and reads as English.
+fn lookup(language: AppLanguage, key: UiText) -> &'static str {
     let (english, japanese) = localized_pair(key);
-    match resolve_language(language) {
+    match language {
         AppLanguage::Japanese => japanese,
         AppLanguage::English | AppLanguage::SystemDefault => english,
     }
@@ -372,8 +371,9 @@ pub fn text(language: AppLanguage, key: UiText) -> &'static str {
 
 /// CJK-capable sans family for the UI language, when the platform default cannot cover it.
 /// `None` means the frontend default already covers the language.
+/// Takes an already-resolved language; see [`lookup`].
 pub fn font_family(language: AppLanguage) -> Option<&'static str> {
-    if !matches!(resolve_language(language), AppLanguage::Japanese) {
+    if !matches!(language, AppLanguage::Japanese) {
         return None;
     }
     platform_cjk_sans()
@@ -680,9 +680,11 @@ pub fn menu_label_with_shortcut(label: &str, shortcut: &str) -> String {
 
 /// Parameterized debugger messages: one helper per message keeps both
 /// languages side by side instead of scattering `format!`.
+/// Takes an already-resolved language; every caller threads one
+/// through, so this never resolves (`SystemDefault` reads as English).
 macro_rules! localized {
     ($language:expr, $en:expr, $ja:expr) => {
-        match resolve_language($language) {
+        match $language {
             AppLanguage::Japanese => $ja,
             _ => $en,
         }
@@ -727,7 +729,7 @@ pub fn slot_description(language: AppLanguage) -> String {
 /// "Name" or "Name +N" (short form is banned: the full first name reads).
 pub fn port_summary(language: AppLanguage, names: &[String]) -> String {
     match names {
-        [] => text(language, UiText::NotAssigned).to_string(),
+        [] => lookup(language, UiText::NotAssigned).to_string(),
         [first] => first.clone(),
         // Count suffix is language-neutral, so no per-language branch.
         [first, rest @ ..] => format!("{first} +{}", rest.len()),
@@ -933,8 +935,9 @@ mod tests {
 
     #[test]
     fn explicit_choice_never_falls_back_to_os() {
-        assert_eq!(resolve_language(AppLanguage::Japanese), ja());
-        assert_eq!(resolve_language(AppLanguage::English), en());
+        let os = OsLocale;
+        assert_eq!(resolve_locale(AppLanguage::Japanese, &os), ja());
+        assert_eq!(resolve_locale(AppLanguage::English, &os), en());
     }
 
     struct StubSource(Option<AppLanguage>);
@@ -1105,9 +1108,9 @@ mod tests {
             Connection,
             Capabilities,
         ] {
-            assert!(!text(en(), key).is_empty());
-            assert!(!text(ja(), key).is_empty());
-            assert_ne!(text(en(), key), text(ja(), key));
+            assert!(!I18n::new(en()).text(key).is_empty());
+            assert!(!I18n::new(ja()).text(key).is_empty());
+            assert_ne!(I18n::new(en()).text(key), I18n::new(ja()).text(key));
         }
     }
 
@@ -1117,8 +1120,8 @@ mod tests {
         // bare instead of restating the label.
         use UiText::*;
         for key in [DescVsync, DescMute, KeyMappingDesc] {
-            assert!(text(en(), key).is_empty());
-            assert!(text(ja(), key).is_empty());
+            assert!(I18n::new(en()).text(key).is_empty());
+            assert!(I18n::new(ja()).text(key).is_empty());
         }
     }
 
@@ -1140,12 +1143,12 @@ mod tests {
         assert_eq!(notification_group_label(ja(), "警告"), "警告通知");
         // Matches the existing full-name keys exactly.
         assert_eq!(
-            notification_group_label(en(), text(en(), UiText::Error)),
-            text(en(), UiText::NotificationError)
+            notification_group_label(en(), &I18n::new(en()).text(UiText::Error)),
+            I18n::new(en()).text(UiText::NotificationError)
         );
         assert_eq!(
-            notification_group_label(ja(), text(ja(), UiText::Error)),
-            text(ja(), UiText::NotificationError)
+            notification_group_label(ja(), &I18n::new(ja()).text(UiText::Error)),
+            I18n::new(ja()).text(UiText::NotificationError)
         );
     }
 

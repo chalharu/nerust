@@ -85,7 +85,7 @@ fn history_table(headers: [String; 4], empty_text: String, rows: Vec<HistoryRowV
                         foreground: None,
                     },
                     TableCell {
-                        text: row.level.into(),
+                        text: row.level,
                         foreground: color,
                     },
                     TableCell {
@@ -139,7 +139,7 @@ impl Pane {
                         .into_iter()
                         .map(|filter| Choice {
                             id: filter.id().into(),
-                            label: filter.label(i18n).into(),
+                            label: filter.label(i18n),
                         })
                         .collect(),
                     table,
@@ -216,7 +216,7 @@ impl Pane {
                 .into_iter()
                 .map(|filter| Choice {
                     id: filter.id().into(),
-                    label: filter.label(i18n).into(),
+                    label: filter.label(i18n),
                 })
                 .collect();
         });

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::bridge_contract::SETTINGS_SCHEMA_VERSION;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_settings_core::{
-    i18n::{UiText, text as ui_text},
+    i18n::{I18n, UiText},
     model::language::AppLanguage,
 };
 use nerust_system_traits::factory::CoreFactory;
@@ -1167,7 +1167,7 @@ fn auto_hide_status_row_shows_none_when_empty() {
     let status = row(&payload, "controls.auto_hide_status");
     assert_eq!(
         status.text,
-        ui_text(AppLanguage::English, UiText::NotAssigned).to_string(),
+        I18n::new(AppLanguage::English).text(UiText::NotAssigned),
         "empty gate says so"
     );
 }

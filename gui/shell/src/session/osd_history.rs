@@ -1,7 +1,7 @@
 //! OSD history formatting: level text plus render-ready rows.
 //! Pure mapping from notifications to grid lines; no queue state.
 
-use nerust_settings_core::i18n::{I18n, UiText};
+use nerust_settings_core::i18n::I18n;
 use nerust_settings_core::model::language::AppLanguage;
 
 use crate::session::notification::{NotificationLevel, NotificationRenderer, UiNotification};
@@ -41,7 +41,7 @@ pub fn level_name(level: NotificationLevel) -> &'static str {
 
 /// Localized level name for history grid and filter options.
 /// `Error` maps to `UiText::Error` for column width.
-pub fn level_label(level: NotificationLevel, i18n: I18n) -> &'static str {
+pub fn level_label(level: NotificationLevel, i18n: I18n) -> String {
     NotificationRenderer { i18n }.level_name(level)
 }
 
@@ -308,14 +308,13 @@ impl HistoryFilter {
 
     /// Localized dropdown label. Levels reuse the settings table;
     /// only "All" needs its own key.
-    pub fn label(self, i18n: I18n) -> &'static str {
-        use nerust_settings_core::i18n::text;
-        let language = i18n.language();
+    pub fn label(self, i18n: I18n) -> String {
+        use nerust_settings_core::i18n::UiText;
         match self {
-            HistoryFilter::All => text(language, UiText::HistoryFilterAll),
-            HistoryFilter::Info => text(language, UiText::NotificationInfo),
-            HistoryFilter::Warning => text(language, UiText::NotificationWarning),
-            HistoryFilter::Error => text(language, UiText::Error),
+            HistoryFilter::All => i18n.text(UiText::HistoryFilterAll),
+            HistoryFilter::Info => i18n.text(UiText::NotificationInfo),
+            HistoryFilter::Warning => i18n.text(UiText::NotificationWarning),
+            HistoryFilter::Error => i18n.text(UiText::Error),
         }
     }
 
@@ -381,7 +380,7 @@ pub fn short_module(module: &str) -> &str {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryRowView {
     pub datetime: String,
-    pub level: &'static str,
+    pub level: String,
     pub rgb: (u8, u8, u8),
     pub module: String,
     /// `HistoryLine.text` already carries the `×N` merge suffix.
@@ -433,7 +432,7 @@ mod filter_rule_tests {
             let i18n = I18n::new(language);
             for filter in HistoryFilter::all() {
                 assert_eq!(
-                    HistoryFilter::from_label(filter.label(i18n), i18n),
+                    HistoryFilter::from_label(filter.label(i18n).as_str(), i18n),
                     Some(filter)
                 );
             }

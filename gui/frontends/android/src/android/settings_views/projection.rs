@@ -138,7 +138,7 @@ fn build_play_section(
     let orientation = snapshot.local.screen_orientation;
     SectionWire {
         id: "play".to_string(),
-        label: crate::settings_sections::section_label("play", i18n).to_string(),
+        label: crate::settings_sections::section_label("play", i18n),
         sub: String::new(),
         rows: vec![
             choice_row(
@@ -219,7 +219,7 @@ fn build_saves_section(vm: &SettingsViewModel, i18n: I18n) -> SectionWire {
     ));
     SectionWire {
         id: "saves".to_string(),
-        label: crate::settings_sections::section_label("saves", i18n).to_string(),
+        label: crate::settings_sections::section_label("saves", i18n),
         sub: String::new(),
         rows,
         visible: true,
@@ -264,7 +264,7 @@ fn build_app_section(
     ];
     SectionWire {
         id: "app".to_string(),
-        label: crate::settings_sections::section_label("app", i18n).to_string(),
+        label: crate::settings_sections::section_label("app", i18n),
         sub: String::new(),
         rows,
         visible: true,
@@ -372,7 +372,7 @@ fn build_advanced_section(
     }
     SectionWire {
         id: "advanced".to_string(),
-        label: crate::settings_sections::section_label("advanced", i18n).to_string(),
+        label: crate::settings_sections::section_label("advanced", i18n),
         sub: String::new(),
         rows,
         visible: true,
@@ -438,7 +438,7 @@ fn build_notifications_section(vm: &SettingsViewModel, i18n: I18n) -> SectionWir
         .collect();
     SectionWire {
         id: "notifications".to_string(),
-        label: crate::settings_sections::section_label("notifications", i18n).to_string(),
+        label: crate::settings_sections::section_label("notifications", i18n),
         sub: String::new(),
         rows: vec![
             header_row(i18n.text(UiText::NotificationSectionDisplay)),
@@ -659,7 +659,7 @@ fn controllers_quick_section(
     ]);
     SectionWire {
         id: "controllers".to_string(),
-        label: crate::settings_sections::section_label("controllers", i18n).to_string(),
+        label: crate::settings_sections::section_label("controllers", i18n),
         sub: String::new(),
         rows: quick_rows,
         visible: true,

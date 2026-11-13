@@ -286,19 +286,18 @@ impl NotificationRenderer {
     }
 
     /// Render one stable level name in the adapter language.
-    pub fn level_name(&self, level: NotificationLevel) -> &'static str {
+    pub fn level_name(&self, level: NotificationLevel) -> String {
         level_key(level, self.i18n)
     }
 }
 
 /// Stable level key; only the renderer resolves it per language.
-fn level_key(level: NotificationLevel, i18n: I18n) -> &'static str {
-    use nerust_settings_core::i18n::{UiText, text};
-    let language = i18n.language();
+fn level_key(level: NotificationLevel, i18n: I18n) -> String {
+    use nerust_settings_core::i18n::UiText;
     match level {
-        NotificationLevel::Info => text(language, UiText::NotificationInfo),
-        NotificationLevel::Warning => text(language, UiText::NotificationWarning),
-        NotificationLevel::Error => text(language, UiText::Error),
+        NotificationLevel::Info => i18n.text(UiText::NotificationInfo),
+        NotificationLevel::Warning => i18n.text(UiText::NotificationWarning),
+        NotificationLevel::Error => i18n.text(UiText::Error),
     }
 }
 
@@ -380,7 +379,7 @@ fn failure_reason_text(reason: SlotOpFailure, i18n: I18n) -> &'static str {
 }
 
 /// Pick the language side. Splitting this out (instead of inline
-/// `language` matches per arm) keeps `text()` under the complexity budget.
+/// `i18n.language()` matches per arm) keeps `render_message` under the complexity budget.
 fn bilingual(i18n: I18n, en: &str, ja_text: &str) -> String {
     bilingual_str(i18n, en, ja_text).to_string()
 }
