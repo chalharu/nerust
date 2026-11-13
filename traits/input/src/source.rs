@@ -9,7 +9,9 @@ pub const MAX_PADS: usize = 4;
 
 /// Position-based standard pad button. Glyph names (`A`/`B`) transpose per
 /// vendor (Nintendo swaps them); positions do not, so bindings stay portable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 #[cfg_attr(test, derive(strum::EnumIter))]
 #[serde(rename_all = "snake_case")]
 pub enum StandardButton {
@@ -102,7 +104,9 @@ impl StandardButton {
 
 /// Analog axes: two sticks plus two triggers. Digital-only consoles sample
 /// these through the backend-common threshold, never per-backend logic.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 #[cfg_attr(test, derive(strum::EnumIter))]
 #[serde(rename_all = "snake_case")]
 pub enum GamepadAxis {

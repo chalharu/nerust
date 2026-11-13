@@ -675,6 +675,30 @@ fn apply_view_model_command(
                 .set_pad_port(3, value)
                 .map_err(|error| error.to_string())
         }
+        "controls.gamepads.triggers1" => {
+            let value = toggle_value(row, command.index)?;
+            vm.gamepads
+                .set_trigger_alias(0, value)
+                .map_err(|error| error.to_string())
+        }
+        "controls.gamepads.triggers2" => {
+            let value = toggle_value(row, command.index)?;
+            vm.gamepads
+                .set_trigger_alias(1, value)
+                .map_err(|error| error.to_string())
+        }
+        "controls.gamepads.triggers3" => {
+            let value = toggle_value(row, command.index)?;
+            vm.gamepads
+                .set_trigger_alias(2, value)
+                .map_err(|error| error.to_string())
+        }
+        "controls.gamepads.triggers4" => {
+            let value = toggle_value(row, command.index)?;
+            vm.gamepads
+                .set_trigger_alias(3, value)
+                .map_err(|error| error.to_string())
+        }
         "notifications.error_enabled" => {
             let value = toggle_value(row, command.index)?;
             vm.notifications

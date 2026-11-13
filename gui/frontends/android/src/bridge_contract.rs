@@ -18,6 +18,8 @@ pub(crate) const ACTION_DELETE_SLOT: &str = "delete_slot";
 pub(crate) const ACTION_SELECT_SLOT: &str = "select_slot";
 pub(crate) const ACTION_CONTROLLER: &str = "controller";
 pub(crate) const ACTION_ANALOG: &str = "analog";
+pub(crate) const ACTION_DEVICE_ADDED: &str = "device_added";
+pub(crate) const ACTION_DEVICE_REMOVED: &str = "device_removed";
 pub(crate) const ACTION_TOUCH_GATE: &str = "touch_gate";
 
 /// Schema-derived validation before typed dispatch. Missing is not JSON null.
@@ -50,6 +52,8 @@ pub(crate) fn validate_bridge_event(value: &mut serde_json::Value) -> Option<()>
                                     | "select_slot"
                                     | "controller"
                                     | "analog"
+                                    | "device_added"
+                                    | "device_removed"
                                     | "touch_gate"
                             )
                         )
@@ -83,6 +87,7 @@ pub(crate) fn validate_bridge_event(value: &mut serde_json::Value) -> Option<()>
                         )
                     }
                     "pressed" => value.is_boolean(),
+                    "descriptor" => value.is_string(),
                     "axis" => {
                         matches!(
                             value.as_str(),
@@ -123,6 +128,13 @@ pub(crate) fn validate_bridge_event(value: &mut serde_json::Value) -> Option<()>
                 object.get("device_id")?;
                 object.get("axis")?;
                 object.get("value")?;
+            }
+            if object.get("action")?.as_str() == Some("device_added") {
+                object.get("device_id")?;
+                object.get("descriptor")?;
+            }
+            if object.get("action")?.as_str() == Some("device_removed") {
+                object.get("device_id")?;
             }
             if object.get("action")?.as_str() == Some("touch_gate") {
                 object.get("pressed")?;

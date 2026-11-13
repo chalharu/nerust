@@ -16,20 +16,42 @@ pub struct InputSettings {
 
 /// Pad-level preferences shared by every system: one deadzone for all
 /// sticks plus the connection-order port table. Pad `i` (first-seen order
-/// within a boot) drives slot `pad_ports[i]`; `None` parks the pad.
+/// within a boot, stabilized by device descriptors) drives its assigned
+/// port; `slot: None` parks the pad. `triggers_as_shoulders` doubles the
+/// analog triggers as the shoulder buttons of the same pad (full-press
+/// past 0.9): opt-in per pad, never a silent global alias.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct GamepadSettings {
     /// Stick deadzone in percent, `0..=90`. Session clamps on read.
     pub deadzone_percent: u8,
-    pub pad_ports: [Option<usize>; nerust_input_traits::MAX_PADS],
+    pub pad_ports: [PadPort; nerust_input_traits::MAX_PADS],
+}
+
+/// One connection-order pad: its player slot plus the trigger doubling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct PadPort {
+    pub slot: Option<usize>,
+    pub triggers_as_shoulders: bool,
 }
 
 impl Default for GamepadSettings {
     fn default() -> Self {
         Self {
             deadzone_percent: 15,
-            pad_ports: [Some(0), Some(1), None, None],
+            pad_ports: [
+                PadPort {
+                    slot: Some(0),
+                    triggers_as_shoulders: false,
+                },
+                PadPort {
+                    slot: Some(1),
+                    triggers_as_shoulders: false,
+                },
+                PadPort::default(),
+                PadPort::default(),
+            ],
         }
     }
 }
@@ -161,6 +183,23 @@ pub fn shortcut_pad_label(
         .map(|button| button.label())
 }
 
+/// Pad shortcut conflicts: one button driving two or more actions.
+/// Keyboard conflicts ride `conflicting_keys`; pads are global (no system
+/// topology), so they get their own map. First binding still wins at
+/// runtime; this only feeds validation.
+pub fn pad_shortcut_conflicts(
+    bindings: &[ShortcutBinding],
+) -> std::collections::BTreeMap<StandardButton, Vec<ShortcutAction>> {
+    let mut by_button = std::collections::BTreeMap::<StandardButton, Vec<ShortcutAction>>::new();
+    for binding in bindings {
+        if let Some(button) = binding.pad {
+            by_button.entry(button).or_default().push(binding.action);
+        }
+    }
+    by_button.retain(|_, actions| actions.len() > 1);
+    by_button
+}
+
 /// Migrate persisted shortcuts forward: append defaults for actions
 /// the file predates (e.g. `OpenDebugger` on files seeded before it
 /// existed). User bindings are never touched; when the default key is
@@ -274,6 +313,39 @@ impl PartialEq<DigitalControlId> for PersistedControlId {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pad_shortcut_conflicts_groups_shared_buttons() {
+        use super::pad_shortcut_conflicts;
+        let defaults = default_shortcut_bindings();
+        assert!(pad_shortcut_conflicts(&defaults).is_empty());
+        let mut doubled = defaults;
+        doubled
+            .iter_mut()
+            .find(|binding| binding.action == ShortcutAction::Reset)
+            .expect("reset row")
+            .pad = Some(StandardButton::Guide);
+        let conflicts = pad_shortcut_conflicts(&doubled);
+        assert_eq!(conflicts.len(), 1);
+        let actions = &conflicts[&StandardButton::Guide];
+        assert!(actions.contains(&ShortcutAction::TogglePause));
+        assert!(actions.contains(&ShortcutAction::Reset));
+    }
+
+    #[test]
+    fn gamepad_defaults_park_extra_pads_without_alias() {
+        let gamepad = super::GamepadSettings::default();
+        assert_eq!(gamepad.deadzone_percent, 15);
+        assert_eq!(gamepad.pad_ports[0].slot, Some(0));
+        assert_eq!(gamepad.pad_ports[1].slot, Some(1));
+        assert_eq!(gamepad.pad_ports[2].slot, None);
+        assert!(
+            gamepad
+                .pad_ports
+                .iter()
+                .all(|port| !port.triggers_as_shoulders)
+        );
+    }
 
     #[test]
     fn ensure_adds_missing_actions_without_touching_users() {

@@ -412,7 +412,7 @@ fn gamepads_page(editor: &Rc<Editor>) -> Keyed<InputPage> {
     let mut slots: Vec<Keyed<ChoiceRow>> = view
         .pads
         .iter()
-        .map(|pad| {
+        .flat_map(|pad| {
             let index = pad.index;
             let gamepads = vm.gamepads.clone();
             let items = editor.binding(
@@ -441,7 +441,7 @@ fn gamepads_page(editor: &Rc<Editor>) -> Keyed<InputPage> {
                 })),
             );
             let selection = choice(items, selected);
-            Keyed::new(
+            let port_row = Keyed::new(
                 format!("pad-{index}"),
                 Store::new(
                     ChoiceRow {
@@ -463,7 +463,59 @@ fn gamepads_page(editor: &Rc<Editor>) -> Keyed<InputPage> {
                     },
                     executor.clone(),
                 ),
-            )
+            );
+            let triggers = vm.gamepads.clone();
+            let trigger_items = editor.binding(
+                vm.gamepads.view.clone(),
+                move |value| {
+                    value
+                        .pads
+                        .iter()
+                        .find(|row| row.index == index)
+                        .map(|row| row.trigger_choices.clone())
+                        .unwrap_or_default()
+                },
+                None,
+            );
+            let trigger_selected = editor.binding(
+                vm.gamepads.view.clone(),
+                move |value| {
+                    value
+                        .pads
+                        .iter()
+                        .find(|row| row.index == index)
+                        .map(|row| row.trigger_alias)
+                        .unwrap_or_default()
+                },
+                Some(Rc::new(move |alias: bool| {
+                    triggers.set_trigger_alias(index, alias)
+                })),
+            );
+            let trigger_selection = choice(trigger_items, trigger_selected);
+            let trigger_row = Keyed::new(
+                format!("pad-{index}-triggers"),
+                Store::new(
+                    ChoiceRow {
+                        label: editor.binding(
+                            vm.gamepads.view.clone(),
+                            move |value| {
+                                value
+                                    .pads
+                                    .iter()
+                                    .find(|row| row.index == index)
+                                    .map(|row| row.trigger_label.clone())
+                                    .unwrap_or_default()
+                            },
+                            None,
+                        ),
+                        choices: trigger_selection.items,
+                        selected: trigger_selection.selected,
+                        enabled: Binding::constant(true),
+                    },
+                    executor.clone(),
+                ),
+            );
+            [port_row, trigger_row]
         })
         .collect();
     let deadzone_vm = vm.gamepads.clone();
@@ -652,13 +704,15 @@ mod tests {
         assert!(!snapshot.label.is_empty());
         assert_eq!(
             snapshot.slots.len(),
-            nerust_input_traits::MAX_PADS + 1,
-            "four pads plus the deadzone row"
+            2 * nerust_input_traits::MAX_PADS + 1,
+            "four pads times two rows plus the deadzone row"
         );
         let pad = snapshot.slots[0].model.snapshot();
         assert_eq!(pad.label.get(), "Pad 1");
         assert!(!pad.choices.get().is_empty());
         assert!(pad.enabled.get());
+        let triggers = snapshot.slots[1].model.snapshot();
+        assert_eq!(triggers.label.get(), "Pad 1 triggers");
         // Writing pad 1 to player 2 sticks in the draft.
         editor
             .vm

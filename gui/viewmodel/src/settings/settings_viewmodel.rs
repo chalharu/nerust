@@ -309,11 +309,39 @@ fn validator(state: &super::EditorState) -> super::ValidationState {
     validate_storage_policy(state, &mut issues);
     validate_audio_settings(state, &mut issues);
     validate_notification_settings(state, &mut issues);
+    validate_pad_shortcuts(state, &mut issues);
     validate_port_devices(state, &mut issues);
     for factory in state.catalog.all() {
         validate_factory_settings(state, factory, &mut issues);
     }
     super::ValidationState { issues }
+}
+
+/// Global pad-shortcut conflicts: one button driving two or more actions.
+/// Labels come from the shortcut descriptors, so the message names the
+/// rows the user must disambiguate. Same blocking semantics as keyboard
+/// key conflicts.
+fn validate_pad_shortcuts(state: &super::EditorState, issues: &mut Vec<super::ValidationIssue>) {
+    use std::collections::HashMap;
+    let labels: HashMap<_, _> = nerust_settings_core::bindings::descriptors::shortcut_descriptors()
+        .iter()
+        .map(|desc| (desc.action, desc.label))
+        .collect();
+    for (button, actions) in nerust_settings_core::model::input::pad_shortcut_conflicts(
+        &state.draft.shared.input.shortcuts.keyboard,
+    ) {
+        let names: Vec<&str> = actions
+            .iter()
+            .map(|action| labels.get(action).copied().unwrap_or("?"))
+            .collect();
+        issues.push(super::ValidationIssue {
+            scope: super::ValidationScope::Controllers,
+            kind: super::ValidationIssueKind::PadConflict {
+                button: button.label().to_string(),
+                labels: names.join(", "),
+            },
+        });
+    }
 }
 
 /// Global port device sets: exclusive members (gamepads) must not sit in
@@ -434,6 +462,56 @@ mod tests {
         assert!(
             has_unknown_profile,
             "validator should flag unknown profile ID"
+        );
+    }
+
+    #[test]
+    fn validator_flags_shared_pad_shortcuts() {
+        use std::sync::Arc;
+
+        use nerust_input_traits::StandardButton;
+        use nerust_settings_core::model::{
+            app_state::DesktopAppState,
+            input::{ShortcutAction, default_shortcut_bindings},
+            local::HostBackendLocalSettings,
+            shared::DesktopSharedSettings,
+            snapshot::SettingsSnapshot,
+        };
+
+        use crate::settings::test_support::{TestCoreFactory, TestInputFactory};
+
+        let mut shared = DesktopSharedSettings::default();
+        let mut bindings = default_shortcut_bindings();
+        bindings
+            .iter_mut()
+            .find(|binding| binding.action == ShortcutAction::Reset)
+            .expect("reset row")
+            .pad = Some(StandardButton::Guide);
+        shared.input.shortcuts.keyboard = bindings;
+        let snapshot = SettingsSnapshot {
+            shared,
+            local: HostBackendLocalSettings::default(),
+            app_state: DesktopAppState::default(),
+        };
+        let factory: Arc<dyn nerust_system_traits::factory::CoreFactory> =
+            Arc::new(TestCoreFactory(TestInputFactory::new()));
+        let vm = crate::settings::SettingsViewModel::new(
+            snapshot,
+            vec![factory],
+            Arc::new([]),
+            std::rc::Rc::new(crate::settings::NoopStoragePathValidator)
+                as std::rc::Rc<dyn crate::settings::editor::StoragePathValidator>,
+        )
+        .unwrap();
+        let err = vm.finish().expect_err("shared Guide must block submit");
+        assert!(
+            err.issues.iter().any(|issue| matches!(
+                &issue.kind,
+                crate::settings::ValidationIssueKind::PadConflict { button, .. }
+                if button == "Guide"
+            )),
+            "shared Guide binding must block with a pad conflict, got {:?}",
+            err.issues
         );
     }
 }

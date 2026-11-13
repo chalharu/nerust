@@ -1770,6 +1770,10 @@ fn bare_rows_are_reviewed_allowlist() {
         "controls.gamepads.pad2",
         "controls.gamepads.pad3",
         "controls.gamepads.pad4",
+        "controls.gamepads.triggers1",
+        "controls.gamepads.triggers2",
+        "controls.gamepads.triggers3",
+        "controls.gamepads.triggers4",
         "controls.overlay_haptics",
         "controls.overlay_opacity",
         "controls.overlay_scale",
@@ -1913,7 +1917,7 @@ fn gamepad_section_sets_deadzone_ports_and_resets() {
     assert_eq!(snapshot.shared.input.gamepad.deadzone_percent, 25);
     assert_eq!(row(&next, "controls.gamepads.deadzone").number, 25);
     // Pad 3 is Off by default; parking it on player 2 sticks.
-    assert_eq!(snapshot.shared.input.gamepad.pad_ports[2], None);
+    assert_eq!(snapshot.shared.input.gamepad.pad_ports[2].slot, None);
     let pad_row = row(&next, "controls.gamepads.pad3");
     let player2 = pad_row
         .choices
@@ -1921,12 +1925,16 @@ fn gamepad_section_sets_deadzone_ports_and_resets() {
         .position(|choice| choice.value == serde_json::json!(1))
         .expect("player 2 choice exists");
     let after = set(&mut snapshot, "controls.gamepads.pad3", player2, 0);
-    assert_eq!(snapshot.shared.input.gamepad.pad_ports[2], Some(1));
+    assert_eq!(snapshot.shared.input.gamepad.pad_ports[2].slot, Some(1));
     assert_eq!(
         row(&after, "controls.gamepads.pad3").selected,
         player2,
         "selection tracks the draft"
     );
+    // Trigger doubling toggles per pad and resets with the screen.
+    let triggers = set(&mut snapshot, "controls.gamepads.triggers1", 1, 0);
+    assert!(snapshot.shared.input.gamepad.pad_ports[0].triggers_as_shoulders);
+    assert_eq!(row(&triggers, "controls.gamepads.triggers1").selected, 1);
     // Screen reset restores the deadzone and the default table.
     let mut capture: CaptureSlot = None;
     let reset = with_test_deps(|| {
@@ -1950,8 +1958,9 @@ fn gamepad_section_sets_deadzone_ports_and_resets() {
     });
     assert_eq!(snapshot.shared.input.gamepad.deadzone_percent, 15);
     assert_eq!(
-        snapshot.shared.input.gamepad.pad_ports,
-        [Some(0), Some(1), None, None]
+        snapshot.shared.input.gamepad,
+        nerust_settings_core::model::input::GamepadSettings::default(),
+        "screen reset restores the deadzone and the default table"
     );
     assert_eq!(row(&reset, "controls.gamepads.deadzone").number, 15);
 }

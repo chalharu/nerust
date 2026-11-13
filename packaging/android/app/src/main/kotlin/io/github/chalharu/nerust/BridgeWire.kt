@@ -21,6 +21,8 @@ internal object MenuAction {
     const val SELECT_SLOT = "select_slot"
     const val CONTROLLER = "controller"
     const val ANALOG = "analog"
+    const val DEVICE_ADDED = "device_added"
+    const val DEVICE_REMOVED = "device_removed"
     const val TOUCH_GATE = "touch_gate"
 
     val ALL: Set<String> = setOf(
@@ -38,6 +40,8 @@ internal object MenuAction {
         SELECT_SLOT,
         CONTROLLER,
         ANALOG,
+        DEVICE_ADDED,
+        DEVICE_REMOVED,
         TOUCH_GATE,
     )
 }
