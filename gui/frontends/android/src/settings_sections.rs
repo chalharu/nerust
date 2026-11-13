@@ -64,53 +64,28 @@ mod tests {
 
     #[test]
     fn section_ids_stay_unique_with_static_labels() {
+        let en = I18n::new(AppLanguage::English);
+        let ja = I18n::new(AppLanguage::Japanese);
         for language in [AppLanguage::English, AppLanguage::Japanese] {
             let mut seen = BTreeSet::new();
             for id in SETTINGS_SECTION_IDS {
                 assert!(seen.insert(*id), "duplicate section id {id}");
                 assert!(!section_label(id, I18n::new(language)).is_empty());
             }
-            assert_ne!(
-                section_label("play", I18n::new(AppLanguage::English)),
-                section_label("play", I18n::new(AppLanguage::Japanese))
-            );
+            assert_ne!(section_label("play", en), section_label("play", ja));
             assert_eq!(
                 section_label("system.gbc", I18n::new(language)),
                 "Game Boy Color"
             );
-            assert_eq!(
-                section_label("foo_bar", I18n::new(AppLanguage::English)),
-                "Unknown"
-            );
+            assert_eq!(section_label("foo_bar", en), "Unknown");
         }
-        assert_eq!(
-            section_label("play", I18n::new(AppLanguage::English)),
-            "Play"
-        );
-        assert_eq!(
-            section_label("play", I18n::new(AppLanguage::Japanese)),
-            "プレイ"
-        );
-        assert_eq!(
-            section_label("controllers", I18n::new(AppLanguage::Japanese)),
-            "コントローラー"
-        );
-        assert_eq!(
-            section_label("notifications", I18n::new(AppLanguage::English)),
-            "Notifications"
-        );
-        assert_eq!(section_label("app", I18n::new(AppLanguage::English)), "App");
-        assert_eq!(
-            section_label("app", I18n::new(AppLanguage::Japanese)),
-            "アプリ"
-        );
-        assert_eq!(
-            section_label("system.unknown", I18n::new(AppLanguage::English)),
-            "Unknown"
-        );
-        assert_eq!(
-            section_label("foo_bar", I18n::new(AppLanguage::Japanese)),
-            "不明"
-        );
+        assert_eq!(section_label("play", en), "Play");
+        assert_eq!(section_label("play", ja), "プレイ");
+        assert_eq!(section_label("controllers", ja), "コントローラー");
+        assert_eq!(section_label("notifications", en), "Notifications");
+        assert_eq!(section_label("app", en), "App");
+        assert_eq!(section_label("app", ja), "アプリ");
+        assert_eq!(section_label("system.unknown", en), "Unknown");
+        assert_eq!(section_label("foo_bar", ja), "不明");
     }
 }

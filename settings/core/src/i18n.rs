@@ -322,7 +322,6 @@ impl I18n {
         slot_description(self.language)
     }
 
-    /// History item count (`42 items` / `42件`).
     pub fn history_count(self, count: usize) -> String {
         history_count(self.language, count)
     }
@@ -907,6 +906,8 @@ mod tests {
     #[test]
     fn new_keys_resolve_in_both_languages() {
         use UiText::*;
+        let en_text = I18n::new(en());
+        let ja_text = I18n::new(ja());
         for key in [
             OpenDebugger,
             WriteNeedsSelection,
@@ -1035,9 +1036,9 @@ mod tests {
             Connection,
             Capabilities,
         ] {
-            assert!(!I18n::new(en()).text(key).is_empty());
-            assert!(!I18n::new(ja()).text(key).is_empty());
-            assert_ne!(I18n::new(en()).text(key), I18n::new(ja()).text(key));
+            assert!(!en_text.text(key).is_empty());
+            assert!(!ja_text.text(key).is_empty());
+            assert_ne!(en_text.text(key), ja_text.text(key));
         }
     }
 
@@ -1046,9 +1047,11 @@ mod tests {
         // Self-evident labels carry no supporting text: the rows render
         // bare instead of restating the label.
         use UiText::*;
+        let en_text = I18n::new(en());
+        let ja_text = I18n::new(ja());
         for key in [DescVsync, DescMute, KeyMappingDesc] {
-            assert!(I18n::new(en()).text(key).is_empty());
-            assert!(I18n::new(ja()).text(key).is_empty());
+            assert!(en_text.text(key).is_empty());
+            assert!(ja_text.text(key).is_empty());
         }
     }
 

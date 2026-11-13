@@ -150,28 +150,18 @@ mod tests {
 
     #[test]
     fn level_text_stays_distinct_per_surface() {
+        let en = I18n::new(AppLanguage::English);
+        let ja = I18n::new(AppLanguage::Japanese);
         assert_eq!(level_tag(NotificationLevel::Info), "[INFO]");
         assert_eq!(level_name(NotificationLevel::Info), "Info");
         assert_eq!(level_tag(NotificationLevel::Warning), "[WARN]");
         assert_eq!(level_name(NotificationLevel::Warning), "Warning");
         assert_eq!(level_tag(NotificationLevel::Error), "[ERROR]");
         assert_eq!(level_name(NotificationLevel::Error), "Error");
-        assert_eq!(
-            level_label(NotificationLevel::Info, I18n::new(AppLanguage::English)),
-            "Info"
-        );
-        assert_eq!(
-            level_label(NotificationLevel::Warning, I18n::new(AppLanguage::Japanese)),
-            "警告"
-        );
-        assert_eq!(
-            level_label(NotificationLevel::Error, I18n::new(AppLanguage::English)),
-            "Error"
-        );
-        assert_eq!(
-            level_label(NotificationLevel::Error, I18n::new(AppLanguage::Japanese)),
-            "エラー"
-        );
+        assert_eq!(level_label(NotificationLevel::Info, en), "Info");
+        assert_eq!(level_label(NotificationLevel::Warning, ja), "警告");
+        assert_eq!(level_label(NotificationLevel::Error, en), "Error");
+        assert_eq!(level_label(NotificationLevel::Error, ja), "エラー");
     }
 
     #[test]
