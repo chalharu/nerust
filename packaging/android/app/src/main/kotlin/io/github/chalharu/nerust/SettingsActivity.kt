@@ -187,7 +187,7 @@ class SettingsActivity :
                 }
             if (scan == lastDeviceTruth) return@runIo
             lastDeviceTruth = scan
-            Log.d(TAG, "device truth scan: keyboards=${scan.keyboards.size} gamepads=${scan.gamepadNames}")
+            Log.d(TAG, "device truth scan: keyboards=${scan.keyboards.size} gamepads=${scan.gamepads.map { it.name }}")
             val keyboards = JSONArray()
             scan.keyboards.forEach { row ->
                 keyboards.put(
@@ -198,7 +198,7 @@ class SettingsActivity :
                 )
             }
             val gamepads = JSONArray()
-            scan.gamepadNames.forEach { gamepads.put(JSONObject().put("name", it)) }
+            scan.gamepads.forEach { gamepads.put(JSONObject().put("member", it.member).put("name", it.name)) }
             val payload =
                 JSONObject()
                     .put("keyboards", keyboards)
@@ -239,7 +239,15 @@ class SettingsActivity :
         // Capture wait takes every hardware key first, keyboard and pad
         // alike; unmapped keys fall through to the platform. Outside
         // capture, controller sources keep platform behavior.
-        if (isControllerSource(event.source) && navActions?.isCapturing != true) {
+        val capturing = navActions?.isCapturing == true
+        val controller = isControllerSource(event.source)
+        if (controller || capturing) {
+            Log.d(
+                TAG,
+                "settings key: source=0x${event.source.toString(16)} keyCode=${event.keyCode} action=${event.action} capturing=$capturing",
+            )
+        }
+        if (controller && !capturing) {
             return super.dispatchKeyEvent(event)
         }
         return routeSettingsKeyEvent(event.keyCode, event.action) ||

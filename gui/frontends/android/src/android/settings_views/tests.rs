@@ -728,6 +728,7 @@ fn gamepad_alone_reopens_capture() {
     // even with no keyboard: pad buttons fall through when unmapped,
     // mapped keys (dpad) capture into the shared vocabulary.
     let gamepads = vec![GamepadInfo {
+        member: "pad:desc-1".to_string(),
         name: "Pad".to_string(),
     }];
     let (_snapshot, payload) = with_test_deps(|| {
@@ -1096,6 +1097,7 @@ fn keyboards_op_upserts_enumeration_without_mutating_draft() {
 
 fn test_gamepads() -> Vec<GamepadInfo> {
     vec![GamepadInfo {
+        member: "pad:wireless-1".to_string(),
         name: "Wireless Controller".to_string(),
     }]
 }
@@ -1146,7 +1148,7 @@ fn gamepads_op_upserts_without_mutating_draft() {
         payload: serde_json::json!({
             "keyboards": [],
             "capable": true,
-            "gamepads": [{ "name": "" }],
+            "gamepads": [{ "member": "pad:x", "name": "" }],
         }),
     })
     .unwrap();
@@ -1163,6 +1165,33 @@ fn gamepads_op_upserts_without_mutating_draft() {
             )
             .is_err(),
             "nameless gamepads never persist"
+        );
+    });
+    let bad_member = serde_json::to_string(&WireCommand {
+        key: "device_truth".to_string(),
+        index: 0,
+        number: 0,
+        op: WireOp::DeviceTruth,
+        payload: serde_json::json!({
+            "keyboards": [],
+            "capable": true,
+            "gamepads": [{ "member": "", "name": "Pad" }],
+        }),
+    })
+    .unwrap();
+    with_test_deps(|| {
+        assert!(
+            apply_command_to(
+                &mut snapshot,
+                &bad_member,
+                &mut None,
+                &mut test_keyboards(),
+                &mut None,
+                &mut gamepads,
+                &mut None,
+            )
+            .is_err(),
+            "memberless gamepads never persist"
         );
     });
 }
@@ -1850,6 +1879,8 @@ fn bare_rows_are_reviewed_allowlist() {
         "notifications.warning_color",
         "notifications.position",
         "notifications.warning_duration",
+        "devices.p1.gamepads",
+        "devices.p2.gamepads",
         "player.1.devices",
         "player.1.type",
         "player.2.devices",

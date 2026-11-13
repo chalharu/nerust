@@ -387,7 +387,7 @@ class MainActivity :
             if (scan == lastPresenceTruth) return@runIo
             lastPresenceTruth = scan
             val touchCapable = scan.touchCapable
-            val gamepadNames = scan.gamepadNames
+            val gamepadNames = scan.gamepads.map { it.name }
             BridgeIo.postMain {
                 if (isDestroyed || isFinishing) return@postMain
                 chromeManager.setTouchCapable(touchCapable)

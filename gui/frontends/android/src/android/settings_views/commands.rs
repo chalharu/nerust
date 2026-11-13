@@ -263,6 +263,9 @@ fn apply_device_truth_command(
         Some(serde_json::from_value(capable_raw.clone()).map_err(|error| error.to_string())?);
     let names: Vec<GamepadInfo> = payload_vec(command, "gamepads")?;
     for info in &names {
+        if info.member.is_empty() {
+            return Err("gamepad member id must not be empty".to_string());
+        }
         if info.name.is_empty() {
             return Err("gamepad name must not be empty".to_string());
         }
