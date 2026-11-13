@@ -1,0 +1,12 @@
+# SDL_GameControllerDB-format mapping subset (Phase 1 representatives).
+# Format: https://github.com/gabomdq/SDL_GameControllerDB (MIT).
+# Mapping facts (which physical index drives which position) are data, not
+# code; entries below follow that project's line format so `build.rs` parses
+# them with the same rules the full DB will use in Phase 3.
+# `platform:` selects the target the entry compiles into; `build.rs` keeps
+# only the current `CARGO_CFG_TARGET_OS` platform.
+030000005e0400008e02000000000000,Microsoft X-Box 360 pad,a:b0,b:b1,back:b7,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,dpup:h0.1,guide:b8,leftshoulder:b4,leftstick:b9,lefttrigger:a2,leftx:a0,lefty:a1,rightshoulder:b5,rightstick:b10,righttrigger:a5,rightx:a3,righty:a4,start:b6,x:b2,y:b3,platform:Linux,
+030000004c050000c405000000000000,Sony Computer Entertainment Wireless Controller,a:b0,b:b1,back:b8,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,dpup:h0.1,guide:b10,leftshoulder:b4,leftstick:b9,lefttrigger:a2,leftx:a0,lefty:a1,rightshoulder:b5,rightstick:b11,righttrigger:a5,rightx:a3,righty:a4,start:b6,x:b2,y:b3,platform:Linux,
+030000007e0500000920000000000000,Switch Pro Controller,a:b1,b:b2,back:b8,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,dpup:h0.1,guide:b12,leftshoulder:b4,leftstick:b10,lefttrigger:a3,leftx:a0,lefty:a1,rightshoulder:b5,rightstick:b11,righttrigger:a4,rightx:a2,righty:a5,start:b9,x:b0,y:b3,platform:Linux,
+78696e70757400000000000000000000,XInput Controller,a:b0,b:b1,back:b6,dpdown:b12,dpleft:b13,dpright:b14,dpup:b11,guide:b10,leftshoulder:b4,leftstick:b8,lefttrigger:a2,leftx:a0,lefty:a1,rightshoulder:b5,rightstick:b9,righttrigger:a5,rightx:a3,righty:a4,start:b7,x:b2,y:b3,platform:Windows,
+030000005e0400008e02000000000000,Microsoft X-Box 360 pad,a:b0,b:b1,back:b9,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,dpup:h0.1,guide:b10,leftshoulder:b4,leftstick:b7,lefttrigger:a2,leftx:a0,lefty:a1,rightshoulder:b5,rightstick:b8,righttrigger:a5,rightx:a3,righty:a4,start:b8,x:b2,y:b3,platform:Mac OS X,
