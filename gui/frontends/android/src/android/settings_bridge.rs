@@ -11,6 +11,7 @@ use super::settings_views;
 use crate::bridge_contract::SETTINGS_SCHEMA_VERSION;
 use crate::settings_flight::SettingsRequestId;
 use nerust_gui_runtime::settings::SettingsSnapshot;
+use nerust_settings_core::i18n::language_from_locale_tag;
 use nerust_settings_core::model::language::AppLanguage;
 use nerust_settings_core::model::local::ScreenOrientation;
 
@@ -83,7 +84,7 @@ pub(super) fn request_show_settings_dialog(
 /// The resolved value is never persisted; the draft keeps the choice.
 pub(super) fn display_language(choice: AppLanguage) -> AppLanguage {
     let system = bridge::with_settings(|state| state.system_locale);
-    settings_views::I18n::resolve(choice, system).language()
+    settings_views::resolve_display(choice, system).language()
 }
 
 /// Publish the saved in-app language without opening the screen.
@@ -256,7 +257,7 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_pushSystemLoc
         _ => return,
     };
     bridge::with_settings(|state| {
-        state.system_locale = Some(settings_views::system_language_from_tag(&tag));
+        state.system_locale = Some(language_from_locale_tag(&tag));
     });
 }
 
@@ -351,7 +352,7 @@ fn hardware_key(
                         &state.keyboards,
                         state.touch_capable,
                         &state.gamepads,
-                        settings_views::I18n::resolve(
+                        settings_views::resolve_display(
                             draft.shared.general.language,
                             state.system_locale,
                         ),

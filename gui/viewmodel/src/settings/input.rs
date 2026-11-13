@@ -2,12 +2,11 @@ use std::{rc::Rc, sync::Arc};
 
 use nerust_core_traits::identity::SystemId;
 use nerust_input_traits::{AttachmentId, ControllerProfile, SlotInfo};
-use nerust_settings_core::model::{language::AppLanguage, snapshot::SettingsSnapshot};
 use nerust_settings_core::{
     bindings::descriptors::KeyboardBindingDescriptor,
     bindings::{conflicting_keys, descriptors::keyboard_binding_sections},
     editor::{CaptureTarget, current_binding_label},
-    i18n::{UiText, text as ui_text},
+    i18n::{I18n, UiText},
     input::clear_multi_port_conflicts,
 };
 use nerust_system_traits::factory::CoreFactory;
@@ -83,13 +82,13 @@ impl InputSettingsViewModel {
         let factory_id = factory.system_id();
         let display_name = factory.display_name();
         let current = editor.current();
-        let initial = project_view(&current, factory.as_ref(), &current.capture_target);
+        let initial = project_view(&current, factory.as_ref());
         drop(current);
         let view = editor
             .projections()
             .register(factory.display_name(), initial, {
                 let factory = Arc::clone(factory);
-                move |state| project_view(state, factory.as_ref(), &state.capture_target)
+                move |state| project_view(state, factory.as_ref())
             });
         Self {
             editor: editor.clone(),
@@ -189,17 +188,16 @@ fn occupied_slots(
 }
 
 pub(super) fn binding_value(
-    draft: &SettingsSnapshot,
+    state: &EditorState,
     target: &CaptureTarget,
-    capture_target: &Option<CaptureTarget>,
-    language: AppLanguage,
+    i18n: I18n,
 ) -> BindingValueView {
-    if capture_target.as_ref() == Some(target) {
-        BindingValueView::Capturing(ui_text(language, UiText::CapturePrompt).to_string())
+    if state.capture_target.as_ref() == Some(target) {
+        BindingValueView::Capturing(i18n.text(UiText::CapturePrompt))
     } else {
-        match current_binding_label(draft, target) {
+        match current_binding_label(&state.draft, target) {
             Some(label) => BindingValueView::Bound(label.to_string()),
-            None => BindingValueView::Unbound(ui_text(language, UiText::Unbound).to_string()),
+            None => BindingValueView::Unbound(i18n.text(UiText::Unbound)),
         }
     }
 }
@@ -209,7 +207,7 @@ fn project_slot_view(
     assignments: &[(AttachmentId, Option<Rc<dyn ControllerProfile>>)],
     controllers: &[Rc<dyn ControllerProfile>],
     occupied: &std::collections::HashSet<AttachmentId>,
-    language: AppLanguage,
+    i18n: I18n,
 ) -> ControllerSlotView {
     let profile_id = assignments
         .iter()
@@ -218,7 +216,7 @@ fn project_slot_view(
 
     let mut choices: Vec<ChoiceView<Option<String>>> = vec![ChoiceView {
         value: None,
-        label: ui_text(language, UiText::NotAssigned).to_string(),
+        label: i18n.text(UiText::NotAssigned),
     }];
 
     choices.extend(
@@ -252,15 +250,14 @@ fn project_slot_view(
 fn project_binding_row(
     state: &EditorState,
     descriptor: &KeyboardBindingDescriptor,
-    language: AppLanguage,
-    capture_target: &Option<CaptureTarget>,
+    i18n: I18n,
 ) -> BindingRowView {
     let target = CaptureTarget::Binding {
         system: descriptor.system.clone_box(),
         attachment: descriptor.attachment.as_str().to_string(),
         control: descriptor.control.as_str().to_string(),
     };
-    let value = binding_value(&state.draft, &target, capture_target, language);
+    let value = binding_value(state, &target, i18n);
     BindingRowView {
         target,
         label: descriptor.control_label.to_string(),
@@ -272,16 +269,15 @@ fn project_binding_sections(
     state: &EditorState,
     system_id: &dyn SystemId,
     topology: &nerust_input_traits::InputTopologyDescriptor,
-    capture_target: &Option<CaptureTarget>,
 ) -> Vec<BindingSectionView> {
-    let language = state.draft.shared.general.language;
+    let i18n = I18n::resolve_os(state.draft.shared.general.language);
     keyboard_binding_sections(topology, system_id)
         .into_iter()
         .map(|section| {
             let rows: Vec<BindingRowView> = section
                 .bindings
                 .iter()
-                .map(|descriptor| project_binding_row(state, descriptor, language, capture_target))
+                .map(|descriptor| project_binding_row(state, descriptor, i18n))
                 .collect();
             BindingSectionView {
                 label: section.attachment_label.to_string(),
@@ -291,11 +287,7 @@ fn project_binding_sections(
         .collect()
 }
 
-fn project_view(
-    state: &EditorState,
-    factory: &dyn CoreFactory,
-    capture_target: &Option<CaptureTarget>,
-) -> InputTabView {
+fn project_view(state: &EditorState, factory: &dyn CoreFactory) -> InputTabView {
     let system_id = factory.system_id();
     let input_factory = factory.input_system_factory();
     let slots_descs = input_factory.slots();
@@ -306,17 +298,10 @@ fn project_view(
     // Build set of occupied slots (from multi-port controllers)
     let occupied = occupied_slots(&assignments);
 
+    let i18n = I18n::resolve_os(state.draft.shared.general.language);
     let slots: Vec<ControllerSlotView> = slots_descs
         .iter()
-        .map(|slot_desc| {
-            project_slot_view(
-                slot_desc,
-                &assignments,
-                &controllers,
-                &occupied,
-                state.draft.shared.general.language,
-            )
-        })
+        .map(|slot_desc| project_slot_view(slot_desc, &assignments, &controllers, &occupied, i18n))
         .collect();
 
     let topology = state
@@ -325,7 +310,7 @@ fn project_view(
         .get(system_id.as_ref())
         .cloned()
         .unwrap_or_else(|| Rc::new(build_topology(&assignments, slots_descs)));
-    let sections = project_binding_sections(state, system_id.as_ref(), &topology, capture_target);
+    let sections = project_binding_sections(state, system_id.as_ref(), &topology);
 
     // Build conflict messages — prefer cached result from validator
     let conflicts: Vec<InputConflictView> = state

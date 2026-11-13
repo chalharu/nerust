@@ -15,6 +15,7 @@ nerust_input_traits.workspace = true
 nerust_settings_traits.workspace = true
 nerust_system_traits.workspace = true
 serde = { features = ["derive", "std"], workspace = true }
+sys-locale.workspace = true
 
 [dev-dependencies]
 serde-saphyr.workspace = true

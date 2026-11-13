@@ -1,4 +1,4 @@
-use nerust_settings_core::{i18n::resolve_language, model::language::AppLanguage};
+use nerust_settings_core::model::language::AppLanguage;
 
 /// Overall validation state for the settings view model.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,73 +74,29 @@ pub enum ValidationIssueKind {
 
 impl ValidationIssueKind {
     pub fn message(&self, language: AppLanguage) -> String {
-        let japanese = matches!(resolve_language(language), AppLanguage::Japanese);
+        use nerust_settings_core::i18n::{self as core_i18n, I18n, UiText};
+        let i18n = I18n::resolve_os(language);
+        let lang = i18n.language();
         match self {
             Self::Storage(detail) => detail.clone(),
-            Self::VolumeOutOfRange => pick(
-                japanese,
-                "Master volume must be between 0 and 100",
-                "主音量は0～100で指定してください",
-            ),
-            Self::SampleRateOutOfRange => pick(
-                japanese,
-                "Sample rate must be between 1 and 192000",
-                "サンプルレートは1～192000で指定してください",
-            ),
-            Self::LatencyOutOfRange => pick(
-                japanese,
-                "Audio latency must be between 10 and 200 ms",
-                "音声遅延は10～200 msで指定してください",
-            ),
-            Self::InfoDurationOutOfRange => pick(
-                japanese,
-                "Info notification duration must be between 1000 and 30000 ms",
-                "情報通知表示時間は1000～30000 msで指定してください",
-            ),
-            Self::WarningDurationOutOfRange => pick(
-                japanese,
-                "Warning notification duration must be between 1000 and 30000 ms",
-                "警告通知表示時間は1000～30000 msで指定してください",
-            ),
-            Self::UnknownSlots { system, count } => {
-                if japanese {
-                    format!("{system}: 不明スロットID{count}件")
-                } else {
-                    format!("{system}: {count} unknown slot ID(s)")
-                }
-            }
+            Self::VolumeOutOfRange => i18n.text(UiText::ValidationVolumeRange),
+            Self::SampleRateOutOfRange => i18n.text(UiText::ValidationSampleRateRange),
+            Self::LatencyOutOfRange => i18n.text(UiText::ValidationLatencyRange),
+            Self::InfoDurationOutOfRange => i18n.text(UiText::ValidationInfoDuration),
+            Self::WarningDurationOutOfRange => i18n.text(UiText::ValidationWarningDuration),
+            Self::UnknownSlots { system, count } => core_i18n::unknown_slots(lang, system, *count),
             Self::UnknownProfiles { system, count } => {
-                if japanese {
-                    format!("{system}: 不明コントローラープロファイルID{count}件")
-                } else {
-                    format!("{system}: {count} unknown controller profile ID(s)")
-                }
+                core_i18n::unknown_profiles(lang, system, *count)
             }
             Self::NoController { system } => {
-                if japanese {
-                    format!("{system}: コントローラー未割当")
-                } else {
-                    format!("{system}: No controller assigned")
-                }
+                format!("{system}: {}", i18n.text(UiText::ValidationNoController))
             }
             Self::Placement { system, detail } => format!("{system}: {detail}"),
             Self::KeyConflict { key, labels } => format!("{key}: {labels}"),
             Self::ExclusiveMember { member, ports } => {
-                if japanese {
-                    format!("{member}は複数ポートに割当済み ({ports})")
-                } else {
-                    format!("{member} is on multiple ports ({ports})")
-                }
+                core_i18n::exclusive_member(lang, member, ports)
             }
         }
-    }
-}
-
-fn pick(japanese: bool, english: &str, translated: &str) -> String {
-    if japanese {
-        translated.to_string()
-    } else {
-        english.to_string()
     }
 }
 

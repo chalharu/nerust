@@ -3,7 +3,7 @@ use nerust_gui_viewmodel::debugger::{
     images::{PPU_HOVER_HINT, scale2x_nearest, tile_hover_text},
 };
 use nerust_settings_core::{
-    i18n::{UiText, text},
+    i18n::{I18n, UiText},
     model::language::AppLanguage,
 };
 use panechord::backend::View;
@@ -71,16 +71,17 @@ pub(crate) struct Pane {
 
 impl Pane {
     pub(crate) fn new(language: AppLanguage, executor: Rc<dyn Executor>) -> Rc<Self> {
+        let i18n = I18n::resolve_os(language);
         Rc::new(Self {
             model: Store::new(
                 Model {
-                    title: text(language, UiText::PpuViewer).into(),
+                    title: i18n.text(UiText::PpuViewer),
                     hover: PPU_HOVER_HINT.into(),
                     hovered: None,
                     images: vec![],
                     panels: String::new(),
                     has_panels: false,
-                    empty: text(language, UiText::NoImages).into(),
+                    empty: i18n.text(UiText::NoImages),
                     is_empty: true,
                 },
                 executor.clone(),
@@ -124,9 +125,10 @@ impl Pane {
             return;
         }
         if self.language.replace(language) != language {
+            let i18n = I18n::resolve_os(language);
             let _ = self.model.update(move |model| {
-                model.title = text(language, UiText::PpuViewer).into();
-                model.empty = text(language, UiText::NoImages).into();
+                model.title = i18n.text(UiText::PpuViewer);
+                model.empty = i18n.text(UiText::NoImages);
             });
         }
         if self.media_revision.replace(Some(media_revision)) != Some(media_revision) {
@@ -303,7 +305,7 @@ impl Pane {
                     let (width, height) = dimensions.unwrap_or((width, height));
                     let caption = point.map(|point| {
                         tile_hover_text(
-                            language.get(),
+                            I18n::resolve_os(language.get()),
                             &label,
                             width,
                             height,
@@ -453,8 +455,9 @@ mod operation_tests {
             adapter.borrow().media_revision(),
         );
         let model = pane.model.snapshot();
-        assert_eq!(model.title, text(AppLanguage::Japanese, UiText::PpuViewer));
-        assert_eq!(model.empty, text(AppLanguage::Japanese, UiText::NoImages));
+        let ja = I18n::new(AppLanguage::Japanese);
+        assert_eq!(model.title, ja.text(UiText::PpuViewer));
+        assert_eq!(model.empty, ja.text(UiText::NoImages));
     }
 }
 
@@ -594,11 +597,12 @@ mod ppu_headless_tests {
         let pane = Pane::new(AppLanguage::English, Rc::new(NoDispatch));
         pane.poll(AppLanguage::Japanese, true, 1);
         let model = pane.model.snapshot();
-        assert_eq!(model.title, text(AppLanguage::Japanese, UiText::PpuViewer));
+        let ja = I18n::new(AppLanguage::Japanese);
+        assert_eq!(model.title, ja.text(UiText::PpuViewer));
         pane.poll(AppLanguage::English, true, 2);
         assert_eq!(
             pane.model.snapshot().title,
-            text(AppLanguage::English, UiText::PpuViewer)
+            I18n::new(AppLanguage::English).text(UiText::PpuViewer)
         );
         assert!(pane.generation.get().is_none());
         pane.refresh_images(vec![image("a", 1, 1, 1)], 1);

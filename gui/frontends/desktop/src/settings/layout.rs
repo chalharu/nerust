@@ -672,7 +672,7 @@ mod tests {
     /// language re-renders Change/Clear without rebuilding the page.
     #[test]
     fn binding_rows_localize_chrome_with_draft_language() {
-        use nerust_settings_core::i18n::text as ui_text;
+        use nerust_settings_core::i18n::I18n;
         use nerust_settings_core::model::language::AppLanguage;
         let (editor, _adapter, _dir) = headless_editor();
         let executor: Rc<dyn panechord::Executor> = Rc::new(TestExecutor);
@@ -702,14 +702,9 @@ mod tests {
             .general
             .set_language(AppLanguage::Japanese)
             .expect("language applies");
-        assert_eq!(
-            row.change_label.get(),
-            ui_text(AppLanguage::Japanese, UiText::Change)
-        );
-        assert_eq!(
-            row.clear_label.get(),
-            ui_text(AppLanguage::Japanese, UiText::Clear)
-        );
+        let ja = I18n::new(AppLanguage::Japanese);
+        assert_eq!(row.change_label.get(), ja.text(UiText::Change));
+        assert_eq!(row.clear_label.get(), ja.text(UiText::Clear));
         // Row chrome delegates to the built capture/clear commands.
         let _ = row.capture.invoke();
         let _ = row.clear.invoke();
@@ -719,7 +714,7 @@ mod tests {
     /// the unbound label and the capturing row reads back the prompt.
     #[test]
     fn binding_row_values_cover_unbound_and_capturing() {
-        use nerust_settings_core::i18n::{UiText, text as ui_text};
+        use nerust_settings_core::i18n::{I18n, UiText};
         use nerust_settings_core::model::input::ShortcutAction;
         let (editor, _adapter, _dir) = headless_editor();
         let executor: Rc<dyn panechord::Executor> = Rc::new(TestExecutor);
@@ -752,8 +747,7 @@ mod tests {
                 .clear_binding(&CaptureTarget::Shortcut(action))
                 .expect("clear applies");
         }
-        let language = editor.vm.general.view.get().language;
-        let unbound = ui_text(language, UiText::Unbound).to_string();
+        let unbound = I18n::resolve_os(editor.vm.general.view.get().language).text(UiText::Unbound);
         let values: Vec<String> = rows
             .iter()
             .map(|row| row.model.snapshot().value.get())

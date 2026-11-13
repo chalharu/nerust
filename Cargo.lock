@@ -3557,6 +3557,7 @@ dependencies = [
  "serde",
  "serde-saphyr",
  "serde_json",
+ "sys-locale",
  "typetag",
 ]
 

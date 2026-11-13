@@ -417,7 +417,7 @@ mod tests {
     #[test]
     fn crash_dialog_points_at_stderr_in_english() {
         use nerust_settings_core::{
-            i18n::{UiText, text},
+            i18n::{I18n, UiText},
             model::language::AppLanguage,
         };
         let dialog = super::crash_dialog_text("boom");
@@ -426,7 +426,7 @@ mod tests {
         assert!(dialog.contains("stderr"), "{dialog}");
         assert_eq!(super::crash_title(), "nerust");
         assert_eq!(
-            text(AppLanguage::English, UiText::CrashTitle),
+            I18n::new(AppLanguage::English).text(UiText::CrashTitle),
             super::crash_title()
         );
     }
@@ -434,7 +434,7 @@ mod tests {
     #[test]
     fn crash_dialog_is_english_without_language_input() {
         use nerust_settings_core::{
-            i18n::{UiText, text},
+            i18n::{I18n, UiText},
             model::language::AppLanguage,
         };
         // No language param: the settings stack may have just died.
@@ -442,7 +442,7 @@ mod tests {
         assert!(!dialog.contains("クラッシュ"), "{dialog}");
         assert!(dialog.contains("stderr"), "{dialog}");
         assert_eq!(
-            text(AppLanguage::Japanese, UiText::CrashTitle),
+            I18n::new(AppLanguage::Japanese).text(UiText::CrashTitle),
             super::crash_title()
         );
     }

@@ -12,11 +12,18 @@ use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_viewmodel::settings::{SettingsViewModel, StoragePathError, StoragePathValidator};
 use nerust_settings_core::{
     editor::CaptureTarget,
-    i18n::{UiText, port_count_line, port_summary, slot_description, text as ui_text},
+    i18n::{FixedLocale, UiText},
     model::language::AppLanguage,
 };
 use nerust_system_traits::factory::CoreFactory;
 use serde::{Deserialize, Serialize};
+
+/// Shared resolved-language instance, re-exported so every builder names
+/// one type. Constructed once per projection from the draft choice and
+/// the vault system `Locale`, then threaded through every builder instead
+/// of a bare locale or language. The VM working copy is normalized with
+/// the same value, so labels from both layers agree.
+pub(crate) use nerust_settings_core::i18n::I18n;
 
 /// Full screen payload: schema version, sections Kotlin renders, live
 /// validation issues for the draft, and the pending key-capture state.
@@ -261,9 +268,9 @@ pub(super) fn build_vm(
     i18n: I18n,
 ) -> Result<SettingsViewModel, String> {
     // Display copy only: the VM resolves every label through the snapshot
-    // language, so SystemDefault is concretized here (Android never sets
-    // the LANG env the shared resolver reads). The draft keeps the user's
-    // choice; writebacks restore it via `sync_snapshot_from_vm`.
+    // language, so SystemDefault is concretized here (the OS query sees
+    // no locale on Android). The draft keeps the user's choice;
+    // writebacks restore it via `sync_snapshot_from_vm`.
     let mut resolved = snapshot.clone();
     resolved.shared.general.language = i18n.language();
     SettingsViewModel::new(
@@ -275,70 +282,15 @@ pub(super) fn build_vm(
     .map_err(|error| error.to_string())
 }
 
-/// Resolved display language plus text accessors: constructed once per
-/// projection from the draft choice and the vault system `Locale`, then
-/// threaded through every builder instead of a bare locale or language.
-/// The VM working copy is normalized with the same value, so labels from
-/// both layers agree.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct I18n {
-    language: AppLanguage,
-}
-
-impl I18n {
-    /// Resolve the display language: an explicit choice wins, SystemDefault
-    /// follows the vault-pushed `Locale` (`None` until pushed keeps the
-    /// choice for the host fallback).
-    pub(crate) fn resolve(setting: AppLanguage, system: Option<AppLanguage>) -> Self {
-        let language = match (setting, system) {
-            (AppLanguage::SystemDefault, Some(system)) => system,
-            _ => setting,
-        };
-        Self { language }
-    }
-
-    pub(crate) fn language(self) -> AppLanguage {
-        self.language
-    }
-
-    pub(super) fn text(self, key: UiText) -> String {
-        ui_text(self.language, key).to_string()
-    }
-
-    pub(super) fn port_summary(self, names: &[String]) -> String {
-        port_summary(self.language, names)
-    }
-
-    pub(super) fn port_count_line(self, count: usize) -> String {
-        port_count_line(self.language, count)
-    }
-
-    pub(super) fn slot_description(self) -> String {
-        slot_description(self.language)
-    }
-
-    /// Full disabled-choice sentence, formatted Rust-side so word order
-    /// follows the locale (Kotlin renders it verbatim).
-    pub(super) fn slot_in_use(self, owner: &str) -> String {
-        match self.language {
-            AppLanguage::Japanese => format!("{owner}使用中"),
-            _ => format!("Used in {owner}"),
-        }
-    }
-}
-
-/// Terminal locale tag to the supported set. Both directions of the
-/// tag mapping live here so ingestion and the save push cannot drift.
-pub(crate) fn system_language_from_tag(tag: &str) -> AppLanguage {
-    if tag.starts_with("ja") {
-        AppLanguage::Japanese
-    } else {
-        AppLanguage::English
-    }
+/// Display language for one projection: an explicit draft choice wins,
+/// SystemDefault follows the vault-pushed terminal `Locale` (`None`
+/// until pushed keeps the choice for the host fallback).
+pub(crate) fn resolve_display(setting: AppLanguage, system: Option<AppLanguage>) -> I18n {
+    I18n::resolve_with(setting, FixedLocale(system))
 }
 
 /// Supported set back to a BCP-47 tag for the save push (empty means
-/// the terminal locale). Inverse of `system_language_from_tag`.
+/// the terminal locale). Inverse of the shared tag→language rule.
 pub(crate) fn app_language_tag(language: AppLanguage) -> &'static str {
     match language {
         AppLanguage::Japanese => "ja",
@@ -351,7 +303,7 @@ pub(crate) fn app_language_tag(language: AppLanguage) -> &'static str {
 /// capability, counted gamepads, and the resolved display language. One
 /// `Copy` struct instead of four parallel params (keeps every wire fn
 /// under the argument cap).
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub(crate) struct Projection<'a> {
     pub keyboards: &'a [KeyboardInfo],
     pub touch_capable: Option<bool>,
@@ -510,8 +462,8 @@ pub(super) fn toggle_row(
         label,
         description,
         &[
-            (false, i18n.text(UiText::Off).to_string()),
-            (true, i18n.text(UiText::On).to_string()),
+            (false, i18n.text(UiText::Off)),
+            (true, i18n.text(UiText::On)),
         ],
         &value,
     );

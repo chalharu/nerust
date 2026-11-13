@@ -231,52 +231,152 @@ pub enum UiText {
     Connection,
     Capabilities,
     KeyMappingDesc,
+    NotificationPaused,
+    NotificationResumed,
+    NotificationReset,
+    NotificationSlotCreated,
+    NotificationSavesUnavailable,
+    SlotEmpty,
+    SlotMissing,
+    SlotStorageFailure,
+    SlotCorrupt,
+    SlotIncompatible,
+    SlotUnavailable,
+    SlotVerbSaved,
+    SlotVerbLoaded,
+    SlotVerbDeleted,
+    SlotVerbSelected,
+    CommandOriginPicker,
+    CommandOriginRestore,
+    CommandOriginHost,
+    OutcomeUnknown,
+    ValidationVolumeRange,
+    ValidationSampleRateRange,
+    ValidationLatencyRange,
+    ValidationInfoDuration,
+    ValidationWarningDuration,
+    ValidationNoController,
 }
 
-pub fn resolve_language(language: AppLanguage) -> AppLanguage {
-    match language {
-        AppLanguage::SystemDefault => {
-            let locale = std::env::var("LANG").unwrap_or_default().to_lowercase();
-            if locale.starts_with("ja") {
-                AppLanguage::Japanese
-            } else {
-                AppLanguage::English
-            }
-        }
-        other => other,
+/// How the terminal locale is obtained: the one axis frontends differ
+/// on (Desktop queries the OS; Android pushes the Kotlin `Locale`
+/// through the vault). The tag→language rule stays shared, so both
+/// paths resolve identically.
+pub trait SystemLocaleSource {
+    /// Terminal language, or `None` when unknown (falls back to English).
+    fn system_language(&self) -> Option<AppLanguage>;
+}
+
+/// Fixed-value source: previews, tests, and the Android vault push.
+pub struct FixedLocale(pub Option<AppLanguage>);
+
+impl SystemLocaleSource for FixedLocale {
+    fn system_language(&self) -> Option<AppLanguage> {
+        self.0
     }
 }
 
-pub fn text(language: AppLanguage, key: UiText) -> &'static str {
+/// OS-query source: `sys-locale` reads the platform locale (Win32/macOS
+/// APIs; process env on Unix, including `LANG`), so GUI launches
+/// without `LANG` still resolve correctly.
+struct OsLocale;
+
+impl SystemLocaleSource for OsLocale {
+    fn system_language(&self) -> Option<AppLanguage> {
+        sys_locale::get_locale().map(|locale| language_from_locale_tag(&locale))
+    }
+}
+
+/// Saved choice to display language: an explicit choice always wins, so
+/// the source is only queried for `SystemDefault` (concrete Android
+/// snapshots never touch it). Pure apart from the source call.
+fn resolve_locale(choice: AppLanguage, source: impl SystemLocaleSource) -> AppLanguage {
+    match choice {
+        AppLanguage::SystemDefault => source.system_language().unwrap_or(AppLanguage::English),
+        explicit => explicit,
+    }
+}
+
+/// Resolved display language plus text accessors. Built once per render
+/// entry from the resolved choice — never from a raw choice — and threaded
+/// through builders/controls instead of re-resolving per string.
+#[derive(Clone, Copy)]
+pub struct I18n {
+    language: AppLanguage,
+}
+
+impl I18n {
+    /// Build from an already-resolved language. Resolution and text
+    /// lookup stay separate: edges resolve, controls only read.
+    pub fn new(resolved: AppLanguage) -> Self {
+        debug_assert_ne!(
+            resolved,
+            AppLanguage::SystemDefault,
+            "resolve the choice before building I18n",
+        );
+        Self { language: resolved }
+    }
+
+    /// The invariant language for locale-independent surfaces (logs).
+    /// English doubles as the resolution fallback, so rendering through
+    /// this never depends on the terminal locale or the saved choice.
+    pub fn english() -> Self {
+        Self::new(AppLanguage::English)
+    }
+
+    /// Edge constructor: saved choice plus an OS query.
+    pub fn resolve_os(choice: AppLanguage) -> Self {
+        Self::new(resolve_locale(choice, OsLocale))
+    }
+
+    /// Edge constructor with an explicit source (tests, Android vault).
+    pub fn resolve_with(choice: AppLanguage, source: impl SystemLocaleSource) -> Self {
+        Self::new(resolve_locale(choice, source))
+    }
+
+    pub fn language(self) -> AppLanguage {
+        self.language
+    }
+
+    pub fn text(self, key: UiText) -> String {
+        lookup(self.language, key).to_string()
+    }
+
+    pub fn port_summary(self, names: &[String]) -> String {
+        port_summary(self.language, names)
+    }
+
+    pub fn port_count_line(self, count: usize) -> String {
+        port_count_line(self.language, count)
+    }
+
+    pub fn slot_description(self) -> String {
+        slot_description(self.language)
+    }
+
+    pub fn history_count(self, count: usize) -> String {
+        history_count(self.language, count)
+    }
+
+    /// Full disabled-choice sentence, formatted here so word order
+    /// follows the locale.
+    pub fn slot_in_use(self, owner: &str) -> String {
+        match self.language {
+            AppLanguage::Japanese => format!("{owner}使用中"),
+            _ => format!("Used in {owner}"),
+        }
+    }
+}
+
+/// Static-string kernel behind [`I18n::text`]. Takes an already-resolved
+/// language; every caller threads one through, so this never resolves.
+/// `SystemDefault` cannot occur by construction and reads as English.
+fn lookup(language: AppLanguage, key: UiText) -> &'static str {
     let (english, japanese) = localized_pair(key);
-    match resolve_language(language) {
+    match language {
         AppLanguage::Japanese => japanese,
         AppLanguage::English | AppLanguage::SystemDefault => english,
     }
-}
-
-/// CJK-capable sans family for the UI language, when the platform default cannot cover it.
-/// `None` means the frontend default already covers the language.
-pub fn font_family(language: AppLanguage) -> Option<&'static str> {
-    if !matches!(resolve_language(language), AppLanguage::Japanese) {
-        return None;
-    }
-    platform_cjk_sans()
-}
-
-#[cfg(target_os = "windows")]
-fn platform_cjk_sans() -> Option<&'static str> {
-    Some("Yu Gothic UI")
-}
-
-#[cfg(target_os = "macos")]
-fn platform_cjk_sans() -> Option<&'static str> {
-    Some("Hiragino Sans")
-}
-
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
-fn platform_cjk_sans() -> Option<&'static str> {
-    None
 }
 
 /// (English, Japanese) pair per key: one match instead of two
@@ -554,6 +654,49 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::Connection => ("Connection", "接続"),
         UiText::Capabilities => ("Capabilities", "対応機能"),
         UiText::KeyMappingDesc => ("", ""),
+        UiText::NotificationPaused => ("Paused", "一時停止しました"),
+        UiText::NotificationResumed => ("Resumed", "再開しました"),
+        UiText::NotificationReset => ("Reset", "リセットしました"),
+        UiText::NotificationSlotCreated => ("Slot created", "スロットを作成しました"),
+        UiText::NotificationSavesUnavailable => ("Saves unavailable", "保存機能が利用できません"),
+        UiText::SlotEmpty => ("slot is empty", "空きスロットです"),
+        UiText::SlotMissing => ("no data", "データがありません"),
+        UiText::SlotStorageFailure => ("storage failure", "保存に失敗しました"),
+        UiText::SlotCorrupt => ("data is corrupt", "データが壊れています"),
+        UiText::SlotIncompatible => ("incompatible data", "互換性がありません"),
+        UiText::SlotUnavailable => ("unavailable", "利用できません"),
+        UiText::SlotVerbSaved => ("Saved to", "保存しました"),
+        UiText::SlotVerbLoaded => ("Loaded", "読み込みました"),
+        UiText::SlotVerbDeleted => ("Deleted", "削除しました"),
+        UiText::SlotVerbSelected => ("Selected", "選択しました"),
+        UiText::CommandOriginPicker => ("Picker", "選択"),
+        UiText::CommandOriginRestore => ("Restore", "復元"),
+        UiText::CommandOriginHost => ("Bridge", "通知"),
+        UiText::OutcomeUnknown => (
+            "Operation outcome unknown. Check the current state before retrying.",
+            "操作結果を確認できません。状態を確認してから再操作してください。",
+        ),
+        UiText::ValidationVolumeRange => (
+            "Master volume must be between 0 and 100",
+            "主音量は0～100で指定してください",
+        ),
+        UiText::ValidationSampleRateRange => (
+            "Sample rate must be between 1 and 192000",
+            "サンプルレートは1～192000で指定してください",
+        ),
+        UiText::ValidationLatencyRange => (
+            "Audio latency must be between 10 and 200 ms",
+            "音声遅延は10～200 msで指定してください",
+        ),
+        UiText::ValidationInfoDuration => (
+            "Info notification duration must be between 1000 and 30000 ms",
+            "情報通知表示時間は1000～30000 msで指定してください",
+        ),
+        UiText::ValidationWarningDuration => (
+            "Warning notification duration must be between 1000 and 30000 ms",
+            "警告通知表示時間は1000～30000 msで指定してください",
+        ),
+        UiText::ValidationNoController => ("No controller assigned", "コントローラー未割当"),
     }
 }
 
@@ -565,42 +708,113 @@ pub fn menu_label_with_shortcut(label: &str, shortcut: &str) -> String {
 
 /// Parameterized debugger messages: one helper per message keeps both
 /// languages side by side instead of scattering `format!`.
+/// Takes an already-resolved language; every caller threads one
+/// through, so this never resolves (`SystemDefault` reads as English).
 macro_rules! localized {
     ($language:expr, $en:expr, $ja:expr) => {
-        match resolve_language($language) {
+        match $language {
             AppLanguage::Japanese => $ja,
             _ => $en,
         }
     };
 }
 
-pub fn parse_failed(language: AppLanguage, input: &str) -> String {
-    localized!(
-        language,
-        format!("parse failed: {input}"),
-        format!("解析失敗: {input}")
-    )
-}
-
 /// History item count (`42 items` / `42件`). The number leads in
 /// both languages (Console / Event Viewer pattern).
-pub fn history_count(language: AppLanguage, count: usize) -> String {
+fn history_count(language: AppLanguage, count: usize) -> String {
     localized!(language, format!("{count} items"), format!("{count}件"))
 }
+/// Slot-bound event sentence (`Saved to slot 7` / `スロット7に保存しました`).
+/// The verb arrives resolved (see the `SlotVerb*` keys); word order follows
+/// the locale here so callers never branch on language.
+pub fn slot_event(language: AppLanguage, slot: Option<u64>, verb: &str) -> String {
+    match slot {
+        Some(id) => localized!(
+            language,
+            format!("{verb} slot {id}"),
+            format!("スロット{id}に{verb}")
+        ),
+        None => verb.to_string(),
+    }
+}
 
-/// Screen-reader label for a level enable toggle.
-/// Pass the short level name; Error/Status read full elsewhere.
-pub fn notification_group_label(language: AppLanguage, level: &str) -> String {
+/// Slot failure sentence (`Slot 7: no data` / `スロット7: データがありません`).
+/// Takes the already-localized reason so only the template branches here.
+pub fn slot_failure(language: AppLanguage, slot: Option<u64>, what: &str) -> String {
+    match slot {
+        Some(id) => localized!(
+            language,
+            format!("Slot {id}: {what}"),
+            format!("スロット{id}: {what}")
+        ),
+        None => what.to_string(),
+    }
+}
+
+/// Bare command failure (`{id} failed[: detail]`). Origin prefixes ride on
+/// the `CommandOrigin*` keys; only the Command origin formats here.
+pub fn command_failed(language: AppLanguage, id: &str, detail: &str) -> String {
     localized!(
         language,
-        format!("{level} notifications"),
-        format!("{level}通知")
+        if detail.is_empty() {
+            format!("{id} failed")
+        } else {
+            format!("{id} failed: {detail}")
+        },
+        if detail.is_empty() {
+            format!("{id} に失敗しました")
+        } else {
+            format!("{id} に失敗しました: {detail}")
+        }
     )
+}
+
+/// Validation lines with locale-dependent word order. The static tails
+/// (ranges, `ValidationNoController`) are table keys; only templates
+/// whose argument order differs per language live here.
+pub fn unknown_slots(language: AppLanguage, system: &str, count: u32) -> String {
+    localized!(
+        language,
+        format!("{system}: {count} unknown slot ID(s)"),
+        format!("{system}: 不明スロットID{count}件")
+    )
+}
+
+/// Validation lines with locale-dependent word order.
+pub fn unknown_profiles(language: AppLanguage, system: &str, count: u32) -> String {
+    localized!(
+        language,
+        format!("{system}: {count} unknown controller profile ID(s)"),
+        format!("{system}: 不明コントローラープロファイルID{count}件")
+    )
+}
+
+/// Validation lines with locale-dependent word order.
+pub fn exclusive_member(language: AppLanguage, member: &str, ports: &str) -> String {
+    localized!(
+        language,
+        format!("{member} is on multiple ports ({ports})"),
+        format!("{member}は複数ポートに割当済み ({ports})")
+    )
+}
+
+/// Locale tag to the supported set (`ja` primary subtag → Japanese,
+/// everything else → English). Accepts BCP-47 (`ja-JP`) and Unix
+/// (`ja_JP.UTF-8`) forms. Pure: unit-tested, no env access.
+pub fn language_from_locale_tag(tag: &str) -> AppLanguage {
+    let primary = tag.split(['.', '@']).next().unwrap_or_default();
+    let primary = primary.replace('_', "-");
+    let subtag = primary.split('-').next().unwrap_or_default();
+    if subtag.eq_ignore_ascii_case("ja") {
+        AppLanguage::Japanese
+    } else {
+        AppLanguage::English
+    }
 }
 
 /// Description for a controller-slot choice row: which port the row drives
 /// is in the row label, so the description only states the action.
-pub fn slot_description(language: AppLanguage) -> String {
+fn slot_description(language: AppLanguage) -> String {
     localized!(
         language,
         "Controller for this port.".to_string(),
@@ -610,9 +824,9 @@ pub fn slot_description(language: AppLanguage) -> String {
 
 /// Player/device-row summary: "Not assigned" when empty, otherwise
 /// "Name" or "Name +N" (short form is banned: the full first name reads).
-pub fn port_summary(language: AppLanguage, names: &[String]) -> String {
+fn port_summary(language: AppLanguage, names: &[String]) -> String {
     match names {
-        [] => text(language, UiText::NotAssigned).to_string(),
+        [] => lookup(language, UiText::NotAssigned).to_string(),
         [first] => first.clone(),
         // Count suffix is language-neutral, so no per-language branch.
         [first, rest @ ..] => format!("{first} +{}", rest.len()),
@@ -621,7 +835,7 @@ pub fn port_summary(language: AppLanguage, names: &[String]) -> String {
 
 /// Player/device-row count line: "No devices assigned" / "1 device
 /// assigned" / "N devices assigned" (singular/plural distinguished).
-pub fn port_count_line(language: AppLanguage, count: usize) -> String {
+fn port_count_line(language: AppLanguage, count: usize) -> String {
     match count {
         0 => localized!(
             language,
@@ -749,28 +963,6 @@ pub fn resume_failed(language: AppLanguage, detail: &str) -> String {
     )
 }
 
-/// Applied freeze (`frozen {addr}={value}`).
-pub fn frozen(language: AppLanguage, addr: u32, value: u8) -> String {
-    localized!(
-        language,
-        format!("frozen 0x{addr:08X}={value:02X}"),
-        format!("フリーズ 0x{addr:08X}={value:02X}")
-    )
-}
-
-/// Live watch readout (`= ??` when unreadable).
-pub fn watch_value(language: AppLanguage, addr: u32, value: Option<u8>) -> String {
-    let value_text = match value {
-        Some(value) => format!("{value:02X}"),
-        None => "??".to_string(),
-    };
-    localized!(
-        language,
-        format!("watch 0x{addr:08X} = {value_text}"),
-        format!("ウォッチ 0x{addr:08X} = {value_text}")
-    )
-}
-
 /// Tile hover readout (`+0x{offset}` is the tile-start byte offset).
 pub fn tile_hover(
     language: AppLanguage,
@@ -800,8 +992,70 @@ mod tests {
     }
 
     #[test]
+    fn locale_tag_maps_primary_subtag() {
+        // BCP-47 (Android vault, sys-locale) and Unix (`ja_JP.UTF-8`) forms.
+        for tag in [
+            "ja",
+            "ja-JP",
+            "ja_JP.UTF-8",
+            "JA-jp",
+            "ja@calendar=japanese",
+        ] {
+            assert_eq!(language_from_locale_tag(tag), ja(), "{tag}");
+        }
+        for tag in ["", "C", "C.UTF-8", "en", "en-US", "fr-FR", "de_DE.UTF-8"] {
+            assert_eq!(language_from_locale_tag(tag), en(), "{tag}");
+        }
+    }
+
+    #[test]
+    fn explicit_choice_never_falls_back_to_os() {
+        assert_eq!(resolve_locale(AppLanguage::Japanese, OsLocale), ja());
+        assert_eq!(resolve_locale(AppLanguage::English, OsLocale), en());
+    }
+
+    struct StubSource(Option<AppLanguage>);
+
+    impl SystemLocaleSource for StubSource {
+        fn system_language(&self) -> Option<AppLanguage> {
+            self.0
+        }
+    }
+
+    #[test]
+    fn resolve_locale_prefers_choice_over_source() {
+        // Explicit choices never query the source, so concrete Android
+        // snapshots cost nothing.
+        assert_eq!(resolve_locale(ja(), StubSource(Some(en()))), ja());
+        assert_eq!(resolve_locale(en(), StubSource(Some(ja()))), en());
+        assert_eq!(
+            resolve_locale(AppLanguage::SystemDefault, StubSource(Some(ja()))),
+            ja()
+        );
+        assert_eq!(
+            resolve_locale(AppLanguage::SystemDefault, StubSource(None)),
+            en()
+        );
+    }
+
+    #[test]
+    fn i18n_instance_serves_both_languages() {
+        let ja_i18n = I18n::resolve_with(AppLanguage::SystemDefault, StubSource(Some(ja())));
+        assert_eq!(ja_i18n.language(), ja());
+        assert_eq!(ja_i18n.text(UiText::Open), "開く");
+        assert_eq!(ja_i18n.slot_in_use("P1"), "P1使用中");
+
+        let en_i18n = I18n::resolve_os(AppLanguage::English);
+        assert_eq!(en_i18n.language(), en());
+        assert_eq!(en_i18n.text(UiText::Open), "Open");
+        assert_eq!(en_i18n.slot_in_use("P1"), "Used in P1");
+    }
+
+    #[test]
     fn new_keys_resolve_in_both_languages() {
         use UiText::*;
+        let en_text = I18n::new(en());
+        let ja_text = I18n::new(ja());
         for key in [
             OpenDebugger,
             WriteNeedsSelection,
@@ -929,10 +1183,35 @@ mod tests {
             KeyMapping,
             Connection,
             Capabilities,
+            NotificationPaused,
+            NotificationResumed,
+            NotificationReset,
+            NotificationSlotCreated,
+            NotificationSavesUnavailable,
+            SlotEmpty,
+            SlotMissing,
+            SlotStorageFailure,
+            SlotCorrupt,
+            SlotIncompatible,
+            SlotUnavailable,
+            SlotVerbSaved,
+            SlotVerbLoaded,
+            SlotVerbDeleted,
+            SlotVerbSelected,
+            CommandOriginPicker,
+            CommandOriginRestore,
+            CommandOriginHost,
+            OutcomeUnknown,
+            ValidationVolumeRange,
+            ValidationSampleRateRange,
+            ValidationLatencyRange,
+            ValidationInfoDuration,
+            ValidationWarningDuration,
+            ValidationNoController,
         ] {
-            assert!(!text(en(), key).is_empty());
-            assert!(!text(ja(), key).is_empty());
-            assert_ne!(text(en(), key), text(ja(), key));
+            assert!(!en_text.text(key).is_empty());
+            assert!(!ja_text.text(key).is_empty());
+            assert_ne!(en_text.text(key), ja_text.text(key));
         }
     }
 
@@ -941,9 +1220,11 @@ mod tests {
         // Self-evident labels carry no supporting text: the rows render
         // bare instead of restating the label.
         use UiText::*;
+        let en_text = I18n::new(en());
+        let ja_text = I18n::new(ja());
         for key in [DescVsync, DescMute, KeyMappingDesc] {
-            assert!(text(en(), key).is_empty());
-            assert!(text(ja(), key).is_empty());
+            assert!(en_text.text(key).is_empty());
+            assert!(ja_text.text(key).is_empty());
         }
     }
 
@@ -955,29 +1236,7 @@ mod tests {
     }
 
     #[test]
-    fn notification_group_label_names_the_level() {
-        assert_eq!(notification_group_label(en(), "Info"), "Info notifications");
-        assert_eq!(notification_group_label(ja(), "情報"), "情報通知");
-        assert_eq!(
-            notification_group_label(en(), "Warning"),
-            "Warning notifications"
-        );
-        assert_eq!(notification_group_label(ja(), "警告"), "警告通知");
-        // Matches the existing full-name keys exactly.
-        assert_eq!(
-            notification_group_label(en(), text(en(), UiText::Error)),
-            text(en(), UiText::NotificationError)
-        );
-        assert_eq!(
-            notification_group_label(ja(), text(ja(), UiText::Error)),
-            text(ja(), UiText::NotificationError)
-        );
-    }
-
-    #[test]
     fn parameterized_messages_cover_both_languages() {
-        assert_eq!(parse_failed(en(), "zz"), "parse failed: zz");
-        assert_eq!(parse_failed(ja(), "zz"), "解析失敗: zz");
         assert_eq!(
             selected_row(en(), 0x80, Some(0xAB)),
             "Selected 0x00000080 (was AB)"
@@ -1025,11 +1284,6 @@ mod tests {
         assert_eq!(pause_failed(ja(), "X"), "一時停止失敗: X");
         assert_eq!(resume_failed(en(), "X"), "resume failed: X");
         assert_eq!(resume_failed(ja(), "X"), "再開失敗: X");
-        assert_eq!(frozen(en(), 0x10, 0xFF), "frozen 0x00000010=FF");
-        assert_eq!(frozen(ja(), 0x10, 0xFF), "フリーズ 0x00000010=FF");
-        assert_eq!(watch_value(en(), 0x10, Some(1)), "watch 0x00000010 = 01");
-        assert_eq!(watch_value(en(), 0x10, None), "watch 0x00000010 = ??");
-        assert_eq!(watch_value(ja(), 0x10, Some(1)), "ウォッチ 0x00000010 = 01");
         assert_eq!(
             tile_hover(en(), "Tiles", 21, 44, 13, 0x150),
             "Tiles tile #21 (px 44,13, +0x0150)"
@@ -1038,19 +1292,42 @@ mod tests {
             tile_hover(ja(), "Tiles", 21, 44, 13, 0x150),
             "Tiles タイル #21 (px 44,13, +0x0150)"
         );
-    }
-
-    #[test]
-    fn cjk_font_family_follows_ui_language() {
-        // English needs no override: the frontend default covers Latin.
-        assert_eq!(font_family(en()), None);
-        // Japanese needs an explicit CJK sans on Noto-less platforms;
-        // Linux keeps the default (system fallback is consistent there).
-        #[cfg(target_os = "windows")]
-        assert_eq!(font_family(ja()), Some("Yu Gothic UI"));
-        #[cfg(target_os = "macos")]
-        assert_eq!(font_family(ja()), Some("Hiragino Sans"));
-        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-        assert_eq!(font_family(ja()), None);
+        assert_eq!(slot_event(en(), Some(7), "Saved to"), "Saved to slot 7");
+        assert_eq!(
+            slot_event(ja(), Some(7), "保存しました"),
+            "スロット7に保存しました"
+        );
+        assert_eq!(slot_event(en(), None, "Saved to"), "Saved to");
+        assert_eq!(slot_failure(en(), Some(7), "no data"), "Slot 7: no data");
+        assert_eq!(
+            slot_failure(ja(), Some(7), "データがありません"),
+            "スロット7: データがありません"
+        );
+        assert_eq!(slot_failure(en(), None, "no data"), "no data");
+        assert_eq!(command_failed(en(), "slot", ""), "slot failed");
+        assert_eq!(command_failed(en(), "slot", "gone"), "slot failed: gone");
+        assert_eq!(command_failed(ja(), "slot", ""), "slot に失敗しました");
+        assert_eq!(
+            command_failed(ja(), "slot", "gone"),
+            "slot に失敗しました: gone"
+        );
+        assert_eq!(unknown_slots(en(), "s", 2), "s: 2 unknown slot ID(s)");
+        assert_eq!(unknown_slots(ja(), "s", 2), "s: 不明スロットID2件");
+        assert_eq!(
+            unknown_profiles(en(), "s", 2),
+            "s: 2 unknown controller profile ID(s)"
+        );
+        assert_eq!(
+            unknown_profiles(ja(), "s", 2),
+            "s: 不明コントローラープロファイルID2件"
+        );
+        assert_eq!(
+            exclusive_member(en(), "m", "p1"),
+            "m is on multiple ports (p1)"
+        );
+        assert_eq!(
+            exclusive_member(ja(), "m", "p1"),
+            "mは複数ポートに割当済み (p1)"
+        );
     }
 }

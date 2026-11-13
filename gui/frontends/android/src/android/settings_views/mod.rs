@@ -23,7 +23,7 @@ use projection::project_fresh;
 use wire::with_vm_deps;
 
 #[cfg(not(target_os = "android"))]
-use wire::{CaptureSlot, GamepadInfo, I18n, KeyboardInfo, ViewPayload};
+use wire::{CaptureSlot, GamepadInfo, KeyboardInfo, ViewPayload, resolve_display};
 // Android-facing surface: the bridge, vault, and save paths name these
 // through `settings_views::`. Only the JNI build (the `android` module)
 // uses them; host tests import the submodules directly.
@@ -33,8 +33,8 @@ pub(crate) use capture::apply_hardware_key;
 pub(crate) use commands::{apply_command_to, finish_snapshot};
 #[cfg(target_os = "android")]
 pub(crate) use wire::{
-    CaptureSlot, GamepadInfo, I18n, KeyboardInfo, ViewPayload, app_language_tag, install_vm_deps,
-    projection, system_language_from_tag,
+    CaptureSlot, GamepadInfo, KeyboardInfo, ViewPayload, app_language_tag, install_vm_deps,
+    projection, resolve_display,
 };
 
 #[cfg(test)]
@@ -55,7 +55,7 @@ pub(super) fn open_payload(
     system_locale: Option<AppLanguage>,
 ) -> Result<ViewPayload, String> {
     with_vm_deps(|deps| {
-        let i18n = I18n::resolve(snapshot.shared.general.language, system_locale);
+        let i18n = resolve_display(snapshot.shared.general.language, system_locale);
         let truth = wire::projection(keyboards, touch_capable, gamepads, i18n);
         let capture: CaptureSlot = None;
         project_fresh(snapshot, deps, &capture, truth)

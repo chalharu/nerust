@@ -1,4 +1,4 @@
-use nerust_settings_core::i18n::{UiText, text as ui_text};
+use nerust_settings_core::i18n::{I18n, UiText};
 use nerust_settings_core::model::{language::AppLanguage, shared::StoragePolicy};
 use std::path::PathBuf;
 
@@ -103,35 +103,36 @@ mod tests {
 #[allow(clippy::items_after_test_module)]
 fn project_view(state: &super::EditorState) -> GeneralView {
     let lang = state.draft.shared.general.language;
+    let i18n = I18n::resolve_os(lang);
     GeneralView {
         language: lang,
         language_choices: vec![
             ChoiceView {
                 value: AppLanguage::SystemDefault,
-                label: ui_text(lang, UiText::SystemDefault).to_string(),
+                label: i18n.text(UiText::SystemDefault),
             },
             ChoiceView {
                 value: AppLanguage::Japanese,
-                label: ui_text(lang, UiText::Japanese).to_string(),
+                label: i18n.text(UiText::Japanese),
             },
             ChoiceView {
                 value: AppLanguage::English,
-                label: ui_text(lang, UiText::English).to_string(),
+                label: i18n.text(UiText::English),
             },
         ],
         storage_policy: state.draft.shared.persistence.storage_policy,
         storage_policy_choices: vec![
             ChoiceView {
                 value: StoragePolicy::Sidecar,
-                label: ui_text(lang, UiText::Sidecar).to_string(),
+                label: i18n.text(UiText::Sidecar),
             },
             ChoiceView {
                 value: StoragePolicy::AppSharedData,
-                label: ui_text(lang, UiText::AppSharedData).to_string(),
+                label: i18n.text(UiText::AppSharedData),
             },
             ChoiceView {
                 value: StoragePolicy::CustomDirectory,
-                label: ui_text(lang, UiText::CustomDirectory).to_string(),
+                label: i18n.text(UiText::CustomDirectory),
             },
         ],
         storage_directory: state

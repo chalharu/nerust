@@ -1,6 +1,6 @@
 use nerust_gui_application::{Application, ApplicationState, SessionAction};
 use nerust_settings_core::{
-    i18n::{UiText, text},
+    i18n::{I18n, UiText},
     model::{
         input::{ShortcutAction, ShortcutBinding},
         language::AppLanguage,
@@ -85,7 +85,8 @@ impl MenuModel {
         let (slots, active_slot) = app.session().menu_slots();
         let available = !state.closed;
         let loaded = available && state.loaded;
-        let label = |key| text(language, key).to_owned();
+        let i18n = I18n::resolve_os(language);
+        let label = move |key| i18n.text(key);
         let hinted = |key, action| {
             nerust_gui_runtime::menu_labels::shortcut_hint(&label(key), &shortcuts, action)
         };
@@ -324,23 +325,21 @@ mod tests {
         let (adapter, _dir) = loaded_adapter();
         let app = nerust_gui_application::Application::new(adapter);
         let model = MenuModel::new(&app);
-        assert_eq!(model.file_title, text(model.language, UiText::File));
-        assert_eq!(
-            model.emulation_title,
-            text(model.language, UiText::Emulation)
-        );
+        let i18n = I18n::resolve_os(model.language);
+        assert_eq!(model.file_title, i18n.text(UiText::File));
+        assert_eq!(model.emulation_title, i18n.text(UiText::Emulation));
         // Loaded fixture with slots: creation and per-slot traffic enabled.
         assert!(model.available && model.loaded);
-        assert_eq!(model.open_label, text(model.language, UiText::Open));
+        assert_eq!(model.open_label, i18n.text(UiText::Open));
         assert_eq!(
             model.debugger_label,
             nerust_gui_runtime::menu_labels::shortcut_hint(
-                text(model.language, UiText::OpenDebugger),
+                &i18n.text(UiText::OpenDebugger),
                 &model.shortcuts,
                 ShortcutAction::OpenDebugger,
             )
         );
-        assert_eq!(model.pause_label, text(model.language, UiText::Pause));
+        assert_eq!(model.pause_label, i18n.text(UiText::Pause));
         assert!(model.matches(&app));
     }
 

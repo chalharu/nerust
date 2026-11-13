@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::bridge_contract::SETTINGS_SCHEMA_VERSION;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_settings_core::{
-    i18n::{UiText, text as ui_text},
+    i18n::{I18n, UiText, language_from_locale_tag},
     model::language::AppLanguage,
 };
 use nerust_system_traits::factory::CoreFactory;
@@ -21,6 +21,12 @@ use nerust_settings_core::model::{
     app_state::DesktopAppState, local::HostBackendLocalSettings, shared::DesktopSharedSettings,
 };
 use nerust_settings_traits::SystemSettings;
+
+/// Display language with no vault-pushed system locale: the host
+/// fallback. Most tests only vary the saved choice.
+fn sys_display(choice: AppLanguage) -> I18n {
+    resolve_display(choice, None)
+}
 
 fn default_snapshot() -> SettingsSnapshot {
     let mut shared = DesktopSharedSettings::default();
@@ -257,19 +263,19 @@ fn system_locale_resolves_system_default_for_display() {
         assert_eq!(label, want, "locale {system:?} resolves the display");
     }
     assert_eq!(
-        I18n::resolve(AppLanguage::SystemDefault, Some(AppLanguage::Japanese)).language(),
+        resolve_display(AppLanguage::SystemDefault, Some(AppLanguage::Japanese)).language(),
         AppLanguage::Japanese
     );
     assert_eq!(
-        I18n::resolve(AppLanguage::SystemDefault, Some(AppLanguage::English)).language(),
+        resolve_display(AppLanguage::SystemDefault, Some(AppLanguage::English)).language(),
         AppLanguage::English
     );
     assert_eq!(
-        I18n::resolve(AppLanguage::English, Some(AppLanguage::Japanese)).language(),
+        resolve_display(AppLanguage::English, Some(AppLanguage::Japanese)).language(),
         AppLanguage::English
     );
     assert_eq!(
-        I18n::resolve(AppLanguage::English, None).language(),
+        sys_display(AppLanguage::English).language(),
         AppLanguage::English
     );
 }
@@ -536,10 +542,10 @@ fn locale_tag_mapping_round_trips() {
         ("en-US", AppLanguage::English),
         ("fr", AppLanguage::English),
     ] {
-        let mapped = system_language_from_tag(tag);
+        let mapped = language_from_locale_tag(tag);
         assert_eq!(mapped, want, "tag {tag} maps");
         assert_eq!(
-            I18n::resolve(AppLanguage::SystemDefault, Some(mapped)).language(),
+            resolve_display(AppLanguage::SystemDefault, Some(mapped)).language(),
             want,
             "tag {tag} resolves for display"
         );
@@ -1167,7 +1173,7 @@ fn auto_hide_status_row_shows_none_when_empty() {
     let status = row(&payload, "controls.auto_hide_status");
     assert_eq!(
         status.text,
-        ui_text(AppLanguage::English, UiText::NotAssigned).to_string(),
+        I18n::new(AppLanguage::English).text(UiText::NotAssigned),
         "empty gate says so"
     );
 }
@@ -1429,7 +1435,7 @@ fn capture_round_trips_through_hardware_keys() {
         let vm = build_vm(
             &snapshot,
             &test_deps(),
-            I18n::resolve(AppLanguage::SystemDefault, None),
+            sys_display(AppLanguage::SystemDefault),
         )
         .expect("vm builds");
         let keyboards = test_keyboards();
@@ -1437,7 +1443,7 @@ fn capture_round_trips_through_hardware_keys() {
             &keyboards,
             None,
             &[],
-            I18n::resolve(AppLanguage::SystemDefault, None),
+            sys_display(AppLanguage::SystemDefault),
         );
         let sections = build_sections(&vm, &snapshot, truth);
         sections
@@ -1471,7 +1477,7 @@ fn capture_round_trips_through_hardware_keys() {
                 &test_keyboards(),
                 None,
                 &[],
-                I18n::resolve(AppLanguage::SystemDefault, None),
+                sys_display(AppLanguage::SystemDefault),
             ),
         )
         .expect("hardware key release probes")
@@ -1488,7 +1494,7 @@ fn capture_round_trips_through_hardware_keys() {
                 &test_keyboards(),
                 None,
                 &[],
-                I18n::resolve(AppLanguage::SystemDefault, None),
+                sys_display(AppLanguage::SystemDefault),
             ),
         )
         .expect("unknown keycode probes")
@@ -1505,7 +1511,7 @@ fn capture_round_trips_through_hardware_keys() {
                 &test_keyboards(),
                 None,
                 &[],
-                I18n::resolve(AppLanguage::SystemDefault, None),
+                sys_display(AppLanguage::SystemDefault),
             ),
         )
         .expect("hardware key applies")
@@ -1522,7 +1528,7 @@ fn clear_binding_unbinds_without_keyboard() {
         let vm = build_vm(
             &snapshot,
             &test_deps(),
-            I18n::resolve(AppLanguage::SystemDefault, None),
+            sys_display(AppLanguage::SystemDefault),
         )
         .expect("vm builds");
         let keyboards = test_keyboards();
@@ -1530,7 +1536,7 @@ fn clear_binding_unbinds_without_keyboard() {
             &keyboards,
             None,
             &[],
-            I18n::resolve(AppLanguage::SystemDefault, None),
+            sys_display(AppLanguage::SystemDefault),
         );
         let sections = build_sections(&vm, &snapshot, truth);
         sections
@@ -1560,7 +1566,7 @@ fn number_rows_advertise_vm_accepted_bounds() {
         let vm = build_vm(
             &snapshot,
             &test_deps(),
-            I18n::resolve(AppLanguage::SystemDefault, None),
+            sys_display(AppLanguage::SystemDefault),
         )
         .expect("vm builds");
         let keyboards = test_keyboards();
@@ -1568,7 +1574,7 @@ fn number_rows_advertise_vm_accepted_bounds() {
             &keyboards,
             None,
             &[],
-            I18n::resolve(AppLanguage::SystemDefault, None),
+            sys_display(AppLanguage::SystemDefault),
         );
         let sections = build_sections(&vm, &snapshot, truth);
         sections
@@ -1604,10 +1610,10 @@ fn empty_slots_surface_live_issues() {
         let vm = build_vm(
             &snapshot,
             &test_deps(),
-            I18n::resolve(AppLanguage::SystemDefault, None),
+            sys_display(AppLanguage::SystemDefault),
         )
         .expect("vm builds");
-        draft_issues(&vm, I18n::resolve(AppLanguage::SystemDefault, None))
+        draft_issues(&vm, sys_display(AppLanguage::SystemDefault))
     });
     assert!(
         probed.iter().any(|issue| issue.contains("controller")),
@@ -1615,13 +1621,9 @@ fn empty_slots_surface_live_issues() {
     );
     // Japanese resolves the same kind through the localized template.
     let japanese = with_test_deps(|| {
-        let vm = build_vm(
-            &snapshot,
-            &test_deps(),
-            I18n::resolve(AppLanguage::Japanese, None),
-        )
-        .expect("vm builds");
-        draft_issues(&vm, I18n::resolve(AppLanguage::Japanese, None))
+        let vm = build_vm(&snapshot, &test_deps(), sys_display(AppLanguage::Japanese))
+            .expect("vm builds");
+        draft_issues(&vm, sys_display(AppLanguage::Japanese))
     });
     assert!(
         japanese

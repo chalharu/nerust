@@ -1,9 +1,10 @@
 //! OSD history formatting: level text plus render-ready rows.
 //! Pure mapping from notifications to grid lines; no queue state.
 
+use nerust_settings_core::i18n::I18n;
 use nerust_settings_core::model::language::AppLanguage;
 
-use crate::session::notification::{NotificationLevel, NotificationRenderer, UiNotification};
+use crate::session::notification::{NotificationLevel, UiNotification, level_key};
 
 /// Level tag prefixing OSD labels: text carries severity; grid names come from [`level_name`].
 /// Single source for level text so a new level cannot update one side and forget the other.
@@ -40,11 +41,8 @@ pub fn level_name(level: NotificationLevel) -> &'static str {
 
 /// Localized level name for history grid and filter options.
 /// `Error` maps to `UiText::Error` for column width.
-pub fn level_label(
-    level: NotificationLevel,
-    language: nerust_settings_core::model::language::AppLanguage,
-) -> &'static str {
-    NotificationRenderer { language }.level_name(level)
+pub fn level_label(level: NotificationLevel, i18n: I18n) -> String {
+    level_key(level, i18n)
 }
 
 /// One rendered history line: datetime plus grid columns.
@@ -119,9 +117,10 @@ pub fn history_lines<'a>(
     language: AppLanguage,
 ) -> Vec<HistoryLine> {
     let offset_secs = local_utc_offset_secs();
+    let i18n = I18n::resolve_os(language);
     history
         .map(|n| {
-            let text = super::notification::render_text(&n.message, n.count, language);
+            let text = super::notification::render_text(&n.message, n.count, i18n);
             HistoryLine {
                 datetime: format_datetime_in(n.at, offset_secs),
                 level: n.level,
@@ -151,28 +150,18 @@ mod tests {
 
     #[test]
     fn level_text_stays_distinct_per_surface() {
+        let en = I18n::new(AppLanguage::English);
+        let ja = I18n::new(AppLanguage::Japanese);
         assert_eq!(level_tag(NotificationLevel::Info), "[INFO]");
         assert_eq!(level_name(NotificationLevel::Info), "Info");
         assert_eq!(level_tag(NotificationLevel::Warning), "[WARN]");
         assert_eq!(level_name(NotificationLevel::Warning), "Warning");
         assert_eq!(level_tag(NotificationLevel::Error), "[ERROR]");
         assert_eq!(level_name(NotificationLevel::Error), "Error");
-        assert_eq!(
-            level_label(NotificationLevel::Info, AppLanguage::English),
-            "Info"
-        );
-        assert_eq!(
-            level_label(NotificationLevel::Warning, AppLanguage::Japanese),
-            "警告"
-        );
-        assert_eq!(
-            level_label(NotificationLevel::Error, AppLanguage::English),
-            "Error"
-        );
-        assert_eq!(
-            level_label(NotificationLevel::Error, AppLanguage::Japanese),
-            "エラー"
-        );
+        assert_eq!(level_label(NotificationLevel::Info, en), "Info");
+        assert_eq!(level_label(NotificationLevel::Warning, ja), "警告");
+        assert_eq!(level_label(NotificationLevel::Error, en), "Error");
+        assert_eq!(level_label(NotificationLevel::Error, ja), "エラー");
     }
 
     #[test]
@@ -309,24 +298,18 @@ impl HistoryFilter {
 
     /// Localized dropdown label. Levels reuse the settings table;
     /// only "All" needs its own key.
-    pub fn label(
-        self,
-        language: nerust_settings_core::model::language::AppLanguage,
-    ) -> &'static str {
-        use nerust_settings_core::i18n::{UiText, text as ui_text};
+    pub fn label(self, i18n: I18n) -> String {
+        use nerust_settings_core::i18n::UiText;
         match self {
-            HistoryFilter::All => ui_text(language, UiText::HistoryFilterAll),
-            HistoryFilter::Info => ui_text(language, UiText::NotificationInfo),
-            HistoryFilter::Warning => ui_text(language, UiText::NotificationWarning),
-            HistoryFilter::Error => ui_text(language, UiText::Error),
+            HistoryFilter::All => i18n.text(UiText::HistoryFilterAll),
+            HistoryFilter::Info => i18n.text(UiText::NotificationInfo),
+            HistoryFilter::Warning => i18n.text(UiText::NotificationWarning),
+            HistoryFilter::Error => i18n.text(UiText::Error),
         }
     }
 
     /// Inverse of [`HistoryFilter::label`]: localized strings mapped back.
-    pub fn from_label(
-        label: &str,
-        language: nerust_settings_core::model::language::AppLanguage,
-    ) -> Option<HistoryFilter> {
+    pub fn from_label(label: &str, i18n: I18n) -> Option<HistoryFilter> {
         [
             HistoryFilter::All,
             HistoryFilter::Info,
@@ -334,7 +317,7 @@ impl HistoryFilter {
             HistoryFilter::Error,
         ]
         .into_iter()
-        .find(|filter| filter.label(language) == label)
+        .find(|filter| filter.label(i18n) == label)
     }
 
     /// Inverse of [`HistoryFilter::id`]: combo ids mapped back.
@@ -387,7 +370,7 @@ pub fn short_module(module: &str) -> &str {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryRowView {
     pub datetime: String,
-    pub level: &'static str,
+    pub level: String,
     pub rgb: (u8, u8, u8),
     pub module: String,
     /// `HistoryLine.text` already carries the `×N` merge suffix.
@@ -395,10 +378,10 @@ pub struct HistoryRowView {
 }
 
 /// Single-row projection for the history grid.
-pub fn history_row_view(line: &HistoryLine, language: AppLanguage) -> HistoryRowView {
+pub fn history_row_view(line: &HistoryLine, i18n: I18n) -> HistoryRowView {
     HistoryRowView {
         datetime: line.datetime.clone(),
-        level: level_label(line.level, language),
+        level: level_label(line.level, i18n),
         rgb: level_rgb(line.level),
         module: short_module(line.module).to_string(),
         message: line.text.clone(),
@@ -436,14 +419,18 @@ mod filter_rule_tests {
         assert_eq!(HistoryFilter::from_id(None), HistoryFilter::All);
         assert_eq!(HistoryFilter::from_id(Some("bogus")), HistoryFilter::All);
         for language in [AppLanguage::English, AppLanguage::Japanese] {
+            let i18n = I18n::new(language);
             for filter in HistoryFilter::all() {
                 assert_eq!(
-                    HistoryFilter::from_label(filter.label(language), language),
+                    HistoryFilter::from_label(filter.label(i18n).as_str(), i18n),
                     Some(filter)
                 );
             }
         }
-        assert_eq!(HistoryFilter::from_label("???", AppLanguage::English), None);
+        assert_eq!(
+            HistoryFilter::from_label("???", I18n::new(AppLanguage::English)),
+            None
+        );
     }
 
     #[test]
@@ -455,7 +442,7 @@ mod filter_rule_tests {
             text: "hello".to_string(),
             count: 1,
         };
-        let row = history_row_view(&line, AppLanguage::English);
+        let row = history_row_view(&line, I18n::new(AppLanguage::English));
         assert_eq!(row.rgb, (170, 110, 0));
         assert_eq!(row.module, "session::notification");
         assert_eq!(row.message, "hello");

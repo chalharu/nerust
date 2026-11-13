@@ -2,9 +2,10 @@
 //! The shell pump and the owning frontend adapter are the only writers.
 
 use super::{
-    notification::{Message, NotificationLevel, NotificationRenderer, append_count},
+    notification::{Message, NotificationLevel, append_count, render_message},
     osd_transient::TransientPolicy,
 };
+use nerust_settings_core::i18n::I18n;
 use nerust_settings_core::model::language::AppLanguage;
 
 #[derive(Debug)]
@@ -28,10 +29,7 @@ impl ModalLine {
             } => {
                 let (policy, language) = presentation?;
                 policy.enabled(*level).then(|| {
-                    append_count(
-                        NotificationRenderer { language }.render_message(message),
-                        *count,
-                    )
+                    append_count(render_message(message, I18n::resolve_os(language)), *count)
                 })
             }
         }

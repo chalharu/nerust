@@ -5,7 +5,7 @@
 //! desktop frame loop on this window's close, mirroring Android's
 //! `ErrorDialogController::on_dismissed`.
 use nerust_settings_core::{
-    i18n::{UiText, text},
+    i18n::{I18n, UiText},
     model::language::AppLanguage,
 };
 use panechord::backend::View;
@@ -29,12 +29,13 @@ impl Pane {
         detail: String,
         executor: Rc<dyn Executor>,
     ) -> Rc<Self> {
+        let i18n = I18n::resolve_os(language);
         Rc::new(Self {
             model: Store::new(
                 Model {
-                    title: text(language, UiText::Error).to_owned(),
+                    title: i18n.text(UiText::Error),
                     text: detail,
-                    ok: text(language, UiText::Ok).to_owned(),
+                    ok: i18n.text(UiText::Ok),
                 },
                 executor,
             ),
@@ -124,8 +125,8 @@ mod tests {
             let pane = Pane::new(language, "boom".into(), Rc::new(NoDispatch));
             let model = pane.model.snapshot();
             assert_eq!(model.text, "boom");
-            assert_eq!(model.title, text(language, UiText::Error));
-            assert_eq!(model.ok, text(language, UiText::Ok));
+            assert_eq!(model.title, I18n::new(language).text(UiText::Error));
+            assert_eq!(model.ok, I18n::new(language).text(UiText::Ok));
             pane.model.close();
         }
     }

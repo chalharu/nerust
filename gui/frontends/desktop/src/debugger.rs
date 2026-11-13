@@ -3,7 +3,7 @@ use nerust_gui_viewmodel::debugger::{
     DisplayCache, NavState, format_disasm_line, format_register_sized, register_hex_digits,
 };
 use nerust_settings_core::{
-    i18n::{UiText, text},
+    i18n::{I18n, UiText},
     model::language::AppLanguage,
 };
 use panechord::backend::View;
@@ -46,6 +46,7 @@ fn register_key(name: &str) -> String {
 }
 
 fn synchronize_registers(model: &mut Model) {
+    let i18n = I18n::resolve_os(model.language);
     let next = model
         .register_left_selection
         .as_ref()
@@ -60,8 +61,8 @@ fn synchronize_registers(model: &mut Model) {
         .as_ref()
         .and_then(|selection| model.register_targets.get(&selection.row_key));
     model.reg_target = selected.map_or_else(
-        || text(model.language, UiText::PickRegister).to_owned(),
-        |(name, _)| format!("{} {name}", text(model.language, UiText::Set)),
+        || i18n.text(UiText::PickRegister),
+        |(name, _)| format!("{} {name}", i18n.text(UiText::Set)),
     );
     if model.register_left_selection != next {
         model.register_left_selection = None;
@@ -298,7 +299,8 @@ struct Captions {
 }
 impl Captions {
     fn new(language: AppLanguage) -> Self {
-        let label = |key| text(language, key).to_owned();
+        let i18n = I18n::resolve_os(language);
+        let label = move |key| i18n.text(key);
         Self {
             title: label(UiText::Debugger),
             step_frame: label(UiText::StepFrame),
@@ -454,7 +456,8 @@ impl Pane {
     pub(crate) fn new(language: AppLanguage, executor: Rc<dyn Executor>) -> Rc<Self> {
         let projection = project(&DisplayCache::default());
         let [registers_left, registers_right] = projection.registers;
-        let label = |key| text(language, key).to_owned();
+        let i18n = I18n::resolve_os(language);
+        let label = move |key| i18n.text(key);
         let pane = Rc::new(Self {
             model: Store::new(
                 Model {
@@ -478,7 +481,7 @@ impl Pane {
                     register_style: projection.register_style,
                     registers_visible: projection.registers_visible,
                     status: label(UiText::NoCore),
-                    back: format!("{} (0)", text(language, UiText::Back)),
+                    back: format!("{} (0)", i18n.text(UiText::Back)),
                     reg_target: label(UiText::PickRegister),
                     selected: label(UiText::SelectDumpRow),
                     watch: label(UiText::WatchNone),
@@ -517,19 +520,20 @@ impl Pane {
         let subscription = pane.model.watch(source, |store, _| {
             let _ = store.update(|model| {
                 synchronize_registers(model);
+                let i18n = I18n::resolve_os(model.language);
                 let selected = model
                     .memory_selection
                     .as_ref()
                     .and_then(|selection| selected_memory(selection, &model.memory_targets));
                 model.selected = selected.map_or_else(
-                    || text(model.language, UiText::SelectDumpRow).to_owned(),
+                    || i18n.text(UiText::SelectDumpRow),
                     |(addr, old)| {
-                        nerust_settings_core::i18n::selected_row(model.language, addr, old)
+                        nerust_settings_core::i18n::selected_row(i18n.language(), addr, old)
                     },
                 );
                 model.captions.write = selected.map_or_else(
-                    || text(model.language, UiText::Write).to_owned(),
-                    |(addr, _)| format!("{} 0x{addr:08X}", text(model.language, UiText::Write)),
+                    || i18n.text(UiText::Write),
+                    |(addr, _)| format!("{} 0x{addr:08X}", i18n.text(UiText::Write)),
                 );
                 let next = selected.and(
                     model
@@ -774,7 +778,7 @@ impl Pane {
             AssistAction::FreezeClear => operations.freeze = None,
             AssistAction::RegisterSet => {
                 if register.is_none() {
-                    return Err(text(model.language, UiText::PickRegister).to_owned());
+                    return Err(I18n::resolve_os(model.language).text(UiText::PickRegister));
                 }
                 return Ok(Some(vec![DebugAction::RegisterWrite(hex(
                     &model.register_value
@@ -913,7 +917,7 @@ impl Pane {
                 .memory_selection
                 .as_ref()
                 .and_then(|selection| selected_memory(selection, &model.memory_targets))
-                .ok_or_else(|| text(model.language, UiText::SelectDumpRow).to_owned())
+                .ok_or_else(|| I18n::resolve_os(model.language).text(UiText::SelectDumpRow))
         };
         let register = model
             .register_marked
@@ -1077,6 +1081,7 @@ impl Pane {
         language: AppLanguage,
     ) {
         self.refresh(&output.display, language);
+        let i18n = I18n::resolve_os(language);
         if let Some(operations) = self.operations.borrow_mut().as_mut() {
             let paused_snapshot = output.display.paused;
             operations.display = output.display;
@@ -1088,7 +1093,7 @@ impl Pane {
             let disasm_addr = operations.nav.dis_input().to_owned();
             let back = format!(
                 "{} ({})",
-                text(language, UiText::Back),
+                i18n.text(UiText::Back),
                 operations.nav.back_len()
             );
             let space = operations
@@ -1108,11 +1113,11 @@ impl Pane {
                             .unwrap_or_else(|| "??".into())
                     )
                 })
-                .unwrap_or_else(|| text(language, UiText::WatchNone).to_owned());
+                .unwrap_or_else(|| i18n.text(UiText::WatchNone));
             let freeze = operations
                 .freeze
                 .map(|(addr, value)| format!("0x{addr:08X} = {value:02X}"))
-                .unwrap_or_else(|| text(language, UiText::FreezeNone).to_owned());
+                .unwrap_or_else(|| i18n.text(UiText::FreezeNone));
             let pin = operations.nav.dis_addr();
             let _ = self.model.update(move |model| {
                 model.memory_addr = memory_addr;
@@ -1123,7 +1128,7 @@ impl Pane {
                 model.freeze = freeze;
                 if let Some(addr) = pin {
                     model.captions.disassembly =
-                        format!("{} (0x{addr:08X})", text(language, UiText::Disassembly));
+                        format!("{} (0x{addr:08X})", i18n.text(UiText::Disassembly));
                 }
             });
         }
@@ -1403,14 +1408,17 @@ mod tests {
         pane.refresh(&display, AppLanguage::Japanese);
         assert_eq!(
             pane.model.snapshot().reg_target,
-            format!("{} Second", text(AppLanguage::Japanese, UiText::Set))
+            format!(
+                "{} Second",
+                I18n::new(AppLanguage::Japanese).text(UiText::Set)
+            )
         );
         assert_eq!(pane.model.snapshot().register_value, "AB");
         pane.refresh(&DisplayCache::default(), AppLanguage::English);
         assert!(pane.model.snapshot().register_marked.is_none());
         assert_eq!(
             pane.model.snapshot().reg_target,
-            text(AppLanguage::English, UiText::PickRegister)
+            I18n::new(AppLanguage::English).text(UiText::PickRegister)
         );
         pane.model.close();
         assert!(!pane.model.update(
@@ -1469,7 +1477,7 @@ mod tests {
         assert!(pane.model.snapshot().memory_selection.is_none());
         assert_eq!(
             pane.model.snapshot().selected,
-            text(AppLanguage::English, UiText::SelectDumpRow)
+            I18n::new(AppLanguage::English).text(UiText::SelectDumpRow)
         );
     }
 
@@ -1526,9 +1534,11 @@ mod tests {
     #[test]
     fn captions_follow_language_without_domain_actions() {
         assert!(
-            Captions::new(AppLanguage::English)
-                .disassembly
-                .contains(text(AppLanguage::English, UiText::FollowPcTag))
+            Captions::new(AppLanguage::English).disassembly.contains(
+                I18n::new(AppLanguage::English)
+                    .text(UiText::FollowPcTag)
+                    .as_str()
+            )
         );
         assert_eq!(
             project(&DisplayCache::default()).memory_addr,
@@ -2491,7 +2501,7 @@ mod debugger_headless_tests {
         assert!(pane.is_idle());
         assert_eq!(
             pane.model.snapshot().status,
-            text(AppLanguage::English, UiText::NoCore)
+            I18n::new(AppLanguage::English).text(UiText::NoCore)
         );
         pane.execute_for_test("refresh");
         assert!(pane.is_idle(), "no operations means no flight");
@@ -2581,13 +2591,13 @@ mod debugger_headless_tests {
         pane.execute_for_test("watch");
         assert_eq!(
             pane.model.snapshot().status,
-            text(AppLanguage::English, UiText::SelectDumpRow)
+            I18n::new(AppLanguage::English).text(UiText::SelectDumpRow)
         );
         assert!(pane.is_idle());
         pane.execute_for_test("register_set");
         assert_eq!(
             pane.model.snapshot().status,
-            text(AppLanguage::English, UiText::PickRegister)
+            I18n::new(AppLanguage::English).text(UiText::PickRegister)
         );
         assert!(pane.is_idle());
         let missing: Option<&'static str> = None;
@@ -2923,7 +2933,7 @@ mod debugger_headless_tests {
         );
         assert_eq!(
             Captions::new(AppLanguage::Japanese).title,
-            text(AppLanguage::Japanese, UiText::Debugger)
+            I18n::new(AppLanguage::Japanese).text(UiText::Debugger)
         );
     }
 

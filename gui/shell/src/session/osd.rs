@@ -3,6 +3,7 @@
 
 use std::time::Instant;
 
+use nerust_settings_core::i18n::I18n;
 use nerust_settings_core::model::language::AppLanguage;
 
 use super::notification::UiNotification;
@@ -96,8 +97,8 @@ impl OsdManager {
             // Adopted only here: dropped/modal paths pay no clone or render.
             let group = n.message.replace_group();
             let message = n.message;
-            let renderer = super::notification::NotificationRenderer { language };
-            let base: std::sync::Arc<str> = renderer.render_message(&message).into();
+            let base: std::sync::Arc<str> =
+                super::notification::render_message(&message, I18n::resolve_os(language)).into();
             let item = OsdItem {
                 row: counted_row(
                     &base,
@@ -388,8 +389,14 @@ mod tests {
         let message = K::command_failure(FailureOrigin::Selection, "", "picker failed".to_string());
         assert_eq!(message.level(), NotificationLevel::Error);
         assert!(message.wants_modal());
-        assert_eq!(message.text(AppLanguage::English), "Picker: picker failed");
-        assert_eq!(message.text(AppLanguage::Japanese), "選択: picker failed");
+        assert_eq!(
+            message.text(I18n::new(AppLanguage::English)),
+            "Picker: picker failed"
+        );
+        assert_eq!(
+            message.text(I18n::new(AppLanguage::Japanese)),
+            "選択: picker failed"
+        );
         let mut manager = OsdManager::new();
         manager.push_all_with_policy(
             vec![UiNotification {

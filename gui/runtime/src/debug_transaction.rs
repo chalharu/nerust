@@ -12,7 +12,8 @@ pub struct PendingWrite {
 
 impl PendingWrite {
     pub fn render(&self, language: AppLanguage) -> String {
-        nerust_settings_core::i18n::pending_write(language, self.addr, self.old, self.value)
+        let i18n = nerust_settings_core::i18n::I18n::resolve_os(language);
+        nerust_settings_core::i18n::pending_write(i18n.language(), self.addr, self.old, self.value)
     }
 }
 

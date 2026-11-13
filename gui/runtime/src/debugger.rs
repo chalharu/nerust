@@ -35,22 +35,17 @@ pub enum StatusMessage {
 
 impl StatusMessage {
     pub fn render(&self, language: AppLanguage) -> String {
-        use nerust_settings_core::i18n as ui_msg;
+        use nerust_settings_core::i18n::{self as ui_msg, I18n};
+        let i18n = I18n::resolve_os(language);
+        let language = i18n.language();
         match self {
             Self::Empty => String::new(),
-            Self::Paused => ui_msg::text(language, ui_msg::UiText::PausedState).to_string(),
-            Self::Running => ui_msg::text(language, ui_msg::UiText::RunningState).to_string(),
-            Self::Resume => ui_msg::text(language, ui_msg::UiText::Resume).to_string(),
-            Self::NothingToWrite => {
-                ui_msg::text(language, ui_msg::UiText::NothingToWrite).to_string()
-            }
-            Self::NoCore => ui_msg::text(language, ui_msg::UiText::NoCore).to_string(),
-            Self::OutcomeUnknown => match language {
-                AppLanguage::Japanese => {
-                    "操作結果を確認できません。状態を確認してから再操作してください。".into()
-                }
-                _ => "Operation outcome unknown. Check the current state before retrying.".into(),
-            },
+            Self::Paused => i18n.text(ui_msg::UiText::PausedState),
+            Self::Running => i18n.text(ui_msg::UiText::RunningState),
+            Self::Resume => i18n.text(ui_msg::UiText::Resume),
+            Self::NothingToWrite => i18n.text(ui_msg::UiText::NothingToWrite),
+            Self::NoCore => i18n.text(ui_msg::UiText::NoCore),
+            Self::OutcomeUnknown => i18n.text(ui_msg::UiText::OutcomeUnknown),
             Self::Stepped(count) => ui_msg::stepped(language, *count),
             Self::WroteMemory { addr, value } => ui_msg::wrote_memory(language, *addr, *value),
             Self::RegisterWrote { name, value } => ui_msg::register_wrote(language, name, *value),

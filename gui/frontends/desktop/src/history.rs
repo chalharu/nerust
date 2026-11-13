@@ -2,7 +2,7 @@ use nerust_gui_shell::session::osd::{
     HistoryFilter, HistoryLine, HistoryRowView, history_row_view, visible_history,
 };
 use nerust_settings_core::{
-    i18n::{UiText, history_count, text as ui_text},
+    i18n::{I18n, UiText},
     model::language::AppLanguage,
 };
 use panechord::backend::View;
@@ -33,14 +33,10 @@ pub(crate) struct Pane {
     cache: RefCell<nerust_gui_shell::session::session_query::HistoryView>,
 }
 
-fn project(
-    lines: &[HistoryLine],
-    language: AppLanguage,
-    filter: HistoryFilter,
-) -> Vec<HistoryRowView> {
+fn project(lines: &[HistoryLine], i18n: I18n, filter: HistoryFilter) -> Vec<HistoryRowView> {
     visible_history(lines, filter)
         .into_iter()
-        .map(|line| history_row_view(line, language))
+        .map(|line| history_row_view(line, i18n))
         .collect()
 }
 
@@ -89,7 +85,7 @@ fn history_table(headers: [String; 4], empty_text: String, rows: Vec<HistoryRowV
                         foreground: None,
                     },
                     TableCell {
-                        text: row.level.into(),
+                        text: row.level,
                         foreground: color,
                     },
                     TableCell {
@@ -117,7 +113,8 @@ fn history_table(headers: [String; 4], empty_text: String, rows: Vec<HistoryRowV
 
 impl Pane {
     pub(crate) fn new(language: AppLanguage, executor: Rc<dyn Executor>) -> Rc<Self> {
-        let label = |key| ui_text(language, key).to_owned();
+        let i18n = I18n::resolve_os(language);
+        let label = move |key| i18n.text(key);
         let headers = [
             UiText::HistoryDatetime,
             UiText::HistoryLevel,
@@ -135,14 +132,14 @@ impl Pane {
                     clear_label: label(UiText::HistoryClear),
                     close_label: label(UiText::Close),
                     headers,
-                    count: history_count(language, 0),
+                    count: i18n.history_count(0),
                     empty_label,
                     empty: true,
                     choices: HistoryFilter::all()
                         .into_iter()
                         .map(|filter| Choice {
                             id: filter.id().into(),
-                            label: filter.label(language).into(),
+                            label: filter.label(i18n),
                         })
                         .collect(),
                     table,
@@ -195,12 +192,13 @@ impl Pane {
             return;
         }
         let selection = self.filter.snapshot();
-        let rows = project(lines, language, HistoryFilter::from_id(Some(&selection)));
-        let count = history_count(language, rows.len());
+        let i18n = I18n::resolve_os(language);
+        let rows = project(lines, i18n, HistoryFilter::from_id(Some(&selection)));
+        let count = i18n.history_count(rows.len());
         let _ = self.model.update(move |model| {
             model.empty = rows.is_empty();
             model.count = count;
-            let label = |key| ui_text(language, key).to_owned();
+            let label = move |key| i18n.text(key);
             model.title = label(UiText::NotificationHistory);
             model.level_label = label(UiText::HistoryLevel);
             model.clear_label = label(UiText::HistoryClear);
@@ -218,7 +216,7 @@ impl Pane {
                 .into_iter()
                 .map(|filter| Choice {
                     id: filter.id().into(),
-                    label: filter.label(language).into(),
+                    label: filter.label(i18n),
                 })
                 .collect();
         });
@@ -378,14 +376,12 @@ mod tests {
             count: 2,
         })
         .collect();
-        let rows = project(&lines, AppLanguage::English, HistoryFilter::Warning);
+        let en = I18n::new(AppLanguage::English);
+        let rows = project(&lines, en, HistoryFilter::Warning);
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].message, "event \u{00d7}2");
         assert_eq!(rows[0].level, "Warning");
-        assert_eq!(
-            project(&lines, AppLanguage::English, HistoryFilter::Error).len(),
-            1
-        );
+        assert_eq!(project(&lines, en, HistoryFilter::Error).len(), 1);
     }
 }
 

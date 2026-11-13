@@ -11,7 +11,7 @@ use nerust_gui_viewmodel::settings::{
     dto::{ChoiceView, choice_position},
 };
 use nerust_settings_core::{
-    i18n::{UiText, text as ui_text},
+    i18n::{I18n, UiText},
     model::language::AppLanguage,
 };
 use panechord::backend::{View, WeakView};
@@ -192,7 +192,7 @@ impl Editor {
         let general = self.vm.general.clone();
         self.binding(
             general.view.clone(),
-            move |value| ui_text(value.language, key).to_string(),
+            move |value| I18n::resolve_os(value.language).text(key),
             None,
         )
     }
@@ -412,13 +412,18 @@ impl Editor {
             scaling: choices!(video, scaling, scaling_choices, set_scaling),
             muted: field!(audio, muted, set_mute),
             volume_label: language.clone().zip(&volume).map(|(lang, value)| {
-                format!("{}: {value:.0}%", ui_text(lang, UiText::MasterVolume))
+                format!(
+                    "{}: {value:.0}%",
+                    I18n::resolve_os(lang).text(UiText::MasterVolume)
+                )
             }),
             volume,
-            latency_label: language
-                .clone()
-                .zip(&latency)
-                .map(|(lang, value)| format!("{}: {value:.0} ms", ui_text(lang, UiText::Latency))),
+            latency_label: language.clone().zip(&latency).map(|(lang, value)| {
+                format!(
+                    "{}: {value:.0} ms",
+                    I18n::resolve_os(lang).text(UiText::Latency)
+                )
+            }),
             latency,
             sample_rate: choices!(audio, sample_rate, sample_rate_choices, set_sample_rate),
             info_enabled: field!(notifications, info_enabled, set_info_enabled),
@@ -476,7 +481,12 @@ impl Editor {
             labels: Labels {
                 title: self.binding(
                     self.vm.general.view.clone(),
-                    |value| format!("nerust {}", ui_text(value.language, UiText::Settings)),
+                    |value| {
+                        format!(
+                            "nerust {}",
+                            I18n::resolve_os(value.language).text(UiText::Settings)
+                        )
+                    },
                     None,
                 ),
                 tab_general: self.tr(UiText::General),
@@ -1274,11 +1284,12 @@ mod tests {
         assert_eq!(presentation.language.selected.get(), position);
         assert!(presentation.volume.set(42.0));
         assert_eq!(editor.vm.audio.view.get().volume_percent, 42);
+        let en = I18n::new(AppLanguage::English);
         assert_eq!(
             presentation.volume_label.get(),
             format!(
                 "{}: {:.0}%",
-                ui_text(AppLanguage::English, UiText::MasterVolume),
+                en.text(UiText::MasterVolume),
                 presentation.volume.get()
             )
         );
@@ -1286,13 +1297,13 @@ mod tests {
             presentation.latency_label.get(),
             format!(
                 "{}: {:.0} ms",
-                ui_text(AppLanguage::English, UiText::Latency),
+                en.text(UiText::Latency),
                 presentation.latency.get()
             )
         );
         assert_eq!(
             presentation.labels.title.get(),
-            format!("nerust {}", ui_text(AppLanguage::English, UiText::Settings))
+            format!("nerust {}", en.text(UiText::Settings))
         );
         // Subscribing observes the live property; dropping ends the watch.
         let seen = Rc::new(RefCell::new(Vec::new()));
@@ -1330,10 +1341,8 @@ mod tests {
             .expect("japanese is a language choice");
         assert!(presentation.language.selected.set(japanese));
         assert_eq!(editor.vm.general.view.get().language, AppLanguage::Japanese);
-        assert_eq!(
-            presentation.labels.cancel.get(),
-            ui_text(AppLanguage::Japanese, UiText::Cancel).to_string()
-        );
+        let ja = I18n::new(AppLanguage::Japanese);
+        assert_eq!(presentation.labels.cancel.get(), ja.text(UiText::Cancel));
         assert!(!presentation.language.selected.set("999".into()));
         assert!(!presentation.language.selected.set("bogus".into()));
         assert!(presentation.info_duration.set("3000".into()));
