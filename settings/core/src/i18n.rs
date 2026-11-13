@@ -317,6 +317,13 @@ impl I18n {
         Self { language: resolved }
     }
 
+    /// The invariant language for locale-independent surfaces (logs).
+    /// English doubles as the resolution fallback, so rendering through
+    /// this never depends on the terminal locale or the saved choice.
+    pub fn english() -> Self {
+        Self::new(AppLanguage::English)
+    }
+
     /// Edge constructor: saved choice plus an OS query.
     pub fn resolve_os(choice: AppLanguage) -> Self {
         Self::new(resolve_locale(choice, OsLocale))

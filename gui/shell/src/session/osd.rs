@@ -391,8 +391,14 @@ mod tests {
         let message = K::command_failure(FailureOrigin::Selection, "", "picker failed".to_string());
         assert_eq!(message.level(), NotificationLevel::Error);
         assert!(message.wants_modal());
-        assert_eq!(message.text(AppLanguage::English), "Picker: picker failed");
-        assert_eq!(message.text(AppLanguage::Japanese), "選択: picker failed");
+        assert_eq!(
+            message.text(I18n::new(AppLanguage::English)),
+            "Picker: picker failed"
+        );
+        assert_eq!(
+            message.text(I18n::new(AppLanguage::Japanese)),
+            "選択: picker failed"
+        );
         let mut manager = OsdManager::new();
         manager.push_all_with_policy(
             vec![UiNotification {

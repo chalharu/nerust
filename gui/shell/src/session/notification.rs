@@ -4,7 +4,6 @@
 use std::collections::VecDeque;
 
 use nerust_settings_core::i18n::{I18n, UiText};
-use nerust_settings_core::model::language::AppLanguage;
 
 use crate::session::error::SlotOpFailure;
 
@@ -201,12 +200,11 @@ impl Message {
         }
     }
 
-    /// Localized text via the single renderer adapter.
-    pub fn text(&self, language: AppLanguage) -> String {
-        NotificationRenderer {
-            i18n: I18n::resolve_os(language),
-        }
-        .render_message(self)
+    /// Localized text via the single renderer adapter. Takes the resolved
+    /// display language: callers thread `I18n` in, so this never resolves.
+    /// (The only production caller is the English-only log line below.)
+    pub fn text(&self, i18n: I18n) -> String {
+        NotificationRenderer { i18n }.render_message(self)
     }
 
     /// Key-only message with no args.
@@ -610,7 +608,7 @@ pub const LOG_MODULE: &str = "notifications";
 
 fn kind_text(event: &UiNotification) -> String {
     // Logs stay English for grep stability; UI text is localized at render.
-    event.message.text(AppLanguage::English)
+    event.message.text(I18n::english())
 }
 
 #[cfg(test)]
@@ -675,8 +673,8 @@ mod tests {
             Message::persistence_unavailable(),
         ];
         for message in &variants {
-            assert!(!message.text(AppLanguage::English).is_empty());
-            assert!(!message.text(AppLanguage::Japanese).is_empty());
+            assert!(!message.text(I18n::new(AppLanguage::English)).is_empty());
+            assert!(!message.text(I18n::new(AppLanguage::Japanese)).is_empty());
         }
         // Slot suffixes and failure reasons in both languages.
         for reason in [
@@ -689,18 +687,18 @@ mod tests {
         ] {
             for slot in [None, Some(7)] {
                 let message = Message::slot_failed(slot, reason);
-                assert!(!message.text(AppLanguage::English).is_empty());
-                assert!(!message.text(AppLanguage::Japanese).is_empty());
+                assert!(!message.text(I18n::new(AppLanguage::English)).is_empty());
+                assert!(!message.text(I18n::new(AppLanguage::Japanese)).is_empty());
             }
         }
         assert!(
             Message::saved_slot(7)
-                .text(AppLanguage::English)
+                .text(I18n::new(AppLanguage::English))
                 .contains('7')
         );
         assert!(
             Message::slot_failed(Some(7), SlotOpFailure::Storage)
-                .text(AppLanguage::Japanese)
+                .text(I18n::new(AppLanguage::Japanese))
                 .contains("スロット7")
         );
     }
@@ -761,8 +759,8 @@ mod tests {
         assert_eq!(message.origin, Some(FailureOrigin::Command));
         assert_eq!(message.id, "Pause");
         assert_eq!(message.detail, error.to_string());
-        assert!(!message.text(AppLanguage::English).is_empty());
-        assert!(!message.text(AppLanguage::Japanese).is_empty());
+        assert!(!message.text(I18n::new(AppLanguage::English)).is_empty());
+        assert!(!message.text(I18n::new(AppLanguage::Japanese)).is_empty());
     }
 
     #[test]
@@ -812,6 +810,7 @@ mod tests {
 mod message_key_tests {
     use crate::session::error::SlotOpFailure;
     use crate::session::notification::*;
+    use nerust_settings_core::model::language::AppLanguage;
 
     #[test]
     fn equal_messages_hash_equal_and_differ_otherwise() {
@@ -844,7 +843,7 @@ mod message_key_tests {
         ] {
             assert_eq!(
                 renderer.render_message(&message),
-                message.text(AppLanguage::English)
+                message.text(I18n::new(AppLanguage::English))
             );
         }
     }
@@ -853,6 +852,7 @@ mod message_key_tests {
 #[cfg(test)]
 mod key_tests {
     use crate::session::notification::*;
+    use nerust_settings_core::model::language::AppLanguage;
 
     #[test]
     fn queue_keys_on_message_not_text() {
@@ -878,6 +878,7 @@ mod key_tests {
 #[cfg(test)]
 mod notification_cov_tests {
     use crate::session::notification::*;
+    use nerust_settings_core::model::language::AppLanguage;
 
     #[test]
     fn pending_queue_reports_emptiness() {
