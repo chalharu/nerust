@@ -161,9 +161,7 @@ impl TransientQueue {
         u32,
         NotificationLevel,
     )> {
-        let renderer = crate::session::notification::NotificationRenderer {
-            i18n: I18n::resolve_os(language),
-        };
+        let i18n = I18n::resolve_os(language);
         let mut modal = Vec::new();
         let mut update = |item: &mut OsdItem, showing: bool| {
             if !policy.enabled(item.level) {
@@ -174,7 +172,7 @@ impl TransientQueue {
                 // provisional deadlines, so only the showing row is expiry-checked here.
                 return false;
             }
-            item.base = renderer.render_message(&item.message).into();
+            item.base = crate::session::notification::render_message(&item.message, i18n).into();
             item.row = counted_row(
                 &item.base,
                 item.count,

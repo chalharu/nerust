@@ -97,10 +97,8 @@ impl OsdManager {
             // Adopted only here: dropped/modal paths pay no clone or render.
             let group = n.message.replace_group();
             let message = n.message;
-            let renderer = super::notification::NotificationRenderer {
-                i18n: I18n::resolve_os(language),
-            };
-            let base: std::sync::Arc<str> = renderer.render_message(&message).into();
+            let base: std::sync::Arc<str> =
+                super::notification::render_message(&message, I18n::resolve_os(language)).into();
             let item = OsdItem {
                 row: counted_row(
                     &base,

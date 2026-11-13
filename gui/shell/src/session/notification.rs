@@ -204,7 +204,7 @@ impl Message {
     /// display language: callers thread `I18n` in, so this never resolves.
     /// (The only production caller is the English-only log line below.)
     pub fn text(&self, i18n: I18n) -> String {
-        NotificationRenderer { i18n }.render_message(self)
+        render_message(self, i18n)
     }
 
     /// Key-only message with no args.
@@ -269,28 +269,8 @@ impl Message {
     }
 }
 
-/// Single localization adapter: the only place turning keys into text.
-#[derive(Debug, Clone, Copy)]
-pub struct NotificationRenderer {
-    /// Resolved display language for every rendered string.
-    pub i18n: I18n,
-}
-
-impl NotificationRenderer {
-    /// Render one domain message: the single format point shared
-    /// by the row and the coalescing key.
-    pub fn render_message(&self, message: &Message) -> String {
-        render_message(message, self.i18n)
-    }
-
-    /// Render one stable level name in the adapter language.
-    pub fn level_name(&self, level: NotificationLevel) -> String {
-        level_key(level, self.i18n)
-    }
-}
-
-/// Stable level key; only the renderer resolves it per language.
-fn level_key(level: NotificationLevel, i18n: I18n) -> String {
+/// Stable level key: the single resolution point for level names.
+pub(crate) fn level_key(level: NotificationLevel, i18n: I18n) -> String {
     use nerust_settings_core::i18n::UiText;
     match level {
         NotificationLevel::Info => i18n.text(UiText::NotificationInfo),
@@ -301,8 +281,9 @@ fn level_key(level: NotificationLevel, i18n: I18n) -> String {
 
 /// Template fill for one domain message in one language.
 /// Pure domain mapping: keys and detail args select shared templates,
-/// so no arm branches on language here.
-fn render_message(message: &Message, i18n: I18n) -> String {
+/// so no arm branches on language here. The single format point shared
+/// by the row and the coalescing key.
+pub(crate) fn render_message(message: &Message, i18n: I18n) -> String {
     use nerust_settings_core::i18n::{self as core_i18n, UiText};
     match message.key {
         MessageKey::Paused => i18n.text(UiText::NotificationPaused),
@@ -589,7 +570,7 @@ impl NotificationCenter {
 /// Single text source for history rows and OSD labels: base
 /// text plus the `×N` suffix for coalesced repeats.
 pub fn render_text(message: &Message, count: u32, i18n: I18n) -> String {
-    append_count(NotificationRenderer { i18n }.render_message(message), count)
+    append_count(render_message(message, i18n), count)
 }
 
 /// Suffix rule shared by [`render_text`] and OSD rows (which keep
@@ -833,16 +814,14 @@ mod message_key_tests {
 
     #[test]
     fn renderer_is_the_single_format_point() {
-        let renderer = NotificationRenderer {
-            i18n: I18n::resolve_os(AppLanguage::English),
-        };
+        let i18n = I18n::resolve_os(AppLanguage::English);
         for message in [
             Message::paused(),
             Message::saved_slot(3),
             Message::slot_failed(Some(1), SlotOpFailure::Storage),
         ] {
             assert_eq!(
-                renderer.render_message(&message),
+                render_message(&message, i18n),
                 message.text(I18n::new(AppLanguage::English))
             );
         }
@@ -867,11 +846,9 @@ mod key_tests {
 
     #[test]
     fn renderer_is_the_single_format_point() {
-        let renderer = NotificationRenderer {
-            i18n: I18n::resolve_os(AppLanguage::English),
-        };
-        assert_eq!(renderer.render_message(&Message::paused()), "Paused");
-        assert!(!renderer.render_message(&Message::saved_slot(7)).is_empty());
+        let i18n = I18n::resolve_os(AppLanguage::English);
+        assert_eq!(render_message(&Message::paused(), i18n), "Paused");
+        assert!(!render_message(&Message::saved_slot(7), i18n).is_empty());
     }
 }
 
@@ -910,10 +887,8 @@ mod notification_cov_tests {
         let message = Message::slot(MessageKey::SlotSaved, None);
         assert_eq!(message.slot, None);
         assert_eq!(message.key, MessageKey::SlotSaved);
-        let renderer = NotificationRenderer {
-            i18n: I18n::resolve_os(AppLanguage::Japanese),
-        };
-        assert!(!renderer.level_name(NotificationLevel::Warning).is_empty());
+        let i18n = I18n::resolve_os(AppLanguage::Japanese);
+        assert!(!level_key(NotificationLevel::Warning, i18n).is_empty());
         assert_eq!(append_count("a".to_string(), 1), "a");
         let _ = SystemClock::now_system();
         let mut log = EventLog::default();

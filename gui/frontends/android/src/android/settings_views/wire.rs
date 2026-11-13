@@ -303,7 +303,7 @@ pub(crate) fn app_language_tag(language: AppLanguage) -> &'static str {
 /// capability, counted gamepads, and the resolved display language. One
 /// `Copy` struct instead of four parallel params (keeps every wire fn
 /// under the argument cap).
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub(crate) struct Projection<'a> {
     pub keyboards: &'a [KeyboardInfo],
     pub touch_capable: Option<bool>,

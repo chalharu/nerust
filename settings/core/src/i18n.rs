@@ -300,7 +300,7 @@ fn resolve_locale(choice: AppLanguage, source: impl SystemLocaleSource) -> AppLa
 /// Resolved display language plus text accessors. Built once per render
 /// entry from the resolved choice — never from a raw choice — and threaded
 /// through builders/controls instead of re-resolving per string.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct I18n {
     language: AppLanguage,
 }
