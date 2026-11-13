@@ -23,96 +23,119 @@ pub(crate) const ACTION_DEVICE_REMOVED: &str = "device_removed";
 pub(crate) const ACTION_TOUCH_GATE: &str = "touch_gate";
 
 /// Schema-derived validation before typed dispatch. Missing is not JSON null.
+fn menu_field_valid(name: &str, value: &mut serde_json::Value) -> bool {
+    match name {
+        "v" => {
+            if normalize_bridge_integer(value).is_none() {
+                return false;
+            }
+            value.as_i64() == Some(BRIDGE_EVENT_VERSION as i64)
+        }
+        "type" => value.as_str() == Some("menu"),
+        "action" => {
+            matches!(
+                value.as_str(),
+                Some(
+                    "exit"
+                        | "load_state"
+                        | "open_rom"
+                        | "open_settings"
+                        | "orientation_changed"
+                        | "reset"
+                        | "save_state"
+                        | "toggle_pause"
+                        | "unload"
+                        | "create_slot"
+                        | "delete_slot"
+                        | "select_slot"
+                        | "controller"
+                        | "analog"
+                        | "device_added"
+                        | "device_removed"
+                        | "touch_gate"
+                )
+            )
+        }
+        "device_id" => {
+            if normalize_bridge_integer(value).is_none() {
+                return false;
+            }
+            value
+                .as_i64()
+                .is_some_and(|number| (-2147483648..=2147483647).contains(&number))
+        }
+        "key" => {
+            matches!(
+                value.as_str(),
+                Some(
+                    "button1"
+                        | "button2"
+                        | "button3"
+                        | "button4"
+                        | "button5"
+                        | "button6"
+                        | "start"
+                        | "select"
+                        | "guide"
+                        | "up"
+                        | "down"
+                        | "left"
+                        | "right"
+                        | "l3"
+                        | "r3"
+                )
+            )
+        }
+        "pressed" => value.is_boolean(),
+        "descriptor" => value.is_string(),
+        "axis" => {
+            matches!(
+                value.as_str(),
+                Some("left_x" | "left_y" | "right_x" | "right_y" | "trigger_l" | "trigger_r")
+            )
+        }
+        "value" => value
+            .as_f64()
+            .is_some_and(|number| (-1.0..=1.0).contains(&number)),
+        "slot_id" => {
+            if normalize_bridge_integer(value).is_none() {
+                return false;
+            }
+            value
+                .as_i64()
+                .is_some_and(|number| (0..=9223372036854775807).contains(&number))
+        }
+        _ => false,
+    }
+}
+
+fn error_dialog_dismissed_field_valid(name: &str, value: &mut serde_json::Value) -> bool {
+    match name {
+        "v" => {
+            if normalize_bridge_integer(value).is_none() {
+                return false;
+            }
+            value.as_i64() == Some(BRIDGE_EVENT_VERSION as i64)
+        }
+        "type" => value.as_str() == Some("error_dialog_dismissed"),
+        "request_id" => {
+            if normalize_bridge_integer(value).is_none() {
+                return false;
+            }
+            value
+                .as_i64()
+                .is_some_and(|number| (1..=9223372036854775807).contains(&number))
+        }
+        _ => false,
+    }
+}
+
 pub(crate) fn validate_bridge_event(value: &mut serde_json::Value) -> Option<()> {
     let object = value.as_object_mut()?;
     match object.get("type")?.as_str()? {
         "menu" => {
             for (name, value) in object.iter_mut() {
-                let valid = match name.as_str() {
-                    "v" => {
-                        normalize_bridge_integer(value)?;
-                        value.as_i64() == Some(BRIDGE_EVENT_VERSION as i64)
-                    }
-                    "type" => value.as_str() == Some("menu"),
-                    "action" => {
-                        matches!(
-                            value.as_str(),
-                            Some(
-                                "exit"
-                                    | "load_state"
-                                    | "open_rom"
-                                    | "open_settings"
-                                    | "orientation_changed"
-                                    | "reset"
-                                    | "save_state"
-                                    | "toggle_pause"
-                                    | "unload"
-                                    | "create_slot"
-                                    | "delete_slot"
-                                    | "select_slot"
-                                    | "controller"
-                                    | "analog"
-                                    | "device_added"
-                                    | "device_removed"
-                                    | "touch_gate"
-                            )
-                        )
-                    }
-                    "device_id" => {
-                        normalize_bridge_integer(value)?;
-                        value
-                            .as_i64()
-                            .is_some_and(|number| (-2147483648..=2147483647).contains(&number))
-                    }
-                    "key" => {
-                        matches!(
-                            value.as_str(),
-                            Some(
-                                "button1"
-                                    | "button2"
-                                    | "button3"
-                                    | "button4"
-                                    | "button5"
-                                    | "button6"
-                                    | "start"
-                                    | "select"
-                                    | "guide"
-                                    | "up"
-                                    | "down"
-                                    | "left"
-                                    | "right"
-                                    | "l3"
-                                    | "r3"
-                            )
-                        )
-                    }
-                    "pressed" => value.is_boolean(),
-                    "descriptor" => value.is_string(),
-                    "axis" => {
-                        matches!(
-                            value.as_str(),
-                            Some(
-                                "left_x"
-                                    | "left_y"
-                                    | "right_x"
-                                    | "right_y"
-                                    | "trigger_l"
-                                    | "trigger_r"
-                            )
-                        )
-                    }
-                    "value" => value
-                        .as_f64()
-                        .is_some_and(|number| (-1.0..=1.0).contains(&number)),
-                    "slot_id" => {
-                        normalize_bridge_integer(value)?;
-                        value
-                            .as_i64()
-                            .is_some_and(|number| (0..=9223372036854775807).contains(&number))
-                    }
-                    _ => false,
-                };
-                if !valid {
+                if !menu_field_valid(name, value) {
                     return None;
                 }
             }
@@ -149,21 +172,7 @@ pub(crate) fn validate_bridge_event(value: &mut serde_json::Value) -> Option<()>
         }
         "error_dialog_dismissed" => {
             for (name, value) in object.iter_mut() {
-                let valid = match name.as_str() {
-                    "v" => {
-                        normalize_bridge_integer(value)?;
-                        value.as_i64() == Some(BRIDGE_EVENT_VERSION as i64)
-                    }
-                    "type" => value.as_str() == Some("error_dialog_dismissed"),
-                    "request_id" => {
-                        normalize_bridge_integer(value)?;
-                        value
-                            .as_i64()
-                            .is_some_and(|number| (1..=9223372036854775807).contains(&number))
-                    }
-                    _ => false,
-                };
-                if !valid {
+                if !error_dialog_dismissed_field_valid(name, value) {
                     return None;
                 }
             }
