@@ -174,30 +174,44 @@ def _validator_gate_lines(gate):
     return lines + ["            }"]
 
 
+def _validator_field_arm(name, prop):
+    """One match arm for a field predicate, at predicate indentation."""
+    if name == "v" and prop.get("const") == 1:
+        # Envelope version: normalize like any integer, but compare
+        # against the generated constant so a schema bump cannot leave
+        # a stale literal behind.
+        return ['        "v" => {',
+                '            if normalize_bridge_integer(value).is_none() {',
+                '                return false;',
+                '            }',
+                '            value.as_i64() == Some(BRIDGE_EVENT_VERSION as i64)',
+                '        }']
+    if field_type(prop) != "integer" and "enum" not in prop:
+        return [f'        {json.dumps(name)} => {rust_predicate(prop)},']
+    arm = [f'        {json.dumps(name)} => {{']
+    if field_type(prop) == "integer":
+        arm += ['            if normalize_bridge_integer(value).is_none() {',
+                '                return false;',
+                '            }']
+    arm += [f'            {line}' for line in rust_predicate(prop).splitlines()]
+    return arm + ["        }"]
+
+
+def _validator_predicate_lines(event, definition):
+    """Per-field predicate for one event type. Split from the entry point
+    so the dispatch stays under the complexity budget as gated fields grow."""
+    require(event.isidentifier(), f"event name must be a Rust fn fragment: {event}")
+    lines = [f'fn {event}_field_valid(name: &str, value: &mut serde_json::Value) -> bool {{',
+             '    match name {']
+    for name, prop in definition["properties"].items():
+        lines += _validator_field_arm(name, prop)
+    return lines + ["        _ => false,", "    }", "}", ""]
+
+
 def _validator_event_lines(event, definition):
     """Validation block for one event type."""
-    props = definition["properties"]
     lines = [f'        {json.dumps(event)} => {{', "            for (name, value) in object.iter_mut() {",
-              "                let valid = match name.as_str() {"]
-    for name, prop in props.items():
-        if name == "v" and prop.get("const") == 1:
-            # Envelope version: normalize like any integer, but compare
-            # against the generated constant so a schema bump cannot leave
-            # a stale literal behind.
-            lines += [f'                    {json.dumps(name)} => {{',
-                      '                        normalize_bridge_integer(value)?;',
-                      '                        value.as_i64() == Some(BRIDGE_EVENT_VERSION as i64)',
-                      '                    }']
-            continue
-        if field_type(prop) != "integer" and "enum" not in prop:
-            lines += [f'                    {json.dumps(name)} => {rust_predicate(prop)},']
-            continue
-        lines += [f'                    {json.dumps(name)} => {{']
-        if field_type(prop) == "integer":
-            lines += ["                        normalize_bridge_integer(value)?;"]
-        lines += [f'                        {line}' for line in rust_predicate(prop).splitlines()]
-        lines += ["                    }"]
-    lines += ["                    _ => false,", "                };", "                if !valid {",
+              f'                if !{event}_field_valid(name, value) {{',
               "                    return None;", "                }", "            }"]
     required = ", ".join(json.dumps(name) for name in definition["required"])
     lines += [f'            for name in [{required}] {{',
@@ -210,10 +224,12 @@ def _validator_event_lines(event, definition):
 
 
 def rust_validator(definitions):
-    lines = ["", "/// Schema-derived validation before typed dispatch. Missing is not JSON null.",
-             "pub(crate) fn validate_bridge_event(value: &mut serde_json::Value) -> Option<()> {",
-             "    let object = value.as_object_mut()?;",
-             '    match object.get("type")?.as_str()? {']
+    lines = ["", "/// Schema-derived validation before typed dispatch. Missing is not JSON null."]
+    for event, definition in definitions.items():
+        lines += _validator_predicate_lines(event, definition)
+    lines += ["pub(crate) fn validate_bridge_event(value: &mut serde_json::Value) -> Option<()> {",
+              "    let object = value.as_object_mut()?;",
+              '    match object.get("type")?.as_str()? {']
     for event, definition in definitions.items():
         lines += _validator_event_lines(event, definition)
     lines += ["        _ => None,", "    }", "}", "",
