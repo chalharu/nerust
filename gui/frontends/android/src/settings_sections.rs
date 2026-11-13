@@ -36,9 +36,9 @@ pub(crate) const SETTINGS_SECTION_IDS: &[&str] = &[
     "keys.gba",
 ];
 
-/// Canonical section id→label table, returned as static strings.
-/// Unknown ids fall back to a static rather than a formatted guess.
-/// System names are proper nouns, identical in both languages.
+/// Canonical section id→label table. Unknown ids fall back to the
+/// shared Unknown label rather than a formatted guess. System names are
+/// proper nouns, identical in both languages.
 pub(crate) fn section_label(id: &str, i18n: I18n) -> String {
     use nerust_settings_core::i18n::UiText;
     match id {

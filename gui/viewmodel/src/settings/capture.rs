@@ -74,7 +74,7 @@ fn project_view(state: &super::EditorState) -> CaptureStateView {
         prompt: state
             .capture_target
             .as_ref()
-            .map(|_| i18n.text(UiText::CapturePrompt).to_string())
+            .map(|_| i18n.text(UiText::CapturePrompt))
             .unwrap_or_default(),
     }
 }

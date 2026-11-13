@@ -300,7 +300,7 @@ struct Captions {
 impl Captions {
     fn new(language: AppLanguage) -> Self {
         let i18n = I18n::resolve_os(language);
-        let label = move |key| i18n.text(key).to_owned();
+        let label = move |key| i18n.text(key);
         Self {
             title: label(UiText::Debugger),
             step_frame: label(UiText::StepFrame),
@@ -457,7 +457,7 @@ impl Pane {
         let projection = project(&DisplayCache::default());
         let [registers_left, registers_right] = projection.registers;
         let i18n = I18n::resolve_os(language);
-        let label = move |key| i18n.text(key).to_owned();
+        let label = move |key| i18n.text(key);
         let pane = Rc::new(Self {
             model: Store::new(
                 Model {
@@ -1087,6 +1087,7 @@ impl Pane {
         language: AppLanguage,
     ) {
         self.refresh(&output.display, language);
+        let i18n = I18n::resolve_os(language);
         if let Some(operations) = self.operations.borrow_mut().as_mut() {
             let paused_snapshot = output.display.paused;
             operations.display = output.display;
@@ -1098,7 +1099,7 @@ impl Pane {
             let disasm_addr = operations.nav.dis_input().to_owned();
             let back = format!(
                 "{} ({})",
-                I18n::resolve_os(language).text(UiText::Back),
+                i18n.text(UiText::Back),
                 operations.nav.back_len()
             );
             let space = operations
@@ -1118,19 +1119,11 @@ impl Pane {
                             .unwrap_or_else(|| "??".into())
                     )
                 })
-                .unwrap_or_else(|| {
-                    I18n::resolve_os(language)
-                        .text(UiText::WatchNone)
-                        .to_owned()
-                });
+                .unwrap_or_else(|| i18n.text(UiText::WatchNone));
             let freeze = operations
                 .freeze
                 .map(|(addr, value)| format!("0x{addr:08X} = {value:02X}"))
-                .unwrap_or_else(|| {
-                    I18n::resolve_os(language)
-                        .text(UiText::FreezeNone)
-                        .to_owned()
-                });
+                .unwrap_or_else(|| i18n.text(UiText::FreezeNone));
             let pin = operations.nav.dis_addr();
             let _ = self.model.update(move |model| {
                 model.memory_addr = memory_addr;
@@ -1140,10 +1133,8 @@ impl Pane {
                 model.watch = watch;
                 model.freeze = freeze;
                 if let Some(addr) = pin {
-                    model.captions.disassembly = format!(
-                        "{} (0x{addr:08X})",
-                        I18n::resolve_os(language).text(UiText::Disassembly)
-                    );
+                    model.captions.disassembly =
+                        format!("{} (0x{addr:08X})", i18n.text(UiText::Disassembly));
                 }
             });
         }

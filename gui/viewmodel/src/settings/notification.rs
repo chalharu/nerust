@@ -137,23 +137,23 @@ fn project_view(state: &super::EditorState) -> NotificationView {
         color_choices: vec![
             ChoiceView {
                 value: NotificationColor::White,
-                label: i18n.text(UiText::ColorWhite).to_string(),
+                label: i18n.text(UiText::ColorWhite),
             },
             ChoiceView {
                 value: NotificationColor::Yellow,
-                label: i18n.text(UiText::ColorYellow).to_string(),
+                label: i18n.text(UiText::ColorYellow),
             },
             ChoiceView {
                 value: NotificationColor::Red,
-                label: i18n.text(UiText::ColorRed).to_string(),
+                label: i18n.text(UiText::ColorRed),
             },
             ChoiceView {
                 value: NotificationColor::Green,
-                label: i18n.text(UiText::ColorGreen).to_string(),
+                label: i18n.text(UiText::ColorGreen),
             },
             ChoiceView {
                 value: NotificationColor::Cyan,
-                label: i18n.text(UiText::ColorCyan).to_string(),
+                label: i18n.text(UiText::ColorCyan),
             },
         ],
         warning_enabled: n.warning_enabled,
@@ -168,19 +168,19 @@ fn project_view(state: &super::EditorState) -> NotificationView {
         position_choices: vec![
             ChoiceView {
                 value: NotificationPosition::TopLeft,
-                label: i18n.text(UiText::PosTopLeft).to_string(),
+                label: i18n.text(UiText::PosTopLeft),
             },
             ChoiceView {
                 value: NotificationPosition::TopRight,
-                label: i18n.text(UiText::PosTopRight).to_string(),
+                label: i18n.text(UiText::PosTopRight),
             },
             ChoiceView {
                 value: NotificationPosition::BottomLeft,
-                label: i18n.text(UiText::PosBottomLeft).to_string(),
+                label: i18n.text(UiText::PosBottomLeft),
             },
             ChoiceView {
                 value: NotificationPosition::BottomRight,
-                label: i18n.text(UiText::PosBottomRight).to_string(),
+                label: i18n.text(UiText::PosBottomRight),
             },
         ],
         area_mode: n.area_mode,
@@ -188,11 +188,11 @@ fn project_view(state: &super::EditorState) -> NotificationView {
         area_mode_choices: vec![
             ChoiceView {
                 value: NotificationAreaMode::Overlay,
-                label: i18n.text(UiText::AreaOverlay).to_string(),
+                label: i18n.text(UiText::AreaOverlay),
             },
             ChoiceView {
                 value: NotificationAreaMode::Strip,
-                label: i18n.text(UiText::AreaStrip).to_string(),
+                label: i18n.text(UiText::AreaStrip),
             },
         ],
     }

@@ -470,8 +470,8 @@ pub(super) fn toggle_row(
         label,
         description,
         &[
-            (false, i18n.text(UiText::Off).to_string()),
-            (true, i18n.text(UiText::On).to_string()),
+            (false, i18n.text(UiText::Off)),
+            (true, i18n.text(UiText::On)),
         ],
         &value,
     );

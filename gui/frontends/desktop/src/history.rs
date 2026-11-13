@@ -114,7 +114,7 @@ fn history_table(headers: [String; 4], empty_text: String, rows: Vec<HistoryRowV
 impl Pane {
     pub(crate) fn new(language: AppLanguage, executor: Rc<dyn Executor>) -> Rc<Self> {
         let i18n = I18n::resolve_os(language);
-        let label = move |key| i18n.text(key).to_owned();
+        let label = move |key| i18n.text(key);
         let headers = [
             UiText::HistoryDatetime,
             UiText::HistoryLevel,
@@ -198,7 +198,7 @@ impl Pane {
         let _ = self.model.update(move |model| {
             model.empty = rows.is_empty();
             model.count = count;
-            let label = move |key| i18n.text(key).to_owned();
+            let label = move |key| i18n.text(key);
             model.title = label(UiText::NotificationHistory);
             model.level_label = label(UiText::HistoryLevel);
             model.clear_label = label(UiText::HistoryClear);

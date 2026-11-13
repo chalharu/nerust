@@ -117,9 +117,9 @@ pub fn history_lines<'a>(
     language: AppLanguage,
 ) -> Vec<HistoryLine> {
     let offset_secs = local_utc_offset_secs();
+    let i18n = I18n::resolve_os(language);
     history
         .map(|n| {
-            let i18n = I18n::resolve_os(language);
             let text = super::notification::render_text(&n.message, n.count, i18n);
             HistoryLine {
                 datetime: format_datetime_in(n.at, offset_secs),

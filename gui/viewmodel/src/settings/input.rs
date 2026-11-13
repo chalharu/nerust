@@ -195,11 +195,11 @@ pub(super) fn binding_value(
     i18n: I18n,
 ) -> BindingValueView {
     if capture_target.as_ref() == Some(target) {
-        BindingValueView::Capturing(i18n.text(UiText::CapturePrompt).to_string())
+        BindingValueView::Capturing(i18n.text(UiText::CapturePrompt))
     } else {
         match current_binding_label(draft, target) {
             Some(label) => BindingValueView::Bound(label.to_string()),
-            None => BindingValueView::Unbound(i18n.text(UiText::Unbound).to_string()),
+            None => BindingValueView::Unbound(i18n.text(UiText::Unbound)),
         }
     }
 }
@@ -218,7 +218,7 @@ fn project_slot_view(
 
     let mut choices: Vec<ChoiceView<Option<String>>> = vec![ChoiceView {
         value: None,
-        label: i18n.text(UiText::NotAssigned).to_string(),
+        label: i18n.text(UiText::NotAssigned),
     }];
 
     choices.extend(

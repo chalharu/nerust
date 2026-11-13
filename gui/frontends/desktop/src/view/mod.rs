@@ -325,32 +325,21 @@ mod tests {
         let (adapter, _dir) = loaded_adapter();
         let app = nerust_gui_application::Application::new(adapter);
         let model = MenuModel::new(&app);
-        assert_eq!(
-            model.file_title,
-            I18n::resolve_os(model.language).text(UiText::File)
-        );
-        assert_eq!(
-            model.emulation_title,
-            I18n::resolve_os(model.language).text(UiText::Emulation)
-        );
+        let i18n = I18n::resolve_os(model.language);
+        assert_eq!(model.file_title, i18n.text(UiText::File));
+        assert_eq!(model.emulation_title, i18n.text(UiText::Emulation));
         // Loaded fixture with slots: creation and per-slot traffic enabled.
         assert!(model.available && model.loaded);
-        assert_eq!(
-            model.open_label,
-            I18n::resolve_os(model.language).text(UiText::Open)
-        );
+        assert_eq!(model.open_label, i18n.text(UiText::Open));
         assert_eq!(
             model.debugger_label,
             nerust_gui_runtime::menu_labels::shortcut_hint(
-                &I18n::resolve_os(model.language).text(UiText::OpenDebugger),
+                &i18n.text(UiText::OpenDebugger),
                 &model.shortcuts,
                 ShortcutAction::OpenDebugger,
             )
         );
-        assert_eq!(
-            model.pause_label,
-            I18n::resolve_os(model.language).text(UiText::Pause)
-        );
+        assert_eq!(model.pause_label, i18n.text(UiText::Pause));
         assert!(model.matches(&app));
     }
 

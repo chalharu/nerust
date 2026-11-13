@@ -109,30 +109,30 @@ fn project_view(state: &super::EditorState) -> GeneralView {
         language_choices: vec![
             ChoiceView {
                 value: AppLanguage::SystemDefault,
-                label: i18n.text(UiText::SystemDefault).to_string(),
+                label: i18n.text(UiText::SystemDefault),
             },
             ChoiceView {
                 value: AppLanguage::Japanese,
-                label: i18n.text(UiText::Japanese).to_string(),
+                label: i18n.text(UiText::Japanese),
             },
             ChoiceView {
                 value: AppLanguage::English,
-                label: i18n.text(UiText::English).to_string(),
+                label: i18n.text(UiText::English),
             },
         ],
         storage_policy: state.draft.shared.persistence.storage_policy,
         storage_policy_choices: vec![
             ChoiceView {
                 value: StoragePolicy::Sidecar,
-                label: i18n.text(UiText::Sidecar).to_string(),
+                label: i18n.text(UiText::Sidecar),
             },
             ChoiceView {
                 value: StoragePolicy::AppSharedData,
-                label: i18n.text(UiText::AppSharedData).to_string(),
+                label: i18n.text(UiText::AppSharedData),
             },
             ChoiceView {
                 value: StoragePolicy::CustomDirectory,
-                label: i18n.text(UiText::CustomDirectory).to_string(),
+                label: i18n.text(UiText::CustomDirectory),
             },
         ],
         storage_directory: state

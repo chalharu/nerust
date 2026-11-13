@@ -146,18 +146,9 @@ fn build_play_section(
                 i18n.text(UiText::ScreenOrientation),
                 i18n.text(UiText::DescOrientation),
                 &[
-                    (
-                        ScreenOrientation::Auto,
-                        i18n.text(UiText::AutoRotate).to_string(),
-                    ),
-                    (
-                        ScreenOrientation::Portrait,
-                        i18n.text(UiText::Portrait).to_string(),
-                    ),
-                    (
-                        ScreenOrientation::Landscape,
-                        i18n.text(UiText::Landscape).to_string(),
-                    ),
+                    (ScreenOrientation::Auto, i18n.text(UiText::AutoRotate)),
+                    (ScreenOrientation::Portrait, i18n.text(UiText::Portrait)),
+                    (ScreenOrientation::Landscape, i18n.text(UiText::Landscape)),
                 ],
                 &orientation,
             ),
@@ -348,15 +339,9 @@ fn build_advanced_section(
             i18n.text(UiText::RumbleTarget),
             String::new(),
             &[
-                (RumbleTarget::Auto, i18n.text(UiText::Auto).to_string()),
-                (
-                    RumbleTarget::Handset,
-                    i18n.text(UiText::Handset).to_string(),
-                ),
-                (
-                    RumbleTarget::Controller,
-                    i18n.text(UiText::Controller).to_string(),
-                ),
+                (RumbleTarget::Auto, i18n.text(UiText::Auto)),
+                (RumbleTarget::Handset, i18n.text(UiText::Handset)),
+                (RumbleTarget::Controller, i18n.text(UiText::Controller)),
             ],
             &peripherals.rumble_target,
         ),
@@ -602,18 +587,9 @@ fn controllers_quick_section(
         i18n.text(UiText::TouchOverlay),
         i18n.text(UiText::DescOverlayVisibility),
         &[
-            (
-                TouchOverlayVisibility::Always,
-                i18n.text(UiText::Always).to_string(),
-            ),
-            (
-                TouchOverlayVisibility::Auto,
-                i18n.text(UiText::Auto).to_string(),
-            ),
-            (
-                TouchOverlayVisibility::Hidden,
-                i18n.text(UiText::Hidden).to_string(),
-            ),
+            (TouchOverlayVisibility::Always, i18n.text(UiText::Always)),
+            (TouchOverlayVisibility::Auto, i18n.text(UiText::Auto)),
+            (TouchOverlayVisibility::Hidden, i18n.text(UiText::Hidden)),
         ],
         &overlay.visibility,
     );
@@ -831,7 +807,7 @@ fn build_system_sections(vm: &SettingsViewModel, i18n: I18n) -> Vec<SectionWire>
                 .collect();
             rows.push(group_row(
                 &format!("system.{}.controllers", view.system_id),
-                i18n.text(UiText::Controller).to_string(),
+                i18n.text(UiText::Controller),
                 String::new(),
                 &format!("input.{}", view.system_id),
             ));
@@ -1055,7 +1031,7 @@ fn type_profile_summary(
                 })
             })
         })
-        .unwrap_or_else(|| i18n.text(UiText::NotAssigned).to_string())
+        .unwrap_or_else(|| i18n.text(UiText::NotAssigned))
 }
 
 /// Display names for a port's member ids in set order. Unknown members

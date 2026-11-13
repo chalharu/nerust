@@ -40,7 +40,7 @@ fn project_view(state: &EditorState) -> BindingSectionView {
         .map(|desc| project_shortcut_row(&state.draft, desc, i18n, &state.capture_target))
         .collect();
     BindingSectionView {
-        label: i18n.text(UiText::Shortcuts).to_string(),
+        label: i18n.text(UiText::Shortcuts),
         rows: shortcut_rows,
     }
 }

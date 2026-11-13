@@ -192,7 +192,7 @@ impl Editor {
         let general = self.vm.general.clone();
         self.binding(
             general.view.clone(),
-            move |value| I18n::resolve_os(value.language).text(key).to_string(),
+            move |value| I18n::resolve_os(value.language).text(key),
             None,
         )
     }
