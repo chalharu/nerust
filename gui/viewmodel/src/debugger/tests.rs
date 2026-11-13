@@ -61,14 +61,8 @@ fn tile_hover_text_matches_viewers() {
         ),
         "Pattern left tile #21 (px 44,13, +0x0150)"
     );
-    let clamped = tile_hover_text(
-        I18n::new(AppLanguage::Japanese),
-        "Pattern right",
-        128,
-        128,
-        500.0,
-        500.0,
-    );
+    let ja = I18n::new(AppLanguage::Japanese);
+    let clamped = tile_hover_text(ja, "Pattern right", 128, 128, 500.0, 500.0);
     assert!(clamped.starts_with("Pattern right タイル #255 "));
 }
 

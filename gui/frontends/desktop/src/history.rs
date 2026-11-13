@@ -376,23 +376,12 @@ mod tests {
             count: 2,
         })
         .collect();
-        let rows = project(
-            &lines,
-            I18n::new(AppLanguage::English),
-            HistoryFilter::Warning,
-        );
+        let en = I18n::new(AppLanguage::English);
+        let rows = project(&lines, en, HistoryFilter::Warning);
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].message, "event \u{00d7}2");
         assert_eq!(rows[0].level, "Warning");
-        assert_eq!(
-            project(
-                &lines,
-                I18n::new(AppLanguage::English),
-                HistoryFilter::Error
-            )
-            .len(),
-            1
-        );
+        assert_eq!(project(&lines, en, HistoryFilter::Error).len(), 1);
     }
 }
 

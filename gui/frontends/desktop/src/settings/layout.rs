@@ -702,14 +702,9 @@ mod tests {
             .general
             .set_language(AppLanguage::Japanese)
             .expect("language applies");
-        assert_eq!(
-            row.change_label.get(),
-            I18n::new(AppLanguage::Japanese).text(UiText::Change)
-        );
-        assert_eq!(
-            row.clear_label.get(),
-            I18n::new(AppLanguage::Japanese).text(UiText::Clear)
-        );
+        let ja = I18n::new(AppLanguage::Japanese);
+        assert_eq!(row.change_label.get(), ja.text(UiText::Change));
+        assert_eq!(row.clear_label.get(), ja.text(UiText::Clear));
         // Row chrome delegates to the built capture/clear commands.
         let _ = row.capture.invoke();
         let _ = row.clear.invoke();

@@ -455,14 +455,9 @@ mod operation_tests {
             adapter.borrow().media_revision(),
         );
         let model = pane.model.snapshot();
-        assert_eq!(
-            model.title,
-            I18n::new(AppLanguage::Japanese).text(UiText::PpuViewer)
-        );
-        assert_eq!(
-            model.empty,
-            I18n::new(AppLanguage::Japanese).text(UiText::NoImages)
-        );
+        let ja = I18n::new(AppLanguage::Japanese);
+        assert_eq!(model.title, ja.text(UiText::PpuViewer));
+        assert_eq!(model.empty, ja.text(UiText::NoImages));
     }
 }
 
@@ -602,10 +597,8 @@ mod ppu_headless_tests {
         let pane = Pane::new(AppLanguage::English, Rc::new(NoDispatch));
         pane.poll(AppLanguage::Japanese, true, 1);
         let model = pane.model.snapshot();
-        assert_eq!(
-            model.title,
-            I18n::new(AppLanguage::Japanese).text(UiText::PpuViewer)
-        );
+        let ja = I18n::new(AppLanguage::Japanese);
+        assert_eq!(model.title, ja.text(UiText::PpuViewer));
         pane.poll(AppLanguage::English, true, 2);
         assert_eq!(
             pane.model.snapshot().title,

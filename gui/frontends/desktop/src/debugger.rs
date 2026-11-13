@@ -778,9 +778,7 @@ impl Pane {
             AssistAction::FreezeClear => operations.freeze = None,
             AssistAction::RegisterSet => {
                 if register.is_none() {
-                    return Err(I18n::resolve_os(model.language)
-                        .text(UiText::PickRegister)
-                        .to_owned());
+                    return Err(I18n::resolve_os(model.language).text(UiText::PickRegister));
                 }
                 return Ok(Some(vec![DebugAction::RegisterWrite(hex(
                     &model.register_value
@@ -919,11 +917,7 @@ impl Pane {
                 .memory_selection
                 .as_ref()
                 .and_then(|selection| selected_memory(selection, &model.memory_targets))
-                .ok_or_else(|| {
-                    I18n::resolve_os(model.language)
-                        .text(UiText::SelectDumpRow)
-                        .to_owned()
-                })
+                .ok_or_else(|| I18n::resolve_os(model.language).text(UiText::SelectDumpRow))
         };
         let register = model
             .register_marked

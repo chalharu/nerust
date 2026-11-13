@@ -1284,11 +1284,12 @@ mod tests {
         assert_eq!(presentation.language.selected.get(), position);
         assert!(presentation.volume.set(42.0));
         assert_eq!(editor.vm.audio.view.get().volume_percent, 42);
+        let en = I18n::new(AppLanguage::English);
         assert_eq!(
             presentation.volume_label.get(),
             format!(
                 "{}: {:.0}%",
-                I18n::new(AppLanguage::English).text(UiText::MasterVolume),
+                en.text(UiText::MasterVolume),
                 presentation.volume.get()
             )
         );
@@ -1296,16 +1297,13 @@ mod tests {
             presentation.latency_label.get(),
             format!(
                 "{}: {:.0} ms",
-                I18n::new(AppLanguage::English).text(UiText::Latency),
+                en.text(UiText::Latency),
                 presentation.latency.get()
             )
         );
         assert_eq!(
             presentation.labels.title.get(),
-            format!(
-                "nerust {}",
-                I18n::new(AppLanguage::English).text(UiText::Settings)
-            )
+            format!("nerust {}", en.text(UiText::Settings))
         );
         // Subscribing observes the live property; dropping ends the watch.
         let seen = Rc::new(RefCell::new(Vec::new()));
@@ -1343,12 +1341,8 @@ mod tests {
             .expect("japanese is a language choice");
         assert!(presentation.language.selected.set(japanese));
         assert_eq!(editor.vm.general.view.get().language, AppLanguage::Japanese);
-        assert_eq!(
-            presentation.labels.cancel.get(),
-            I18n::new(AppLanguage::Japanese)
-                .text(UiText::Cancel)
-                .to_string()
-        );
+        let ja = I18n::new(AppLanguage::Japanese);
+        assert_eq!(presentation.labels.cancel.get(), ja.text(UiText::Cancel));
         assert!(!presentation.language.selected.set("999".into()));
         assert!(!presentation.language.selected.set("bogus".into()));
         assert!(presentation.info_duration.set("3000".into()));
