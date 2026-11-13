@@ -760,6 +760,24 @@ pub fn slot_failure(language: AppLanguage, slot: Option<u64>, what: &str) -> Str
     }
 }
 
+/// Connection-order pad label (`Pad 1` / `パッド 1`). The number is
+/// connection order, never the player slot, in both languages.
+pub fn pad_label(language: AppLanguage, index: usize) -> String {
+    let pad = index + 1;
+    localized!(language, format!("Pad {pad}"), format!("パッド {pad}"))
+}
+
+/// Per-pad trigger row (`Pad 1 triggers` / `パッド 1 トリガー`):
+/// the shoulder-doubling opt-in shares the pad's number.
+pub fn pad_triggers_label(language: AppLanguage, index: usize) -> String {
+    let pad = index + 1;
+    localized!(
+        language,
+        format!("Pad {pad} triggers"),
+        format!("パッド {pad} トリガー")
+    )
+}
+
 /// Bare command failure (`{id} failed[: detail]`). Origin prefixes ride on
 /// the `CommandOrigin*` keys; only the Command origin formats here.
 pub fn command_failed(language: AppLanguage, id: &str, detail: &str) -> String {
