@@ -256,7 +256,7 @@ impl SystemLocaleSource for FixedLocale {
 /// APIs; process env on Unix), so GUI launches without `LANG` still
 /// resolve correctly. `LANG` stays as the fallback for platforms
 /// `sys-locale` does not cover.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct OsLocale;
 
 impl SystemLocaleSource for OsLocale {
@@ -367,31 +367,6 @@ fn lookup(language: AppLanguage, key: UiText) -> &'static str {
         AppLanguage::Japanese => japanese,
         AppLanguage::English | AppLanguage::SystemDefault => english,
     }
-}
-
-/// CJK-capable sans family for the UI language, when the platform default cannot cover it.
-/// `None` means the frontend default already covers the language.
-/// Takes an already-resolved language; see [`lookup`].
-pub fn font_family(language: AppLanguage) -> Option<&'static str> {
-    if !matches!(language, AppLanguage::Japanese) {
-        return None;
-    }
-    platform_cjk_sans()
-}
-
-#[cfg(target_os = "windows")]
-fn platform_cjk_sans() -> Option<&'static str> {
-    Some("Yu Gothic UI")
-}
-
-#[cfg(target_os = "macos")]
-fn platform_cjk_sans() -> Option<&'static str> {
-    Some("Hiragino Sans")
-}
-
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
-fn platform_cjk_sans() -> Option<&'static str> {
-    None
 }
 
 /// (English, Japanese) pair per key: one match instead of two
@@ -691,28 +666,10 @@ macro_rules! localized {
     };
 }
 
-pub fn parse_failed(language: AppLanguage, input: &str) -> String {
-    localized!(
-        language,
-        format!("parse failed: {input}"),
-        format!("解析失敗: {input}")
-    )
-}
-
 /// History item count (`42 items` / `42件`). The number leads in
 /// both languages (Console / Event Viewer pattern).
 pub fn history_count(language: AppLanguage, count: usize) -> String {
     localized!(language, format!("{count} items"), format!("{count}件"))
-}
-
-/// Screen-reader label for a level enable toggle.
-/// Pass the short level name; Error/Status read full elsewhere.
-pub fn notification_group_label(language: AppLanguage, level: &str) -> String {
-    localized!(
-        language,
-        format!("{level} notifications"),
-        format!("{level}通知")
-    )
 }
 
 /// Description for a controller-slot choice row: which port the row drives
@@ -863,28 +820,6 @@ pub fn resume_failed(language: AppLanguage, detail: &str) -> String {
         language,
         format!("resume failed: {detail}"),
         format!("再開失敗: {detail}")
-    )
-}
-
-/// Applied freeze (`frozen {addr}={value}`).
-pub fn frozen(language: AppLanguage, addr: u32, value: u8) -> String {
-    localized!(
-        language,
-        format!("frozen 0x{addr:08X}={value:02X}"),
-        format!("フリーズ 0x{addr:08X}={value:02X}")
-    )
-}
-
-/// Live watch readout (`= ??` when unreadable).
-pub fn watch_value(language: AppLanguage, addr: u32, value: Option<u8>) -> String {
-    let value_text = match value {
-        Some(value) => format!("{value:02X}"),
-        None => "??".to_string(),
-    };
-    localized!(
-        language,
-        format!("watch 0x{addr:08X} = {value_text}"),
-        format!("ウォッチ 0x{addr:08X} = {value_text}")
     )
 }
 
@@ -1133,29 +1068,7 @@ mod tests {
     }
 
     #[test]
-    fn notification_group_label_names_the_level() {
-        assert_eq!(notification_group_label(en(), "Info"), "Info notifications");
-        assert_eq!(notification_group_label(ja(), "情報"), "情報通知");
-        assert_eq!(
-            notification_group_label(en(), "Warning"),
-            "Warning notifications"
-        );
-        assert_eq!(notification_group_label(ja(), "警告"), "警告通知");
-        // Matches the existing full-name keys exactly.
-        assert_eq!(
-            notification_group_label(en(), &I18n::new(en()).text(UiText::Error)),
-            I18n::new(en()).text(UiText::NotificationError)
-        );
-        assert_eq!(
-            notification_group_label(ja(), &I18n::new(ja()).text(UiText::Error)),
-            I18n::new(ja()).text(UiText::NotificationError)
-        );
-    }
-
-    #[test]
     fn parameterized_messages_cover_both_languages() {
-        assert_eq!(parse_failed(en(), "zz"), "parse failed: zz");
-        assert_eq!(parse_failed(ja(), "zz"), "解析失敗: zz");
         assert_eq!(
             selected_row(en(), 0x80, Some(0xAB)),
             "Selected 0x00000080 (was AB)"
@@ -1203,11 +1116,6 @@ mod tests {
         assert_eq!(pause_failed(ja(), "X"), "一時停止失敗: X");
         assert_eq!(resume_failed(en(), "X"), "resume failed: X");
         assert_eq!(resume_failed(ja(), "X"), "再開失敗: X");
-        assert_eq!(frozen(en(), 0x10, 0xFF), "frozen 0x00000010=FF");
-        assert_eq!(frozen(ja(), 0x10, 0xFF), "フリーズ 0x00000010=FF");
-        assert_eq!(watch_value(en(), 0x10, Some(1)), "watch 0x00000010 = 01");
-        assert_eq!(watch_value(en(), 0x10, None), "watch 0x00000010 = ??");
-        assert_eq!(watch_value(ja(), 0x10, Some(1)), "ウォッチ 0x00000010 = 01");
         assert_eq!(
             tile_hover(en(), "Tiles", 21, 44, 13, 0x150),
             "Tiles tile #21 (px 44,13, +0x0150)"
@@ -1216,19 +1124,5 @@ mod tests {
             tile_hover(ja(), "Tiles", 21, 44, 13, 0x150),
             "Tiles タイル #21 (px 44,13, +0x0150)"
         );
-    }
-
-    #[test]
-    fn cjk_font_family_follows_ui_language() {
-        // English needs no override: the frontend default covers Latin.
-        assert_eq!(font_family(en()), None);
-        // Japanese needs an explicit CJK sans on Noto-less platforms;
-        // Linux keeps the default (system fallback is consistent there).
-        #[cfg(target_os = "windows")]
-        assert_eq!(font_family(ja()), Some("Yu Gothic UI"));
-        #[cfg(target_os = "macos")]
-        assert_eq!(font_family(ja()), Some("Hiragino Sans"));
-        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-        assert_eq!(font_family(ja()), None);
     }
 }

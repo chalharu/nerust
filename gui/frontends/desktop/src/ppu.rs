@@ -71,16 +71,17 @@ pub(crate) struct Pane {
 
 impl Pane {
     pub(crate) fn new(language: AppLanguage, executor: Rc<dyn Executor>) -> Rc<Self> {
+        let i18n = I18n::resolve_os(language);
         Rc::new(Self {
             model: Store::new(
                 Model {
-                    title: I18n::resolve_os(language).text(UiText::PpuViewer),
+                    title: i18n.text(UiText::PpuViewer),
                     hover: PPU_HOVER_HINT.into(),
                     hovered: None,
                     images: vec![],
                     panels: String::new(),
                     has_panels: false,
-                    empty: I18n::resolve_os(language).text(UiText::NoImages),
+                    empty: i18n.text(UiText::NoImages),
                     is_empty: true,
                 },
                 executor.clone(),

@@ -46,6 +46,7 @@ fn register_key(name: &str) -> String {
 }
 
 fn synchronize_registers(model: &mut Model) {
+    let i18n = I18n::resolve_os(model.language);
     let next = model
         .register_left_selection
         .as_ref()
@@ -60,17 +61,8 @@ fn synchronize_registers(model: &mut Model) {
         .as_ref()
         .and_then(|selection| model.register_targets.get(&selection.row_key));
     model.reg_target = selected.map_or_else(
-        || {
-            I18n::resolve_os(model.language)
-                .text(UiText::PickRegister)
-                .to_owned()
-        },
-        |(name, _)| {
-            format!(
-                "{} {name}",
-                I18n::resolve_os(model.language).text(UiText::Set)
-            )
-        },
+        || i18n.text(UiText::PickRegister),
+        |(name, _)| format!("{} {name}", i18n.text(UiText::Set)),
     );
     if model.register_left_selection != next {
         model.register_left_selection = None;
@@ -528,32 +520,20 @@ impl Pane {
         let subscription = pane.model.watch(source, |store, _| {
             let _ = store.update(|model| {
                 synchronize_registers(model);
+                let i18n = I18n::resolve_os(model.language);
                 let selected = model
                     .memory_selection
                     .as_ref()
                     .and_then(|selection| selected_memory(selection, &model.memory_targets));
                 model.selected = selected.map_or_else(
-                    || {
-                        I18n::resolve_os(model.language)
-                            .text(UiText::SelectDumpRow)
-                            .to_owned()
-                    },
+                    || i18n.text(UiText::SelectDumpRow),
                     |(addr, old)| {
-                        nerust_settings_core::i18n::selected_row(model.language, addr, old)
+                        nerust_settings_core::i18n::selected_row(i18n.language(), addr, old)
                     },
                 );
                 model.captions.write = selected.map_or_else(
-                    || {
-                        I18n::resolve_os(model.language)
-                            .text(UiText::Write)
-                            .to_owned()
-                    },
-                    |(addr, _)| {
-                        format!(
-                            "{} 0x{addr:08X}",
-                            I18n::resolve_os(model.language).text(UiText::Write)
-                        )
-                    },
+                    || i18n.text(UiText::Write),
+                    |(addr, _)| format!("{} 0x{addr:08X}", i18n.text(UiText::Write)),
                 );
                 let next = selected.and(
                     model

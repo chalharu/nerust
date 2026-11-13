@@ -12,11 +12,18 @@ use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_viewmodel::settings::{SettingsViewModel, StoragePathError, StoragePathValidator};
 use nerust_settings_core::{
     editor::CaptureTarget,
-    i18n::{UiText, language_from_locale_tag},
+    i18n::{FixedLocale, UiText, language_from_locale_tag},
     model::language::AppLanguage,
 };
 use nerust_system_traits::factory::CoreFactory;
 use serde::{Deserialize, Serialize};
+
+/// Shared resolved-language instance, re-exported so every builder names
+/// one type. Constructed once per projection from the draft choice and
+/// the vault system `Locale`, then threaded through every builder instead
+/// of a bare locale or language. The VM working copy is normalized with
+/// the same value, so labels from both layers agree.
+pub(crate) use nerust_settings_core::i18n::I18n;
 
 /// Full screen payload: schema version, sections Kotlin renders, live
 /// validation issues for the draft, and the pending key-capture state.
@@ -274,14 +281,6 @@ pub(super) fn build_vm(
     )
     .map_err(|error| error.to_string())
 }
-
-use nerust_settings_core::i18n::FixedLocale;
-/// Shared resolved-language instance, re-exported so every builder names
-/// one type. Constructed once per projection from the draft choice and
-/// the vault system `Locale`, then threaded through every builder instead
-/// of a bare locale or language. The VM working copy is normalized with
-/// the same value, so labels from both layers agree.
-pub(crate) use nerust_settings_core::i18n::I18n;
 
 /// Display language for one projection: an explicit draft choice wins,
 /// SystemDefault follows the vault-pushed terminal `Locale` (`None`

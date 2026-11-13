@@ -85,7 +85,8 @@ impl MenuModel {
         let (slots, active_slot) = app.session().menu_slots();
         let available = !state.closed;
         let loaded = available && state.loaded;
-        let label = |key| I18n::resolve_os(language).text(key).to_owned();
+        let i18n = I18n::resolve_os(language);
+        let label = move |key| i18n.text(key);
         let hinted = |key, action| {
             nerust_gui_runtime::menu_labels::shortcut_hint(&label(key), &shortcuts, action)
         };

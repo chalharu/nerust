@@ -29,12 +29,13 @@ impl Pane {
         detail: String,
         executor: Rc<dyn Executor>,
     ) -> Rc<Self> {
+        let i18n = I18n::resolve_os(language);
         Rc::new(Self {
             model: Store::new(
                 Model {
-                    title: I18n::resolve_os(language).text(UiText::Error).to_owned(),
+                    title: i18n.text(UiText::Error),
                     text: detail,
-                    ok: I18n::resolve_os(language).text(UiText::Ok).to_owned(),
+                    ok: i18n.text(UiText::Ok),
                 },
                 executor,
             ),
