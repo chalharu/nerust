@@ -4,6 +4,9 @@
 
 use super::key::Key;
 
+/// Maximum pads the port table (and the session order) tracks.
+pub const MAX_PADS: usize = 4;
+
 /// Position-based standard pad button. Glyph names (`A`/`B`) transpose per
 /// vendor (Nintendo swaps them); positions do not, so bindings stay portable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -118,6 +121,19 @@ impl GamepadAxis {
     /// Array index for normalized state storage.
     pub const fn index(self) -> usize {
         self as usize
+    }
+
+    /// Console-agnostic axis for default resolution. Triggers have no
+    /// console counterpart yet, so they stay unbound instead of guessing.
+    pub fn abstract_key(self) -> Option<crate::AbstractKey> {
+        use crate::AbstractKey as A;
+        match self {
+            Self::LeftStickX => Some(A::Axis1X),
+            Self::LeftStickY => Some(A::Axis1Y),
+            Self::RightStickX => Some(A::Axis2X),
+            Self::RightStickY => Some(A::Axis2Y),
+            Self::LeftTrigger | Self::RightTrigger => None,
+        }
     }
 }
 
@@ -300,6 +316,21 @@ mod tests {
             axes += 1;
         }
         assert_eq!(axes, GamepadAxis::COUNT);
+    }
+
+    #[test]
+    fn sticks_map_to_console_axes_triggers_stay_unbound() {
+        use crate::AbstractKey as A;
+        for (axis, key) in [
+            (GamepadAxis::LeftStickX, A::Axis1X),
+            (GamepadAxis::LeftStickY, A::Axis1Y),
+            (GamepadAxis::RightStickX, A::Axis2X),
+            (GamepadAxis::RightStickY, A::Axis2Y),
+        ] {
+            assert_eq!(axis.abstract_key(), Some(key));
+        }
+        assert_eq!(GamepadAxis::LeftTrigger.abstract_key(), None);
+        assert_eq!(GamepadAxis::RightTrigger.abstract_key(), None);
     }
 
     #[test]

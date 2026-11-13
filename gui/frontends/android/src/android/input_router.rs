@@ -2,7 +2,7 @@
 //! State lives in trackers; every JNI push routes through [`ChromePort`].
 
 use nerust_gui_shell::session::SessionHandle;
-use nerust_input_traits::{PadGuid, SourceButtonId, SourceId, StandardButton};
+use nerust_input_traits::{GamepadAxis, PadGuid, SourceButtonId, SourceId, StandardButton};
 use winit::{event::Touch, platform::android::activity::AndroidApp};
 
 use super::{chrome_port, touch_layout::ProfileTouchOverlay, touch_tracker::TouchTracker};
@@ -71,6 +71,17 @@ impl InputRouter {
             SourceButtonId::Pad(button),
             pressed,
         );
+    }
+
+    pub(super) fn apply_physical_controller_axis(
+        &mut self,
+        session: &mut SessionHandle,
+        device_id: i32,
+        axis: GamepadAxis,
+        value: f32,
+    ) {
+        // Same source identity as buttons: one pad, one order index.
+        session.handle_source_axis(Self::pad_source(device_id), axis, value);
     }
 
     /// Rebuild the hit-zone overlay for the current window size and push it to Kotlin.

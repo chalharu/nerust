@@ -4,7 +4,7 @@
 //! the vault device truth so rows and the command path cannot disagree.
 
 use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_input_traits::Key;
+use nerust_input_traits::{Key, StandardButton};
 
 use super::projection::project_fresh;
 use super::wire::{
@@ -27,24 +27,32 @@ pub(crate) fn apply_hardware_key(
         let i18n = truth.i18n;
         // Borrow first: releases and unmapped keys (volume, Back, ...) must
         // not pay a target+prompt clone on the hot path.
-        if pressed
-            && let Some(key) = android_keycode_to_key(keycode)
-            && let Some((target, _)) = capture.as_ref()
-        {
-            let vm = build_vm(snapshot, deps, i18n)?;
+        if pressed && let Some((target, _)) = capture.as_ref() {
             let target = target.clone();
-            vm.capture
-                .start_capture(target)
-                .map_err(|error| error.to_string())?;
-            vm.capture.apply_captured_key(key);
-            sync_snapshot_from_vm(snapshot, &vm, i18n);
-            *capture = None;
-            Ok((Some(project_fresh(snapshot, deps, capture, truth)?), true))
-        } else {
-            // No-op: Kotlin only reads the payload when consumed is true,
-            // so skip the full re-projection (releases arrive per key).
-            Ok((None, false))
+            if let Some(key) = android_keycode_to_key(keycode) {
+                let vm = build_vm(snapshot, deps, i18n)?;
+                vm.capture
+                    .start_capture(target)
+                    .map_err(|error| error.to_string())?;
+                vm.capture.apply_captured_key(key);
+                sync_snapshot_from_vm(snapshot, &vm, i18n);
+                *capture = None;
+                return Ok((Some(project_fresh(snapshot, deps, capture, truth)?), true));
+            }
+            if let Some(button) = android_keycode_to_pad(keycode) {
+                let vm = build_vm(snapshot, deps, i18n)?;
+                vm.capture
+                    .start_capture(target)
+                    .map_err(|error| error.to_string())?;
+                vm.capture.apply_captured_pad(button);
+                sync_snapshot_from_vm(snapshot, &vm, i18n);
+                *capture = None;
+                return Ok((Some(project_fresh(snapshot, deps, capture, truth)?), true));
+            }
         }
+        // No-op: Kotlin only reads the payload when consumed is true,
+        // so skip the full re-projection (releases arrive per key).
+        Ok((None, false))
     })
 }
 
@@ -159,4 +167,27 @@ fn android_keycode_to_key(keycode: i32) -> Option<Key> {
         .binary_search_by_key(&keycode, |(code, _)| *code)
         .ok()
         .map(|index| ANDROID_KEYCODE_TABLE[index].1)
+}
+
+/// Controller keycodes to position buttons. Triggers (L2/R2) and the
+/// C/Z buttons have no position: analog and unmapped respectively.
+pub(crate) const ANDROID_PAD_KEYCODE_TABLE: &[(i32, StandardButton)] = &[
+    (96, StandardButton::South),
+    (97, StandardButton::East),
+    (99, StandardButton::West),
+    (100, StandardButton::North),
+    (102, StandardButton::LeftShoulder),
+    (103, StandardButton::RightShoulder),
+    (106, StandardButton::LeftStick),
+    (107, StandardButton::RightStick),
+    (108, StandardButton::Start),
+    (109, StandardButton::Back),
+    (110, StandardButton::Guide),
+];
+
+fn android_keycode_to_pad(keycode: i32) -> Option<StandardButton> {
+    ANDROID_PAD_KEYCODE_TABLE
+        .binary_search_by_key(&keycode, |(code, _)| *code)
+        .ok()
+        .map(|index| ANDROID_PAD_KEYCODE_TABLE[index].1)
 }

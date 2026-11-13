@@ -620,6 +620,12 @@ fn controllers_quick_section(
             i18n,
             overlay.haptics,
         ),
+        group_row(
+            "controls.gamepads_link",
+            i18n.text(UiText::Gamepads),
+            i18n.text(UiText::DescDeadzone),
+            "controls.gamepads",
+        ),
         header_row(i18n.text(UiText::Shortcuts)),
         group_row(
             "controls.shortcuts_link",
@@ -707,6 +713,50 @@ fn overlay_detail_section(
     }
 }
 
+/// Gamepads screen: stick deadzone plus one port row per pad.
+/// Ports are player slots, not devices: pads are connection-ordered and
+/// transient, so the table (not device ids) is what persists.
+fn gamepads_section(snapshot: &SettingsSnapshot, i18n: I18n) -> SectionWire {
+    use nerust_input_traits::MAX_PADS;
+    let gamepad = &snapshot.shared.input.gamepad;
+    let port_choices = [
+        (None, i18n.text(UiText::Off)),
+        (Some(0), i18n.text(UiText::PlayerOne)),
+        (Some(1), i18n.text(UiText::PlayerTwo)),
+    ];
+    let mut rows = vec![number_row(
+        "controls.gamepads.deadzone",
+        i18n.text(UiText::Deadzone),
+        i18n.text(UiText::DescDeadzone),
+        i64::from(gamepad.deadzone_percent),
+        5,
+        0,
+        30,
+        "%",
+    )];
+    rows.extend((0..MAX_PADS).map(|index| {
+        choice_row(
+            &format!("controls.gamepads.pad{}", index + 1),
+            format!("Pad {}", index + 1),
+            String::new(),
+            &port_choices,
+            &gamepad.pad_ports[index],
+        )
+    }));
+    rows.push(button_row(
+        "reset.controls.gamepads",
+        i18n.text(UiText::ResetScreen),
+        String::new(),
+    ));
+    SectionWire {
+        id: "controls.gamepads".to_string(),
+        label: i18n.text(UiText::Gamepads),
+        sub: i18n.text(UiText::SectionControllers),
+        rows,
+        visible: false,
+    }
+}
+
 /// Global shortcuts screen: one capture row per binding plus reset.
 /// Fullscreen and debugger are desktop-only (window chrome the phone has
 /// no equivalent for): their rows never reach Android, though the shared
@@ -777,6 +827,7 @@ fn build_controllers_sections(
         controllers_quick_section(snapshot, i18n, keyboards, touch_capable),
         overlay_detail_section(&snapshot.local.touch_overlay, gamepads, i18n),
         shortcuts_section(vm, i18n, keyboards, gamepads),
+        gamepads_section(snapshot, i18n),
     ]
 }
 

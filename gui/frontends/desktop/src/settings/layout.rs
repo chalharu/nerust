@@ -396,10 +396,121 @@ pub(super) fn inputs(
                     ),
                 )),
             },
-            executor,
+            executor.clone(),
         ),
     ));
+    pages.push(gamepads_page(editor));
     pages
+}
+
+/// Global gamepads page: one port choice per connection-order pad plus the
+/// stick deadzone. No slot chrome (ports are global, not per-system).
+fn gamepads_page(editor: &Rc<Editor>) -> Keyed<InputPage> {
+    let vm = &editor.vm;
+    let executor = editor.executor.clone();
+    let view = vm.gamepads.view.get();
+    let mut slots: Vec<Keyed<ChoiceRow>> = view
+        .pads
+        .iter()
+        .map(|pad| {
+            let index = pad.index;
+            let gamepads = vm.gamepads.clone();
+            let items = editor.binding(
+                vm.gamepads.view.clone(),
+                move |value| {
+                    value
+                        .pads
+                        .iter()
+                        .find(|row| row.index == index)
+                        .map(|row| row.choices.clone())
+                        .unwrap_or_default()
+                },
+                None,
+            );
+            let selected = editor.binding(
+                vm.gamepads.view.clone(),
+                move |value| {
+                    value
+                        .pads
+                        .iter()
+                        .find(|row| row.index == index)
+                        .and_then(|row| row.port)
+                },
+                Some(Rc::new(move |port: Option<usize>| {
+                    gamepads.set_pad_port(index, port)
+                })),
+            );
+            let selection = choice(items, selected);
+            Keyed::new(
+                format!("pad-{index}"),
+                Store::new(
+                    ChoiceRow {
+                        label: editor.binding(
+                            vm.gamepads.view.clone(),
+                            move |value| {
+                                value
+                                    .pads
+                                    .iter()
+                                    .find(|row| row.index == index)
+                                    .map(|row| row.label.clone())
+                                    .unwrap_or_default()
+                            },
+                            None,
+                        ),
+                        choices: selection.items,
+                        selected: selection.selected,
+                        enabled: Binding::constant(true),
+                    },
+                    executor.clone(),
+                ),
+            )
+        })
+        .collect();
+    let deadzone_vm = vm.gamepads.clone();
+    let deadzone_items = editor.binding(
+        vm.gamepads.view.clone(),
+        |value| value.deadzone_choices.clone(),
+        None,
+    );
+    let deadzone_selected = editor.binding(
+        vm.gamepads.view.clone(),
+        |value| value.deadzone,
+        Some(Rc::new(move |percent: u8| {
+            deadzone_vm.set_deadzone(percent)
+        })),
+    );
+    let deadzone = choice(deadzone_items, deadzone_selected);
+    slots.push(Keyed::new(
+        "deadzone".to_string(),
+        Store::new(
+            ChoiceRow {
+                label: editor.binding(
+                    vm.gamepads.view.clone(),
+                    |value| value.deadzone_label.clone(),
+                    None,
+                ),
+                choices: deadzone.items,
+                selected: deadzone.selected,
+                enabled: Binding::constant(true),
+            },
+            executor.clone(),
+        ),
+    ));
+    Keyed::new(
+        "gamepads",
+        Store::new(
+            InputPage {
+                label: view.label.clone(),
+                slots,
+                has_slots: true,
+                sections: Binding::constant(Vec::new()),
+                section: String::new(),
+                show_section_tabs: false,
+                single_section: None,
+            },
+            executor,
+        ),
+    )
 }
 
 pub(super) fn systems(editor: &Rc<Editor>) -> Vec<Keyed<SystemPage>> {
@@ -526,6 +637,52 @@ mod tests {
         })
     }
 
+    /// Gamepads page lists one port row per pad plus the deadzone, and
+    /// writing a row routes through the gamepad view model.
+    #[test]
+    fn gamepads_page_lists_ports_and_deadzone() {
+        let (editor, _adapter, _dir) = headless_editor();
+        let executor: Rc<dyn panechord::Executor> = Rc::new(TestExecutor);
+        let pages = inputs(&editor, noop_capture(&executor), noop_capture(&executor));
+        let gamepads = pages
+            .iter()
+            .find(|page| page.key == "gamepads")
+            .expect("gamepads page builds");
+        let snapshot = gamepads.model.snapshot();
+        assert!(!snapshot.label.is_empty());
+        assert_eq!(
+            snapshot.slots.len(),
+            nerust_input_traits::MAX_PADS + 1,
+            "four pads plus the deadzone row"
+        );
+        let pad = snapshot.slots[0].model.snapshot();
+        assert_eq!(pad.label.get(), "Pad 1");
+        assert!(!pad.choices.get().is_empty());
+        assert!(pad.enabled.get());
+        // Writing pad 1 to player 2 sticks in the draft.
+        editor
+            .vm
+            .gamepads
+            .set_pad_port(0, Some(1))
+            .expect("port applies");
+        let pages = inputs(&editor, noop_capture(&executor), noop_capture(&executor));
+        let row = pages
+            .iter()
+            .find(|page| page.key == "gamepads")
+            .expect("gamepads page rebuilds")
+            .model
+            .snapshot()
+            .slots[0]
+            .model
+            .snapshot();
+        assert_eq!(row.selected.get(), "2", "player 2 is the third choice id");
+        editor
+            .vm
+            .gamepads
+            .set_pad_port(0, Some(0))
+            .expect("port restores");
+    }
+
     /// System pages mirror the live registry: every factory system yields
     /// a labeled page whose rows track the view model selections.
     #[test]
@@ -594,14 +751,19 @@ mod tests {
     }
 
     /// Input pages carry slots plus section bindings; the shortcuts page
-    /// collapses to one prebuilt section with no slot chrome.
+    /// collapses to one prebuilt section with no slot chrome, and the
+    /// gamepads page lists pad ports plus the deadzone.
     #[test]
     fn inputs_pages_include_shortcuts_and_live_sections() {
         let (editor, _adapter, _dir) = headless_editor();
         let executor: Rc<dyn panechord::Executor> = Rc::new(TestExecutor);
         let pages = inputs(&editor, noop_capture(&executor), noop_capture(&executor));
-        assert_eq!(pages.len(), editor.vm.inputs().len() + 1);
-        let shortcuts = pages.last().expect("shortcuts page closes the list");
+        assert_eq!(pages.len(), editor.vm.inputs().len() + 2);
+        let gamepads = pages.last().expect("gamepads page closes the list");
+        assert_eq!(gamepads.key, "gamepads");
+        let shortcuts = pages
+            .get(pages.len() - 2)
+            .expect("shortcuts page precedes gamepads");
         assert_eq!(shortcuts.key, "shortcuts");
         let page = shortcuts.model.snapshot();
         assert!(!page.label.is_empty());
@@ -678,8 +840,9 @@ mod tests {
         let executor: Rc<dyn panechord::Executor> = Rc::new(TestExecutor);
         let pages = inputs(&editor, noop_capture(&executor), noop_capture(&executor));
         let rows = pages
-            .last()
-            .expect("shortcuts page closes the list")
+            .iter()
+            .find(|page| page.key == "shortcuts")
+            .expect("shortcuts page builds")
             .model
             .snapshot()
             .single_section
@@ -720,8 +883,9 @@ mod tests {
         let executor: Rc<dyn panechord::Executor> = Rc::new(TestExecutor);
         let pages = inputs(&editor, noop_capture(&executor), noop_capture(&executor));
         let rows = pages
-            .last()
-            .expect("shortcuts page closes the list")
+            .iter()
+            .find(|page| page.key == "shortcuts")
+            .expect("shortcuts page builds")
             .model
             .snapshot()
             .single_section

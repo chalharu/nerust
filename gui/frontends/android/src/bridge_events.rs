@@ -1,15 +1,20 @@
 //! Typed Kotlin bridge codec: v1 JSON strings into frontend events.
 //! JNI glue stays in `android::menu`; this module is host-testable.
 
-use nerust_input_traits::StandardButton;
+use nerust_input_traits::{GamepadAxis, StandardButton};
 
 /// Menu button presses from the Kotlin overflow menu.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum MenuAction {
     ControllerInput {
         device_id: i32,
         button: StandardButton,
         pressed: bool,
+    },
+    AnalogInput {
+        device_id: i32,
+        axis: GamepadAxis,
+        value: f32,
     },
     CreateSlot,
     DeleteSlot(u64),
@@ -29,17 +34,19 @@ pub(crate) enum MenuAction {
 }
 
 /// Single Kotlin→Rust event channel: menu presses and dialog dismiss.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// `Eq` is absent: analog values ride `f32`, compared by tests exactly
+/// but never hashed or keyed.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum FrontendEvent {
     Menu(MenuAction),
     ErrorDialogDismissed(crate::error_dialog_controller::DialogRequestId),
 }
 
 use crate::bridge_contract::{
-    ACTION_CONTROLLER, ACTION_CREATE_SLOT, ACTION_DELETE_SLOT, ACTION_EXIT, ACTION_LOAD_STATE,
-    ACTION_OPEN_ROM, ACTION_OPEN_SETTINGS, ACTION_ORIENTATION_CHANGED, ACTION_RESET,
-    ACTION_SAVE_STATE, ACTION_SELECT_SLOT, ACTION_TOGGLE_PAUSE, ACTION_TOUCH_GATE, ACTION_UNLOAD,
-    BRIDGE_EVENT_VERSION, validate_bridge_event,
+    ACTION_ANALOG, ACTION_CONTROLLER, ACTION_CREATE_SLOT, ACTION_DELETE_SLOT, ACTION_EXIT,
+    ACTION_LOAD_STATE, ACTION_OPEN_ROM, ACTION_OPEN_SETTINGS, ACTION_ORIENTATION_CHANGED,
+    ACTION_RESET, ACTION_SAVE_STATE, ACTION_SELECT_SLOT, ACTION_TOGGLE_PAUSE, ACTION_TOUCH_GATE,
+    ACTION_UNLOAD, BRIDGE_EVENT_VERSION, validate_bridge_event,
 };
 
 /// Typed controller-key mapping, checked against the shared JSON schema.
@@ -108,6 +115,10 @@ enum BridgeEventV1 {
         #[serde(default)]
         pressed: Option<bool>,
         #[serde(default)]
+        axis: Option<String>,
+        #[serde(default)]
+        value: Option<f32>,
+        #[serde(default)]
         slot_id: Option<i64>,
     },
     ErrorDialogDismissed {
@@ -137,9 +148,19 @@ fn decode_json_event(raw: &str) -> Option<FrontendEvent> {
             device_id,
             key,
             pressed,
+            axis,
+            value,
             slot_id,
             ..
-        } => decode_json_menu_action(&action, device_id, key.as_deref(), pressed, slot_id),
+        } => decode_json_menu_action(
+            &action,
+            device_id,
+            key.as_deref(),
+            pressed,
+            axis.as_deref(),
+            value,
+            slot_id,
+        ),
     }
 }
 
@@ -160,6 +181,8 @@ fn decode_json_menu_action(
     device_id: Option<i32>,
     key: Option<&str>,
     pressed: Option<bool>,
+    axis: Option<&str>,
+    value: Option<f32>,
     slot_id: Option<i64>,
 ) -> Option<FrontendEvent> {
     if action == ACTION_CONTROLLER {
@@ -171,6 +194,16 @@ fn decode_json_menu_action(
             }
         };
         return decode_controller_parts(device_id, key, pressed).map(FrontendEvent::Menu);
+    }
+    if action == ACTION_ANALOG {
+        let (device_id, axis, value) = match (device_id, axis, value) {
+            (Some(device_id), Some(axis), Some(value)) => (device_id, axis, value),
+            _ => {
+                log::warn!("ignoring analog bridge event with missing fields");
+                return None;
+            }
+        };
+        return decode_analog_parts(device_id, axis, value).map(FrontendEvent::Menu);
     }
     if action == ACTION_TOUCH_GATE {
         return match pressed {
@@ -215,11 +248,45 @@ fn decode_controller_parts(device_id: i32, key: &str, pressed: bool) -> Option<M
     })
 }
 
+fn decode_analog_parts(device_id: i32, axis: &str, value: f32) -> Option<MenuAction> {
+    let Some(axis) = controller_axis(axis) else {
+        log::warn!("ignoring unknown Android controller axis: {axis}");
+        return None;
+    };
+    if !(-1.0..=1.0).contains(&value) {
+        log::warn!("ignoring out-of-range Android axis value: {value}");
+        return None;
+    }
+    Some(MenuAction::AnalogInput {
+        device_id,
+        axis,
+        value,
+    })
+}
+
+/// Typed controller-axis mapping: SDL-style names to normalized axes.
+/// Single source: the decoder reads this table, no parallel match.
+pub(crate) const CONTROLLER_AXIS_TABLE: &[(&str, GamepadAxis)] = &[
+    ("left_x", GamepadAxis::LeftStickX),
+    ("left_y", GamepadAxis::LeftStickY),
+    ("right_x", GamepadAxis::RightStickX),
+    ("right_y", GamepadAxis::RightStickY),
+    ("trigger_l", GamepadAxis::LeftTrigger),
+    ("trigger_r", GamepadAxis::RightTrigger),
+];
+
 /// Single-table key lookup; the schema test keeps it in sync.
 fn controller_button(key: &str) -> Option<StandardButton> {
     CONTROLLER_KEY_TABLE
         .iter()
         .find(|(name, _)| *name == key)
+        .map(|(_, mapped)| *mapped)
+}
+
+fn controller_axis(axis: &str) -> Option<GamepadAxis> {
+    CONTROLLER_AXIS_TABLE
+        .iter()
+        .find(|(name, _)| *name == axis)
         .map(|(_, mapped)| *mapped)
 }
 
@@ -235,10 +302,10 @@ pub(crate) fn decode_frontend_event(raw: &str) -> Option<FrontendEvent> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ACTION_CREATE_SLOT, ACTION_DELETE_SLOT, ACTION_EXIT, ACTION_LOAD_STATE, ACTION_OPEN_ROM,
-        ACTION_OPEN_SETTINGS, ACTION_ORIENTATION_CHANGED, ACTION_RESET, ACTION_SAVE_STATE,
-        ACTION_SELECT_SLOT, ACTION_TOGGLE_PAUSE, ACTION_TOUCH_GATE, ACTION_UNLOAD, FrontendEvent,
-        MenuAction, decode_frontend_event,
+        ACTION_ANALOG, ACTION_CREATE_SLOT, ACTION_DELETE_SLOT, ACTION_EXIT, ACTION_LOAD_STATE,
+        ACTION_OPEN_ROM, ACTION_OPEN_SETTINGS, ACTION_ORIENTATION_CHANGED, ACTION_RESET,
+        ACTION_SAVE_STATE, ACTION_SELECT_SLOT, ACTION_TOGGLE_PAUSE, ACTION_TOUCH_GATE,
+        ACTION_UNLOAD, FrontendEvent, MenuAction, decode_frontend_event,
     };
     use crate::bridge_contract::BRIDGE_EVENT_VERSION;
 
@@ -445,10 +512,11 @@ mod tests {
             .collect();
         assert_eq!(
             names.len(),
-            14,
+            15,
             "new actions must also be handled by the decoder"
         );
         for action in [
+            ACTION_ANALOG,
             ACTION_CREATE_SLOT,
             ACTION_DELETE_SLOT,
             ACTION_EXIT,
@@ -468,6 +536,59 @@ mod tests {
         }
     }
 
+    /// Axis parity: the decoder table and the schema axis enum list
+    /// exactly the same axes, and every one round-trips with a float.
+    #[test]
+    fn controller_axis_table_matches_schema() {
+        use super::{CONTROLLER_AXIS_TABLE, decode_frontend_event};
+        use nerust_input_traits::GamepadAxis;
+        let doc: serde_json::Value = serde_json::from_str(include_str!("../bridge_events.v1.json"))
+            .expect("bridge schema must parse");
+        let axes = doc["definitions"]["menuEvent"]["properties"]["axis"]["enum"]
+            .as_array()
+            .expect("axis enum must list every controller axis");
+        let schema_axes: Vec<&str> = axes
+            .iter()
+            .map(|value| value.as_str().expect("axis enum entries are strings"))
+            .collect();
+        assert_eq!(schema_axes.len(), CONTROLLER_AXIS_TABLE.len());
+        for (name, axis) in CONTROLLER_AXIS_TABLE {
+            assert!(
+                schema_axes.contains(name),
+                "schema is missing controller axis {name}"
+            );
+            let raw = format!(
+                r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"analog","device_id":3,"axis":"{name}","value":0.5}}"#
+            );
+            assert_eq!(
+                decode_frontend_event(&raw),
+                Some(FrontendEvent::Menu(MenuAction::AnalogInput {
+                    device_id: 3,
+                    axis: *axis,
+                    value: 0.5,
+                })),
+                "axis {name} must round-trip"
+            );
+        }
+        for raw in [
+            format!(
+                r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"analog","device_id":3,"axis":"mystery","value":0.5}}"#
+            ),
+            format!(
+                r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"analog","device_id":3,"axis":"left_x","value":1.5}}"#
+            ),
+            format!(
+                r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"analog","device_id":3,"axis":"left_x"}}"#
+            ),
+        ] {
+            assert_eq!(decode_frontend_event(&raw), None);
+        }
+        assert_eq!(
+            GamepadAxis::LeftStickX,
+            CONTROLLER_AXIS_TABLE[0].1,
+            "axis order stays SDL-canonical"
+        );
+    }
     /// Key parity: the decoder table and the schema key enum list
     /// exactly the same keys; Kotlin `KEY_*` pins the same set in CI.
     #[test]

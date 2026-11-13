@@ -347,6 +347,7 @@ mod tests {
         );
         let mut snapshot = manager.snapshot().unwrap();
         snapshot.shared.input = InputSettings {
+            gamepad: Default::default(),
             systems: HashMap::from([(Box::new(DummySystemId) as Box<_>, {
                 let mut system = SystemInputSettings::default();
                 system.keyboard_profiles.insert(
@@ -365,6 +366,7 @@ mod tests {
                 keyboard: vec![ShortcutBinding {
                     action: ShortcutAction::TogglePause,
                     key: Some(Key::Space),
+                    pad: None,
                 }],
             },
         };

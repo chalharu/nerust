@@ -642,6 +642,18 @@ impl AndroidFrontend {
                         pressed,
                     );
                 }
+                MenuAction::AnalogInput {
+                    device_id,
+                    axis,
+                    value,
+                } => {
+                    self.chrome.input.apply_physical_controller_axis(
+                        &mut self.core.session,
+                        device_id,
+                        axis,
+                        value,
+                    );
+                }
                 MenuAction::CreateSlot => {
                     let _ = self.exec(SessionCommand::CreateSlot);
                 }

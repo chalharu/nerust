@@ -23,7 +23,8 @@ def sample(prop):
         return prop["const"]
     if "enum" in prop:
         return prop["enum"][0]
-    return {"integer": max(1, prop.get("minimum", 1)), "string": "probe", "boolean": True}[GEN.field_type(prop)]
+    return {"integer": max(1, prop.get("minimum", 1)), "string": "probe", "boolean": True,
+            "number": 0.5}[GEN.field_type(prop)]
 
 
 def _enum_cases(event, name, prop, base):
@@ -59,7 +60,8 @@ def _integer_cases(event, name, prop, base):
 def _prop_cases(event, name, prop, base, required):
     """Missing, mistyped, enum, and bounds probes for one property."""
     kind = GEN.field_type(prop)
-    wrong = {"integer": "not an integer", "boolean": "not a boolean", "string": 7}[kind]
+    wrong = {"integer": "not an integer", "boolean": "not a boolean", "string": 7,
+             "number": "not a number"}[kind]
     missing = dict(base)
     del missing[name]
     cases = [(f"{event}: missing {'required' if required else 'optional'} {name}", missing, not required)]
@@ -67,7 +69,18 @@ def _prop_cases(event, name, prop, base, required):
         cases.append((f"{event}: {name}={value!r}", dict(base, **{name: value}), False))
     cases.append((f"{event}: wrong type {name}", dict(base, **{name: wrong}), False))
     cases += _enum_cases(event, name, prop, base)
-    return cases + _integer_cases(event, name, prop, base)
+    cases += _integer_cases(event, name, prop, base)
+    return cases + _number_cases(event, name, prop, base)
+
+
+def _number_cases(event, name, prop, base):
+    """Boundary probes for floats."""
+    if GEN.field_type(prop) != "number" or "const" in prop:
+        return []
+    bounds = ((prop["minimum"], True), (prop["maximum"], True),
+              (prop["minimum"] - 1, False), (prop["maximum"] + 1, False))
+    return [(f"{event}: boundary {name}={number}", dict(base, **{name: number}), accepted)
+            for number, accepted in bounds]
 
 
 def _conditional_cases(event, definition, base):
@@ -120,6 +133,8 @@ def harness(schema):
         'extern crate self as nerust_input_traits;',
         '#[derive(Debug, Clone, Copy, PartialEq, Eq)]',
         'pub enum StandardButton { South, East, West, North, Back, Guide, Start, LeftStick, RightStick, LeftShoulder, RightShoulder, DpadUp, DpadDown, DpadLeft, DpadRight, Misc1, Paddle1, Paddle2, Paddle3, Paddle4 }',
+        '#[derive(Debug, Clone, Copy, PartialEq)]',
+        'pub enum GamepadAxis { LeftStickX, LeftStickY, RightStickX, RightStickY, LeftTrigger, RightTrigger }',
         'mod error_dialog_controller {',
         '    #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]',
         '    #[serde(transparent)]',

@@ -1427,6 +1427,83 @@ fn covered_slot_disables_concrete_controllers() {
 }
 
 #[test]
+fn pad_capture_lands_on_shortcut_rows() {
+    use nerust_input_traits::StandardButton;
+    let (mut snapshot, _) = test_payload();
+    // Production seeds shortcut rows at load; the payload fixture skips
+    // that, so capture would find no entry to update.
+    nerust_settings_core::model::input::ensure_default_shortcuts(
+        &mut snapshot.shared.input.shortcuts,
+    );
+    let mut capture: CaptureSlot = None;
+    // Any shortcut capture row: pads only land on shortcuts.
+    let target_key = with_test_deps(|| {
+        let vm = build_vm(
+            &snapshot,
+            &test_deps(),
+            sys_display(AppLanguage::SystemDefault),
+        )
+        .expect("vm builds");
+        let keyboards = test_keyboards();
+        let truth = projection(
+            &keyboards,
+            None,
+            &[],
+            sys_display(AppLanguage::SystemDefault),
+        );
+        let sections = build_sections(&vm, &snapshot, truth);
+        let shortcuts = sections
+            .iter()
+            .find(|section| section.id == "controls.shortcuts")
+            .expect("shortcuts screen exists");
+        shortcuts
+            .rows
+            .iter()
+            .find(|row| row.kind == RowKind::Capture)
+            .map(|row| row.key.clone())
+            .expect("shortcut capture row exists")
+    });
+    let started = apply(
+        &mut snapshot,
+        &mut capture,
+        &mut test_keyboards(),
+        &target_key,
+        WireOp::StartCapture,
+        0,
+        0,
+    );
+    assert!(started.capture.is_some(), "shortcut capture pending");
+    // BUTTON_MODE (110) captures Guide into the pad column.
+    let (_, consumed) = with_test_deps(|| {
+        apply_hardware_key(
+            110,
+            true,
+            &mut snapshot,
+            &mut capture,
+            projection(
+                &test_keyboards(),
+                None,
+                &[],
+                sys_display(AppLanguage::SystemDefault),
+            ),
+        )
+        .expect("pad capture applies")
+    });
+    assert!(consumed, "pad press is consumed");
+    assert!(capture.is_none(), "capture closes after one pad");
+    assert!(
+        snapshot
+            .shared
+            .input
+            .shortcuts
+            .keyboard
+            .iter()
+            .any(|binding| binding.pad == Some(StandardButton::Guide)),
+        "Guide landed in a shortcut pad column"
+    );
+}
+
+#[test]
 fn capture_round_trips_through_hardware_keys() {
     let (mut snapshot, _) = test_payload();
     let mut capture: CaptureSlot = None;
@@ -1675,6 +1752,8 @@ fn bare_rows_are_reviewed_allowlist() {
     // - player.*.devices: the value line carries the port summary.
     // - mute/vsync toggles and per-device key-mapping links: self-evident
     //   labels with no restatement (on/off, or the machine context).
+    // - pad port rows (controls.gamepads.padN): "Pad N" plus the player
+    //   choices list the whole story, like color/position rows.
     let mut bare: Vec<String> = payload_bare_keys(&test_payload().1);
     bare.sort();
     let mut expected: Vec<String> = vec![
@@ -1687,6 +1766,10 @@ fn bare_rows_are_reviewed_allowlist() {
         "general.language",
         "controls.cartridge_rumble_strength",
         "controls.cartridge_rumble_target",
+        "controls.gamepads.pad1",
+        "controls.gamepads.pad2",
+        "controls.gamepads.pad3",
+        "controls.gamepads.pad4",
         "controls.overlay_haptics",
         "controls.overlay_opacity",
         "controls.overlay_scale",
@@ -1720,6 +1803,7 @@ fn bare_rows_are_reviewed_allowlist() {
         "reset.all",
         "reset.audio.detail",
         "reset.controllers",
+        "reset.controls.gamepads",
         "reset.controls.overlay_detail",
         "reset.controls.shortcuts",
         "reset.devices.p1",
@@ -1819,6 +1903,57 @@ fn toggle_and_number_commands_round_trip() {
     let volume = set(&mut snapshot, "audio.volume", 0, 42);
     assert_eq!(snapshot.local.audio.master_volume_percent, 42);
     assert_eq!(row(&volume, "audio.volume").number, 42);
+}
+
+#[test]
+fn gamepad_section_sets_deadzone_ports_and_resets() {
+    let (mut snapshot, _) = test_payload();
+    assert_eq!(snapshot.shared.input.gamepad.deadzone_percent, 15);
+    let next = set(&mut snapshot, "controls.gamepads.deadzone", 0, 25);
+    assert_eq!(snapshot.shared.input.gamepad.deadzone_percent, 25);
+    assert_eq!(row(&next, "controls.gamepads.deadzone").number, 25);
+    // Pad 3 is Off by default; parking it on player 2 sticks.
+    assert_eq!(snapshot.shared.input.gamepad.pad_ports[2], None);
+    let pad_row = row(&next, "controls.gamepads.pad3");
+    let player2 = pad_row
+        .choices
+        .iter()
+        .position(|choice| choice.value == serde_json::json!(1))
+        .expect("player 2 choice exists");
+    let after = set(&mut snapshot, "controls.gamepads.pad3", player2, 0);
+    assert_eq!(snapshot.shared.input.gamepad.pad_ports[2], Some(1));
+    assert_eq!(
+        row(&after, "controls.gamepads.pad3").selected,
+        player2,
+        "selection tracks the draft"
+    );
+    // Screen reset restores the deadzone and the default table.
+    let mut capture: CaptureSlot = None;
+    let reset = with_test_deps(|| {
+        apply_command_to(
+            &mut snapshot,
+            &serde_json::to_string(&WireCommand {
+                key: "reset.controls.gamepads".to_string(),
+                index: 0,
+                number: 0,
+                op: WireOp::ResetSection,
+                payload: serde_json::Value::Null,
+            })
+            .unwrap(),
+            &mut capture,
+            &mut test_keyboards(),
+            &mut None,
+            &mut Vec::new(),
+            &mut None,
+        )
+        .expect("reset applies")
+    });
+    assert_eq!(snapshot.shared.input.gamepad.deadzone_percent, 15);
+    assert_eq!(
+        snapshot.shared.input.gamepad.pad_ports,
+        [Some(0), Some(1), None, None]
+    );
+    assert_eq!(row(&reset, "controls.gamepads.deadzone").number, 15);
 }
 
 #[test]

@@ -38,8 +38,8 @@ use nerust_gui_runtime::settings::{
     manager::SettingsManager,
 };
 use nerust_input_traits::{
-    AbstractKey, AttachmentId, DigitalControlId, InputAssignments, SourceButtonId, SourceId,
-    UnifiedFieldMap,
+    AbstractKey, AttachmentId, DigitalControlId, GamepadAxis, InputAssignments, PadGuid,
+    SourceButtonId, SourceId, StandardButton, UnifiedFieldMap,
 };
 use nerust_persistence::error::PersistenceError;
 use nerust_render_traits::{FrameBuffer, VideoRenderProfile};
@@ -171,6 +171,18 @@ struct InputDept {
     /// Repeat suppression for every source: one `(source, button)` set, so
     /// keyboards and pads share the rule instead of each adapter owning one.
     pressed: HashSet<(SourceId, SourceButtonId)>,
+    /// Post-deadzone analog values per `(source, axis)`: the transport
+    /// endpoint future analog consoles read; sticks also feed the
+    /// dpad substitute from here.
+    analogs: HashMap<(SourceId, GamepadAxis), f32>,
+    /// Stick-derived dpad directions currently asserted, per
+    /// `(source, axis, button)`. Distinct from `pressed` so a hat release
+    /// cannot strand a still-deflected stick (or vice versa).
+    axis_dpad: HashSet<(SourceId, GamepadAxis, StandardButton)>,
+    /// Pad connection order within this boot: `pad_order[i]` is pad `i`
+    /// for the persisted `pad_ports` table. Transient ids never persist;
+    /// order does the assignment.
+    pad_order: Vec<PadGuid>,
     /// Key → Copy (attachment, control) for dpad-neutral resolution.
     /// Interned at rebuild time so the hot path never allocates.
     key_source: HashMap<nerust_input_traits::Key, (AttachmentId, DigitalControlId)>,
@@ -189,6 +201,9 @@ impl InputDept {
             current_assignments,
             key_field_map: HashMap::new(),
             pressed: HashSet::new(),
+            analogs: HashMap::new(),
+            axis_dpad: HashSet::new(),
+            pad_order: Vec::new(),
             key_source: HashMap::new(),
             interner: IdInterner::default(),
             press_state: field_press::FieldPressState::default(),
@@ -281,15 +296,18 @@ impl InputDept {
     }
 
     /// First console control carrying one abstract button, in slot order.
-    /// Pad resolution inverts `abstract_for` over the same traversal:
-    /// first assigned port wins, so multi-port choice stays explicit
-    /// instead of fanning one pad out to every port silently.
+    /// Pad resolution inverts `abstract_for` over the same traversal.
+    /// `slot` pins the pad's assigned port; `None` scans every slot.
     fn control_for_abstract(
         &self,
         abstract_key: AbstractKey,
+        slot: Option<usize>,
     ) -> Option<(AttachmentId, DigitalControlId)> {
         use nerust_input_traits::ControlId;
-        for (_slot, profile) in self.current_assignments.slots() {
+        for (index, (_slot, profile)) in self.current_assignments.slots().iter().enumerate() {
+            if slot.is_some_and(|pinned| pinned != index) {
+                continue;
+            }
             let Some(profile) = profile else {
                 continue;
             };
@@ -298,6 +316,75 @@ impl InputDept {
                     for info in *group {
                         if info.abstract_key == Some(abstract_key)
                             && let ControlId::Digital(id) = info.id
+                        {
+                            return Some((*port, id));
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// First-seen index of one pad, registering newcomers. Keyboards take
+    /// no port. Pads past the table park: the persisted prefs cannot name
+    /// them, so they resolve to `None` instead of aliasing pad 4.
+    fn pad_index(&mut self, source: SourceId) -> Option<usize> {
+        match source {
+            SourceId::Keyboard(_) => None,
+            SourceId::Pad(guid) => {
+                if let Some(index) = self.pad_order.iter().position(|known| *known == guid) {
+                    return Some(index);
+                }
+                if self.pad_order.len() >= nerust_input_traits::MAX_PADS {
+                    return None;
+                }
+                let index = self.pad_order.len();
+                self.pad_order.push(guid);
+                Some(index)
+            }
+        }
+    }
+
+    /// Assigned player slot for one source: pad order into the persisted
+    /// table, clamped to the live slots. `None` parks the source (Off,
+    /// keyboards, or pads past the table).
+    fn pad_slot(
+        &mut self,
+        source: SourceId,
+        ports: &[Option<usize>; nerust_input_traits::MAX_PADS],
+    ) -> Option<usize> {
+        let index = self.pad_index(source)?;
+        let slot = (*ports.get(index)?)?;
+        let live = self.current_assignments.slots().len();
+        if live == 0 {
+            return None;
+        }
+        Some(slot.min(live - 1))
+    }
+
+    /// First console control carrying one analog abstract, in one slot.
+    /// Same traversal as `control_for_abstract`, over analog controls.
+    /// No console exposes analog yet, so this resolves `None` today;
+    /// the lookup (not a second spelling) is the transport endpoint.
+    fn control_for_analog_abstract(
+        &self,
+        abstract_key: AbstractKey,
+        slot: Option<usize>,
+    ) -> Option<(AttachmentId, nerust_input_traits::AnalogControlId)> {
+        use nerust_input_traits::ControlId;
+        for (index, (_slot, profile)) in self.current_assignments.slots().iter().enumerate() {
+            if slot.is_some_and(|pinned| pinned != index) {
+                continue;
+            }
+            let Some(profile) = profile else {
+                continue;
+            };
+            for set in profile.port_sets() {
+                for (port, group) in set.ports.iter().zip(profile.port_groups()) {
+                    for info in *group {
+                        if info.abstract_key == Some(abstract_key)
+                            && let ControlId::Analog(id) = info.id
                         {
                             return Some((*port, id));
                         }

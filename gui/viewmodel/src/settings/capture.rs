@@ -39,7 +39,17 @@ impl CaptureViewModel {
 
     pub fn clear_binding(&self, target: &CaptureTarget) -> Result<(), ViewModelError> {
         self.editor.transact(|state| {
+            // Row-level reset: both columns clear together, so a pad-only
+            // row cannot strand an invisible keyboard twin. Game binding
+            // rows never carry pads, so only shortcuts take the pad clear.
             nerust_settings_core::editor::apply_capture_target(state.draft_mut(), target, None);
+            if matches!(target, CaptureTarget::Shortcut(_)) {
+                nerust_settings_core::editor::apply_capture_pad_target(
+                    state.draft_mut(),
+                    target,
+                    None,
+                );
+            }
             state.capture_target = None;
             Ok(())
         })
@@ -53,6 +63,20 @@ impl CaptureViewModel {
                 state.draft_mut(),
                 &target,
                 Some(key),
+            );
+            state.capture_target = None;
+            Ok(())
+        });
+    }
+
+    pub fn apply_captured_pad(&self, button: nerust_input_traits::StandardButton) {
+        let target = self.editor.current().capture_target.clone();
+        let Some(target) = target else { return };
+        let _ = self.editor.transact(|state| {
+            nerust_settings_core::editor::apply_capture_pad_target(
+                state.draft_mut(),
+                &target,
+                Some(button),
             );
             state.capture_target = None;
             Ok(())

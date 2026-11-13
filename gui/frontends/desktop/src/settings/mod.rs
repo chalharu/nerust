@@ -1267,7 +1267,7 @@ mod tests {
         );
         assert_eq!(
             presentation.input_pages.get().len(),
-            editor.vm.inputs().len() + 1
+            editor.vm.inputs().len() + 2
         );
         assert_eq!(
             presentation.system_pages.get().len(),

@@ -65,6 +65,60 @@ mod tests {
     use crate::settings::test_support::test_vm;
 
     #[test]
+    fn shortcut_row_combines_key_and_pad_labels() {
+        use std::sync::Arc;
+
+        use nerust_settings_core::model::{
+            app_state::DesktopAppState,
+            input::{ShortcutAction, default_shortcut_bindings},
+            local::HostBackendLocalSettings,
+            shared::DesktopSharedSettings,
+            snapshot::SettingsSnapshot,
+        };
+
+        use super::super::dto::BindingValueView;
+        use crate::settings::editor::NoopStoragePathValidator;
+        use crate::settings::test_support::{TestCoreFactory, TestInputFactory};
+
+        let mut shared = DesktopSharedSettings::default();
+        shared.input.shortcuts.keyboard = default_shortcut_bindings();
+        let snapshot = SettingsSnapshot {
+            shared,
+            local: HostBackendLocalSettings::default(),
+            app_state: DesktopAppState::default(),
+        };
+        let factory: Arc<dyn nerust_system_traits::factory::CoreFactory> =
+            Arc::new(TestCoreFactory(TestInputFactory::new()));
+        let vm = crate::settings::SettingsViewModel::new(
+            snapshot,
+            vec![factory],
+            Arc::new([]),
+            std::rc::Rc::new(NoopStoragePathValidator)
+                as std::rc::Rc<dyn crate::settings::editor::StoragePathValidator>,
+        )
+        .unwrap();
+        let rows = vm.shortcuts.view.get().rows;
+        let pause = rows
+            .iter()
+            .find(|row| row.target == CaptureTarget::Shortcut(ShortcutAction::TogglePause))
+            .expect("pause row");
+        assert!(
+            matches!(&pause.value, BindingValueView::Bound(label) if label == "Space + Guide"),
+            "pause row shows both columns, got {:?}",
+            pause.value
+        );
+        let reset = rows
+            .iter()
+            .find(|row| row.target == CaptureTarget::Shortcut(ShortcutAction::Reset))
+            .expect("reset row");
+        assert!(
+            matches!(&reset.value, BindingValueView::Unbound(_)),
+            "unbound row stays unbound, got {:?}",
+            reset.value
+        );
+    }
+
+    #[test]
     fn shortcuts_lists_all_global_actions_once() {
         let vm = test_vm();
         let view = vm.shortcuts.view.get();

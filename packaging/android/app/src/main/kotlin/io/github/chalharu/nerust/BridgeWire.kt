@@ -20,6 +20,7 @@ internal object MenuAction {
     const val DELETE_SLOT = "delete_slot"
     const val SELECT_SLOT = "select_slot"
     const val CONTROLLER = "controller"
+    const val ANALOG = "analog"
     const val TOUCH_GATE = "touch_gate"
 
     val ALL: Set<String> = setOf(
@@ -36,6 +37,7 @@ internal object MenuAction {
         DELETE_SLOT,
         SELECT_SLOT,
         CONTROLLER,
+        ANALOG,
         TOUCH_GATE,
     )
 }
@@ -73,5 +75,23 @@ internal object ControllerKey {
         RIGHT,
         L3,
         R3,
+    )
+}
+
+internal object ControllerAxis {
+    const val LEFT_X = "left_x"
+    const val LEFT_Y = "left_y"
+    const val RIGHT_X = "right_x"
+    const val RIGHT_Y = "right_y"
+    const val TRIGGER_L = "trigger_l"
+    const val TRIGGER_R = "trigger_r"
+
+    val ALL: Set<String> = setOf(
+        LEFT_X,
+        LEFT_Y,
+        RIGHT_X,
+        RIGHT_Y,
+        TRIGGER_L,
+        TRIGGER_R,
     )
 }

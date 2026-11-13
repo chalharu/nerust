@@ -418,6 +418,9 @@ fn apply_reset_scope(
         "controls.shortcuts" => {
             snapshot.shared.input.shortcuts = default.shared.input.shortcuts.clone();
         }
+        "controls.gamepads" => {
+            snapshot.shared.input.gamepad = default.shared.input.gamepad.clone();
+        }
         scope => {
             return apply_reset_dynamic_scope(snapshot, default, deps, scope, truth);
         }
@@ -640,6 +643,36 @@ fn apply_view_model_command(
             let value: NotificationColor = choice(row, command.index)?;
             vm.notifications
                 .set_warning_color(value)
+                .map_err(|error| error.to_string())
+        }
+        "controls.gamepads.deadzone" => {
+            let value: u8 = range_value(&command.key, command.number)?;
+            vm.gamepads
+                .set_deadzone(value)
+                .map_err(|error| error.to_string())
+        }
+        "controls.gamepads.pad1" => {
+            let value: Option<usize> = choice(row, command.index)?;
+            vm.gamepads
+                .set_pad_port(0, value)
+                .map_err(|error| error.to_string())
+        }
+        "controls.gamepads.pad2" => {
+            let value: Option<usize> = choice(row, command.index)?;
+            vm.gamepads
+                .set_pad_port(1, value)
+                .map_err(|error| error.to_string())
+        }
+        "controls.gamepads.pad3" => {
+            let value: Option<usize> = choice(row, command.index)?;
+            vm.gamepads
+                .set_pad_port(2, value)
+                .map_err(|error| error.to_string())
+        }
+        "controls.gamepads.pad4" => {
+            let value: Option<usize> = choice(row, command.index)?;
+            vm.gamepads
+                .set_pad_port(3, value)
                 .map_err(|error| error.to_string())
         }
         "notifications.error_enabled" => {
