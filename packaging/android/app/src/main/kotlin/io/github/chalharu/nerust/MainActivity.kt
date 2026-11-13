@@ -171,6 +171,7 @@ class MainActivity :
         // behavior (volume, Back, hardware keyboards in gameplay).
         val isController = isControllerSource(event.source)
         if (!isController) {
+            Log.v(TAG, "non-controller key: source=0x${event.source.toString(16)} keyCode=${event.keyCode}")
             return super.dispatchKeyEvent(event)
         }
         val key =
@@ -192,7 +193,10 @@ class MainActivity :
                 KeyEvent.KEYCODE_DPAD_DOWN -> ControllerKey.DOWN
                 KeyEvent.KEYCODE_DPAD_LEFT -> ControllerKey.LEFT
                 KeyEvent.KEYCODE_DPAD_RIGHT -> ControllerKey.RIGHT
-                else -> return super.dispatchKeyEvent(event)
+                else -> {
+                    Log.d(TAG, "unmapped controller key: source=0x${event.source.toString(16)} keyCode=${event.keyCode}")
+                    return super.dispatchKeyEvent(event)
+                }
             }
         val pressed = event.action == KeyEvent.ACTION_DOWN
         if (pressed && event.repeatCount > 0) {
@@ -209,6 +213,7 @@ class MainActivity :
 
     override fun onGenericMotionEvent(event: MotionEvent): Boolean {
         if (event.source and InputDevice.SOURCE_JOYSTICK != InputDevice.SOURCE_JOYSTICK) {
+            Log.v(TAG, "non-joystick motion: source=0x${event.source.toString(16)}")
             return super.onGenericMotionEvent(event)
         }
         val hatX = event.getAxisValue(MotionEvent.AXIS_HAT_X)
@@ -303,6 +308,7 @@ class MainActivity :
         val keys = controllerPressed.getOrPut(deviceId) { mutableSetOf() }
         val changed = if (pressed) keys.add(key) else keys.remove(key)
         if (!changed) return
+        Log.d(TAG, "controller key: deviceId=$deviceId key=$key pressed=$pressed")
         if (pressed) {
             sensorController.lastControllerDeviceId = deviceId
             chromeManager.noteControllerInput()
