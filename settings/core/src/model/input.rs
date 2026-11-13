@@ -56,8 +56,6 @@ impl Default for GamepadSettings {
     }
 }
 
-/// Maximum pads the port table (and the session order) tracks.
-
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct SystemInputSettings {
