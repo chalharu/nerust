@@ -2,7 +2,7 @@ use std::{collections::HashSet, path::Path, sync::Arc};
 
 use nerust_core_traits::{audio::AudioBackendRegistry, identity::SystemId};
 use nerust_gui_application::{
-    EmulationPort, FramePort, HistoryPort, KeyboardPort, MediaPort, SessionAction,
+    EmulationPort, FramePort, GamepadPort, HistoryPort, KeyboardPort, MediaPort, SessionAction,
     SessionActionPort, SettingsPort,
 };
 use nerust_gui_runtime::settings::{HostBackendCapabilities, SettingsPaths, SettingsSnapshot};
@@ -20,6 +20,7 @@ pub struct SessionAdapter {
     loader: Box<dyn RomLoader>,
     held: bool,
     pressed_keys: HashSet<nerust_input_traits::Key>,
+    gamepads: crate::gamepad::Manager,
     audio: Arc<AudioBackendRegistry>,
     osd: nerust_gui_shell::session::osd::OsdManager,
 }
@@ -169,6 +170,7 @@ impl SessionAdapter {
             loader,
             held: false,
             pressed_keys: HashSet::new(),
+            gamepads: crate::gamepad::Manager::new(),
             audio,
             osd: nerust_gui_shell::session::osd::OsdManager::new(),
         })
@@ -297,6 +299,50 @@ impl KeyboardPort for SessionAdapter {
     fn clear_input(&mut self) {
         self.pressed_keys.clear();
         self.session.clear_input();
+    }
+}
+
+impl GamepadPort for SessionAdapter {
+    type Shortcut = KeyboardShortcut;
+
+    /// One HID poll through the unified source map: connects register
+    /// descriptor identity first (reconnects reuse their order index),
+    /// then buttons/axes ride the same path as Android pads. Mirrors
+    /// `key_event`: fields clear when disabled, shortcuts still return.
+    fn poll_gamepads(&mut self, controller_enabled: bool, out: &mut Vec<KeyboardShortcut>) {
+        use crate::gamepad::PadEvent;
+        use nerust_input_traits::SourceButtonId;
+
+        let mut events = Vec::new();
+        self.gamepads.drain(&mut events);
+        for (device, event) in events {
+            let device_id = device as i32;
+            match event {
+                PadEvent::Connected { descriptor } => {
+                    self.session.note_pad_connected(device_id, &descriptor);
+                }
+                PadEvent::Disconnected => {
+                    self.session.note_pad_disconnected(device_id);
+                }
+                PadEvent::Button { button, pressed } => {
+                    let source = self.session.pad_source_for(device_id);
+                    if let Some(shortcut) = self.session.handle_source_button(
+                        source,
+                        SourceButtonId::Pad(button),
+                        pressed,
+                    ) {
+                        out.push(shortcut);
+                    }
+                }
+                PadEvent::Axis { axis, value } => {
+                    let source = self.session.pad_source_for(device_id);
+                    self.session.handle_source_axis(source, axis, value);
+                }
+            }
+        }
+        if !controller_enabled {
+            self.session.clear_input();
+        }
     }
 }
 
@@ -690,6 +736,19 @@ mod tests {
         assert_eq!(adapter.key_event(Key::KeyV, true, true), first);
         adapter.clear_input();
         assert_eq!(adapter.key_event(Key::KeyV, true, false), first);
+    }
+
+    #[test]
+    fn pad_poll_drains_empty_without_devices() {
+        // CI runners expose no HID pads: the port drains empty under
+        // both gates without touching the keyboard path.
+        use nerust_gui_application::GamepadPort;
+        let (mut adapter, _dir) = test_fixture::loaded_adapter();
+        let mut cuts = Vec::new();
+        adapter.poll_gamepads(true, &mut cuts);
+        assert!(cuts.is_empty());
+        adapter.poll_gamepads(false, &mut cuts);
+        assert!(cuts.is_empty());
     }
 
     #[test]

@@ -17,6 +17,7 @@ tao = ["panechord/tao"]
 futures-timer.workspace = true
 log.workspace = true
 nerust_core_traits.workspace = true
+nerust_gamepad_db.workspace = true
 nerust_gui_application.workspace = true
 nerust_gui_runtime.workspace = true
 nerust_gui_shell.workspace = true
@@ -29,6 +30,10 @@ nerust_system_traits.workspace = true
 panechord.workspace = true
 raw-window-handle.workspace = true
 serde.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation-sys.workspace = true
+io-kit-sys.workspace = true
 
 [dev-dependencies]
 nerust_nes_factory.workspace = true

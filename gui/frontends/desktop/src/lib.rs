@@ -1,5 +1,9 @@
 mod debugger;
 mod error;
+// Non-mac production carries the manager as a tested stub (no HID yet);
+// the allow only silences that stub, never mac or test builds.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod gamepad;
 mod history;
 mod ppu;
 mod render;
@@ -493,26 +497,14 @@ impl MainHost {
                     return;
                 };
                 let result = match app.key_event(key, *pressed) {
-                    Some(KeyboardShortcut::Session(ShortcutAction::TogglePause)) => {
-                        app.toggle_pause();
-                        Ok(())
-                    }
-                    Some(KeyboardShortcut::Session(action)) => {
-                        SessionAdapter::session_action(action)
-                            .map_or(Ok(()), |action| app.execute(action).map(|_| ()))
-                    }
-                    Some(KeyboardShortcut::ToggleFullscreen) => {
-                        self.renderer.borrow().toggle_fullscreen();
-                        Ok(())
-                    }
-                    Some(KeyboardShortcut::OpenDebugger) => {
-                        drop(app);
-                        let dispatch = self.actions.borrow().clone();
-                        if let Some(dispatch) = dispatch {
-                            dispatch(view::Intent::Debugger);
+                    Some(cut) => match self.apply_shortcut(&mut app, cut) {
+                        Some(result) => result,
+                        None => {
+                            drop(app);
+                            self.dispatch_debugger();
+                            return;
                         }
-                        return;
-                    }
+                    },
                     None => return,
                 };
                 drop(app);
@@ -584,6 +576,7 @@ impl MainHost {
         nerust_gui_application::ApplicationState,
         Result<Option<panechord::ImageFrame>, String>,
     ) {
+        self.poll_pads();
         let mut app = self.application.borrow_mut();
         let profile = app.session().render_profile();
         let vsync = app.settings().local.video.presentation.vsync;
@@ -654,6 +647,69 @@ impl MainHost {
                     }
                 }
             });
+        }
+    }
+
+    /// One frame of pad input before capture: drains HID, applies fields
+    /// for this frame, and routes shortcut edges through the shared tail.
+    /// The app borrow stays scoped so debugger dispatch never re-borrows.
+    fn poll_pads(&self) {
+        let cuts = {
+            let mut app = self.application.borrow_mut();
+            let mut cuts = Vec::new();
+            app.poll_gamepads(&mut cuts);
+            cuts
+        };
+        let mut debugger = false;
+        let mut last: Option<Result<(), String>> = None;
+        for cut in cuts {
+            let mut app = self.application.borrow_mut();
+            match self.apply_shortcut(&mut app, cut) {
+                Some(result) => last = Some(result),
+                None => debugger = true,
+            }
+        }
+        // Last edge wins, mirroring the per-event notice line: success
+        // clears a stale notice exactly like the keyboard path.
+        if let Some(result) = last {
+            let _ = self.model.update(move |model| model.notice = result.err());
+        }
+        if debugger {
+            self.dispatch_debugger();
+        }
+    }
+
+    /// Shared key/pad shortcut tail: applies one edge, returning the
+    /// outcome for the notice line. `OpenDebugger` defers (`None`) since
+    /// dispatch must run without the app borrow held.
+    fn apply_shortcut(
+        &self,
+        app: &mut nerust_gui_application::Application<SessionAdapter>,
+        cut: KeyboardShortcut,
+    ) -> Option<Result<(), String>> {
+        match cut {
+            KeyboardShortcut::Session(ShortcutAction::TogglePause) => {
+                app.toggle_pause();
+                Some(Ok(()))
+            }
+            KeyboardShortcut::Session(action) => Some(
+                SessionAdapter::session_action(action)
+                    .map_or(Ok(()), |action| app.execute(action).map(|_| ())),
+            ),
+            KeyboardShortcut::ToggleFullscreen => {
+                self.renderer.borrow().toggle_fullscreen();
+                Some(Ok(()))
+            }
+            KeyboardShortcut::OpenDebugger => None,
+        }
+    }
+
+    /// Debugger dispatch without any app borrow held (the pane re-borrows
+    /// through actions, like the keyboard path).
+    fn dispatch_debugger(&self) {
+        let dispatch = self.actions.borrow().clone();
+        if let Some(dispatch) = dispatch {
+            dispatch(view::Intent::Debugger);
         }
     }
 

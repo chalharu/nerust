@@ -58,6 +58,14 @@ pub trait KeyboardPort {
     fn clear_input(&mut self);
 }
 
+/// Poll-driven pad input: backends without OS key events (desktop HID)
+/// drain here once per frame. Shortcuts return even when disabled so a
+/// held Guide can resume from pause, mirroring `key_event`.
+pub trait GamepadPort {
+    type Shortcut;
+    fn poll_gamepads(&mut self, controller_enabled: bool, out: &mut Vec<Self::Shortcut>);
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PauseReason {
     User,
@@ -272,6 +280,20 @@ impl<P: EmulationPort + KeyboardPort> Application<P> {
         if !self.closed {
             self.port.clear_input();
         }
+    }
+}
+
+impl<P: EmulationPort + GamepadPort> Application<P> {
+    /// One frame of pad input: drains the backend, applies fields, and
+    /// collects shortcut edges. Never `None`-gated: an empty backend is
+    /// an empty vec, not a closed application.
+    pub fn poll_gamepads(&mut self, out: &mut Vec<P::Shortcut>) {
+        if self.closed {
+            return;
+        }
+        let controller_enabled =
+            self.port.loaded() && !self.port.paused() && !self.execution_held();
+        self.port.poll_gamepads(controller_enabled, out);
     }
 }
 
