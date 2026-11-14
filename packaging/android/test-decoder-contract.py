@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Run schema-derived probes through the real Rust decoder, without an SDK.
 
-The isolated crate avoids building unrelated GUI/GPU backends. Only the input
-key enum and request-id wrapper are fixtures; codec and validator are real files.
+The isolated crate avoids building unrelated GUI/GPU backends. Only the
+request-id wrapper is a fixture (its real owner is the Android frontend);
+the input enums come from the real traits crate, codec and validator are
+real files.
 """
 import json
 import os
@@ -125,16 +127,14 @@ def manifest():
         version = workspace["workspace"]["dependencies"][name]["version"]
         features = ["std", "derive"] if name == "serde" else ["std"]
         lines.append(f'{name} = {{ version = {json.dumps(version)}, features = {json.dumps(features)} }}')
+    # Real input vocabulary by path: the decoder's StandardButton/GamepadAxis
+    # must be the traits crate, never a fixture copy that could drift from it.
+    lines.append(f'nerust_input_traits = {{ path = {json.dumps(str(GEN.ROOT / "traits/input"))} }}')
     return "\n".join(lines) + "\n"
 
 
 def harness(schema):
     lines = [
-        'extern crate self as nerust_input_traits;',
-        '#[derive(Debug, Clone, Copy, PartialEq, Eq)]',
-        'pub enum StandardButton { South, East, West, North, Back, Guide, Start, LeftStick, RightStick, LeftShoulder, RightShoulder, DpadUp, DpadDown, DpadLeft, DpadRight, Misc1, Paddle1, Paddle2, Paddle3, Paddle4 }',
-        '#[derive(Debug, Clone, Copy, PartialEq)]',
-        'pub enum GamepadAxis { LeftStickX, LeftStickY, RightStickX, RightStickY, LeftTrigger, RightTrigger }',
         'mod error_dialog_controller {',
         '    #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]',
         '    #[serde(transparent)]',

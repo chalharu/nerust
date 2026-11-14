@@ -93,7 +93,11 @@ class MainActivity :
 
     /** Live ids of counted gamepads: key events from these devices divert
      * to the pad path even with a bare DPAD source (TV remotes never land
-     * here, only counted pads do). Refreshed with the presence scan. */
+     * here, only counted pads do). Refreshed with the presence scan.
+     * Kept alongside the descriptor identity Rust uses: the live id is
+     * what Android routing needs (key gate here, vibrator lookup in
+     * SensorController), while Rust port assignment uses descriptors.
+     * Never persisted or sent to Rust. */
     @Volatile private var gamepadDeviceIds: Set<Int> = emptySet()
 
     /** Set only on user-initiated finish paths; native exits then, never on destroy. */
@@ -177,7 +181,9 @@ class MainActivity :
         // pads divert by device id too: D-pad-only sources would otherwise
         // read as a TV remote and never reach the game.
         val isController = isControllerSource(event.source) || gamepadDeviceIds.contains(event.deviceId)
-        Log.d(TAG, "game key: source=0x${event.source.toString(16)} device=${event.deviceId} keyCode=${event.keyCode} action=${event.action} controller=$isController")
+        if (Log.isLoggable(TAG, Log.DEBUG)) {
+            Log.d(TAG, "game key: source=0x${event.source.toString(16)} device=${event.deviceId} keyCode=${event.keyCode} action=${event.action} controller=$isController")
+        }
         if (!isController) {
             return super.dispatchKeyEvent(event)
         }
@@ -201,7 +207,9 @@ class MainActivity :
                 KeyEvent.KEYCODE_DPAD_LEFT -> ControllerKey.LEFT
                 KeyEvent.KEYCODE_DPAD_RIGHT -> ControllerKey.RIGHT
                 else -> {
-                    Log.d(TAG, "unmapped controller key: source=0x${event.source.toString(16)} keyCode=${event.keyCode}")
+                    if (Log.isLoggable(TAG, Log.DEBUG)) {
+                        Log.d(TAG, "unmapped controller key: source=0x${event.source.toString(16)} keyCode=${event.keyCode}")
+                    }
                     return super.dispatchKeyEvent(event)
                 }
             }
@@ -220,7 +228,9 @@ class MainActivity :
 
     override fun onGenericMotionEvent(event: MotionEvent): Boolean {
         if (event.source and InputDevice.SOURCE_JOYSTICK != InputDevice.SOURCE_JOYSTICK) {
-            Log.d(TAG, "non-joystick motion: source=0x${event.source.toString(16)} device=${event.deviceId}")
+            if (Log.isLoggable(TAG, Log.DEBUG)) {
+                Log.d(TAG, "non-joystick motion: source=0x${event.source.toString(16)} device=${event.deviceId}")
+            }
             return super.onGenericMotionEvent(event)
         }
         val hatX = event.getAxisValue(MotionEvent.AXIS_HAT_X)
@@ -290,9 +300,11 @@ class MainActivity :
         )
     }
 
-    /** Edge-detect per direction with one epsilon: motion streams at
-     * sensor rate, and Rust only wants crossings. Neutral first-sends
-     * stay local: Rust treats a missing axis as neutral already. */
+    /** First-stage Kotlin dedup for the motion stream: motion events fire
+     * at sensor rate and Rust only wants crossings, so sub-epsilon repeats
+     * never cross JNI. Neutral first-sends stay local too — Rust treats a
+     * missing axis as neutral already. The Rust deadzone/store is the
+     * second stage; this cache only saves JNI chatter. */
     private fun updateControllerAxis(deviceId: Int, axis: String, value: Float) {
         val axes = controllerAxes.getOrPut(deviceId) { mutableMapOf() }
         val last = axes[axis]
@@ -315,7 +327,9 @@ class MainActivity :
         val keys = controllerPressed.getOrPut(deviceId) { mutableSetOf() }
         val changed = if (pressed) keys.add(key) else keys.remove(key)
         if (!changed) return
-        Log.d(TAG, "controller key: deviceId=$deviceId key=$key pressed=$pressed")
+        if (Log.isLoggable(TAG, Log.DEBUG)) {
+            Log.d(TAG, "controller key: deviceId=$deviceId key=$key pressed=$pressed")
+        }
         if (pressed) {
             sensorController.lastControllerDeviceId = deviceId
             chromeManager.noteControllerInput()
@@ -337,16 +351,20 @@ class MainActivity :
     }
 
     /** Mirror of the Rust tracker for edge-detect and device-removal synthesis;
-     * focus loss converges via session clear. The capture window calls this
-     * when it loses window focus so a focus steal never strands a hold. */
+     * focus loss converges via session clear. `internal` (not private) because
+     * the capture window calls this when it loses window focus so a focus
+     * steal never strands a hold. */
     internal fun releaseAllControllers() {
         controllerPressed.keys.toList().forEach(::releaseController)
     }
 
     /** Boot sweep: pads connected before resume never fire
-     * `onInputDeviceAdded`, so enumerate them once. Listener registration
-     * comes first; a racing add re-sends the same descriptor, and Rust
-     * collapses duplicates to one index. */
+     * `onInputDeviceAdded`, so enumerate them once. Kept alongside
+     * [refreshControllerPresence] on purpose: the sweep pushes device
+     * identities (Rust port assignment) while the presence scan only drives
+     * the overlay/capture gate, so neither subsumes the other. Listener
+     * registration comes first; a racing add re-sends the same descriptor,
+     * and Rust collapses duplicates to one index. */
     private fun sendInitialDeviceAdded() {
         for (deviceId in InputDevice.getDeviceIds()) {
             val device = InputDevice.getDevice(deviceId) ?: continue
@@ -403,7 +421,9 @@ class MainActivity :
                 chromeManager.setTouchCapable(touchCapable)
                 if (gamepadNames.isNotEmpty()) {
                     // Debug breadcrumb for Auto-hide reports: which device hid it.
-                    Log.d(TAG, "overlay auto-hide counts gamepad: ${gamepadNames.joinToString()}")
+                    if (Log.isLoggable(TAG, Log.DEBUG)) {
+                        Log.d(TAG, "overlay auto-hide counts gamepad: ${gamepadNames.joinToString()}")
+                    }
                 }
                 chromeManager.setControllerConnected(gamepadNames.isNotEmpty())
             }
@@ -468,7 +488,8 @@ class MainActivity :
 
     /** Back stack shared with the gamepad-input capture window (each
      * window has its own dispatcher, so the capture view calls this
-     * directly instead of reaching the activity dispatcher). */
+     * directly instead of reaching the activity dispatcher). `internal`
+     * (not private) for that cross-window call; not a public API leak. */
     internal fun handleBackNavigation() {
         if (!chromeManager.removeDrawerOverlay()) {
             userInitiatedExit = true
