@@ -26,8 +26,8 @@ pub use profile::{
     TypedInputResources, UnifiedFieldMap, collect_first_wins,
 };
 pub use source::{
-    Capability, GamepadAxis, GamepadMotion, GamepadRumble, GamepadState, MAX_PADS, PadGuid,
-    PollSource, RumbleSink, SourceButtonId, SourceEvent, SourceId, SourceInfo, StandardButton,
+    GamepadAxis, GamepadState, MAX_PADS, PadGuid, SourceButtonId, SourceEvent, SourceId,
+    StandardButton, android_keycode_to_button,
 };
 pub use topology::{
     AnalogControlDescriptor, AttachmentSlotDescriptor, ControlDescriptor, DeviceDescriptor,

@@ -9,4 +9,3 @@ version.workspace = true
 [dependencies]
 nerust_input_traits.workspace = true
 
-[build-dependencies]

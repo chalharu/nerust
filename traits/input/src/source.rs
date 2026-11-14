@@ -101,40 +101,54 @@ impl StandardButton {
         }
     }
 
-    /// Every position button, declaration order. Sizes UI loops and the
-    /// reverse lookup below; keep in sync with the enum.
-    pub const ALL: [Self; Self::COUNT] = [
-        Self::South,
-        Self::East,
-        Self::West,
-        Self::North,
-        Self::Back,
-        Self::Guide,
-        Self::Start,
-        Self::LeftStick,
-        Self::RightStick,
-        Self::LeftShoulder,
-        Self::RightShoulder,
-        Self::DpadUp,
-        Self::DpadDown,
-        Self::DpadLeft,
-        Self::DpadRight,
-        Self::Misc1,
-        Self::Paddle1,
-        Self::Paddle2,
-        Self::Paddle3,
-        Self::Paddle4,
-    ];
-
     /// Reverse of [`Self::abstract_key`]: the position button driving one
-    /// console-agnostic button in the fixed standard layout. First match
-    /// wins; the layout maps each abstract once, so this is exact.
+    /// console-agnostic button in the fixed standard layout.
     pub fn with_abstract(abstract_key: crate::AbstractKey) -> Option<Self> {
-        Self::ALL
-            .iter()
-            .copied()
-            .find(|button| button.abstract_key() == Some(abstract_key))
+        use crate::AbstractKey as A;
+        match abstract_key {
+            A::Button1 => Some(Self::South),
+            A::Button2 => Some(Self::East),
+            A::Button3 => Some(Self::West),
+            A::Button4 => Some(Self::North),
+            A::Button5 => Some(Self::LeftShoulder),
+            A::Button6 => Some(Self::RightShoulder),
+            A::Select => Some(Self::Back),
+            A::Guide => Some(Self::Guide),
+            A::Start => Some(Self::Start),
+            A::DpadUp => Some(Self::DpadUp),
+            A::DpadDown => Some(Self::DpadDown),
+            A::DpadLeft => Some(Self::DpadLeft),
+            A::DpadRight => Some(Self::DpadRight),
+            _ => None,
+        }
     }
+}
+
+/// Android keycode to position button (single shared table).
+/// Keycodes 104/105 (L2/R2) stay unmapped: triggers are analog-only and
+/// arrive as motion axes, and `StandardButton` has no trigger buttons.
+pub fn android_keycode_to_button(keycode: i32) -> Option<StandardButton> {
+    const TABLE: [(i32, StandardButton); 15] = [
+        (19, StandardButton::DpadUp),
+        (20, StandardButton::DpadDown),
+        (21, StandardButton::DpadLeft),
+        (22, StandardButton::DpadRight),
+        (96, StandardButton::South),
+        (97, StandardButton::East),
+        (99, StandardButton::West),
+        (100, StandardButton::North),
+        (102, StandardButton::LeftShoulder),
+        (103, StandardButton::RightShoulder),
+        (106, StandardButton::LeftStick),
+        (107, StandardButton::RightStick),
+        (108, StandardButton::Start),
+        (109, StandardButton::Back),
+        (110, StandardButton::Guide),
+    ];
+    TABLE
+        .binary_search_by_key(&keycode, |(code, _)| *code)
+        .ok()
+        .map(|index| TABLE[index].1)
 }
 
 /// Analog axes: two sticks plus two triggers. Digital-only consoles sample
@@ -200,49 +214,9 @@ impl SourceId {
     pub const KEYBOARD: Self = Self::Keyboard(0);
 }
 
-/// Opaque 128-bit pad identity (SDL GUID bytes). Virtual pads use reserved values.
+/// Opaque 128-bit pad identity (SDL GUID bytes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct PadGuid(pub [u8; 16]);
-
-impl PadGuid {
-    /// All-zero GUID: never a real device.
-    pub const NIL: Self = Self([0; 16]);
-    /// Touch overlay virtual pad: shares port assignment with physical pads.
-    pub const VIRTUAL_TOUCH: Self = Self([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
-
-    /// Raw GUID bytes.
-    pub const fn as_bytes(self) -> [u8; 16] {
-        self.0
-    }
-}
-
-/// Dual-motor rumble levels, `0.0..=1.0` each. Backends clamp; this is a value.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct GamepadRumble {
-    pub low: f32,
-    pub high: f32,
-}
-
-impl GamepadRumble {
-    /// Silent rumble: the neutral value for unsupported or idle pads.
-    pub const OFF: Self = Self {
-        low: 0.0,
-        high: 0.0,
-    };
-
-    /// Motor levels before backend clamping.
-    pub const fn new(low: f32, high: f32) -> Self {
-        Self { low, high }
-    }
-}
-
-/// Gyroscope (rad/s) and accelerometer (g) sample. Eventized so backends
-/// never grow a second transport; consoles that ignore motion drop it.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct GamepadMotion {
-    pub gyro: [f32; 3],
-    pub accel: [f32; 3],
-}
 
 /// One normalized input event from any source. Absolute values: the session
 /// OR-machine owns press state, sources never track it.
@@ -256,7 +230,6 @@ pub enum SourceEvent {
         axis: GamepadAxis,
         value: f32,
     },
-    Motion(GamepadMotion),
 }
 
 /// Normalized pad snapshot: the virtual-backend seam and headless test entry.
@@ -287,7 +260,6 @@ impl GamepadState {
             SourceEvent::Axis { axis, value } => {
                 self.axes[axis.index()] = value;
             }
-            SourceEvent::Motion(_) => {}
         }
     }
 
@@ -300,38 +272,6 @@ impl GamepadState {
     pub fn axis(self, axis: GamepadAxis) -> f32 {
         self.axes[axis.index()]
     }
-}
-
-/// Device capability flags. Rumble-less pads report `has_rumble: false`
-/// instead of growing a second trait.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct Capability {
-    pub has_rumble: bool,
-    pub has_motion: bool,
-}
-
-/// Event poll half: the only trait keyboards and touch overlays implement.
-/// Backends drain into the caller-owned buffer, so polling never allocates.
-pub trait PollSource: Send {
-    /// Drain pending events into `out`.
-    fn poll(&mut self, out: &mut Vec<SourceEvent>);
-}
-
-/// Identity half: stable id, display name, and capability flags.
-pub trait SourceInfo {
-    /// Stable id for port assignment and persistence.
-    fn source_id(&self) -> SourceId;
-    /// OS display name for device lists.
-    fn name(&self) -> &str;
-    /// Rumble/motion support flags.
-    fn capability(&self) -> Capability;
-}
-
-/// Rumble output half: implemented only where the OS backend can emit.
-/// Fire-and-forget; backends clamp levels to `0.0..=1.0`.
-pub trait RumbleSink {
-    /// Emit one rumble command.
-    fn set_rumble(&mut self, rumble: GamepadRumble);
 }
 
 #[cfg(test)]
@@ -400,40 +340,71 @@ mod tests {
     }
 
     #[test]
-    fn source_ids_cover_keyboard_pad_and_virtual_touch() {
+    fn source_ids_cover_keyboard_and_pad() {
         assert_ne!(
             SourceId::Keyboard(0),
-            SourceId::Pad(PadGuid::NIL),
+            SourceId::Pad(PadGuid([0; 16])),
             "keyboard and pad namespaces stay disjoint"
         );
-        assert_ne!(PadGuid::NIL, PadGuid::VIRTUAL_TOUCH);
-        assert_eq!(PadGuid::NIL.as_bytes(), [0; 16]);
     }
 
     #[test]
-    fn all_lists_every_button_once_for_reverse_lookup() {
-        use std::collections::HashSet;
-        assert_eq!(
-            StandardButton::ALL.len(),
-            StandardButton::COUNT,
-            "ALL must track the enum"
-        );
-        let unique: HashSet<_> = StandardButton::ALL.iter().collect();
-        assert_eq!(unique.len(), StandardButton::COUNT);
-        // Every mapped abstract round-trips through the fixed layout.
-        for button in StandardButton::ALL {
-            if let Some(abstract_key) = button.abstract_key() {
-                assert_eq!(StandardButton::with_abstract(abstract_key), Some(button));
-            }
+    fn abstract_round_trips_through_the_fixed_layout() {
+        use crate::AbstractKey as A;
+        for (button, key) in [
+            (StandardButton::South, A::Button1),
+            (StandardButton::East, A::Button2),
+            (StandardButton::West, A::Button3),
+            (StandardButton::North, A::Button4),
+            (StandardButton::LeftShoulder, A::Button5),
+            (StandardButton::RightShoulder, A::Button6),
+            (StandardButton::Back, A::Select),
+            (StandardButton::Guide, A::Guide),
+            (StandardButton::Start, A::Start),
+            (StandardButton::DpadUp, A::DpadUp),
+            (StandardButton::DpadDown, A::DpadDown),
+            (StandardButton::DpadLeft, A::DpadLeft),
+            (StandardButton::DpadRight, A::DpadRight),
+        ] {
+            assert_eq!(button.abstract_key(), Some(key));
+            assert_eq!(StandardButton::with_abstract(key), Some(button));
         }
         assert_eq!(
             StandardButton::with_abstract(crate::AbstractKey::Button1),
             Some(StandardButton::South)
         );
+        assert_eq!(StandardButton::with_abstract(A::Axis1X), None);
     }
 
     #[test]
-    fn state_folds_events_and_ignores_motion() {
+    fn android_keycodes_cover_face_dpad_and_system_buttons() {
+        for (keycode, button) in [
+            (19, StandardButton::DpadUp),
+            (20, StandardButton::DpadDown),
+            (21, StandardButton::DpadLeft),
+            (22, StandardButton::DpadRight),
+            (96, StandardButton::South),
+            (97, StandardButton::East),
+            (99, StandardButton::West),
+            (100, StandardButton::North),
+            (102, StandardButton::LeftShoulder),
+            (103, StandardButton::RightShoulder),
+            (106, StandardButton::LeftStick),
+            (107, StandardButton::RightStick),
+            (108, StandardButton::Start),
+            (109, StandardButton::Back),
+            (110, StandardButton::Guide),
+        ] {
+            assert_eq!(android_keycode_to_button(keycode), Some(button));
+        }
+        // Triggers stay analog-only; unknown codes map to nothing.
+        for keycode in [0, 98, 104, 105, 255] {
+            assert_eq!(android_keycode_to_button(keycode), None);
+        }
+    }
+
+    #[test]
+    fn state_folds_events() {
         let mut state = GamepadState::default();
         assert!(!state.is_pressed(StandardButton::South));
         state.apply_event(SourceEvent::Button {
@@ -446,35 +417,10 @@ mod tests {
             value: 0.5,
         });
         assert_eq!(state.axis(GamepadAxis::LeftTrigger), 0.5);
-        state.apply_event(SourceEvent::Motion(GamepadMotion::default()));
-        assert!(state.is_pressed(StandardButton::South));
         state.apply_event(SourceEvent::Button {
             button: StandardButton::South,
             pressed: false,
         });
         assert!(!state.is_pressed(StandardButton::South));
-    }
-
-    #[test]
-    fn traits_split_so_keyboards_need_poll_only() {
-        struct Keys {
-            pending: Vec<SourceEvent>,
-        }
-        impl PollSource for Keys {
-            fn poll(&mut self, out: &mut Vec<SourceEvent>) {
-                out.append(&mut self.pending);
-            }
-        }
-        let mut keys = Keys {
-            pending: vec![SourceEvent::Button {
-                button: StandardButton::Start,
-                pressed: true,
-            }],
-        };
-        let mut out = Vec::new();
-        keys.poll(&mut out);
-        assert_eq!(out.len(), 1);
-        keys.poll(&mut out);
-        assert_eq!(out.len(), 1, "drained sources stay drained");
     }
 }
