@@ -205,5 +205,5 @@ fn android_keycode_to_key(keycode: i32) -> Option<Key> {
 }
 
 fn android_keycode_to_pad(keycode: i32) -> Option<StandardButton> {
-    super::super::keycode::android_keycode_to_button(keycode)
+    super::keycode::android_keycode_to_button(keycode)
 }

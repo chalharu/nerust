@@ -184,6 +184,11 @@ impl SessionHandle {
     /// reconnected pad (reused id) keeps its order index and slot. No
     /// allocation: both namespaces are `Copy` GUIDs.
     pub fn pad_source_for(&mut self, device_id: i32) -> SourceId {
+        // Virtual ids never consume order slots: a ghost entry would
+        // squat a pad index and shut out a real pad past the table.
+        if device_id < 0 {
+            return SourceId::Pad(super::InputDept::guid_for_transient(device_id));
+        }
         let guid = self
             .input
             .device_ids
@@ -194,16 +199,30 @@ impl SessionHandle {
         SourceId::Pad(guid)
     }
 
-    /// Source for winit-delivered pad keys: the first-seen pad (the
-    /// connected one in single-pad play), or `None` when no pad has been
-    /// seen yet and the caller must drop the keys. Winit hides the Android
-    /// device id behind an opaque handle, so per-pad distinction for that
-    /// path needs NDK polling and stays future work. Dual delivery with
-    /// the Kotlin bridge is safe: the session pressed set suppresses
-    /// repeats. Never mints a descriptor-less transient: that would pin
-    /// winit keys to a parked pad and let one player drive another.
+    /// Source for winit-delivered pad keys: the first *assigned* pad, or
+    /// `None` when no assigned pad exists and the caller must drop the
+    /// keys. Winit hides the Android device id behind an opaque handle,
+    /// so per-pad distinction for that path needs NDK polling and stays
+    /// future work. Assigned-first (not first-seen) so a parked pad 0
+    /// cannot swallow pad 1's keys. Dual delivery with the Kotlin bridge
+    /// is safe: the session pressed set suppresses repeats. Never mints
+    /// a descriptor-less transient: that would pin winit keys to a
+    /// parked pad and let one player drive another.
     pub fn primary_pad_source(&self) -> Option<SourceId> {
-        self.input.pad_order.first().copied().map(SourceId::Pad)
+        let ports = &self.settings.snapshot.shared.input.gamepad.pad_ports;
+        self.input
+            .pad_order
+            .iter()
+            .copied()
+            .find(|guid| {
+                self.input
+                    .pad_order
+                    .iter()
+                    .position(|known| *known == *guid)
+                    .and_then(|index| self.input.slot_for_index(index, ports))
+                    .is_some()
+            })
+            .map(SourceId::Pad)
     }
 
     /// Connect-time device registration: descriptor to order index.
@@ -216,7 +235,7 @@ impl SessionHandle {
     /// so the settings vault sorts its display list into session order
     /// and a reconnect can never skew a pad onto another pad's settings.
     pub fn note_pad_connected(&mut self, device_id: i32, descriptor: &str) {
-        if descriptor.is_empty() {
+        if descriptor.is_empty() || device_id < 0 {
             return;
         }
         let guid = super::InputDept::guid_for_descriptor(descriptor);
@@ -298,11 +317,53 @@ impl SessionHandle {
         }
     }
 
-    /// Disconnect-time cleanup: drop the id mapping (Kotlin already
-    /// synthesized the releases). The order entry stays so a reconnect
-    /// reuses the index instead of drifting to a new pad.
+    /// Disconnect-time cleanup: release the pad's holders event-fully
+    /// (Kotlin synthesizes releases for its path, but the winit fallback
+    /// holds never see them), then drop the id mapping. The order entry
+    /// stays so a reconnect reuses the index instead of drifting.
     pub fn note_pad_disconnected(&mut self, device_id: i32) {
-        self.input.device_ids.remove(&device_id);
+        let guid = self.input.device_ids.remove(&device_id);
+        let Some(guid) = guid else {
+            return;
+        };
+        let source = SourceId::Pad(guid);
+        let held: Vec<SourceButtonId> = self
+            .input
+            .pressed
+            .iter()
+            .filter_map(|(held_source, button)| (*held_source == source).then_some(*button))
+            .collect();
+        for button in held {
+            self.input.pressed.remove(&(source, button));
+            if let SourceButtonId::Pad(std_button) = button {
+                let index = self.input.pad_index(source);
+                // Slot unknown by design (mapping already dropped):
+                // releases bypass the gate, so `None` still unstrands.
+                self.commit_holder_press(
+                    FieldSource::Pad(source, std_button),
+                    std_button,
+                    index,
+                    None,
+                    false,
+                );
+            }
+        }
+        self.input
+            .analogs
+            .retain(|(held_source, _), _| *held_source != source);
+        let derived: Vec<(GamepadAxis, StandardButton)> = self
+            .input
+            .axis_dpad
+            .iter()
+            .filter_map(|(held_source, axis, button)| {
+                (*held_source == source).then_some((*axis, *button))
+            })
+            .collect();
+        for (axis, button) in derived {
+            self.input.axis_dpad.remove(&(source, axis, button));
+            let index = self.input.pad_index(source);
+            self.commit_holder_press(FieldSource::Axis(source, axis), button, index, None, false);
+        }
     }
 
     /// Single entry for every physical source. Repeat suppression is one
@@ -388,8 +449,10 @@ impl SessionHandle {
     }
 
     /// Full-press level turning a trigger into a digital press when the
-    /// pad opts into shoulder doubling. Post-deadzone units.
-    const TRIGGER_FULL_PRESS: f32 = 0.9;
+    /// pad opts into shoulder doubling. Post-deadzone units. Release uses
+    /// a lower band so epsilon jitter at the edge cannot flap press/release.
+    const TRIGGER_PRESS: f32 = 0.9;
+    const TRIGGER_RELEASE: f32 = 0.8;
 
     /// Substitute direction for one post-deadzone axis value. Sticks stand
     /// in for dpad on digital-only consoles; triggers only when the pad
@@ -419,11 +482,9 @@ impl SessionHandle {
                     None
                 }
             }
-            GamepadAxis::LeftTrigger => (triggers_as_shoulders
-                && value >= Self::TRIGGER_FULL_PRESS)
+            GamepadAxis::LeftTrigger => (triggers_as_shoulders && value >= Self::TRIGGER_PRESS)
                 .then_some(StandardButton::LeftShoulder),
-            GamepadAxis::RightTrigger => (triggers_as_shoulders
-                && value >= Self::TRIGGER_FULL_PRESS)
+            GamepadAxis::RightTrigger => (triggers_as_shoulders && value >= Self::TRIGGER_PRESS)
                 .then_some(StandardButton::RightShoulder),
         }
     }
@@ -458,8 +519,7 @@ impl SessionHandle {
             .unwrap_or(DEFAULT_DEADZONE_PERCENT)
             .clamp(0, DEADZONE_MAX_PERCENT);
         let value =
-            apply_deadzone(value.clamp(-1.0, 1.0), f32::from(percent) / 100.0)
-                .clamp(-1.0, 1.0);
+            apply_deadzone(value.clamp(-1.0, 1.0), f32::from(percent) / 100.0).clamp(-1.0, 1.0);
         self.input.analogs.insert((source, axis), value);
         let alias = index.is_some_and(|i| {
             self.settings
@@ -489,7 +549,23 @@ impl SessionHandle {
         // One order-index lookup: both the stale release and the fresh
         // press below share it instead of re-scanning `pad_order`.
         let index = self.input.pad_index(source);
-        let want = slot.and(Self::substitute_button(axis, value, triggers_as_shoulders));
+        let mut want = slot.and(Self::substitute_button(axis, value, triggers_as_shoulders));
+        // Trigger hysteresis: a held shoulder survives down to the release
+        // band so epsilon jitter at the press edge cannot flap. Sticks
+        // keep the zero crossing (already deadzoned, no band needed).
+        if want.is_none()
+            && triggers_as_shoulders
+            && matches!(axis, GamepadAxis::LeftTrigger | GamepadAxis::RightTrigger)
+            && value >= Self::TRIGGER_RELEASE
+            && let Some(held) = self
+                .input
+                .axis_dpad
+                .iter()
+                .find(|(held_source, held_axis, _)| *held_source == source && *held_axis == axis)
+                .map(|(_, _, button)| *button)
+        {
+            want = Some(held);
+        }
         // One axis holds at most one substitute (presses are edge-synced),
         // so a single find converges without heap work on the hot path.
         if let Some(stale) = self
@@ -525,8 +601,16 @@ impl SessionHandle {
         slot: Option<usize>,
         pressed: bool,
     ) {
+        // Releases always travel through the OR machine: a pad parked
+        // (or unplugged) mid-hold must still release its fields instead
+        // of stranding them. Only fresh presses need an assigned slot.
         let Some(slot) = slot else {
-            return;
+            if pressed {
+                return;
+            }
+            // Slot unknown on release: resolve the field without a slot
+            // (overrides first, then the fixed layout slot-free).
+            return self.commit_holder_release(holder, button, pad_index);
         };
         // Per-pad overrides win inside the slot: an explicit `(attachment,
         // control)` for this pad's button bypasses the standard layout.
@@ -569,6 +653,52 @@ impl SessionHandle {
             return;
         };
         self.commit_press(field, holder, dpad, pressed);
+    }
+
+    /// Release-only twin of the press tail: resolves without a slot so a
+    /// mid-hold park or unplug cannot strand the field. Overrides first
+    /// (same map), then the fixed layout scanned across every slot.
+    fn commit_holder_release(
+        &mut self,
+        holder: FieldSource,
+        button: StandardButton,
+        pad_index: Option<usize>,
+    ) {
+        let resolved = pad_index.and_then(|index| {
+            self.input
+                .pad_binding_map
+                .get(index)
+                .and_then(|map| map.get(&button).copied())
+        });
+        if let Some((attachment, control)) = resolved {
+            let field = self
+                .emu
+                .field_map()
+                .and_then(|fields| fields.get(&(attachment, ControlId::from(control))).copied());
+            let Some(field) = field else {
+                return;
+            };
+            let dpad = self.input.dpad_for(attachment, control);
+            self.commit_press(field, holder, dpad, false);
+            return;
+        }
+        let Some(abstract_key) = button.abstract_key() else {
+            return;
+        };
+        let Some(((attachment, control), dpad)) = self
+            .input
+            .control_with_dpad_for_abstract(abstract_key, None)
+        else {
+            return;
+        };
+        let field = self
+            .emu
+            .field_map()
+            .and_then(|fields| fields.get(&(attachment, ControlId::from(control))).copied());
+        let Some(field) = field else {
+            return;
+        };
+        self.commit_press(field, holder, dpad, false);
     }
 
     /// Event-ful release of every held pad button (surface loss): releases
@@ -1278,6 +1408,104 @@ mod tests {
         session.note_pad_disconnected(7);
         session.note_pad_connected(11, "pad-desc-A");
         assert_eq!(session.pad_descriptors(), &["pad-desc-A", "pad-desc-B"]);
+        session.clear_input();
+    }
+
+    #[test]
+    fn release_while_parked_still_unstrands() {
+        use nerust_input_traits::{SourceButtonId, StandardButton};
+        let mut session = crate::session::test_util::test_session();
+        let pad = session.pad_source_for(11);
+        session.handle_source_button(pad, SourceButtonId::Pad(StandardButton::South), true);
+        // Park mid-hold: the release must still travel (no slot gate).
+        let mut next = session.settings_snapshot().clone();
+        next.shared.input.gamepad.pad_ports = Default::default();
+        session.apply_settings(next).unwrap();
+        session.handle_source_button(pad, SourceButtonId::Pad(StandardButton::South), false);
+        session.clear_input();
+    }
+
+    #[test]
+    fn disconnect_releases_winit_holds() {
+        use nerust_input_traits::{SourceButtonId, StandardButton};
+        let mut session = crate::session::test_util::test_session();
+        session.note_pad_connected(5, "pad-disconnect-test");
+        let pad = session.pad_source_for(5);
+        session.handle_source_button(pad, SourceButtonId::Pad(StandardButton::South), true);
+        session.note_pad_disconnected(5);
+        assert!(
+            !session
+                .input
+                .pressed
+                .iter()
+                .any(|(source, _)| *source == pad),
+            "disconnect drops the pressed hold"
+        );
+        session.clear_input();
+    }
+
+    #[test]
+    fn primary_pad_prefers_assigned_over_first_seen() {
+        let mut session = crate::session::test_util::test_session();
+        session.note_pad_connected(7, "pad-first-parked");
+        session.note_pad_connected(8, "pad-second-assigned");
+        let mut next = session.settings_snapshot().clone();
+        next.shared.input.gamepad.pad_ports[0].slot = None;
+        next.shared.input.gamepad.pad_ports[1].slot = Some(0);
+        session.apply_settings(next).unwrap();
+        let second = session.pad_source_for(8);
+        assert_eq!(session.primary_pad_source(), Some(second));
+        session.clear_input();
+    }
+
+    #[test]
+    fn negative_device_ids_never_consume_order() {
+        let mut session = crate::session::test_util::test_session();
+        let before = session.input.pad_order.len();
+        let _ = session.pad_source_for(-1);
+        assert_eq!(session.input.pad_order.len(), before);
+        session.note_pad_connected(-1, "ghost");
+        assert_eq!(session.input.pad_order.len(), before);
+        session.clear_input();
+    }
+
+    #[test]
+    fn trigger_hysteresis_holds_through_the_release_band() {
+        use nerust_input_traits::{GamepadAxis, SourceButtonId, StandardButton};
+        let mut session = crate::session::test_util::test_session();
+        session.note_pad_connected(9, "pad-trigger-test");
+        let pad = session.pad_source_for(9);
+        let mut next = session.settings_snapshot().clone();
+        next.shared.input.gamepad.pad_ports[0].slot = Some(0);
+        next.shared.input.gamepad.pad_ports[0].triggers_as_shoulders = true;
+        session.apply_settings(next).unwrap();
+        session.handle_source_axis(pad, GamepadAxis::LeftTrigger, 0.95);
+        assert!(
+            session.input.axis_dpad.contains(&(
+                pad,
+                GamepadAxis::LeftTrigger,
+                StandardButton::LeftShoulder
+            )),
+            "full press engages the shoulder"
+        );
+        session.handle_source_axis(pad, GamepadAxis::LeftTrigger, 0.85);
+        assert!(
+            session.input.axis_dpad.contains(&(
+                pad,
+                GamepadAxis::LeftTrigger,
+                StandardButton::LeftShoulder
+            )),
+            "release band holds instead of flapping"
+        );
+        session.handle_source_axis(pad, GamepadAxis::LeftTrigger, 0.5);
+        assert!(
+            !session
+                .input
+                .axis_dpad
+                .iter()
+                .any(|(source, axis, _)| *source == pad && *axis == GamepadAxis::LeftTrigger),
+            "below the band releases"
+        );
         session.clear_input();
     }
 
