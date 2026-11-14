@@ -140,15 +140,31 @@ root:
           - id: input
             title: {bind: {path: labels.tab_input, source: External}}
             content:
-              type: Scroll
-              id: input_scroll
-              content:
-                type: TabItems
-                id: input_tabs
-                selected: {bind: {path: input_selection, source: External, mode: TwoWay}}
-                items: {bind: {path: input_pages, source: External}}
-                title: {bind: {path: label}}
-                item_template: input_page
+              type: StackLayout
+              id: input_column
+              gap: 6
+              children:
+                - type: StackLayout
+                  id: input_filter_row
+                  orientation: Horizontal
+                  gap: 12
+                  children:
+                    - type: Label
+                      id: input_filter_label
+                      style: {horizontal_alignment: Start, vertical_alignment: Center}
+                      text: {bind: {path: labels.search_filter, source: External}}
+                    - type: TextBox
+                      id: input_filter
+                      text: {bind: {path: input_filter, source: External, mode: TwoWay}}
+                - type: Scroll
+                  id: input_scroll
+                  content:
+                    type: TabItems
+                    id: input_tabs
+                    selected: {bind: {path: input_selection, source: External, mode: TwoWay}}
+                    items: {bind: {path: input_pages, source: External}}
+                    title: {bind: {path: label}}
+                    item_template: input_page
           - id: video
             title: {bind: {path: labels.tab_video, source: External}}
             content:

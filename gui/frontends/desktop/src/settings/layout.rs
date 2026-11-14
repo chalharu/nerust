@@ -236,6 +236,43 @@ fn section_key(section: &BindingSectionView, index: usize) -> String {
     identity.bytes().map(|byte| format!("{byte:02x}")).collect()
 }
 
+/// Substring filter for binding lists: empty query keeps everything;
+/// otherwise a section survives when its label matches (whole section)
+/// or when at least one row label matches (matching rows only).
+/// Case-insensitive; used by the input-tab search box.
+fn filter_sections(sections: Vec<BindingSectionView>, query: String) -> Vec<BindingSectionView> {
+    let needle = query.trim().to_lowercase();
+    if needle.is_empty() {
+        return sections;
+    }
+    sections
+        .into_iter()
+        .filter_map(|section| {
+            if section.label.to_lowercase().contains(&needle) {
+                return Some(section);
+            }
+            let rows = section
+                .rows
+                .into_iter()
+                .filter(|row| row.label.to_lowercase().contains(&needle))
+                .collect::<Vec<_>>();
+            (!rows.is_empty()).then_some(BindingSectionView {
+                label: section.label,
+                rows,
+            })
+        })
+        .collect()
+}
+
+/// Single-section twin of [`filter_sections`] for the shortcuts page.
+fn filter_rows(section: BindingSectionView, query: String) -> BindingSectionView {
+    let mut kept = filter_sections(vec![section], query);
+    kept.pop().unwrap_or(BindingSectionView {
+        label: String::new(),
+        rows: Vec::new(),
+    })
+}
+
 fn binding_sections(
     source: Binding<Vec<BindingSectionView>>,
     editor: &Rc<Editor>,
@@ -290,9 +327,16 @@ pub(super) fn inputs(
     editor: &Rc<Editor>,
     capture: Capture,
     clear: Capture,
+    query: Binding<String>,
 ) -> Vec<Keyed<InputPage>> {
     let vm = &editor.vm;
     let executor = editor.executor.clone();
+    // Freshness tick: revision bumps on every transact (pad applies,
+    // captures, language), query on every keystroke. Section forwards
+    // read views and the live draft inside, so one source covers both.
+    let tick = editor
+        .binding(vm.revision.clone(), Clone::clone, None)
+        .zip(&query);
     let mut pages: Vec<_> = vm
         .inputs()
         .iter()
@@ -371,64 +415,59 @@ pub(super) fn inputs(
             // Keyboard sections plus per-pad button overrides on the same
             // page: one section per connection-order pad, rows mirrored
             // from the keyboard rows with the pad routed in. Sourced on
-            // the settings revision (not the input view): pad applies and
-            // captures never change the keyboard projection, so the view
-            // alone would not notify and the pad values would go stale.
-            // The revision bumps on every transact, so the rows below
-            // always read the live draft and views.
-            let revision = vm.revision.clone();
+            // the freshness tick (revision + filter query): pad applies
+            // and captures never change the keyboard projection, so the
+            // view alone would not notify and the pad values would go
+            // stale. The tick covers both, so the rows below always read
+            // the live draft, views, and query.
             let mapping_input = input.clone();
             let mapping_gamepads = vm.gamepads.clone();
-            let all_sections = editor.binding(
-                revision,
-                move |_| {
-                    let value = mapping_input.view.get();
-                    let mut sections = value.sections.clone();
-                    let pads = mapping_gamepads.view.get().pads;
-                    for pad in pads.iter().map(|row| row.index) {
-                        let pad_label = pads
-                            .iter()
-                            .find(|row| row.index == pad)
-                            .map(|row| row.label.clone())
-                            .unwrap_or_default();
-                        let rows = value
-                            .sections
-                            .iter()
-                            .flat_map(|section| &section.rows)
-                            .filter_map(|binding| {
-                                let (Some(attachment), Some(control)) =
-                                    (binding.target.attachment(), binding.target.control())
-                                else {
-                                    return None;
-                                };
-                                let target = CaptureTarget::PadBinding {
-                                    system: value.system_id.clone_box(),
-                                    pad,
-                                    attachment: attachment.to_string(),
-                                    control: control.to_string(),
-                                };
-                                let row_value =
-                                    mapping_input.pad_row_value(&target, binding.pad_default);
-                                Some(nerust_gui_viewmodel::settings::dto::BindingRowView {
-                                    target,
-                                    label: binding.label.clone(),
-                                    value: row_value,
-                                    pad_default: binding.pad_default,
-                                })
+            let all_sections = tick.clone().map(move |(_, query)| {
+                let value = mapping_input.view.get();
+                let mut sections = value.sections.clone();
+                let pads = mapping_gamepads.view.get().pads;
+                for pad in pads.iter().map(|row| row.index) {
+                    let pad_label = pads
+                        .iter()
+                        .find(|row| row.index == pad)
+                        .map(|row| row.label.clone())
+                        .unwrap_or_default();
+                    let rows = value
+                        .sections
+                        .iter()
+                        .flat_map(|section| &section.rows)
+                        .filter_map(|binding| {
+                            let (Some(attachment), Some(control)) =
+                                (binding.target.attachment(), binding.target.control())
+                            else {
+                                return None;
+                            };
+                            let target = CaptureTarget::PadBinding {
+                                system: value.system_id.clone_box(),
+                                pad,
+                                attachment: attachment.to_string(),
+                                control: control.to_string(),
+                            };
+                            let row_value =
+                                mapping_input.pad_row_value(&target, binding.pad_default);
+                            Some(nerust_gui_viewmodel::settings::dto::BindingRowView {
+                                target,
+                                label: binding.label.clone(),
+                                value: row_value,
+                                pad_default: binding.pad_default,
                             })
-                            .collect::<Vec<_>>();
-                        if rows.is_empty() {
-                            continue;
-                        }
-                        sections.push(BindingSectionView {
-                            label: format!("{} ({})", pad_label, value.label),
-                            rows,
-                        });
+                        })
+                        .collect::<Vec<_>>();
+                    if rows.is_empty() {
+                        continue;
                     }
-                    sections
-                },
-                None,
-            );
+                    sections.push(BindingSectionView {
+                        label: format!("{} ({})", pad_label, value.label),
+                        rows,
+                    });
+                }
+                filter_sections(sections, query)
+            });
             let sections = binding_sections(all_sections, editor, &capture, &clear);
             Keyed::new(
                 format!("system-{index}"),
@@ -462,11 +501,12 @@ pub(super) fn inputs(
                     "global",
                     Store::new(
                         binding_page(
-                            editor.binding(
-                                vm.shortcuts.view.clone(),
-                                |value| Some(value.clone()),
-                                None,
-                            ),
+                            {
+                                let shortcuts = vm.shortcuts.clone();
+                                tick.clone().map(move |(_, query)| {
+                                    Some(filter_rows(shortcuts.view.get(), query))
+                                })
+                            },
                             editor,
                             &capture,
                             &clear,
@@ -777,7 +817,12 @@ mod tests {
     fn gamepads_page_lists_ports_and_deadzone() {
         let (editor, _adapter, _dir) = headless_editor();
         let executor: Rc<dyn panechord::Executor> = Rc::new(TestExecutor);
-        let pages = inputs(&editor, noop_capture(&executor), noop_capture(&executor));
+        let pages = inputs(
+            &editor,
+            noop_capture(&executor),
+            noop_capture(&executor),
+            Binding::constant(String::new()),
+        );
         let gamepads = pages
             .iter()
             .find(|page| page.key == "gamepads")
@@ -801,7 +846,12 @@ mod tests {
             .gamepads
             .set_pad_port(0, Some(1))
             .expect("port applies");
-        let pages = inputs(&editor, noop_capture(&executor), noop_capture(&executor));
+        let pages = inputs(
+            &editor,
+            noop_capture(&executor),
+            noop_capture(&executor),
+            Binding::constant(String::new()),
+        );
         let row = pages
             .iter()
             .find(|page| page.key == "gamepads")
@@ -893,7 +943,12 @@ mod tests {
     fn inputs_pages_include_shortcuts_and_live_sections() {
         let (editor, _adapter, _dir) = headless_editor();
         let executor: Rc<dyn panechord::Executor> = Rc::new(TestExecutor);
-        let pages = inputs(&editor, noop_capture(&executor), noop_capture(&executor));
+        let pages = inputs(
+            &editor,
+            noop_capture(&executor),
+            noop_capture(&executor),
+            Binding::constant(String::new()),
+        );
         assert_eq!(pages.len(), editor.vm.inputs().len() + 2);
         let gamepads = pages.last().expect("gamepads page closes the list");
         assert_eq!(gamepads.key, "gamepads");
@@ -977,6 +1032,56 @@ mod tests {
         assert_eq!(row.selected.get(), original);
     }
 
+    /// The input-tab filter narrows binding rows by label substring:
+    /// empty query keeps everything, a miss keeps nothing, and a hit
+    /// keeps its rows (pad mapping sections filter like keyboard ones).
+    #[test]
+    fn input_filter_narrows_sections_and_rows() {
+        fn row_count(pages: &[Keyed<InputPage>]) -> usize {
+            pages
+                .iter()
+                .filter(|page| page.key.starts_with("system-"))
+                .flat_map(|page| page.model.snapshot().sections.get())
+                .map(|section| section.model.snapshot().rows.get().len())
+                .sum()
+        }
+        let (editor, _adapter, _dir) = headless_editor();
+        let executor: Rc<dyn panechord::Executor> = Rc::new(TestExecutor);
+        let full = inputs(
+            &editor,
+            noop_capture(&executor),
+            noop_capture(&executor),
+            Binding::constant(String::new()),
+        );
+        let total = row_count(&full);
+        assert!(total > 0, "system pages expose binding rows");
+        let missing = inputs(
+            &editor,
+            noop_capture(&executor),
+            noop_capture(&executor),
+            Binding::constant("zzz-no-such-control".to_string()),
+        );
+        assert_eq!(row_count(&missing), 0, "a miss keeps no rows");
+        // A hit on a real row label keeps that row and drops the rest.
+        let probe = full
+            .iter()
+            .filter(|page| page.key.starts_with("system-"))
+            .flat_map(|page| page.model.snapshot().sections.get())
+            .flat_map(|section| section.model.snapshot().rows.get())
+            .map(|row| row.model.snapshot().label.get())
+            .find(|label| label.len() > 3)
+            .expect("a row label to probe with");
+        let needle = probe.chars().take(4).collect::<String>();
+        let hits = inputs(
+            &editor,
+            noop_capture(&executor),
+            noop_capture(&executor),
+            Binding::constant(needle),
+        );
+        let kept = row_count(&hits);
+        assert!(kept > 0 && kept < total, "a hit narrows but keeps rows");
+    }
+
     /// Binding rows localize their chrome live: switching the draft
     /// language re-renders Change/Clear without rebuilding the page.
     #[test]
@@ -985,7 +1090,12 @@ mod tests {
         use nerust_settings_core::model::language::AppLanguage;
         let (editor, _adapter, _dir) = headless_editor();
         let executor: Rc<dyn panechord::Executor> = Rc::new(TestExecutor);
-        let pages = inputs(&editor, noop_capture(&executor), noop_capture(&executor));
+        let pages = inputs(
+            &editor,
+            noop_capture(&executor),
+            noop_capture(&executor),
+            Binding::constant(String::new()),
+        );
         let rows = pages
             .iter()
             .find(|page| page.key == "shortcuts")
@@ -1028,7 +1138,12 @@ mod tests {
         use nerust_settings_core::model::input::ShortcutAction;
         let (editor, _adapter, _dir) = headless_editor();
         let executor: Rc<dyn panechord::Executor> = Rc::new(TestExecutor);
-        let pages = inputs(&editor, noop_capture(&executor), noop_capture(&executor));
+        let pages = inputs(
+            &editor,
+            noop_capture(&executor),
+            noop_capture(&executor),
+            Binding::constant(String::new()),
+        );
         let rows = pages
             .iter()
             .find(|page| page.key == "shortcuts")

@@ -312,7 +312,7 @@ impl SessionHandle {
                 let SourceButtonId::Key(key) = button else {
                     continue;
                 };
-                if let Some(&field) = self.input.key_field_map.get(key) {
+                if let Some(&field) = self.input.keys.field_map.get(key) {
                     let _ = input.set(field, nerust_input_traits::InputValue::Digital(true));
                 }
             }
