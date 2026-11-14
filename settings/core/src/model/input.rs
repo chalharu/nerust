@@ -6,10 +6,17 @@ use nerust_input_traits::{AttachmentId, DigitalControlId, StandardButton};
 
 pub const IMPLICIT_PROFILE_ID: &str = "default";
 
-/// Default stick deadzone in percent. Hall-effect sticks (GuliKit and
-/// friends) hold center tightly; 8% rejects drift without eating intent.
-/// The out-of-box 15% felt wide on real pads, so per-pad rows start here.
+/// Default stick deadzone in percent.
 pub const DEFAULT_DEADZONE_PERCENT: u8 = 8;
+
+/// Hard ceiling for per-pad deadzones in percent.
+pub const DEADZONE_MAX_PERCENT: u8 = 90;
+
+/// Deadzone choices offered by the settings UI.
+pub const DEADZONE_STEPS: [u8; 7] = [0, 5, 10, 15, 20, 25, 30];
+
+/// Connection-order pads tracked by settings; mirrors `MAX_PADS`.
+pub const PAD_COUNT: usize = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -19,21 +26,14 @@ pub struct InputSettings {
     pub gamepad: GamepadSettings,
 }
 
-/// Pad-level preferences shared by every system: one deadzone per pad
-/// plus the connection-order port table. Pad `i` (first-seen order
-/// within a boot, stabilized by device descriptors) drives its assigned
-/// port; `slot: None` parks the pad. `triggers_as_shoulders` doubles the
-/// analog triggers as the shoulder buttons of the same pad (full-press
-/// past 0.9): opt-in per pad, never a silent global alias.
+/// Pad-level preferences shared by every system.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct GamepadSettings {
-    pub pad_ports: [PadPort; nerust_input_traits::MAX_PADS],
+    pub pad_ports: [PadPort; PAD_COUNT],
 }
 
-/// One connection-order pad: its player slot, the trigger doubling, and
-/// its own stick deadzone in percent (`0..=90`, session clamps on read).
-/// Sticks vary per unit, so the deadzone rides the pad, never a global.
+/// One connection-order pad: its player slot plus its stick deadzone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct PadPort {
@@ -88,7 +88,7 @@ pub struct SystemInputSettings {
     /// empty table behaves exactly like the old build. Absolute
     /// attachments (like keyboard bindings): an explicit entry wins over
     /// the pad's player-slot routing.
-    pub pad_bindings: [Vec<PadBinding>; nerust_input_traits::MAX_PADS],
+    pub pad_bindings: [Vec<PadBinding>; PAD_COUNT],
 }
 
 impl SystemInputSettings {
@@ -372,6 +372,11 @@ impl PartialEq<DigitalControlId> for PersistedControlId {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pad_count_tracks_max_pads() {
+        assert_eq!(PAD_COUNT, nerust_input_traits::MAX_PADS);
+    }
 
     #[test]
     fn pad_shortcut_conflicts_groups_shared_buttons() {

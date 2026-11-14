@@ -14,10 +14,7 @@ pub enum CaptureTarget {
         attachment: String,
         control: String,
     },
-    /// One per-pad game-button override: connection-order pad `pad` drives
-    /// `(attachment, control)` with its own button. Absolute attachments
-    /// (like keyboard bindings): an explicit entry wins over the pad's
-    /// player-slot routing, and the standard layout fills every gap.
+    /// One per-pad game-button override.
     PadBinding {
         system: Box<dyn SystemId>,
         pad: usize,
@@ -27,37 +24,75 @@ pub enum CaptureTarget {
     Shortcut(ShortcutAction),
 }
 
-pub fn current_binding_key(snapshot: &SettingsSnapshot, target: &CaptureTarget) -> Option<Key> {
+/// One lookup for all capture columns: `(key, shortcut pad, pad override)`.
+fn binding_cols(
+    snapshot: &SettingsSnapshot,
+    target: &CaptureTarget,
+) -> (Option<Key>, Option<StandardButton>, Option<StandardButton>) {
     match target {
         CaptureTarget::Binding {
             system,
             attachment,
             control,
-        } => snapshot
-            .shared
-            .input
-            .systems
-            .get(system)?
-            .implicit_keyboard_profile()?
-            .bindings
-            .iter()
-            .find(|binding| {
-                binding.attachment.as_str() == attachment
-                    && matches!(&binding.control, PersistedControlId::Digital(id) if id == control)
-            })
-            .map(|binding| binding.key),
-        // Pad-mapping rows have no keyboard column; the shared shortcut
-        // column stays empty for them by construction.
-        CaptureTarget::PadBinding { .. } => None,
-        CaptureTarget::Shortcut(action) => snapshot
-            .shared
-            .input
-            .shortcuts
-            .keyboard
-            .iter()
-            .find(|binding| &binding.action == action)
-            .and_then(|binding| binding.key),
+        } => {
+            let key = snapshot
+                .shared
+                .input
+                .systems
+                .get(system)
+                .and_then(|systems| systems.implicit_keyboard_profile())
+                .and_then(|profile| {
+                    profile
+                        .bindings
+                        .iter()
+                        .find(|binding| {
+                            binding.attachment.as_str() == attachment
+                                && matches!(&binding.control, PersistedControlId::Digital(id) if id == control)
+                        })
+                })
+                .map(|binding| binding.key);
+            (key, None, None)
+        }
+        CaptureTarget::PadBinding {
+            system,
+            pad,
+            attachment,
+            control,
+        } => {
+            let button = snapshot
+                .shared
+                .input
+                .systems
+                .get(system)
+                .and_then(|systems| systems.pad_bindings.get(*pad))
+                .and_then(|bindings| {
+                    bindings.iter().find(|binding| {
+                        binding.attachment.as_str() == attachment
+                            && matches!(&binding.control, PersistedControlId::Digital(id) if id == control)
+                    })
+                })
+                .map(|binding| binding.button);
+            (None, None, button)
+        }
+        CaptureTarget::Shortcut(action) => {
+            let row = snapshot
+                .shared
+                .input
+                .shortcuts
+                .keyboard
+                .iter()
+                .find(|binding| &binding.action == action);
+            (
+                row.and_then(|binding| binding.key),
+                row.and_then(|binding| binding.pad),
+                None,
+            )
+        }
     }
+}
+
+pub fn current_binding_key(snapshot: &SettingsSnapshot, target: &CaptureTarget) -> Option<Key> {
+    binding_cols(snapshot, target).0
 }
 
 pub fn current_binding_label(
@@ -67,53 +102,18 @@ pub fn current_binding_label(
     current_binding_key(snapshot, target).map(|key| key.label())
 }
 
-/// Current pad button for a shortcut target, if any. Game binding rows
-/// never carry pads, so this is `None` for them by construction.
 pub fn current_pad_binding(
     snapshot: &SettingsSnapshot,
     target: &CaptureTarget,
 ) -> Option<StandardButton> {
-    match target {
-        CaptureTarget::Shortcut(action) => snapshot
-            .shared
-            .input
-            .shortcuts
-            .keyboard
-            .iter()
-            .find(|binding| &binding.action == action)
-            .and_then(|binding| binding.pad),
-        CaptureTarget::Binding { .. } | CaptureTarget::PadBinding { .. } => None,
-    }
+    binding_cols(snapshot, target).1
 }
 
-/// Current override button for one per-pad mapping target, if any.
-/// `None` means the fixed standard layout drives it (callers show the
-/// layout's button as the effective value, never "Unbound").
 pub fn current_pad_game_binding(
     snapshot: &SettingsSnapshot,
     target: &CaptureTarget,
 ) -> Option<StandardButton> {
-    match target {
-        CaptureTarget::PadBinding {
-            system,
-            pad,
-            attachment,
-            control,
-        } => snapshot
-            .shared
-            .input
-            .systems
-            .get(system)?
-            .pad_bindings
-            .get(*pad)?
-            .iter()
-            .find(|binding| {
-                binding.attachment.as_str() == attachment
-                    && matches!(&binding.control, PersistedControlId::Digital(id) if id == control)
-            })
-            .map(|binding| binding.button),
-        CaptureTarget::Binding { .. } | CaptureTarget::Shortcut(_) => None,
-    }
+    binding_cols(snapshot, target).2
 }
 
 pub fn apply_capture_target(
@@ -158,16 +158,12 @@ pub fn apply_capture_target(
                 binding.key = key;
             }
         }
-        // Keyboard capture never lands on a pad-mapping row: the row
-        // keeps its override and the press stays pending for a pad.
+        // Keyboard capture never lands on a pad-mapping row.
         CaptureTarget::PadBinding { .. } => {}
     }
 }
 
-/// Apply one captured pad button. Shortcut targets take the shared pad
-/// column; per-pad mapping targets take the override; game binding rows
-/// keep their keyboard binding untouched and report `false` so callers
-/// can route the press elsewhere.
+/// Apply one captured pad button; game binding rows report `false`.
 pub fn apply_capture_pad_target(
     snapshot: &mut SettingsSnapshot,
     target: &CaptureTarget,
@@ -193,9 +189,7 @@ pub fn apply_capture_pad_target(
             attachment,
             control,
         } => {
-            // Missing system entries materialize like keyboard bindings
-            // (`.entry().or_default()`), so mapping a fresh system seeds
-            // its table instead of failing silent.
+            // Missing systems materialize; out-of-range pads fail.
             let settings = snapshot
                 .shared
                 .input
@@ -230,8 +224,8 @@ mod tests {
     use crate::model::{
         app_state::DesktopAppState,
         input::{
-            InputSettings, KeyboardBinding, PersistedControlId, ShortcutAction, ShortcutBinding,
-            ShortcutSettings, SystemInputSettings,
+            InputSettings, KeyboardBinding, PAD_COUNT, PersistedControlId, ShortcutAction,
+            ShortcutBinding, ShortcutSettings, SystemInputSettings,
         },
         local::HostBackendLocalSettings,
         shared::DesktopSharedSettings,
@@ -486,7 +480,7 @@ mod tests {
         let mut snapshot = snapshot_with_binding("test.att", "test.ctrl", Key::KeyZ);
         assert!(!apply_capture_pad_target(
             &mut snapshot,
-            &pad_target(nerust_input_traits::MAX_PADS),
+            &pad_target(PAD_COUNT),
             Some(StandardButton::South)
         ));
     }
