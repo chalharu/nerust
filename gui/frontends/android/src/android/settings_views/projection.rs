@@ -937,9 +937,15 @@ fn slot_rows(view: &nerust_gui_viewmodel::settings::dto::InputTabView, i18n: I18
     view.slots
         .iter()
         .map(|slot| {
+            // Qualify with the system display name: every machine names its
+            // slots "Player 1" (GBC/GBA have only one), so the bare label
+            // repeats as the choice detail title across NES/GBC/GBA.
+            // The detail screen shows the row label as its title, and the
+            // subtitle only names the screen kind, never the machine.
+            let label = format!("{} {}", view.label, slot.label);
             let mut row = choice_row(
                 &format!("system.{}.slot.{}", view.system_id, slot.slot_id.as_str()),
-                slot.label.clone(),
+                label,
                 i18n.slot_description(),
                 &slot
                     .choices

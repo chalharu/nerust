@@ -2100,6 +2100,12 @@ fn pad_screen_sets_deadzone_triggers_and_resets() {
     let triggers = set_with_pads(&mut snapshot, &pads, "pad.1.triggers", 1, 0);
     assert!(snapshot.shared.input.gamepad.pad_ports[0].triggers_as_shoulders);
     assert_eq!(row(&triggers, "pad.1.triggers").selected, 1);
+    // Stick substitutes toggle per stick and reset with the screen.
+    let sticks = set_with_pads(&mut snapshot, &pads, "pad.1.stick_left", 0, 0);
+    assert!(!snapshot.shared.input.gamepad.pad_ports[0].left_stick_as_dpad);
+    assert!(snapshot.shared.input.gamepad.pad_ports[0].right_stick_as_dpad);
+    assert_eq!(row(&sticks, "pad.1.stick_left").selected, 0);
+    assert_eq!(row(&sticks, "pad.1.stick_right").selected, 1);
     // Screen reset restores this pad's deadzone and trigger, keeps the
     // player slot (the devices radio owns assignment, not this screen).
     assert_eq!(snapshot.shared.input.gamepad.pad_ports[0].slot, Some(0));
@@ -2132,6 +2138,11 @@ fn pad_screen_sets_deadzone_triggers_and_resets() {
         DEFAULT_DEADZONE_PERCENT
     );
     assert!(!snapshot.shared.input.gamepad.pad_ports[0].triggers_as_shoulders);
+    assert!(
+        snapshot.shared.input.gamepad.pad_ports[0].left_stick_as_dpad
+            && snapshot.shared.input.gamepad.pad_ports[0].right_stick_as_dpad,
+        "pad reset restores both stick substitutes"
+    );
     assert_eq!(
         snapshot.shared.input.gamepad.pad_ports[0].slot,
         Some(0),
@@ -3136,6 +3147,41 @@ fn assigned_slot_row_links_to_its_devices_screen() {
         .expect("parked slot row exists");
     assert_eq!(slot.kind, RowKind::Info, "parked slot stays put");
     assert_eq!(slot.text, "Not assigned", "parked slot reads empty");
+}
+
+#[test]
+fn slot_rows_carry_their_system_name() {
+    // Every machine names its slots "Player 1" (NES adds "Player 2"), so a
+    // bare slot label repeats as the choice detail title across NES/GBC/GBA.
+    // The detail shows the row label as its title with only the screen kind
+    // beneath, so the label itself must name the machine.
+    let (_, payload) = test_payload();
+    let mut titles = Vec::new();
+    for system in ["nes", "gbc", "gba"] {
+        let section = payload
+            .sections
+            .iter()
+            .find(|section| section.id == format!("input.{system}"))
+            .unwrap_or_else(|| panic!("input.{system} screen exists"));
+        let labels: Vec<_> = section
+            .rows
+            .iter()
+            .filter(|row| row.kind == RowKind::Choice && row.key.contains(".slot."))
+            .map(|row| row.label.clone())
+            .collect();
+        assert!(!labels.is_empty(), "input.{system} lists its slots");
+        for label in &labels {
+            assert_ne!(*label, "Player 1", "slot rows never stand bare");
+            assert_ne!(*label, "Player 2", "slot rows never stand bare");
+            titles.push(label.clone());
+        }
+    }
+    let unique: std::collections::HashSet<_> = titles.iter().collect();
+    assert_eq!(
+        unique.len(),
+        titles.len(),
+        "slot titles differ per machine: {titles:?}"
+    );
 }
 
 #[test]
