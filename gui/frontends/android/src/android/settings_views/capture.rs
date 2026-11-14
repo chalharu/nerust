@@ -2,6 +2,9 @@
 //!
 //! Keycodes arrive from Kotlin as Android keycodes; the gate derives from
 //! the vault device truth so rows and the command path cannot disagree.
+//! Pad buttons also carry the Kotlin truth-order pad index (`-1` for keys
+//! and uncounted devices): per-pad mapping rows only accept presses from
+//! their own pad, so two pads never cross-capture.
 
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_input_traits::{Key, StandardButton};
@@ -19,6 +22,7 @@ use super::wire::{
 /// report `false` so the platform can handle them (volume, Back, ...).
 pub(crate) fn apply_hardware_key(
     keycode: i32,
+    pad_index: i32,
     pressed: bool,
     snapshot: &mut SettingsSnapshot,
     capture: &mut CaptureSlot,
@@ -38,10 +42,18 @@ pub(crate) fn apply_hardware_key(
             } else {
                 None
             };
+            // Per-pad mapping rows take only their own pad's buttons: a
+            // press from another pad (or a keyboard key) leaves the
+            // capture pending instead of eating it.
+            if let CaptureTarget::PadBinding { pad, .. } = &target {
+                let mine = (*pad as i32) == pad_index && pad_index >= 0;
+                if !mine || button.is_none() {
+                    return Ok((None, false));
+                }
             // Pads only land on shortcut rows: a pad press on a game row
             // leaves the capture pending for a keyboard key instead of
             // eating it.
-            if button.is_some() && !matches!(target, CaptureTarget::Shortcut(_)) {
+            } else if button.is_some() && !matches!(target, CaptureTarget::Shortcut(_)) {
                 return Ok((None, false));
             }
             if key.is_some() || button.is_some() {

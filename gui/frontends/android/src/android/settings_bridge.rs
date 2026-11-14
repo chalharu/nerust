@@ -270,9 +270,10 @@ pub extern "system" fn Java_io_github_chalharu_nerust_SettingsActivity_nativeHar
     mut env: jni::EnvUnowned<'_>,
     _activity: JObject<'_>,
     keycode: jni::sys::jint,
+    pad_index: jni::sys::jint,
     pressed: jni::sys::jboolean,
 ) -> jni::sys::jstring {
-    hardware_key(&mut env, keycode, pressed)
+    hardware_key(&mut env, keycode, pad_index, pressed)
 }
 
 /// Fail envelope: every JNI error tail shares one shape.
@@ -325,13 +326,15 @@ fn envelope_key(
 fn hardware_key(
     env: &mut jni::EnvUnowned<'_>,
     keycode: jni::sys::jint,
+    pad_index: jni::sys::jint,
     pressed: jni::sys::jboolean,
 ) -> jni::sys::jstring {
-    let parsed = bridge::with_callback_env(&mut *env, |_env| -> jni::errors::Result<(i32, bool)> {
-        Ok((keycode, pressed))
-    });
+    let parsed =
+        bridge::with_callback_env(&mut *env, |_env| -> jni::errors::Result<(i32, i32, bool)> {
+            Ok((keycode, pad_index, pressed))
+        });
     let out = match parsed {
-        jni::Outcome::Ok((keycode, pressed)) => {
+        jni::Outcome::Ok((keycode, pad_index, pressed)) => {
             // Compute under the lock, serialize outside it: the payload
             // string is the expensive part and needs no vault access.
             // Dirty compares the draft against the pristine open copy in
@@ -345,6 +348,7 @@ fn hardware_key(
                 }
                 settings_views::apply_hardware_key(
                     keycode,
+                    pad_index,
                     pressed,
                     draft,
                     &mut state.capture,

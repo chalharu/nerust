@@ -169,7 +169,7 @@ pub(super) fn register_main_activity_natives(
             ),
             jni::NativeMethod::from_raw_parts(
                 jni_str!("nativeHardwareKey"),
-                jni_str!("(IZ)Ljava/lang/String;"),
+                jni_str!("(IIZ)Ljava/lang/String;"),
                 settings_bridge::Java_io_github_chalharu_nerust_SettingsActivity_nativeHardwareKey
                     as *mut c_void,
             ),
