@@ -1039,39 +1039,6 @@ impl ApplicationHandler for AndroidFrontend {
         }
     }
 
-    /// Raw Android keycode to position button for winit-delivered pad keys.
-    /// Mirrors the Kotlin dispatch table (L2/R2 stay analog-only) plus the
-    /// D-pad codes and winit's Arrow translation of them. Returns `None` for
-    /// keyboard keys, which this frontend never used and stays untouched.
-    fn winit_pad_button(key: &PhysicalKey) -> Option<nerust_input_traits::StandardButton> {
-        use nerust_input_traits::StandardButton as Pad;
-        match key {
-            PhysicalKey::Unidentified(NativeKeyCode::Android(code)) => match code {
-                96 => Some(Pad::South),
-                97 => Some(Pad::East),
-                99 => Some(Pad::West),
-                100 => Some(Pad::North),
-                102 => Some(Pad::LeftShoulder),
-                103 => Some(Pad::RightShoulder),
-                106 => Some(Pad::LeftStick),
-                107 => Some(Pad::RightStick),
-                108 => Some(Pad::Start),
-                109 => Some(Pad::Back),
-                110 => Some(Pad::Guide),
-                19 => Some(Pad::DpadUp),
-                20 => Some(Pad::DpadDown),
-                21 => Some(Pad::DpadLeft),
-                22 => Some(Pad::DpadRight),
-                _ => None,
-            },
-            PhysicalKey::Code(KeyCode::ArrowUp) => Some(Pad::DpadUp),
-            PhysicalKey::Code(KeyCode::ArrowDown) => Some(Pad::DpadDown),
-            PhysicalKey::Code(KeyCode::ArrowLeft) => Some(Pad::DpadLeft),
-            PhysicalKey::Code(KeyCode::ArrowRight) => Some(Pad::DpadRight),
-            _ => None,
-        }
-    }
-
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         if bridge::take_exit_request() {
             // Staged shutdown log: a linger triangulates to the missing completion line.
@@ -1140,5 +1107,38 @@ impl ApplicationHandler for AndroidFrontend {
             self.chrome.osd.wakeup(now),
         );
         event_loop.set_control_flow(deadline.map_or(ControlFlow::Wait, ControlFlow::WaitUntil));
+    }
+}
+
+/// Raw Android keycode to position button for winit-delivered pad keys.
+/// Mirrors the Kotlin dispatch table (L2/R2 stay analog-only) plus the
+/// D-pad codes and winit's Arrow translation of them. Returns `None` for
+/// keyboard keys, which this frontend never used and stays untouched.
+fn winit_pad_button(key: &PhysicalKey) -> Option<nerust_input_traits::StandardButton> {
+    use nerust_input_traits::StandardButton as Pad;
+    match key {
+        PhysicalKey::Unidentified(NativeKeyCode::Android(code)) => match code {
+            96 => Some(Pad::South),
+            97 => Some(Pad::East),
+            99 => Some(Pad::West),
+            100 => Some(Pad::North),
+            102 => Some(Pad::LeftShoulder),
+            103 => Some(Pad::RightShoulder),
+            106 => Some(Pad::LeftStick),
+            107 => Some(Pad::RightStick),
+            108 => Some(Pad::Start),
+            109 => Some(Pad::Back),
+            110 => Some(Pad::Guide),
+            19 => Some(Pad::DpadUp),
+            20 => Some(Pad::DpadDown),
+            21 => Some(Pad::DpadLeft),
+            22 => Some(Pad::DpadRight),
+            _ => None,
+        },
+        PhysicalKey::Code(KeyCode::ArrowUp) => Some(Pad::DpadUp),
+        PhysicalKey::Code(KeyCode::ArrowDown) => Some(Pad::DpadDown),
+        PhysicalKey::Code(KeyCode::ArrowLeft) => Some(Pad::DpadLeft),
+        PhysicalKey::Code(KeyCode::ArrowRight) => Some(Pad::DpadRight),
+        _ => None,
     }
 }
