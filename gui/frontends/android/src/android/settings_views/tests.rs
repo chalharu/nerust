@@ -2597,7 +2597,7 @@ fn pad_mapping_capture_lands_override_from_own_pad() {
         .flat_map(|section| &section.rows)
         .find(|row| row.key == key)
         .expect("mapping row persists");
-    assert_eq!(row.text, "South");
+    assert_eq!(row.text, "A", "face buttons show their cap print");
     let _ = out;
 }
 
@@ -2820,7 +2820,7 @@ fn pad_mapping_conflict_surfaces_on_screen() {
         section
             .rows
             .iter()
-            .any(|row| row.key.contains(".conflict.") && row.label == "South"),
+            .any(|row| row.key.contains(".conflict.") && row.label == "A"),
         "one button driving two controls surfaces on the pad screen"
     );
 }
@@ -3058,4 +3058,140 @@ fn finish_rejects_conflicting_bindings() {
         snapshot.local.audio.latency_ms = 5;
         assert!(finish_snapshot(&snapshot, None).is_err());
     });
+}
+
+#[test]
+fn pad_screens_scope_mapping_rows_to_the_assigned_player() {
+    // Defaults park Pad A on player 1 and Pad B on player 2.
+    let (snapshot, _) = test_payload();
+    let payload = pad_payload(&snapshot, &two_pads());
+    let pad1 = payload
+        .sections
+        .iter()
+        .find(|section| section.id == "pad.1")
+        .expect("pad.1 screen exists");
+    assert!(
+        pad1.rows
+            .iter()
+            .any(|row| row.key.contains("player1") && row.kind == RowKind::Capture),
+        "own player rows stay"
+    );
+    assert!(
+        !pad1.rows.iter().any(|row| row.key.contains("player2")),
+        "player-2 attachments never ride player-1's pad"
+    );
+    let pad2 = payload
+        .sections
+        .iter()
+        .find(|section| section.id == "pad.2")
+        .expect("pad.2 screen exists");
+    assert!(
+        pad2.rows
+            .iter()
+            .any(|row| row.key.contains("player2") && row.kind == RowKind::Capture),
+        "player-2 rows stay on player-2's pad"
+    );
+    assert!(
+        !pad2.rows.iter().any(|row| row.key.contains("player1")),
+        "player-1 defaults must not pose as this pad's mapping"
+    );
+}
+
+#[test]
+fn unassigned_pad_points_at_devices_instead_of_mapping_rows() {
+    let (mut snapshot, _) = test_payload();
+    snapshot.shared.input.gamepad.pad_ports[0].slot = None;
+    let payload = pad_payload(&snapshot, &two_pads());
+    let pad1 = payload
+        .sections
+        .iter()
+        .find(|section| section.id == "pad.1")
+        .expect("pad.1 screen exists");
+    assert!(
+        pad1.rows.iter().any(|row| row.key == "pad.1.unassigned"),
+        "unassigned pad explains where to assign"
+    );
+    assert!(
+        !pad1.rows.iter().any(|row| row.kind == RowKind::Capture),
+        "parked pads collect no latent overrides"
+    );
+}
+
+#[test]
+fn devices_gears_stay_within_their_player() {
+    // Defaults park Pad A on player 1 and Pad B on player 2.
+    let (snapshot, _) = test_payload();
+    let payload = pad_payload(&snapshot, &two_pads());
+    let devices_p1 = payload
+        .sections
+        .iter()
+        .find(|section| section.id == "devices.p1")
+        .expect("devices.p1 exists");
+    assert!(
+        devices_p1
+            .rows
+            .iter()
+            .any(|row| row.key == "devices.p1.pad1"),
+        "own pad keeps its gear"
+    );
+    assert!(
+        !devices_p1
+            .rows
+            .iter()
+            .any(|row| row.key == "devices.p1.pad2"),
+        "player-2's pad has no gear on player-1's screen"
+    );
+    let devices_p2 = payload
+        .sections
+        .iter()
+        .find(|section| section.id == "devices.p2")
+        .expect("devices.p2 exists");
+    assert!(
+        devices_p2
+            .rows
+            .iter()
+            .any(|row| row.key == "devices.p2.pad2"),
+        "own pad keeps its gear"
+    );
+    assert!(
+        !devices_p2
+            .rows
+            .iter()
+            .any(|row| row.key == "devices.p2.pad1"),
+        "player-1's pad has no gear on player-2's screen"
+    );
+}
+
+#[test]
+fn unassigned_pad_gears_stay_reachable_from_both_players() {
+    let (mut snapshot, _) = test_payload();
+    snapshot.shared.input.gamepad.pad_ports[1].slot = None;
+    let payload = pad_payload(&snapshot, &two_pads());
+    for devices_id in ["devices.p1", "devices.p2"] {
+        let devices = payload
+            .sections
+            .iter()
+            .find(|section| section.id == devices_id)
+            .unwrap_or_else(|| panic!("{devices_id} exists"));
+        assert!(
+            devices.rows.iter().any(|row| row.target == "pad.2"),
+            "unassigned pad stays reachable from {devices_id}"
+        );
+    }
+}
+
+#[test]
+fn pad_rows_show_cap_prints_not_positions() {
+    let (snapshot, _) = test_payload();
+    let payload = pad_payload(&snapshot, &two_pads());
+    for (key, want) in [
+        ("pad.1.nes.nes.attachment.player1.nes.control.a", "A"),
+        ("pad.1.nes.nes.attachment.player1.nes.control.b", "B"),
+        (
+            "pad.1.nes.nes.attachment.player1.nes.control.select",
+            "Back",
+        ),
+    ] {
+        assert_eq!(row(&payload, key).text, *want, "{key} shows its cap");
+    }
 }

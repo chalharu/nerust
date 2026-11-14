@@ -62,6 +62,22 @@ impl StandardButton {
         }
     }
 
+    /// Cap-printed label for the four face buttons; every other button
+    /// keeps [`Self::label`]. Positions are the binding identity (vendors
+    /// transpose caps), but caps are what the plastic prints: Xbox-layout
+    /// pads (and the Android `BUTTON_A` key names) put A at the bottom,
+    /// so mapping rows show the cap users can find. Nintendo-layout users
+    /// still get the position-correct binding; only the hint letter differs.
+    pub fn cap_label(self) -> &'static str {
+        match self {
+            Self::South => "A",
+            Self::East => "B",
+            Self::West => "X",
+            Self::North => "Y",
+            other => other.label(),
+        }
+    }
+
     /// Console-agnostic button for default binding resolution. Stick clicks,
     /// misc, and paddles have no console counterpart yet, so they stay
     /// unbound instead of guessing.
@@ -267,6 +283,31 @@ mod tests {
             axes += 1;
         }
         assert_eq!(axes, GamepadAxis::COUNT);
+    }
+
+    #[test]
+    fn face_buttons_show_cap_prints_other_labels_unchanged() {
+        assert_eq!(
+            [
+                StandardButton::South.cap_label(),
+                StandardButton::East.cap_label(),
+                StandardButton::West.cap_label(),
+                StandardButton::North.cap_label(),
+            ],
+            ["A", "B", "X", "Y"]
+        );
+        for button in StandardButton::iter() {
+            assert!(!button.cap_label().is_empty());
+            if !matches!(
+                button,
+                StandardButton::South
+                    | StandardButton::East
+                    | StandardButton::West
+                    | StandardButton::North
+            ) {
+                assert_eq!(button.cap_label(), button.label());
+            }
+        }
     }
 
     #[test]

@@ -231,6 +231,7 @@ pub enum UiText {
     DescDevicesReset,
     DescPadReset,
     DescPadParked,
+    DescPadUnassigned,
     AlwaysAvailable,
     Connected,
     SharesAcrossPlayers,
@@ -680,6 +681,10 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::DescPadParked => (
             "Parked: no screen past the table, or pad left.",
             "待機中：テーブル外または切断中のため非表示",
+        ),
+        UiText::DescPadUnassigned => (
+            "Assign a player in Devices to map buttons.",
+            "ボタンの割当には「機器」でプレイヤーを割当",
         ),
         UiText::AlwaysAvailable => ("Always available", "常に利用可能"),
         UiText::Connected => ("Connected", "接続中"),
@@ -1238,6 +1243,7 @@ mod tests {
             DescDevicesReset,
             DescPadReset,
             DescPadParked,
+            DescPadUnassigned,
             AlwaysAvailable,
             Connected,
             SharesAcrossPlayers,
