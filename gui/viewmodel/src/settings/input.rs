@@ -195,12 +195,13 @@ pub(super) fn binding_value(
     if state.capture_target.as_ref() == Some(target) {
         BindingValueView::Capturing(i18n.text(UiText::CapturePrompt))
     } else {
-        // Shortcut rows show both columns (`Space` + `Guide`); a lone pad
-        // shows its own label, never an empty pair. Game rows never carry
-        // pads (`current_pad_binding` is `None` for them by construction).
+        // Shortcut rows show both columns (`Space / Guide` means either
+        // triggers, not both together); a lone pad shows its own label.
+        // Game rows never carry pads (`current_pad_binding` is `None`
+        // for them by construction).
         let pad = current_pad_binding(&state.draft, target);
         match (current_binding_label(&state.draft, target), pad) {
-            (Some(key), Some(pad)) => BindingValueView::Bound(format!("{key} + {}", pad.label())),
+            (Some(key), Some(pad)) => BindingValueView::Bound(format!("{key} / {}", pad.label())),
             (Some(key), None) => BindingValueView::Bound(key.to_string()),
             (None, Some(pad)) => BindingValueView::Bound(pad.label().to_string()),
             (None, None) => BindingValueView::Unbound(i18n.text(UiText::Unbound)),

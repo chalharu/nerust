@@ -78,7 +78,7 @@ mod tests {
             .find(|row| row.target == CaptureTarget::Shortcut(ShortcutAction::TogglePause))
             .expect("pause row");
         assert!(
-            matches!(&pause.value, BindingValueView::Bound(label) if label == "Space + Guide"),
+            matches!(&pause.value, BindingValueView::Bound(label) if label == "Space / Guide"),
             "pause row shows both columns, got {:?}",
             pause.value
         );
