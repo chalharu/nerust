@@ -616,7 +616,13 @@ fn controllers_quick_section(
     if !gamepads.is_empty() {
         quick_rows.push(header_row(i18n.text(UiText::Gamepads)));
     }
-    for (index, info) in gamepads.iter().enumerate() {
+    // Past the persisted table a pad parks with no settings of its
+    // own: no link, no screen.
+    for (index, info) in gamepads
+        .iter()
+        .take(nerust_input_traits::MAX_PADS)
+        .enumerate()
+    {
         quick_rows.push(group_row(
             &format!("controls.pad{}.link", index + 1),
             info.name.clone(),
@@ -746,6 +752,7 @@ fn build_pad_sections(
     let gamepad = &snapshot.shared.input.gamepad;
     gamepads
         .iter()
+        .take(nerust_input_traits::MAX_PADS)
         .enumerate()
         .map(|(index, info)| {
             let pad_id = format!("pad.{}", index + 1);
@@ -922,7 +929,11 @@ fn shortcuts_section(
             ));
         }
     }
-    for (pad_index, info) in gamepads.iter().enumerate() {
+    for (pad_index, info) in gamepads
+        .iter()
+        .take(nerust_input_traits::MAX_PADS)
+        .enumerate()
+    {
         rows.push(header_row(format!(
             "{} ({})",
             i18n.text(UiText::GamepadDevice),
@@ -1411,7 +1422,11 @@ fn build_devices_section(
         // the connection-order pad indices (`None` parks every pad).
         let mut pad_choices: Vec<(Option<usize>, String)> =
             vec![(None, i18n.text(UiText::NotAssigned))];
-        for (pad_index, info) in gamepads.iter().enumerate() {
+        for (pad_index, info) in gamepads
+            .iter()
+            .take(nerust_input_traits::MAX_PADS)
+            .enumerate()
+        {
             pad_choices.push((Some(pad_index), info.name.clone()));
         }
         let assigned: Option<usize> = port_index
@@ -1437,7 +1452,11 @@ fn build_devices_section(
         // Gear into each connected pad's own screen (deadzone, triggers,
         // button mapping): the radio above owns assignment, these own
         // the pad.
-        for (pad_index, info) in gamepads.iter().enumerate() {
+        for (pad_index, info) in gamepads
+            .iter()
+            .take(nerust_input_traits::MAX_PADS)
+            .enumerate()
+        {
             rows.push(group_row(
                 &format!("{devices_id}.pad{}", pad_index + 1),
                 info.name.clone(),

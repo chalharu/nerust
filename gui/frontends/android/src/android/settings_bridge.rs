@@ -430,6 +430,7 @@ fn settings_command(env: &mut jni::EnvUnowned<'_>, command: JString<'_>) -> jni:
                     &mut state.touch_capable,
                     &mut state.gamepads,
                     &mut state.system_locale,
+                    &state.pad_order,
                 )
             });
             let dirty = bridge::with_settings(|state| state.draft != state.pristine);

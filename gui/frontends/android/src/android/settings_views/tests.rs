@@ -156,6 +156,7 @@ fn apply(
             &mut None,
             &mut Vec::new(),
             &mut None,
+            &[],
         )
         .unwrap_or_else(|error| panic!("command failed: {error}"))
     })
@@ -194,6 +195,7 @@ fn set_with_pads(
             &mut None,
             &mut gamepads,
             &mut None,
+            &[],
         )
         .unwrap_or_else(|error| panic!("command failed: {error}"))
     })
@@ -370,6 +372,7 @@ fn explicit_japanese_under_ja_system_persists_as_japanese() {
             &mut None,
             &mut Vec::new(),
             &mut locale,
+            &[],
         )
         .expect("language set applies")
     });
@@ -411,6 +414,7 @@ fn display_resolution_never_concretes_the_draft() {
             &mut None,
             &mut Vec::new(),
             &mut locale,
+            &[],
         )
         .expect("volume set applies")
     });
@@ -468,6 +472,7 @@ fn display_resolution_never_concretes_the_draft() {
             &mut None,
             &mut Vec::new(),
             &mut locale,
+            &[],
         )
         .expect("language set applies")
     });
@@ -503,6 +508,7 @@ fn locale_op_upserts_without_mutating_draft() {
             &mut None,
             &mut Vec::new(),
             &mut locale,
+            &[],
         )
         .expect("locale op applies")
     });
@@ -548,6 +554,7 @@ fn locale_op_upserts_without_mutating_draft() {
                     &mut None,
                     &mut Vec::new(),
                     &mut locale,
+                    &[],
                 )
                 .is_err(),
                 "bad locale never persists"
@@ -826,6 +833,7 @@ fn start_capture_rejected_without_input_device() {
             &mut None,
             &mut Vec::new(),
             &mut None,
+            &[],
         )
         .expect_err("start with no input device must fail")
     });
@@ -1052,6 +1060,7 @@ fn phantom_builtin_never_surfaces_without_hardware() {
             &mut None,
             &mut Vec::new(),
             &mut None,
+            &[],
         )
         .expect("keyboards op applies")
     });
@@ -1087,6 +1096,7 @@ fn phantom_builtin_never_surfaces_without_hardware() {
             &mut None,
             &mut Vec::new(),
             &mut None,
+            &[],
         )
         .expect("empty enumeration applies")
     });
@@ -1132,6 +1142,7 @@ fn keyboards_op_upserts_enumeration_without_mutating_draft() {
             &mut None,
             &mut Vec::new(),
             &mut None,
+            &[],
         )
         .expect("keyboards op applies")
     });
@@ -1181,6 +1192,7 @@ fn gamepads_op_upserts_without_mutating_draft() {
             &mut None,
             &mut gamepads,
             &mut None,
+            &[],
         )
         .expect("gamepads op applies")
     });
@@ -1225,6 +1237,7 @@ fn gamepads_op_upserts_without_mutating_draft() {
                     &mut None,
                     &mut gamepads,
                     &mut None,
+                    &[],
                 )
                 .is_err(),
                 "{why}"
@@ -1269,6 +1282,7 @@ fn touch_payload(capable: Option<bool>) -> ViewPayload {
                 &mut touch,
                 &mut Vec::new(),
                 &mut None,
+                &[],
             )
             .expect("touch op applies")
         });
@@ -1341,6 +1355,7 @@ fn reset_section_restores_screen_defaults() {
             &mut None,
             &mut Vec::new(),
             &mut None,
+            &[],
         )
         .expect("reset applies")
     });
@@ -1388,6 +1403,7 @@ fn every_emitted_reset_key_executes() {
                 &mut None,
                 &mut Vec::new(),
                 &mut None,
+                &[],
             )
         })
         .unwrap_or_else(|_| panic!("reset executes: {key}"));
@@ -2097,6 +2113,7 @@ fn pad_screen_sets_deadzone_triggers_and_resets() {
             &mut None,
             &mut gamepads,
             &mut None,
+            &[],
         )
         .expect("reset applies")
     });
@@ -2127,6 +2144,99 @@ fn two_pads() -> Vec<GamepadInfo> {
             name: "Pad B".to_string(),
         },
     ]
+}
+
+/// Ingest a device-truth scan with a session order mirror, returning the
+/// stored vault order (sorted into session order at ingest).
+fn ingest_truth(pads: &[GamepadInfo], pad_order: &[String]) -> Vec<GamepadInfo> {
+    let (mut snapshot, _) = test_payload();
+    let mut gamepads = Vec::new();
+    let command_json = serde_json::to_string(&WireCommand {
+        key: "device_truth".to_string(),
+        index: 0,
+        number: 0,
+        op: WireOp::DeviceTruth,
+        payload: serde_json::json!({
+            "keyboards": serde_json::to_value(test_keyboards()).unwrap(),
+            "capable": true,
+            "gamepads": serde_json::to_value(pads).unwrap(),
+        }),
+    })
+    .unwrap();
+    with_test_deps(|| {
+        apply_command_to(
+            &mut snapshot,
+            &command_json,
+            &mut None,
+            &mut test_keyboards(),
+            &mut None,
+            &mut gamepads,
+            &mut None,
+            pad_order,
+        )
+        .expect("device truth applies")
+    });
+    gamepads
+}
+
+#[test]
+fn device_truth_sorts_vault_into_session_order() {
+    // Scan arrives B-first (reconnect compacted it); the session saw
+    // A first, so Pad 1 must stay Pad A with Pad A's slot and settings.
+    let pads = vec![
+        GamepadInfo {
+            member: "pad:b".to_string(),
+            name: "Pad B".to_string(),
+        },
+        GamepadInfo {
+            member: "pad:a".to_string(),
+            name: "Pad A".to_string(),
+        },
+    ];
+    let order = ["a".to_string(), "b".to_string()];
+    let gamepads = ingest_truth(&pads, &order);
+    assert_eq!(gamepads[0].member, "pad:a");
+    assert_eq!(gamepads[1].member, "pad:b");
+    // Unknown scans (raced ahead of the connect event) trail in scan
+    // order instead of skewing the known pads.
+    let pads = vec![
+        GamepadInfo {
+            member: "pad:c".to_string(),
+            name: "Pad C".to_string(),
+        },
+        GamepadInfo {
+            member: "pad:a".to_string(),
+            name: "Pad A".to_string(),
+        },
+    ];
+    let gamepads = ingest_truth(&pads, &order);
+    assert_eq!(gamepads[0].member, "pad:a");
+    assert_eq!(gamepads[1].member, "pad:c");
+}
+
+#[test]
+fn over_table_pads_have_no_screens_or_links() {
+    let pads: Vec<GamepadInfo> = (0..5)
+        .map(|n| GamepadInfo {
+            member: format!("pad:p{n}"),
+            name: format!("Pad {n}"),
+        })
+        .collect();
+    let payload = pad_payload(&test_payload().0, &pads);
+    let ids: Vec<&str> = payload.sections.iter().map(|s| s.id.as_str()).collect();
+    assert!(ids.contains(&"pad.4"), "fourth pad keeps its screen");
+    assert!(
+        !ids.iter().any(|id| *id == "pad.5"),
+        "past the table a pad parks with no screen"
+    );
+    assert!(
+        payload
+            .sections
+            .iter()
+            .flat_map(|s| &s.rows)
+            .all(|row| !row.key.starts_with("controls.pad5") && !row.key.ends_with(".pad5")),
+        "no links, gears, or shortcut blocks for the parked pad"
+    );
 }
 
 #[test]
@@ -2186,6 +2296,7 @@ fn gamepad_radio_rejects_unknown_pads() {
                 &mut None,
                 &mut gamepads,
                 &mut None,
+                &[],
             )
             .is_err(),
             "out-of-range pad choice fails loud"
@@ -2231,6 +2342,7 @@ fn shortcut_clear_is_per_column() {
                 &mut None,
                 &mut gamepads,
                 &mut None,
+                &[],
             )
             .unwrap_or_else(|error| panic!("command failed: {error}"))
         })
@@ -2269,6 +2381,7 @@ fn shortcut_clear_is_per_column() {
                 &mut None,
                 &mut gamepads,
                 &mut None,
+                &[],
             )
             .unwrap_or_else(|error| panic!("command failed: {error}"))
         })
@@ -2499,6 +2612,7 @@ fn set_with_pads_capture(
             &mut None,
             &mut gamepads,
             &mut None,
+            &[],
         )
         .unwrap_or_else(|error| panic!("command failed: {error}"))
     })
@@ -2642,6 +2756,7 @@ fn set_with_pads_clear(
             &mut None,
             &mut gamepads,
             &mut None,
+            &[],
         )
         .unwrap_or_else(|error| panic!("command failed: {error}"))
     })
@@ -2729,6 +2844,7 @@ fn removed_gamepad_hub_keys_fail_as_unknown() {
                 &mut None,
                 &mut Vec::new(),
                 &mut None,
+                &[],
             )
             .expect_err(&format!("{key} fails loud instead of no-op"));
             assert!(error.contains("unknown"), "{key} fails as unknown: {error}");
@@ -2820,7 +2936,8 @@ fn unknown_keys_and_indices_fail_without_mutation() {
                 &mut test_keyboards(),
                 &mut None,
                 &mut Vec::new(),
-                &mut None
+                &mut None,
+                &[],
             )
             .is_err()
         );
@@ -2841,7 +2958,8 @@ fn unknown_keys_and_indices_fail_without_mutation() {
                 &mut test_keyboards(),
                 &mut None,
                 &mut Vec::new(),
-                &mut None
+                &mut None,
+                &[],
             )
             .is_err()
         );
@@ -2858,7 +2976,8 @@ fn unknown_keys_and_indices_fail_without_mutation() {
                 &mut test_keyboards(),
                 &mut None,
                 &mut Vec::new(),
-                &mut None
+                &mut None,
+                &[],
             )
             .is_err()
         );
@@ -2879,7 +2998,8 @@ fn unknown_keys_and_indices_fail_without_mutation() {
                 &mut test_keyboards(),
                 &mut None,
                 &mut Vec::new(),
-                &mut None
+                &mut None,
+                &[],
             )
             .is_err(),
             "unknown ports never persist"
@@ -2901,7 +3021,8 @@ fn unknown_keys_and_indices_fail_without_mutation() {
                 &mut test_keyboards(),
                 &mut None,
                 &mut Vec::new(),
-                &mut None
+                &mut None,
+                &[],
             )
             .is_err(),
             "unknown reset scopes never no-op silently"

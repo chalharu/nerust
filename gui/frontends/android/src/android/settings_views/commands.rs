@@ -27,7 +27,8 @@ use super::projection::{
 use super::wire::{
     CaptureSlot, GamepadInfo, I18n, KeyboardInfo, Projection, RowKind, RowWire, SectionWire,
     ViewPayload, VmDeps, WireCommand, WireOp, build_vm, choice, find_row, pin_draft_language,
-    projection, range_value, resolve_display, sync_snapshot_from_vm, toggle_value, with_vm_deps,
+    projection, range_value, resolve_display, sort_gamepads_by_order, sync_snapshot_from_vm,
+    toggle_value, with_vm_deps,
 };
 
 /// Apply one wire command to the draft snapshot in place, returning the
@@ -45,6 +46,7 @@ pub(crate) fn apply_command_to(
     touch_capable: &mut Option<bool>,
     gamepads: &mut Vec<GamepadInfo>,
     system_locale: &mut Option<AppLanguage>,
+    pad_order: &[String],
 ) -> Result<ViewPayload, String> {
     let command: WireCommand =
         serde_json::from_str(command_json).map_err(|error| error.to_string())?;
@@ -59,6 +61,7 @@ pub(crate) fn apply_command_to(
                     gamepads,
                     system_locale,
                     &command,
+                    pad_order,
                 )?;
                 prune_missing_builtin(snapshot, keyboards);
                 project_after_snapshot_edit(
@@ -290,6 +293,7 @@ fn apply_device_truth_command(
     gamepads: &mut Vec<GamepadInfo>,
     system_locale: &mut Option<AppLanguage>,
     command: &WireCommand,
+    pad_order: &[String],
 ) -> Result<(), String> {
     let list: Vec<KeyboardInfo> = payload_vec(command, "keyboards")?;
     for info in &list {
@@ -314,6 +318,9 @@ fn apply_device_truth_command(
         }
     }
     *gamepads = names;
+    // Session order, not scan order: Pad N must name session pad N, or a
+    // reconnect compacts the scan onto another pad's slot and settings.
+    sort_gamepads_by_order(gamepads, pad_order);
     if let Some(raw) = command.payload.get("lang") {
         let tag = raw
             .as_str()
