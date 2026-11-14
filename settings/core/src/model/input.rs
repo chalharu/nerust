@@ -6,6 +6,11 @@ use nerust_input_traits::{AttachmentId, DigitalControlId, StandardButton};
 
 pub const IMPLICIT_PROFILE_ID: &str = "default";
 
+/// Default stick deadzone in percent. Hall-effect sticks (GuliKit and
+/// friends) hold center tightly; 8% rejects drift without eating intent.
+/// The out-of-box 15% felt wide on real pads, so per-pad rows start here.
+pub const DEFAULT_DEADZONE_PERCENT: u8 = 8;
+
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct InputSettings {
@@ -14,8 +19,8 @@ pub struct InputSettings {
     pub gamepad: GamepadSettings,
 }
 
-/// Pad-level preferences shared by every system: one deadzone for all
-/// sticks plus the connection-order port table. Pad `i` (first-seen order
+/// Pad-level preferences shared by every system: one deadzone per pad
+/// plus the connection-order port table. Pad `i` (first-seen order
 /// within a boot, stabilized by device descriptors) drives its assigned
 /// port; `slot: None` parks the pad. `triggers_as_shoulders` doubles the
 /// analog triggers as the shoulder buttons of the same pad (full-press
@@ -23,31 +28,48 @@ pub struct InputSettings {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct GamepadSettings {
-    /// Stick deadzone in percent, `0..=90`. Session clamps on read.
-    pub deadzone_percent: u8,
     pub pad_ports: [PadPort; nerust_input_traits::MAX_PADS],
 }
 
-/// One connection-order pad: its player slot plus the trigger doubling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+/// One connection-order pad: its player slot, the trigger doubling, and
+/// its own stick deadzone in percent (`0..=90`, session clamps on read).
+/// Sticks vary per unit, so the deadzone rides the pad, never a global.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct PadPort {
     pub slot: Option<usize>,
     pub triggers_as_shoulders: bool,
+    #[serde(default = "default_pad_deadzone")]
+    pub deadzone_percent: u8,
+}
+
+fn default_pad_deadzone() -> u8 {
+    DEFAULT_DEADZONE_PERCENT
+}
+
+impl Default for PadPort {
+    fn default() -> Self {
+        Self {
+            slot: None,
+            triggers_as_shoulders: false,
+            deadzone_percent: DEFAULT_DEADZONE_PERCENT,
+        }
+    }
 }
 
 impl Default for GamepadSettings {
     fn default() -> Self {
         Self {
-            deadzone_percent: 15,
             pad_ports: [
                 PadPort {
                     slot: Some(0),
                     triggers_as_shoulders: false,
+                    deadzone_percent: DEFAULT_DEADZONE_PERCENT,
                 },
                 PadPort {
                     slot: Some(1),
                     triggers_as_shoulders: false,
+                    deadzone_percent: DEFAULT_DEADZONE_PERCENT,
                 },
                 PadPort::default(),
                 PadPort::default(),
@@ -60,6 +82,13 @@ impl Default for GamepadSettings {
 #[serde(default)]
 pub struct SystemInputSettings {
     pub keyboard_profiles: BTreeMap<String, KeyboardProfile>,
+    /// Per-pad game-button overrides, indexed by connection-order pad.
+    /// Sparse: entries name only remapped `(attachment, control)` pairs;
+    /// everything else falls back to the fixed standard layout, so an
+    /// empty table behaves exactly like the old build. Absolute
+    /// attachments (like keyboard bindings): an explicit entry wins over
+    /// the pad's player-slot routing.
+    pub pad_bindings: [Vec<PadBinding>; nerust_input_traits::MAX_PADS],
 }
 
 impl SystemInputSettings {
@@ -93,6 +122,31 @@ impl KeyboardBinding {
             attachment: PersistedAttachmentId::new(attachment),
             control,
             key,
+        }
+    }
+}
+
+/// One per-pad game-button override: `(attachment, control)` driven by
+/// `button` instead of the fixed standard layout. Digital controls only;
+/// analog sticks keep the standard path (session ignores non-digital
+/// entries). Sparse by design: reset clears the pad's vec.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PadBinding {
+    pub attachment: PersistedAttachmentId,
+    pub control: PersistedControlId,
+    pub button: StandardButton,
+}
+
+impl PadBinding {
+    pub fn new(
+        attachment: impl Into<String>,
+        control: PersistedControlId,
+        button: StandardButton,
+    ) -> Self {
+        Self {
+            attachment: PersistedAttachmentId::new(attachment.into()),
+            control,
+            button,
         }
     }
 }
@@ -181,6 +235,27 @@ pub fn pad_shortcut_conflicts(
         }
     }
     by_button.retain(|_, actions| actions.len() > 1);
+    by_button
+}
+
+/// Per-pad mapping conflicts: one button driving two or more controls on
+/// the same pad. The second control never fires (first entry wins in the
+/// session map), so the settings screen must surface it instead of
+/// silently dropping the press. Two buttons driving one control is fine
+/// (the field OR-merges), so only the button side is reported.
+pub fn pad_game_binding_conflicts(
+    bindings: &[PadBinding],
+) -> std::collections::BTreeMap<StandardButton, Vec<(String, String)>> {
+    let mut by_button = std::collections::BTreeMap::<StandardButton, Vec<(String, String)>>::new();
+    for binding in bindings {
+        if matches!(binding.control, PersistedControlId::Digital(_)) {
+            by_button.entry(binding.button).or_default().push((
+                binding.attachment.as_str().to_string(),
+                binding.control.as_str().to_string(),
+            ));
+        }
+    }
+    by_button.retain(|_, controls| controls.len() > 1);
     by_button
 }
 
@@ -318,8 +393,15 @@ mod tests {
 
     #[test]
     fn gamepad_defaults_park_extra_pads_without_alias() {
+        use super::DEFAULT_DEADZONE_PERCENT;
         let gamepad = super::GamepadSettings::default();
-        assert_eq!(gamepad.deadzone_percent, 15);
+        assert!(
+            gamepad
+                .pad_ports
+                .iter()
+                .all(|port| port.deadzone_percent == DEFAULT_DEADZONE_PERCENT),
+            "every pad starts at the default deadzone"
+        );
         assert_eq!(gamepad.pad_ports[0].slot, Some(0));
         assert_eq!(gamepad.pad_ports[1].slot, Some(1));
         assert_eq!(gamepad.pad_ports[2].slot, None);

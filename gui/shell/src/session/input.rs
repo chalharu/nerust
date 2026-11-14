@@ -346,13 +346,22 @@ impl SessionHandle {
     /// slot, so Off-port pads park their floats silently.
     pub fn handle_source_axis(&mut self, source: SourceId, axis: GamepadAxis, value: f32) {
         let slot = self.pad_slot_for(source);
+        // Per-pad deadzone: sticks vary per unit, so the pad's own row
+        // tunes it. Unmapped sources fall back to the default.
         let percent = self
-            .settings
-            .snapshot
-            .shared
             .input
-            .gamepad
-            .deadzone_percent
+            .pad_index(source)
+            .and_then(|index| {
+                self.settings
+                    .snapshot
+                    .shared
+                    .input
+                    .gamepad
+                    .pad_ports
+                    .get(index)
+                    .map(|port| port.deadzone_percent)
+            })
+            .unwrap_or(nerust_settings_core::model::input::DEFAULT_DEADZONE_PERCENT)
             .clamp(0, 90);
         let value =
             nerust_gamepad_db::apply_deadzone(value.clamp(-1.0, 1.0), f32::from(percent) / 100.0)
@@ -425,7 +434,9 @@ impl SessionHandle {
     /// and axis substitutes share the resolve and differ only in the
     /// OR-machine holder, so hat and stick merge instead of aliasing.
     /// Off-port (and over-table) pads park here: without an assigned
-    /// slot there is no control to drive.
+    /// slot there is no control to drive, overrides or not.
+    /// Per-pad overrides win inside the slot: an explicit `(attachment,
+    /// control)` for this pad's button bypasses the standard layout.
     fn commit_holder_press(
         &mut self,
         holder: FieldSource,
@@ -436,6 +447,31 @@ impl SessionHandle {
         let Some(slot) = slot else {
             return;
         };
+        let resolved = self
+            .input
+            .pad_index(match holder {
+                FieldSource::Pad(source, _) => source,
+                FieldSource::Axis(source, _) => source,
+                _ => return,
+            })
+            .and_then(|index| {
+                self.input
+                    .pad_binding_map
+                    .get(index)
+                    .and_then(|map| map.get(&button).copied())
+            });
+        if let Some((attachment, control)) = resolved {
+            let field = self
+                .emu
+                .field_map()
+                .and_then(|fields| fields.get(&(attachment, ControlId::from(control))).copied());
+            let Some(field) = field else {
+                return;
+            };
+            let dpad = self.input.dpad_for(attachment, control);
+            self.commit_press(field, holder, dpad, pressed);
+            return;
+        }
         let Some(abstract_key) = button.abstract_key() else {
             return;
         };
@@ -515,21 +551,18 @@ impl SessionHandle {
     }
 
     pub fn rebuild_key_field_map(&mut self) {
-        let bindings = self.active_system_id_box().and_then(|system_id| {
-            self.settings
-                .snapshot
-                .shared
-                .input
-                .systems
-                .get(&system_id)
-                .and_then(|s| s.implicit_keyboard_profile())
-        });
-        // The department owns the map; the session only resolves which
+        let system = self
+            .active_system_id_box()
+            .and_then(|system_id| self.settings.snapshot.shared.input.systems.get(&system_id));
+        let bindings = system.and_then(|s| s.implicit_keyboard_profile());
+        let pad_bindings = system.map(|s| &s.pad_bindings);
+        // The department owns the maps; the session only resolves which
         // profile is active.
         self.input.rebuild_key_field_map(
             bindings.map(|p| p.bindings.as_slice()),
             self.emu.field_map(),
         );
+        self.input.rebuild_pad_binding_map(pad_bindings);
     }
 }
 
@@ -838,6 +871,107 @@ mod tests {
     }
 
     #[test]
+    fn pad_overrides_rebuild_from_active_system_settings() {
+        use nerust_input_traits::StandardButton;
+        use nerust_settings_core::model::input::{
+            PadBinding, PersistedControlId, SystemInputSettings,
+        };
+        let mut session = crate::session::test_util::test_session();
+        let system = session.active_system_id_box().expect("test system active");
+        // No overrides by default: the maps stay empty.
+        session.rebuild_key_field_map();
+        assert!(
+            session
+                .input
+                .pad_binding_map
+                .iter()
+                .all(|map| map.is_empty())
+        );
+        // One digital override on pad 0; the analog entry never lands.
+        let mut system_settings = SystemInputSettings::default();
+        system_settings.pad_bindings[0] = vec![
+            PadBinding::new(
+                "test.topology.slot",
+                PersistedControlId::digital("test.topology.a"),
+                StandardButton::East,
+            ),
+            PadBinding::new(
+                "test.topology.slot",
+                PersistedControlId::analog("test.topology.x"),
+                StandardButton::West,
+            ),
+        ];
+        let mut next = session.settings_snapshot().clone();
+        next.shared.input.systems.insert(system, system_settings);
+        session.apply_settings(next).unwrap();
+        let map = &session.input.pad_binding_map[0];
+        assert_eq!(map.len(), 1, "analog entries never reach the map");
+        assert_eq!(
+            map[&StandardButton::East],
+            (
+                AttachmentId::new("test.topology.slot"),
+                DigitalControlId::new("test.topology.a")
+            )
+        );
+        assert!(
+            session.input.pad_binding_map[1].is_empty(),
+            "pads stay independent"
+        );
+    }
+
+    #[test]
+    fn pad_override_duplicates_keep_first_like_keyboard() {
+        use nerust_input_traits::StandardButton;
+        use nerust_settings_core::model::input::{
+            PadBinding, PersistedControlId, SystemInputSettings,
+        };
+        let mut session = crate::session::test_util::test_session();
+        let system = session.active_system_id_box().expect("test system active");
+        let mut system_settings = SystemInputSettings::default();
+        system_settings.pad_bindings[0] = vec![
+            PadBinding::new(
+                "test.topology.slot",
+                PersistedControlId::digital("test.topology.a"),
+                StandardButton::East,
+            ),
+            PadBinding::new(
+                "test.topology.slot",
+                PersistedControlId::digital("test.topology.b"),
+                StandardButton::East,
+            ),
+        ];
+        let mut next = session.settings_snapshot().clone();
+        next.shared.input.systems.insert(system, system_settings);
+        session.apply_settings(next).unwrap();
+        let map = &session.input.pad_binding_map[0];
+        assert_eq!(map.len(), 1);
+        assert_eq!(
+            map[&StandardButton::East].1,
+            DigitalControlId::new("test.topology.a"),
+            "first entry wins, the duplicate only logs"
+        );
+    }
+
+    #[test]
+    fn axis_deadzone_reads_per_pad_rows() {
+        use nerust_input_traits::GamepadAxis;
+        let mut session = crate::session::test_util::test_session();
+        let pad0 = session.pad_source_for(11);
+        let pad1 = session.pad_source_for(12);
+        let mut next = session.settings_snapshot().clone();
+        next.shared.input.gamepad.pad_ports[0].deadzone_percent = 0;
+        next.shared.input.gamepad.pad_ports[1].deadzone_percent = 90;
+        session.apply_settings(next).unwrap();
+        session.handle_source_axis(pad0, GamepadAxis::LeftStickX, 0.5);
+        session.handle_source_axis(pad1, GamepadAxis::LeftStickX, 0.5);
+        let stored0 = session.input.analogs[&(pad0, GamepadAxis::LeftStickX)];
+        let stored1 = session.input.analogs[&(pad1, GamepadAxis::LeftStickX)];
+        assert!((stored0 - 0.5).abs() < 1e-6, "zero deadzone stores raw");
+        assert_eq!(stored1, 0.0, "wide deadzone swallows the deflection");
+        session.clear_input();
+    }
+
+    #[test]
     fn axis_events_store_deadzoned_values_and_substitute_stick_dpad() {
         use nerust_input_traits::{GamepadAxis, StandardButton};
         let mut session = crate::session::test_util::test_session();
@@ -853,7 +987,15 @@ mod tests {
             .get(&(pad, GamepadAxis::LeftStickX))
             .copied()
             .expect("axis value stored");
-        assert!((stored - nerust_gamepad_db::apply_deadzone(0.5, 0.15)).abs() < 1e-6);
+        assert!(
+            (stored
+                - nerust_gamepad_db::apply_deadzone(
+                    0.5,
+                    f32::from(nerust_settings_core::model::input::DEFAULT_DEADZONE_PERCENT) / 100.0
+                ))
+            .abs()
+                < 1e-6
+        );
         assert!(session.input.axis_dpad.contains(&(
             pad,
             GamepadAxis::LeftStickX,

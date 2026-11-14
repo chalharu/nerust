@@ -38,7 +38,7 @@ use nerust_gui_runtime::settings::{
     manager::SettingsManager,
 };
 use nerust_input_traits::{
-    AbstractKey, AttachmentId, DigitalControlId, GamepadAxis, InputAssignments, PadGuid,
+    AbstractKey, AttachmentId, DigitalControlId, GamepadAxis, InputAssignments, MAX_PADS, PadGuid,
     SourceButtonId, SourceId, StandardButton, UnifiedFieldMap,
 };
 use nerust_persistence::error::PersistenceError;
@@ -192,6 +192,12 @@ struct InputDept {
     /// Key → Copy (attachment, control) for dpad-neutral resolution.
     /// Interned at rebuild time so the hot path never allocates.
     key_source: HashMap<nerust_input_traits::Key, (AttachmentId, DigitalControlId)>,
+    /// Per-pad game-button overrides: pad order index → position button →
+    /// interned `(attachment, control)`. Sparse (only remapped pairs);
+    /// rebuilt with the keyboard map on settings apply and system switch.
+    /// Absolute attachments (like keyboard bindings): an explicit entry
+    /// wins over the pad's player-slot routing.
+    pad_binding_map: [HashMap<StandardButton, (AttachmentId, DigitalControlId)>; MAX_PADS],
     interner: IdInterner,
     /// OR merge + neutral resolution across keyboards and controls.
     press_state: field_press::FieldPressState,
@@ -212,6 +218,7 @@ impl InputDept {
             pad_order: Vec::new(),
             device_ids: HashMap::new(),
             key_source: HashMap::new(),
+            pad_binding_map: [(); MAX_PADS].map(|()| HashMap::new()),
             interner: IdInterner::default(),
             press_state: field_press::FieldPressState::default(),
             topology_epoch: 0,
@@ -262,6 +269,46 @@ impl InputDept {
                 attachment = duplicate.attachment,
                 control = duplicate.control,
             );
+        }
+    }
+
+    /// Rebuild the per-pad override maps from the active system's tables.
+    /// Digital controls only; analog entries never reach the commit path,
+    /// so they are skipped here. First entry wins per `(pad, button)`,
+    /// mirroring the keyboard duplicate rule; the interner resolves names
+    /// to the same Copy ids the hot path keys on.
+    pub(crate) fn rebuild_pad_binding_map(
+        &mut self,
+        bindings: Option<&[Vec<nerust_settings_core::model::input::PadBinding>; MAX_PADS]>,
+    ) {
+        for map in &mut self.pad_binding_map {
+            map.clear();
+        }
+        let Some(tables) = bindings else {
+            return;
+        };
+        for (map, entries) in self.pad_binding_map.iter_mut().zip(tables.iter()) {
+            for binding in entries {
+                let nerust_settings_core::model::input::PersistedControlId::Digital(control) =
+                    &binding.control
+                else {
+                    continue;
+                };
+                let (Some(attachment), Some(control)) = (
+                    self.interner.attachment(binding.attachment.as_str()),
+                    self.interner.control(control),
+                ) else {
+                    continue;
+                };
+                if map.contains_key(&binding.button) {
+                    log::warn!(
+                        "duplicate pad binding for pad button {button:?}; keeping first",
+                        button = binding.button,
+                    );
+                    continue;
+                }
+                map.insert(binding.button, (attachment, control));
+            }
         }
     }
 

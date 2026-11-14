@@ -100,6 +100,41 @@ impl StandardButton {
             | Self::Paddle4 => None,
         }
     }
+
+    /// Every position button, declaration order. Sizes UI loops and the
+    /// reverse lookup below; keep in sync with the enum.
+    pub const ALL: [Self; Self::COUNT] = [
+        Self::South,
+        Self::East,
+        Self::West,
+        Self::North,
+        Self::Back,
+        Self::Guide,
+        Self::Start,
+        Self::LeftStick,
+        Self::RightStick,
+        Self::LeftShoulder,
+        Self::RightShoulder,
+        Self::DpadUp,
+        Self::DpadDown,
+        Self::DpadLeft,
+        Self::DpadRight,
+        Self::Misc1,
+        Self::Paddle1,
+        Self::Paddle2,
+        Self::Paddle3,
+        Self::Paddle4,
+    ];
+
+    /// Reverse of [`Self::abstract_key`]: the position button driving one
+    /// console-agnostic button in the fixed standard layout. First match
+    /// wins; the layout maps each abstract once, so this is exact.
+    pub fn with_abstract(abstract_key: crate::AbstractKey) -> Option<Self> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|button| button.abstract_key() == Some(abstract_key))
+    }
 }
 
 /// Analog axes: two sticks plus two triggers. Digital-only consoles sample
@@ -373,6 +408,28 @@ mod tests {
         );
         assert_ne!(PadGuid::NIL, PadGuid::VIRTUAL_TOUCH);
         assert_eq!(PadGuid::NIL.as_bytes(), [0; 16]);
+    }
+
+    #[test]
+    fn all_lists_every_button_once_for_reverse_lookup() {
+        use std::collections::HashSet;
+        assert_eq!(
+            StandardButton::ALL.len(),
+            StandardButton::COUNT,
+            "ALL must track the enum"
+        );
+        let unique: HashSet<_> = StandardButton::ALL.iter().collect();
+        assert_eq!(unique.len(), StandardButton::COUNT);
+        // Every mapped abstract round-trips through the fixed layout.
+        for button in StandardButton::ALL {
+            if let Some(abstract_key) = button.abstract_key() {
+                assert_eq!(StandardButton::with_abstract(abstract_key), Some(button));
+            }
+        }
+        assert_eq!(
+            StandardButton::with_abstract(crate::AbstractKey::Button1),
+            Some(StandardButton::South)
+        );
     }
 
     #[test]

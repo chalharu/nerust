@@ -42,8 +42,12 @@ impl CaptureViewModel {
             // Row-level reset: both columns clear together, so a pad-only
             // row cannot strand an invisible keyboard twin. Game binding
             // rows never carry pads, so only shortcuts take the pad clear.
+            // Per-pad mapping rows clear their own override the same way.
             nerust_settings_core::editor::apply_capture_target(state.draft_mut(), target, None);
-            if matches!(target, CaptureTarget::Shortcut(_)) {
+            if matches!(
+                target,
+                CaptureTarget::Shortcut(_) | CaptureTarget::PadBinding { .. }
+            ) {
                 nerust_settings_core::editor::apply_capture_pad_target(
                     state.draft_mut(),
                     target,

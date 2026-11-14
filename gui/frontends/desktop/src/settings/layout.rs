@@ -198,6 +198,23 @@ fn target_key(target: &CaptureTarget) -> String {
                 control.len()
             )
         }
+        // Desktop never constructs per-pad targets (mapping stays
+        // keyboard-only there); the arm keeps the match exhaustive with
+        // a distinct identity if one ever arrives.
+        CaptureTarget::PadBinding {
+            system,
+            pad,
+            attachment,
+            control,
+        } => {
+            let system = system.to_string();
+            format!(
+                "pad{pad}_{}:{system}{}:{attachment}{}:{control}",
+                system.len(),
+                attachment.len(),
+                control.len()
+            )
+        }
     };
     identity.bytes().map(|byte| format!("{byte:02x}")).collect()
 }
@@ -212,6 +229,7 @@ fn section_key(section: &BindingSectionView, index: usize) -> String {
             control: String::new(),
         }),
         Some(CaptureTarget::Shortcut(_)) => "shortcuts".into(),
+        Some(CaptureTarget::PadBinding { .. }) => format!("padbindings_{index}"),
         None => format!("empty_{index}"),
     }
 }
@@ -406,11 +424,12 @@ pub(super) fn inputs(
     pages
 }
 
-/// Global gamepads page: one port choice per connection-order pad plus the
-/// stick deadzone. No slot chrome (ports are global, not per-system).
-/// One pad choice row: port and trigger rows differ only in projectors
-/// and write-back, so one generic builds both. Missing rows fall back to
-/// `Default` (Off / analog-only / empty label), matching the per-row code.
+/// Per-pad gamepads page: one port choice plus trigger doubling plus
+/// the pad's own stick deadzone per connection-order pad. No slot chrome
+/// (ports are global, not per-system).
+/// One pad choice row: port, trigger, and deadzone rows differ only in
+/// projectors and write-back, so one generic builds all three. Missing
+/// rows fall back to `Default`, matching the per-row code.
 fn pad_choice_row<T: Clone + PartialEq + Eq + Default + 'static>(
     editor: &Rc<Editor>,
     index: usize,
@@ -475,7 +494,9 @@ fn gamepads_page(editor: &Rc<Editor>) -> Keyed<InputPage> {
     let vm = &editor.vm;
     let executor = editor.executor.clone();
     let view = vm.gamepads.view.get();
-    let mut slots: Vec<Keyed<ChoiceRow>> = view
+    let deadzone_label = view.deadzone_label.clone();
+    let deadzone_choices = view.deadzone_choices.clone();
+    let slots: Vec<Keyed<ChoiceRow>> = view
         .pads
         .iter()
         .flat_map(|pad| {
@@ -500,39 +521,58 @@ fn gamepads_page(editor: &Rc<Editor>) -> Keyed<InputPage> {
                 |row| row.trigger_label.clone(),
                 move |alias| triggers.set_trigger_alias(index, alias),
             );
-            [port_row, trigger_row]
+            // Deadzone choices are tab-level (identical for every pad);
+            // the value and write-back ride the pad row.
+            let zones = vm.gamepads.clone();
+            let zone_choices = deadzone_choices.clone();
+            let zone_items = editor.binding(
+                vm.gamepads.view.clone(),
+                move |_: &GamepadTabView| zone_choices.clone(),
+                None,
+            );
+            let zone_selected = editor.binding(
+                vm.gamepads.view.clone(),
+                move |value: &GamepadTabView| {
+                    value
+                        .pads
+                        .iter()
+                        .find(|row| row.index == index)
+                        .map(|row| row.deadzone)
+                        .unwrap_or_default()
+                },
+                Some(
+                    Rc::new(move |percent: u8| zones.set_deadzone(index, percent))
+                        as Rc<dyn Fn(u8) -> Result<(), ViewModelError>>,
+                ),
+            );
+            let zone_choice = choice(zone_items, zone_selected);
+            let zone_label_text = deadzone_label.clone();
+            let deadzone_row = Keyed::new(
+                format!("pad-{index}-deadzone"),
+                Store::new(
+                    ChoiceRow {
+                        label: editor.binding(
+                            vm.gamepads.view.clone(),
+                            move |value: &GamepadTabView| {
+                                value
+                                    .pads
+                                    .iter()
+                                    .find(|row| row.index == index)
+                                    .map(|row| format!("{} deadzone", row.label))
+                                    .unwrap_or(zone_label_text.clone())
+                            },
+                            None,
+                        ),
+                        choices: zone_choice.items,
+                        selected: zone_choice.selected,
+                        enabled: Binding::constant(true),
+                    },
+                    executor.clone(),
+                ),
+            );
+            [port_row, trigger_row, deadzone_row]
         })
         .collect();
-    let deadzone_vm = vm.gamepads.clone();
-    let deadzone_items = editor.binding(
-        vm.gamepads.view.clone(),
-        |value| value.deadzone_choices.clone(),
-        None,
-    );
-    let deadzone_selected = editor.binding(
-        vm.gamepads.view.clone(),
-        |value| value.deadzone,
-        Some(Rc::new(move |percent: u8| {
-            deadzone_vm.set_deadzone(percent)
-        })),
-    );
-    let deadzone = choice(deadzone_items, deadzone_selected);
-    slots.push(Keyed::new(
-        "deadzone".to_string(),
-        Store::new(
-            ChoiceRow {
-                label: editor.binding(
-                    vm.gamepads.view.clone(),
-                    |value| value.deadzone_label.clone(),
-                    None,
-                ),
-                choices: deadzone.items,
-                selected: deadzone.selected,
-                enabled: Binding::constant(true),
-            },
-            executor.clone(),
-        ),
-    ));
     Keyed::new(
         "gamepads",
         Store::new(
@@ -674,7 +714,7 @@ mod tests {
         })
     }
 
-    /// Gamepads page lists one port row per pad plus the deadzone, and
+    /// Gamepads page lists port, trigger, and deadzone rows per pad, and
     /// writing a row routes through the gamepad view model.
     #[test]
     fn gamepads_page_lists_ports_and_deadzone() {
@@ -689,8 +729,8 @@ mod tests {
         assert!(!snapshot.label.is_empty());
         assert_eq!(
             snapshot.slots.len(),
-            2 * nerust_input_traits::MAX_PADS + 1,
-            "four pads times two rows plus the deadzone row"
+            3 * nerust_input_traits::MAX_PADS,
+            "four pads times port, trigger, and deadzone rows"
         );
         let pad = snapshot.slots[0].model.snapshot();
         assert_eq!(pad.label.get(), "Pad 1");
@@ -791,7 +831,7 @@ mod tests {
 
     /// Input pages carry slots plus section bindings; the shortcuts page
     /// collapses to one prebuilt section with no slot chrome, and the
-    /// gamepads page lists pad ports plus the deadzone.
+    /// gamepads page lists pad ports, triggers, and per-pad deadzones.
     #[test]
     fn inputs_pages_include_shortcuts_and_live_sections() {
         let (editor, _adapter, _dir) = headless_editor();
@@ -1015,6 +1055,7 @@ mod tests {
                     target,
                     label: "Button".into(),
                     value: BindingValueView::Bound("Space".into()),
+                    pad_default: None,
                 }],
             };
             assert!(!section_key(&section, 0).is_empty());
