@@ -212,6 +212,21 @@ pub(super) fn port_member_names(
     names
 }
 
+/// Reserved slot holding a disconnected pad: restores on reconnect, so
+/// the radio ("no pad for this player") never lies about it. Shared by
+/// the empty and connected branches below.
+fn stale_slot(port_index: Option<usize>, snapshot: &SettingsSnapshot) -> Option<usize> {
+    port_index.and_then(|port_index| {
+        snapshot
+            .shared
+            .input
+            .gamepad
+            .pad_ports
+            .iter()
+            .position(|pad| pad.slot == Some(port_index))
+    })
+}
+
 /// Drop the built-in membership when fresh enumeration reports no
 /// built-in keyboard: a capability flag, not a known device, so there is
 /// nothing to restore on reconnect. USB descriptors are never pruned
@@ -269,6 +284,32 @@ pub(super) fn build_devices_section(
     gamepads: &[GamepadInfo],
     i18n: I18n,
 ) -> SectionWire {
+    let mut rows = keyboard_rows(port, devices_id, snapshot, keyboards, i18n);
+    rows.extend(gamepad_rows(port, devices_id, snapshot, gamepads, i18n));
+    rows.push(button_row(
+        &format!("reset.{devices_id}"),
+        i18n.text(UiText::ResetScreen),
+        String::new(),
+    ));
+    SectionWire {
+        id: devices_id.to_string(),
+        label: i18n.text(UiText::Devices),
+        sub: player.to_string(),
+        rows,
+        visible: false,
+    }
+}
+
+/// Keyboard membership toggles for one port: the dynamic enumeration
+/// (built-in row when present, one row per external descriptor). Row tap
+/// toggles port membership; Details opens the device screen.
+fn keyboard_rows(
+    port: &str,
+    devices_id: &str,
+    snapshot: &SettingsSnapshot,
+    keyboards: &[KeyboardInfo],
+    i18n: I18n,
+) -> Vec<RowWire> {
     let members = snapshot.app_state.port_devices.get(port);
     let is_member = |member: &str| {
         members
@@ -301,60 +342,27 @@ pub(super) fn build_devices_section(
         row.detail_target = format!("device.{}", info.member);
         rows.push(row);
     }
-    rows.push(header_row(i18n.text(UiText::Gamepads)));
+    rows
+}
+
+/// Gamepad radio, stale reservation, and gears for one port. At most one
+/// connected pad drives a player; "no pad" parks them all. The choice
+/// edits the same pad-port table as Controls > Gamepads (deadzone and
+/// triggers stay there).
+fn gamepad_rows(
+    port: &str,
+    devices_id: &str,
+    snapshot: &SettingsSnapshot,
+    gamepads: &[GamepadInfo],
+    i18n: I18n,
+) -> Vec<RowWire> {
+    let mut rows = Vec::new();
     let port_index = PLAYER_PORTS.iter().position(|known| *known == port);
+    // No connected pads: no header, no dead row. The radio below names
+    // pads, so with none connected there is nothing to pick or gear into;
+    // only a stale slot reservation (restores on reconnect) still renders.
     if gamepads.is_empty() {
-        rows.push(info_row(
-            &format!("{devices_id}.pads.none"),
-            i18n.text(UiText::NotAssigned),
-            String::new(),
-            String::new(),
-        ));
-    } else {
-        // Radio over the connected pads: one player, one pad. Values are
-        // the connection-order pad indices (`None` parks every pad).
-        let mut pad_choices: Vec<(Option<usize>, String)> =
-            vec![(None, i18n.text(UiText::NotAssigned))];
-        for (pad_index, info) in gamepads
-            .iter()
-            .take(nerust_input_traits::MAX_PADS)
-            .enumerate()
-        {
-            pad_choices.push((Some(pad_index), info.name.clone()));
-        }
-        let assigned: Option<usize> = port_index
-            .and_then(|port_index| {
-                snapshot
-                    .shared
-                    .input
-                    .gamepad
-                    .pad_ports
-                    .iter()
-                    .position(|pad| pad.slot == Some(port_index))
-            })
-            // Disconnected assigned pads hide: the radio only names
-            // connected pads, and the stale slot restores on reconnect.
-            .filter(|index| *index < gamepads.len());
-        rows.push(choice_row(
-            &format!("{devices_id}.gamepad"),
-            i18n.text(UiText::GamepadDevice),
-            i18n.text(UiText::DescGamepadRadio),
-            &pad_choices,
-            &assigned,
-        ));
-        // A disconnected pad keeps its slot: name it so "Not assigned"
-        // never lies about a reservation that restores on reconnect.
-        if assigned.is_none()
-            && let Some(stale) = port_index.and_then(|port_index| {
-                snapshot
-                    .shared
-                    .input
-                    .gamepad
-                    .pad_ports
-                    .iter()
-                    .position(|pad| pad.slot == Some(port_index))
-            })
-        {
+        if let Some(stale) = stale_slot(port_index, snapshot) {
             rows.push(info_row(
                 &format!("{devices_id}.gamepad.stale"),
                 i18n.text(UiText::GamepadDevice),
@@ -362,65 +370,103 @@ pub(super) fn build_devices_section(
                 format!("pad {}", stale + 1),
             ));
         }
-        // Gear into this port's own pad screen (deadzone, triggers,
-        // button mapping): the radio above owns assignment, the gear
-        // owns the pad. Unassigned pads keep their gears here so they
-        // stay reachable; other players' pads do not intrude, so this
-        // screen never navigates into another player's pad.
-        for (pad_index, info) in gamepads
-            .iter()
-            .take(nerust_input_traits::MAX_PADS)
-            .enumerate()
-        {
-            let entry_slot: Option<usize> = snapshot
-                .shared
-                .input
-                .gamepad
-                .pad_ports
-                .get(pad_index)
-                .and_then(|pad| pad.slot);
-            let assigned_here = entry_slot.is_none_or(|slot| Some(slot) == port_index);
-            if !assigned_here {
-                continue;
-            }
-            // Unassigned pads stay reachable from both players: say so on
-            // the gear itself, so this screen never promises another
-            // player's pad.
-            let gear_description = if entry_slot.is_none() {
-                i18n.text(UiText::NotAssigned)
-            } else {
-                i18n.text(UiText::DescGamepadGear)
-            };
-            rows.push(group_row(
-                &format!("{devices_id}.pad{}", pad_index + 1),
-                info.name.clone(),
-                gear_description,
-                &format!("pad.{}", pad_index + 1),
-            ));
-        }
-        // Past the table a pad parks with no screen of its own: say so
-        // instead of vanishing silently.
-        if gamepads.len() > nerust_input_traits::MAX_PADS {
-            rows.push(info_row(
-                &format!("{devices_id}.pads.parked"),
-                i18n.text(UiText::GamepadDevice),
-                i18n.text(UiText::DescPadParked),
-                String::new(),
-            ));
-        }
+        return rows;
     }
-    rows.push(button_row(
-        &format!("reset.{devices_id}"),
-        i18n.text(UiText::ResetScreen),
-        String::new(),
+    rows.push(header_row(i18n.text(UiText::Gamepads)));
+    // Radio over the connected pads: one player, one pad. The none
+    // choice parks every pad for this player, so it never reads as
+    // "this port has none" the way a disconnected state does.
+    let mut pad_choices: Vec<(Option<usize>, String)> =
+        vec![(None, i18n.text(UiText::NoPadForPlayer))];
+    for (pad_index, info) in gamepads
+        .iter()
+        .take(nerust_input_traits::MAX_PADS)
+        .enumerate()
+    {
+        pad_choices.push((Some(pad_index), info.name.clone()));
+    }
+    let assigned: Option<usize> = stale_slot(port_index, snapshot)
+        // Disconnected assigned pads hide: the radio only names
+        // connected pads, and the stale slot restores on reconnect.
+        .filter(|index| *index < gamepads.len());
+    rows.push(choice_row(
+        &format!("{devices_id}.gamepad"),
+        i18n.text(UiText::GamepadDevice),
+        i18n.text(UiText::DescGamepadRadio),
+        &pad_choices,
+        &assigned,
     ));
-    SectionWire {
-        id: devices_id.to_string(),
-        label: i18n.text(UiText::Devices),
-        sub: player.to_string(),
-        rows,
-        visible: false,
+    // A disconnected pad keeps its slot: name it so "no pad" never
+    // lies about a reservation that restores on reconnect.
+    if assigned.is_none()
+        && let Some(stale) = stale_slot(port_index, snapshot)
+    {
+        rows.push(info_row(
+            &format!("{devices_id}.gamepad.stale"),
+            i18n.text(UiText::GamepadDevice),
+            i18n.text(UiText::DescPadParked),
+            format!("pad {}", stale + 1),
+        ));
     }
+    rows.extend(gear_rows(port_index, devices_id, snapshot, gamepads, i18n));
+    // Past the table a pad parks with no screen of its own: say so
+    // instead of vanishing silently.
+    if gamepads.len() > nerust_input_traits::MAX_PADS {
+        rows.push(info_row(
+            &format!("{devices_id}.pads.parked"),
+            i18n.text(UiText::GamepadDevice),
+            i18n.text(UiText::DescPadParked),
+            String::new(),
+        ));
+    }
+    rows
+}
+
+/// Gear into this port's own pad screen (deadzone, triggers, button
+/// mapping): the radio owns assignment, the gear owns the pad.
+/// Unassigned pads live under player 1 only, so the same pad never gears
+/// in from two players at once.
+fn gear_rows(
+    port_index: Option<usize>,
+    devices_id: &str,
+    snapshot: &SettingsSnapshot,
+    gamepads: &[GamepadInfo],
+    i18n: I18n,
+) -> Vec<RowWire> {
+    let mut rows = Vec::new();
+    for (pad_index, info) in gamepads
+        .iter()
+        .take(nerust_input_traits::MAX_PADS)
+        .enumerate()
+    {
+        let entry_slot: Option<usize> = snapshot
+            .shared
+            .input
+            .gamepad
+            .pad_ports
+            .get(pad_index)
+            .and_then(|pad| pad.slot);
+        let assigned_here = entry_slot.is_some_and(|slot| Some(slot) == port_index)
+            || (entry_slot.is_none() && port_index == Some(0));
+        if !assigned_here {
+            continue;
+        }
+        // Unassigned pads stay reachable from player 1: say so on the
+        // gear itself, so this screen never promises another
+        // player's pad.
+        let gear_description = if entry_slot.is_none() {
+            i18n.text(UiText::NotAssigned)
+        } else {
+            i18n.text(UiText::DescGamepadGear)
+        };
+        rows.push(group_row(
+            &format!("{devices_id}.pad{}", pad_index + 1),
+            info.name.clone(),
+            gear_description,
+            &format!("pad.{}", pad_index + 1),
+        ));
+    }
+    rows
 }
 
 /// One device screen per enumerated keyboard: connection/capability

@@ -542,7 +542,7 @@ fn apply_reset_scope(
             snapshot.local.video.presentation.vsync = default.local.video.presentation.vsync;
             snapshot.local.cartridge_peripherals = default.local.cartridge_peripherals.clone();
         }
-        "about" | "controllers" | "player.1" | "player.2" | "types.1" | "types.2" => {}
+        "about" | "player.1" | "player.2" | "types.1" | "types.2" => {}
         "audio.detail" => {
             snapshot.local.audio.sample_rate = default.local.audio.sample_rate;
             snapshot.local.audio.latency_ms = default.local.audio.latency_ms;

@@ -839,7 +839,7 @@ mod tests {
         assert!(!pad.choices.get().is_empty());
         assert!(pad.enabled.get());
         let triggers = snapshot.slots[1].model.snapshot();
-        assert_eq!(triggers.label.get(), "Pad 1 triggers");
+        assert_eq!(triggers.label.get(), "Pad 1 triggers as shoulders");
         // Writing pad 1 to player 2 sticks in the draft.
         editor
             .vm

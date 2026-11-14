@@ -7,14 +7,17 @@
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_viewmodel::settings::SettingsViewModel;
 use nerust_settings_core::{
-    editor::CaptureTarget, i18n::UiText, input::slot_port_index, model::input::DEADZONE_STEPS,
+    editor::CaptureTarget,
+    i18n::UiText,
+    input::slot_port_index,
+    model::input::{DEADZONE_STEPS, pad_game_binding_conflicts},
 };
 
 use super::devices::player_label;
 use super::projection::PLAYER_PORTS;
 use super::wire::{
-    GamepadInfo, I18n, SectionWire, button_row, capture_row, encode_target, group_row, header_row,
-    info_row, number_row, toggle_row,
+    GamepadInfo, I18n, RowWire, SectionWire, button_row, capture_row, encode_target, group_row,
+    header_row, info_row, number_row, toggle_row,
 };
 
 /// Per-pad settings screens: one `pad.<n>` screen per connected pad
@@ -31,7 +34,6 @@ pub(super) fn build_pad_sections(
     gamepads: &[GamepadInfo],
 ) -> Vec<SectionWire> {
     use nerust_gui_viewmodel::settings::dto::BindingValueView;
-    use nerust_settings_core::model::input::pad_game_binding_conflicts;
     let reason = i18n.text(UiText::InputDeviceRequired);
     let gamepad = &snapshot.shared.input.gamepad;
     gamepads
@@ -51,14 +53,18 @@ pub(super) fn build_pad_sections(
             // shows belonging. Unassigned pads keep the guidance row below
             // instead: no single Devices screen owns them.
             let slot_row = match slot.filter(|slot| PLAYER_PORTS.get(*slot).is_some()) {
+                // Title names the player (the assignment this screen
+                // drives); the text confirms which pad this screen is.
+                // The old title said "Gamepad" while the value said the
+                // player, answering neither "which" nor "whose".
                 Some(slot) => {
                     let mut row = group_row(
                         &format!("{pad_id}.slot"),
-                        i18n.text(UiText::GamepadDevice),
+                        player_label(slot, i18n),
                         String::new(),
                         &format!("devices.{}", PLAYER_PORTS[slot]),
                     );
-                    row.text = player_label(slot, i18n);
+                    row.text = info.name.clone();
                     row
                 }
                 None => info_row(
@@ -86,7 +92,7 @@ pub(super) fn build_pad_sections(
                 toggle_row(
                     &format!("{pad_id}.triggers"),
                     nerust_settings_core::i18n::pad_triggers_label(i18n.language(), index),
-                    info.name.clone(),
+                    String::new(),
                     i18n,
                     port.is_some_and(|pad| pad.triggers_as_shoulders),
                 ),
@@ -190,32 +196,7 @@ pub(super) fn build_pad_sections(
                 if let Some(settings) = snapshot.shared.input.systems.get(&view.system_id)
                     && let Some(entries) = settings.pad_bindings.get(index)
                 {
-                    for (button, controls) in pad_game_binding_conflicts(entries) {
-                        // Scoped like the rows above: only in-scope
-                        // controls render, and a lone survivor is no
-                        // conflict on this screen.
-                        let shown: Vec<_> = controls
-                            .iter()
-                            .filter(|(attachment, _)| {
-                                !slot_port_index(attachment.as_str())
-                                    .is_some_and(|port| port != slot)
-                            })
-                            .collect();
-                        if shown.len() < 2 {
-                            continue;
-                        }
-                        let name = i18n.pad_button_label(button);
-                        rows.push(info_row(
-                            &format!("{pad_id}.{system}.conflict.{name}"),
-                            name.clone(),
-                            shown
-                                .iter()
-                                .map(|(attachment, control)| format!("{attachment}.{control}"))
-                                .collect::<Vec<_>>()
-                                .join(", "),
-                            String::new(),
-                        ));
-                    }
+                    rows.extend(conflict_rows(&pad_id, &system, slot, entries, i18n));
                 }
             }
             rows.push(button_row(
@@ -232,4 +213,40 @@ pub(super) fn build_pad_sections(
             }
         })
         .collect()
+}
+
+/// One button driving two in-scope controls: a warning row per button.
+/// Out-of-scope controls never render, and a lone survivor is no conflict
+/// on this screen.
+fn conflict_rows(
+    pad_id: &str,
+    system: &str,
+    slot: usize,
+    entries: &[nerust_settings_core::model::input::PadBinding],
+    i18n: I18n,
+) -> Vec<RowWire> {
+    let mut rows = Vec::new();
+    for (button, controls) in pad_game_binding_conflicts(entries) {
+        let shown: Vec<_> = controls
+            .iter()
+            .filter(|(attachment, _)| {
+                !slot_port_index(attachment.as_str()).is_some_and(|port| port != slot)
+            })
+            .collect();
+        if shown.len() < 2 {
+            continue;
+        }
+        let name = i18n.pad_button_label(button);
+        rows.push(info_row(
+            &format!("{pad_id}.{system}.conflict.{name}"),
+            name.clone(),
+            shown
+                .iter()
+                .map(|(attachment, control)| format!("{attachment}.{control}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+            String::new(),
+        ));
+    }
+    rows
 }

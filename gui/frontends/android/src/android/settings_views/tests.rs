@@ -2287,6 +2287,12 @@ fn gamepad_radio_assigns_one_pad_per_player() {
     );
     assert_eq!(row(&moved, "devices.p2.gamepad").selected, 1);
     assert_eq!(row(&moved, "devices.p1.gamepad").selected, 0);
+    // The none choice names the player it parks, never "not assigned".
+    assert_eq!(
+        row(&moved, "devices.p1.gamepad").choices[0].label,
+        "No pad for this player",
+        "radio none reads as an action, not a state"
+    );
     // Unassigned clears the port without touching the other one.
     let cleared = set_with_pads(&mut snapshot, &pads, "devices.p2.gamepad", 0, 0);
     assert_eq!(snapshot.shared.input.gamepad.pad_ports[0].slot, None);
@@ -2694,6 +2700,37 @@ fn reset_screen(snapshot: &mut SettingsSnapshot, pads: &[GamepadInfo], key: &str
         )
         .unwrap_or_else(|error| panic!("reset failed: {error}"))
     });
+}
+
+/// Screen-reset press that must fail: dead scopes fail loud instead of
+/// silently succeeding, so the error text is the assertion.
+fn reset_screen_err(snapshot: &mut SettingsSnapshot, pads: &[GamepadInfo], key: &str) -> String {
+    let command_json = serde_json::to_string(&WireCommand {
+        key: key.to_string(),
+        index: 0,
+        number: 0,
+        op: WireOp::ResetSection,
+        payload: serde_json::Value::Null,
+    })
+    .unwrap();
+    with_test_deps(|| {
+        let mut keyboards = test_keyboards();
+        let mut gamepads = pads.to_vec();
+        apply_command_to(
+            snapshot,
+            &command_json,
+            CommandVault {
+                capture: &mut None,
+                keyboards: &mut keyboards,
+                touch_capable: &mut None,
+                gamepads: &mut gamepads,
+                system_locale: &mut None,
+                pad_order: &[],
+            },
+        )
+        .err()
+        .unwrap_or_else(|| panic!("{key} unexpectedly succeeded"))
+    })
 }
 
 #[test]
@@ -3135,7 +3172,8 @@ fn assigned_slot_row_links_to_its_devices_screen() {
         .expect("pad.1 slot row exists");
     assert_eq!(slot.kind, RowKind::Group, "assigned slot navigates");
     assert_eq!(slot.target, "devices.p1", "slot jumps to its radio");
-    assert_eq!(slot.text, "Player 1", "slot names its player");
+    assert_eq!(slot.label, "Player 1", "slot names its player");
+    assert_eq!(slot.text, "Pad A", "slot confirms whose screen this is");
     // Parking the pad degrades the row to a readout.
     set_with_pads(&mut snapshot, &pads, "devices.p1.gamepad", 0, 0);
     let parked = pad_payload(&snapshot, &pads);
@@ -3256,12 +3294,14 @@ fn unknown_command_keys_fail_loud() {
 
 #[test]
 fn stateless_hub_reset_is_a_noop() {
-    // Navigation-only screens (controllers hub, player/type pickers) carry
-    // no editable state: resetting them succeeds while changing nothing,
-    // exactly like the old per-row replay that skipped their rows.
+    // Navigation-only screens (player/type pickers) carry no editable
+    // state: resetting them succeeds while changing nothing, exactly like
+    // the old per-row replay that skipped their rows. The controllers hub
+    // has no reset row at all, so its scope fails loud instead of
+    // silently succeeding.
     let (mut snapshot, _) = test_payload();
     let pristine = snapshot.clone();
-    reset_screen(&mut snapshot, &[], "reset.controllers");
+    reset_screen(&mut snapshot, &[], "reset.about");
     assert_eq!(
         snapshot.local.touch_overlay, pristine.local.touch_overlay,
         "hub reset touches no overlay state"
@@ -3269,6 +3309,11 @@ fn stateless_hub_reset_is_a_noop() {
     assert_eq!(
         snapshot.app_state.port_devices, pristine.app_state.port_devices,
         "hub reset touches no device state"
+    );
+    let err = reset_screen_err(&mut snapshot, &[], "reset.controllers");
+    assert!(
+        err.contains("unknown reset scope"),
+        "dead hub scope fails loud: {err}"
     );
 }
 
@@ -3579,21 +3624,30 @@ fn devices_gears_stay_within_their_player() {
 }
 
 #[test]
-fn unassigned_pad_gears_stay_reachable_from_both_players() {
+fn unassigned_pad_gears_live_under_player_one() {
+    // An unassigned pad gears in once, under player 1: the same pad never
+    // gears in from two players at once.
     let (mut snapshot, _) = test_payload();
     snapshot.shared.input.gamepad.pad_ports[1].slot = None;
     let payload = pad_payload(&snapshot, &two_pads());
-    for devices_id in ["devices.p1", "devices.p2"] {
-        let devices = payload
-            .sections
-            .iter()
-            .find(|section| section.id == devices_id)
-            .unwrap_or_else(|| panic!("{devices_id} exists"));
-        assert!(
-            devices.rows.iter().any(|row| row.target == "pad.2"),
-            "unassigned pad stays reachable from {devices_id}"
-        );
-    }
+    let devices_p1 = payload
+        .sections
+        .iter()
+        .find(|section| section.id == "devices.p1")
+        .expect("devices.p1 exists");
+    assert!(
+        devices_p1.rows.iter().any(|row| row.target == "pad.2"),
+        "unassigned pad gears in from player 1"
+    );
+    let devices_p2 = payload
+        .sections
+        .iter()
+        .find(|section| section.id == "devices.p2")
+        .expect("devices.p2 exists");
+    assert!(
+        !devices_p2.rows.iter().any(|row| row.target == "pad.2"),
+        "unassigned pad never gears in from player 2"
+    );
 }
 
 #[test]

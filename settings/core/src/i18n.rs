@@ -230,6 +230,7 @@ pub enum UiText {
     ExternalKeyboard,
     GamepadDevice,
     Gamepads,
+    NoPadForPlayer,
     Deadzone,
     DescDeadzone,
     LeftStickAsDpad,
@@ -696,6 +697,7 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::ExternalKeyboard => ("External keyboard", "外付けキーボード"),
         UiText::GamepadDevice => ("Gamepad", "ゲームパッド"),
         UiText::Gamepads => ("Gamepads", "ゲームパッド"),
+        UiText::NoPadForPlayer => ("No pad for this player", "このプレイヤーにパッドなし"),
         UiText::Deadzone => ("Deadzone", "デッドゾーン"),
         UiText::DescDeadzone => (
             "Stick drift guard. 0 disables.",
@@ -836,14 +838,17 @@ pub fn pad_label(language: AppLanguage, index: usize) -> String {
     localized!(language, format!("Pad {pad}"), format!("パッド {pad}"))
 }
 
-/// Per-pad trigger row (`Pad 1 triggers` / `パッド 1 トリガー`):
-/// the shoulder-doubling opt-in shares the pad's number.
+/// Per-pad trigger row (`Pad 1 triggers as shoulders` / `パッド 1
+/// トリガーをショルダーに`): the shoulder-doubling opt-in shares the
+/// pad's number. Names the behavior (LT/RT drive LB/RB), not just the
+/// hardware, so the row reads the same on the per-pad screen and the
+/// desktop all-pads page.
 pub fn pad_triggers_label(language: AppLanguage, index: usize) -> String {
     let pad = index + 1;
     localized!(
         language,
-        format!("Pad {pad} triggers"),
-        format!("パッド {pad} トリガー")
+        format!("Pad {pad} triggers as shoulders"),
+        format!("パッド {pad} トリガーをショルダーに")
     )
 }
 
@@ -1277,6 +1282,7 @@ mod tests {
             ExternalKeyboard,
             GamepadDevice,
             Gamepads,
+            NoPadForPlayer,
             Deadzone,
             DescDeadzone,
             LeftStickAsDpad,
