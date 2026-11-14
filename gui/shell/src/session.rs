@@ -170,17 +170,53 @@ type ControlWithDpad = (
     Option<(AttachmentId, DigitalControlId, AbstractKey)>,
 );
 
+/// Keyboard routing tables: reverse field map, shortcut map, and the
+/// interned source map for dpad-neutral resolution. Rebuilt together on
+/// binding/controller change; the hot path only reads.
+struct KeyboardMaps {
+    /// Reverse map: keyboard key → field index.
+    field_map: HashMap<nerust_input_traits::Key, usize>,
+    /// Key → shortcut action (first binding wins).
+    shortcut_map: HashMap<Key, ShortcutAction>,
+    /// Key → Copy (attachment, control). Interned at rebuild time so the
+    /// hot path never allocates.
+    source: HashMap<nerust_input_traits::Key, (AttachmentId, DigitalControlId)>,
+}
+
+/// Pad routing tables: connection order, descriptor mirror, live device
+/// ids, per-pad overrides, and the pad shortcut map. Order holds
+/// `PadGuid`s minted from stable device descriptors (falling back to
+/// transient ids when no connect event arrived yet); descriptors survive
+/// device-id reuse and reconnects, so a pad keeps its index (and its
+/// persisted port) across both. Guids are `Copy`: the input hot path
+/// never allocates.
+struct PadTopology {
+    /// Pad connection order within this boot: `order[i]` is pad `i` for
+    /// the persisted `pad_ports` table.
+    order: Vec<PadGuid>,
+    /// Descriptor mirror of `order`, same positions, transients skipped:
+    /// the settings vault (which never sees connect events) sorts its
+    /// display list by this so a reconnect can never skew a pad onto
+    /// another pad's slot, deadzone, or overrides. Updated atomically
+    /// with `order` in `note_pad_connected`.
+    descriptor_order: Vec<String>,
+    /// Live frontend device id to pad guid. Dropped on disconnect; the
+    /// order entry stays so a reconnect reuses the index.
+    device_ids: HashMap<i32, PadGuid>,
+    /// Per-pad game-button overrides: pad order index → position button →
+    /// interned `(attachment, control)`. Sparse (only remapped pairs).
+    /// Absolute attachments (like keyboard bindings): an explicit entry
+    /// wins over the pad's player-slot routing.
+    binding_map: [HashMap<StandardButton, (AttachmentId, DigitalControlId)>; MAX_PADS],
+    /// Pad button → shortcut action (first binding wins). Parked pads
+    /// never consult it (see the slot gate).
+    shortcut_map: HashMap<StandardButton, ShortcutAction>,
+}
+
 struct InputDept {
     current_assignments: InputAssignments,
-    /// Reverse map: keyboard key → field index, rebuilt on binding/controller change.
-    key_field_map: HashMap<nerust_input_traits::Key, usize>,
-    /// Key → shortcut action, rebuilt with the keyboard map (first
-    /// binding wins). The hot path reads
-    /// this instead of scanning the binding table per key event.
-    key_shortcut_map: HashMap<Key, ShortcutAction>,
-    /// Pad button → shortcut action, rebuilt with the keyboard map (first
-    /// binding wins). Parked pads never consult it (see the slot gate).
-    pad_shortcut_map: HashMap<StandardButton, ShortcutAction>,
+    keys: KeyboardMaps,
+    pads: PadTopology,
     /// Repeat suppression for every source: one `(source, button)` set, so
     /// keyboards and pads share the rule instead of each adapter owning one.
     pressed: HashSet<(SourceId, SourceButtonId)>,
@@ -192,31 +228,6 @@ struct InputDept {
     /// `(source, axis, button)`. Distinct from `pressed` so a hat release
     /// cannot strand a still-deflected stick (or vice versa).
     axis_dpad: HashSet<(SourceId, GamepadAxis, StandardButton)>,
-    /// Pad connection order within this boot: `pad_order[i]` is pad `i`
-    /// for the persisted `pad_ports` table. Order holds `PadGuid`s minted
-    /// from stable device descriptors (falling back to transient ids when
-    /// no connect event arrived yet). Descriptors survive device-id reuse
-    /// and reconnects, so a pad keeps its index (and its persisted port)
-    /// across both. Guids are `Copy`: the input hot path never allocates.
-    pad_order: Vec<PadGuid>,
-    /// Descriptor mirror of `pad_order`, same positions, transients
-    /// skipped: the settings vault (which never sees connect events)
-    /// sorts its display list by this so a reconnect can never skew a
-    /// pad onto another pad's slot, deadzone, or overrides. Updated
-    /// atomically with `pad_order` in `note_pad_connected`.
-    pad_descriptor_order: Vec<String>,
-    /// Live frontend device id to pad guid. Dropped on disconnect; the
-    /// order entry stays so a reconnect reuses the index.
-    device_ids: HashMap<i32, PadGuid>,
-    /// Key → Copy (attachment, control) for dpad-neutral resolution.
-    /// Interned at rebuild time so the hot path never allocates.
-    key_source: HashMap<nerust_input_traits::Key, (AttachmentId, DigitalControlId)>,
-    /// Per-pad game-button overrides: pad order index → position button →
-    /// interned `(attachment, control)`. Sparse (only remapped pairs);
-    /// rebuilt with the keyboard map on settings apply and system switch.
-    /// Absolute attachments (like keyboard bindings): an explicit entry
-    /// wins over the pad's player-slot routing.
-    pad_binding_map: [HashMap<StandardButton, (AttachmentId, DigitalControlId)>; MAX_PADS],
     interner: IdInterner,
     /// OR merge + neutral resolution across keyboards and controls.
     press_state: field_press::FieldPressState,
@@ -230,17 +241,21 @@ impl InputDept {
     fn new(current_assignments: InputAssignments) -> Self {
         Self {
             current_assignments,
-            key_field_map: HashMap::new(),
-            key_shortcut_map: HashMap::new(),
-            pad_shortcut_map: HashMap::new(),
+            keys: KeyboardMaps {
+                field_map: HashMap::new(),
+                shortcut_map: HashMap::new(),
+                source: HashMap::new(),
+            },
+            pads: PadTopology {
+                order: Vec::new(),
+                descriptor_order: Vec::new(),
+                device_ids: HashMap::new(),
+                binding_map: [(); MAX_PADS].map(|()| HashMap::new()),
+                shortcut_map: HashMap::new(),
+            },
             pressed: HashSet::new(),
             analogs: HashMap::new(),
             axis_dpad: HashSet::new(),
-            pad_order: Vec::new(),
-            pad_descriptor_order: Vec::new(),
-            device_ids: HashMap::new(),
-            key_source: HashMap::new(),
-            pad_binding_map: [(); MAX_PADS].map(|()| HashMap::new()),
             interner: IdInterner::default(),
             press_state: field_press::FieldPressState::default(),
             topology_epoch: 0,
@@ -261,8 +276,8 @@ impl InputDept {
         bindings: Option<&[nerust_settings_core::model::input::KeyboardBinding]>,
         field_map: Option<&UnifiedFieldMap>,
     ) {
-        self.key_field_map.clear();
-        self.key_source.clear();
+        self.keys.field_map.clear();
+        self.keys.source.clear();
         if let Some(bindings) = bindings {
             for binding in bindings {
                 if let nerust_settings_core::model::input::PersistedControlId::Digital(control) =
@@ -274,7 +289,7 @@ impl InputDept {
                     ) else {
                         continue;
                     };
-                    self.key_source.insert(binding.key, (attachment, control));
+                    self.keys.source.insert(binding.key, (attachment, control));
                 }
             }
         }
@@ -283,7 +298,7 @@ impl InputDept {
             && let Err(duplicate) = crate::session::input_map::rebuild_input_map(
                 field_map,
                 bindings,
-                &mut self.key_field_map,
+                &mut self.keys.field_map,
             )
         {
             log::warn!(
@@ -298,14 +313,15 @@ impl InputDept {
     /// First entry wins per key and per pad button, mirroring the old
     /// linear scans; parked pads never consult the pad map (slot gate).
     pub(crate) fn rebuild_shortcut_maps(&mut self, bindings: &[ShortcutBinding]) {
-        self.key_shortcut_map.clear();
-        self.pad_shortcut_map.clear();
+        self.keys.shortcut_map.clear();
+        self.pads.shortcut_map.clear();
         for binding in bindings {
             if let Some(key) = binding.key {
-                self.key_shortcut_map.entry(key).or_insert(binding.action);
+                self.keys.shortcut_map.entry(key).or_insert(binding.action);
             }
             if let Some(button) = binding.pad {
-                self.pad_shortcut_map
+                self.pads
+                    .shortcut_map
                     .entry(button)
                     .or_insert(binding.action);
             }
@@ -321,13 +337,13 @@ impl InputDept {
         &mut self,
         bindings: Option<&[Vec<nerust_settings_core::model::input::PadBinding>; MAX_PADS]>,
     ) {
-        for map in &mut self.pad_binding_map {
+        for map in &mut self.pads.binding_map {
             map.clear();
         }
         let Some(tables) = bindings else {
             return;
         };
-        for (map, entries) in self.pad_binding_map.iter_mut().zip(tables.iter()) {
+        for (map, entries) in self.pads.binding_map.iter_mut().zip(tables.iter()) {
             for binding in entries {
                 let nerust_settings_core::model::input::PersistedControlId::Digital(control) =
                     &binding.control
@@ -437,7 +453,9 @@ impl InputDept {
         ));
         Some((found, dpad))
     }
+}
 
+impl PadTopology {
     /// Stable pad GUID for one device descriptor. FNV-1a (deterministic
     /// across runs, unlike SipHash): the same descriptor always maps to
     /// the same source, which is what makes suppression and slots
@@ -464,11 +482,11 @@ impl InputDept {
 
     /// Mirror upsert for a descriptor: `None` appends (fresh connect),
     /// `Some(pos)` takes the collapsed transient's slot (`pos` clamps:
-    /// the mirror skips transients, so it can be shorter than `pad_order`).
+    /// the mirror skips transients, so it can be shorter than `order`).
     /// Duplicates never insert.
     fn upsert_descriptor(&mut self, pos: Option<usize>, descriptor: &str) {
         if self
-            .pad_descriptor_order
+            .descriptor_order
             .iter()
             .any(|known| known == descriptor)
         {
@@ -476,10 +494,10 @@ impl InputDept {
         }
         match pos {
             Some(pos) => {
-                let at = pos.min(self.pad_descriptor_order.len());
-                self.pad_descriptor_order.insert(at, descriptor.to_string());
+                let at = pos.min(self.descriptor_order.len());
+                self.descriptor_order.insert(at, descriptor.to_string());
             }
-            None => self.pad_descriptor_order.push(descriptor.to_string()),
+            None => self.descriptor_order.push(descriptor.to_string()),
         }
     }
 
@@ -487,14 +505,14 @@ impl InputDept {
     /// Pads past the table park: the persisted prefs cannot name them,
     /// so they resolve to `None` instead of aliasing the last pad.
     fn pad_index_for_guid(&mut self, guid: PadGuid) -> Option<usize> {
-        if let Some(index) = self.pad_order.iter().position(|known| *known == guid) {
+        if let Some(index) = self.order.iter().position(|known| *known == guid) {
             return Some(index);
         }
-        if self.pad_order.len() >= nerust_input_traits::MAX_PADS {
+        if self.order.len() >= nerust_input_traits::MAX_PADS {
             return None;
         }
-        let index = self.pad_order.len();
-        self.pad_order.push(guid);
+        let index = self.order.len();
+        self.order.push(guid);
         Some(index)
     }
 
@@ -503,10 +521,12 @@ impl InputDept {
     fn pad_index(&self, source: SourceId) -> Option<usize> {
         match source {
             SourceId::Keyboard(_) => None,
-            SourceId::Pad(guid) => self.pad_order.iter().position(|known| *known == guid),
+            SourceId::Pad(guid) => self.order.iter().position(|known| *known == guid),
         }
     }
+}
 
+impl InputDept {
     /// Assigned player slot for one pad order index: the persisted
     /// table, clamped to the live slots. `None` parks the pad (Off, or
     /// past the table). Split from `pad_slot` so hot paths scan
@@ -528,7 +548,7 @@ impl InputDept {
         source: SourceId,
         ports: &[nerust_settings_core::model::input::PadPort; nerust_input_traits::MAX_PADS],
     ) -> Option<usize> {
-        let index = self.pad_index(source)?;
+        let index = self.pads.pad_index(source)?;
         self.slot_for_index(index, ports)
     }
 

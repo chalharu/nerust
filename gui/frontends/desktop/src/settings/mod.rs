@@ -65,6 +65,9 @@ pub(crate) struct Editor {
     page: Store<String>,
     input_page: Store<String>,
     system_page: Store<String>,
+    /// Binding-list filter query (input tab search box). Ephemeral UI
+    /// state, never persisted; empty disables filtering.
+    input_filter: Store<String>,
     exit: Rc<Cell<ExitChoice>>,
     close_prompt: Store<ExitChoice>,
 }
@@ -90,6 +93,7 @@ impl Editor {
             page: Store::new("general".into(), executor.clone()),
             input_page: Store::new(String::new(), executor.clone()),
             system_page: Store::new(String::new(), executor.clone()),
+            input_filter: Store::new(String::new(), executor.clone()),
             exit: Rc::new(Cell::new(ExitChoice::Editing)),
             close_prompt: Store::new(ExitChoice::Editing, executor.clone()),
             executor,
@@ -377,8 +381,18 @@ impl Editor {
             capture,
             clear,
         } = commands;
+        let input_filter = self.input_filter.bind(
+            Clone::clone,
+            Some(|query: &mut String, value| *query = value),
+        );
         Presentation {
-            input_pages: Binding::constant(layout::inputs(self, capture, clear)),
+            input_pages: Binding::constant(layout::inputs(
+                self,
+                capture,
+                clear,
+                input_filter.clone(),
+            )),
+            input_filter,
             system_pages: Binding::constant(layout::systems(self)),
             input_selection: self
                 .input_page
@@ -518,6 +532,7 @@ impl Editor {
                 status_section: self.tr(UiText::NotificationSectionStatus),
                 status_enabled: self.tr(UiText::NotificationEnabled),
                 follow_note: self.tr(UiText::NotificationStatusAreaFollows),
+                search_filter: self.tr(UiText::SearchFilter),
                 cancel: self.tr(UiText::Cancel),
                 save: self.tr(UiText::Save),
                 confirm: self.tr(UiText::DiscardUnsavedChanges),
@@ -645,6 +660,7 @@ struct Labels {
     status_section: Binding<String>,
     status_enabled: Binding<String>,
     follow_note: Binding<String>,
+    search_filter: Binding<String>,
     cancel: Binding<String>,
     save: Binding<String>,
     confirm: Binding<String>,
@@ -704,6 +720,7 @@ fn integer_text(binding: Binding<u32>) -> Binding<String> {
 #[derive(Clone)]
 struct Presentation {
     input_pages: Binding<Vec<panechord::Keyed<layout::InputPage>>>,
+    input_filter: Binding<String>,
     system_pages: Binding<Vec<panechord::Keyed<layout::SystemPage>>>,
     input_selection: Binding<String>,
     system_selection: Binding<String>,
@@ -1269,6 +1286,11 @@ mod tests {
             presentation.input_pages.get().len(),
             editor.vm.inputs().len() + 2
         );
+        // The search box binding round-trips through the dialog state.
+        assert!(presentation.input_filter.get().is_empty());
+        assert!(presentation.input_filter.set("a".to_string()));
+        assert_eq!(presentation.input_filter.get(), "a");
+        assert!(!presentation.labels.search_filter.get().is_empty());
         assert_eq!(
             presentation.system_pages.get().len(),
             editor.vm.systems().len()

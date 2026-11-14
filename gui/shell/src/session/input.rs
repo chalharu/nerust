@@ -164,7 +164,8 @@ impl SessionHandle {
     /// linear scan on the hot path. Parked pads never reach here.
     fn shortcut_for_pad(&self, button: StandardButton) -> Option<KeyboardShortcut> {
         self.input
-            .pad_shortcut_map
+            .pads
+            .shortcut_map
             .get(&button)
             .copied()
             .map(Self::shortcut_kind)
@@ -187,15 +188,16 @@ impl SessionHandle {
         // Virtual ids never consume order slots: a ghost entry would
         // squat a pad index and shut out a real pad past the table.
         if device_id < 0 {
-            return SourceId::Pad(super::InputDept::guid_for_transient(device_id));
+            return SourceId::Pad(super::PadTopology::guid_for_transient(device_id));
         }
         let guid = self
             .input
+            .pads
             .device_ids
             .get(&device_id)
             .copied()
-            .unwrap_or_else(|| super::InputDept::guid_for_transient(device_id));
-        self.input.pad_index_for_guid(guid);
+            .unwrap_or_else(|| super::PadTopology::guid_for_transient(device_id));
+        self.input.pads.pad_index_for_guid(guid);
         SourceId::Pad(guid)
     }
 
@@ -211,12 +213,14 @@ impl SessionHandle {
     pub fn primary_pad_source(&self) -> Option<SourceId> {
         let ports = &self.settings.snapshot.shared.input.gamepad.pad_ports;
         self.input
-            .pad_order
+            .pads
+            .order
             .iter()
             .copied()
             .find(|guid| {
                 self.input
-                    .pad_order
+                    .pads
+                    .order
                     .iter()
                     .position(|known| *known == *guid)
                     .and_then(|index| self.input.slot_for_index(index, ports))
@@ -238,9 +242,9 @@ impl SessionHandle {
         if descriptor.is_empty() || device_id < 0 {
             return;
         }
-        let guid = super::InputDept::guid_for_descriptor(descriptor);
-        self.input.device_ids.insert(device_id, guid);
-        let transient = super::InputDept::guid_for_transient(device_id);
+        let guid = super::PadTopology::guid_for_descriptor(descriptor);
+        self.input.pads.device_ids.insert(device_id, guid);
+        let transient = super::PadTopology::guid_for_transient(device_id);
         if transient == guid {
             return;
         }
@@ -248,22 +252,23 @@ impl SessionHandle {
         let new = SourceId::Pad(guid);
         if let Some(pos) = self
             .input
-            .pad_order
+            .pads
+            .order
             .iter()
             .position(|known| *known == transient)
         {
-            if self.input.pad_order.contains(&guid) {
+            if self.input.pads.order.contains(&guid) {
                 // An existing descriptor never moves: drop the placeholder.
                 // The mirror never stored transients, so nothing drops there.
-                self.input.pad_order.remove(pos);
+                self.input.pads.order.remove(pos);
             } else {
-                self.input.pad_order[pos] = guid;
-                self.input.upsert_descriptor(Some(pos), descriptor);
+                self.input.pads.order[pos] = guid;
+                self.input.pads.upsert_descriptor(Some(pos), descriptor);
             }
             self.migrate_pad_source(old, new);
-        } else if !self.input.pad_order.contains(&guid) {
-            self.input.pad_order.push(guid);
-            self.input.upsert_descriptor(None, descriptor);
+        } else if !self.input.pads.order.contains(&guid) {
+            self.input.pads.order.push(guid);
+            self.input.pads.upsert_descriptor(None, descriptor);
         }
     }
 
@@ -271,7 +276,7 @@ impl SessionHandle {
     /// is pad `i`'s device descriptor. The vault sorts its display list by
     /// this, so rows, radios, and capture targets name session indices.
     pub fn pad_descriptors(&self) -> &[String] {
-        &self.input.pad_descriptor_order
+        &self.input.pads.descriptor_order
     }
 
     /// Rewrite holders keyed by a collapsed transient source to the
@@ -337,7 +342,7 @@ impl SessionHandle {
     /// holds never see them), then drop the id mapping. The order entry
     /// stays so a reconnect reuses the index instead of drifting.
     pub fn note_pad_disconnected(&mut self, device_id: i32) {
-        let guid = self.input.device_ids.remove(&device_id);
+        let guid = self.input.pads.device_ids.remove(&device_id);
         let Some(guid) = guid else {
             return;
         };
@@ -351,7 +356,7 @@ impl SessionHandle {
         for button in held {
             self.input.pressed.remove(&(source, button));
             if let SourceButtonId::Pad(std_button) = button {
-                let index = self.input.pad_index(source);
+                let index = self.input.pads.pad_index(source);
                 // Slot unknown by design (mapping already dropped):
                 // releases bypass the gate, so `None` still unstrands.
                 self.commit_holder_press(
@@ -376,7 +381,7 @@ impl SessionHandle {
             .collect();
         for (axis, button) in derived {
             self.input.axis_dpad.remove(&(source, axis, button));
-            let index = self.input.pad_index(source);
+            let index = self.input.pads.pad_index(source);
             self.commit_holder_press(FieldSource::Axis(source, axis), button, index, None, false);
         }
     }
@@ -403,10 +408,10 @@ impl SessionHandle {
         let changed = (pressed && first_press) || !pressed;
         match button {
             SourceButtonId::Key(key) => {
-                if changed && let Some(&field) = self.input.key_field_map.get(&key) {
+                if changed && let Some(&field) = self.input.keys.field_map.get(&key) {
                     // Copy ids out: no allocation on the hot path.
                     let dpad =
-                        self.input.key_source.get(&key).copied().and_then(
+                        self.input.keys.source.get(&key).copied().and_then(
                             |(attachment, control)| self.input.dpad_for(attachment, control),
                         );
                     self.commit_press(field, FieldSource::Key(key), dpad, pressed);
@@ -415,7 +420,8 @@ impl SessionHandle {
                 if first_press {
                     return self
                         .input
-                        .key_shortcut_map
+                        .keys
+                        .shortcut_map
                         .get(&key)
                         .copied()
                         .map(Self::shortcut_kind);
@@ -442,7 +448,7 @@ impl SessionHandle {
     fn commit_pad_press(&mut self, source: SourceId, button: StandardButton, pressed: bool) {
         // One order-index lookup: the slot derives from it instead of
         // re-scanning `pad_order` inside the commit.
-        let index = self.input.pad_index(source);
+        let index = self.input.pads.pad_index(source);
         let slot = index.and_then(|i| self.slot_for_pad_index(i));
         self.commit_holder_press(
             FieldSource::Pad(source, button),
@@ -513,7 +519,7 @@ impl SessionHandle {
         // One order-index lookup per event: the slot gate, the deadzone
         // row, and the trigger alias all read this instead of re-scanning
         // `pad_order`.
-        let index = self.input.pad_index(source);
+        let index = self.input.pads.pad_index(source);
         let slot = index.and_then(|i| self.slot_for_pad_index(i));
         let Some(slot) = slot else {
             return;
@@ -563,7 +569,7 @@ impl SessionHandle {
     ) {
         // One order-index lookup: both the stale release and the fresh
         // press below share it instead of re-scanning `pad_order`.
-        let index = self.input.pad_index(source);
+        let index = self.input.pads.pad_index(source);
         let mut want = slot.and(Self::substitute_button(axis, value, triggers_as_shoulders));
         // Trigger hysteresis: a held shoulder survives down to the release
         // band so epsilon jitter at the press edge cannot flap. Sticks
@@ -633,7 +639,8 @@ impl SessionHandle {
         // `pad_order`.
         let resolved = pad_index.and_then(|index| {
             self.input
-                .pad_binding_map
+                .pads
+                .binding_map
                 .get(index)
                 .and_then(|map| map.get(&button).copied())
         });
@@ -673,7 +680,8 @@ impl SessionHandle {
     ) {
         let resolved = pad_index.and_then(|index| {
             self.input
-                .pad_binding_map
+                .pads
+                .binding_map
                 .get(index)
                 .and_then(|map| map.get(&button).copied())
         });
@@ -737,7 +745,7 @@ impl SessionHandle {
             self.input.axis_dpad.iter().copied().collect();
         for (source, axis, button) in derived {
             self.input.axis_dpad.remove(&(source, axis, button));
-            let index = self.input.pad_index(source);
+            let index = self.input.pads.pad_index(source);
             let slot = index.and_then(|i| self.slot_for_pad_index(i));
             self.commit_holder_press(FieldSource::Axis(source, axis), button, index, slot, false);
         }
@@ -1101,7 +1109,8 @@ mod tests {
         assert!(
             session
                 .input
-                .pad_binding_map
+                .pads
+                .binding_map
                 .iter()
                 .all(|map| map.is_empty())
         );
@@ -1122,7 +1131,7 @@ mod tests {
         let mut next = session.settings_snapshot().clone();
         next.shared.input.systems.insert(system, system_settings);
         session.apply_settings(next).unwrap();
-        let map = &session.input.pad_binding_map[0];
+        let map = &session.input.pads.binding_map[0];
         assert_eq!(map.len(), 1, "analog entries never reach the map");
         assert_eq!(
             map[&StandardButton::East],
@@ -1132,7 +1141,7 @@ mod tests {
             )
         );
         assert!(
-            session.input.pad_binding_map[1].is_empty(),
+            session.input.pads.binding_map[1].is_empty(),
             "pads stay independent"
         );
     }
@@ -1161,7 +1170,7 @@ mod tests {
         let mut next = session.settings_snapshot().clone();
         next.shared.input.systems.insert(system, system_settings);
         session.apply_settings(next).unwrap();
-        let map = &session.input.pad_binding_map[0];
+        let map = &session.input.pads.binding_map[0];
         assert_eq!(map.len(), 1);
         assert_eq!(
             map[&StandardButton::East].1,
@@ -1369,8 +1378,9 @@ mod tests {
         assert!(
             !session
                 .input
-                .pad_order
-                .contains(&crate::session::InputDept::guid_for_transient(7))
+                .pads
+                .order
+                .contains(&crate::session::PadTopology::guid_for_transient(7))
         );
         session.clear_input();
     }
@@ -1404,7 +1414,7 @@ mod tests {
         session.note_pad_connected(7, "pad-desc-A");
         assert_eq!(session.pad_descriptors(), &["pad-desc-A", "pad-desc-B"]);
         assert_eq!(
-            session.input.pad_order.len(),
+            session.input.pads.order.len(),
             session.pad_descriptors().len(),
             "no transients leak into the mirror"
         );
@@ -1465,11 +1475,11 @@ mod tests {
     #[test]
     fn negative_device_ids_never_consume_order() {
         let mut session = crate::session::test_util::test_session();
-        let before = session.input.pad_order.len();
+        let before = session.input.pads.order.len();
         let _ = session.pad_source_for(-1);
-        assert_eq!(session.input.pad_order.len(), before);
+        assert_eq!(session.input.pads.order.len(), before);
         session.note_pad_connected(-1, "ghost");
-        assert_eq!(session.input.pad_order.len(), before);
+        assert_eq!(session.input.pads.order.len(), before);
         session.clear_input();
     }
 
