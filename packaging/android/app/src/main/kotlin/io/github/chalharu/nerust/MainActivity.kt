@@ -336,8 +336,10 @@ class MainActivity :
         }
     }
 
-    /** Mirror of the Rust tracker for edge-detect and device-removal synthesis; focus loss converges via session clear. */
-    private fun releaseAllControllers() {
+    /** Mirror of the Rust tracker for edge-detect and device-removal synthesis;
+     * focus loss converges via session clear. The capture window calls this
+     * when it loses window focus so a focus steal never strands a hold. */
+    internal fun releaseAllControllers() {
         controllerPressed.keys.toList().forEach(::releaseController)
     }
 
@@ -464,7 +466,10 @@ class MainActivity :
         onCartridgeAcceleration(xG, yG)
     }
 
-    private fun handleBackNavigation() {
+    /** Back stack shared with the gamepad-input capture window (each
+     * window has its own dispatcher, so the capture view calls this
+     * directly instead of reaching the activity dispatcher). */
+    internal fun handleBackNavigation() {
         if (!chromeManager.removeDrawerOverlay()) {
             userInitiatedExit = true
             finish()
