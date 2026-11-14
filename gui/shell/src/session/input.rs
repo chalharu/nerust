@@ -212,6 +212,9 @@ impl SessionHandle {
     /// into the descriptor entry in place, keeping its order index (and
     /// slot); holders keyed by it migrate to the descriptor source so
     /// pre-connect holds keep driving instead of stranding on a dead key.
+    /// The descriptor mirror tracks the same slots (transients skipped),
+    /// so the settings vault sorts its display list into session order
+    /// and a reconnect can never skew a pad onto another pad's settings.
     pub fn note_pad_connected(&mut self, device_id: i32, descriptor: &str) {
         if descriptor.is_empty() {
             return;
@@ -232,14 +235,24 @@ impl SessionHandle {
         {
             if self.input.pad_order.contains(&guid) {
                 // An existing descriptor never moves: drop the placeholder.
+                // The mirror never stored transients, so nothing drops there.
                 self.input.pad_order.remove(pos);
             } else {
                 self.input.pad_order[pos] = guid;
+                self.input.insert_descriptor_at(pos, descriptor);
             }
             self.migrate_pad_source(old, new);
         } else if !self.input.pad_order.contains(&guid) {
             self.input.pad_order.push(guid);
+            self.input.push_descriptor(descriptor);
         }
+    }
+
+    /// Session-order descriptors for the settings vault: `descriptors[i]`
+    /// is pad `i`'s device descriptor. The vault sorts its display list by
+    /// this, so rows, radios, and capture targets name session indices.
+    pub fn pad_descriptors(&self) -> &[String] {
+        &self.input.pad_descriptor_order
     }
 
     /// Rewrite holders keyed by a collapsed transient source to the
@@ -1243,6 +1256,28 @@ mod tests {
         // Unknown ids park on transient keys, never on a real pad.
         let transient = session.pad_source_for(77);
         assert_ne!(transient, first);
+        session.clear_input();
+    }
+
+    #[test]
+    fn descriptor_mirror_tracks_collapse_slots() {
+        let mut session = crate::session::test_util::test_session();
+        // Interleaved transient input and connects: the mirror must name
+        // the same slots as the session order, or the vault display
+        // skews onto another pad's settings.
+        let _ = session.pad_source_for(7);
+        session.note_pad_connected(9, "pad-desc-B");
+        session.note_pad_connected(7, "pad-desc-A");
+        assert_eq!(session.pad_descriptors(), &["pad-desc-A", "pad-desc-B"]);
+        assert_eq!(
+            session.input.pad_order.len(),
+            session.pad_descriptors().len(),
+            "no transients leak into the mirror"
+        );
+        // Reconnect reuses the slot; the mirror never moves it.
+        session.note_pad_disconnected(7);
+        session.note_pad_connected(11, "pad-desc-A");
+        assert_eq!(session.pad_descriptors(), &["pad-desc-A", "pad-desc-B"]);
         session.clear_input();
     }
 
