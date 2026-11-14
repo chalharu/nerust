@@ -176,29 +176,7 @@ fn set_with_pads(
     index: usize,
     number: i64,
 ) -> ViewPayload {
-    with_test_deps(|| {
-        let command_json = serde_json::to_string(&WireCommand {
-            key: key.to_string(),
-            index,
-            number,
-            op: WireOp::Set,
-            payload: serde_json::Value::Null,
-        })
-        .unwrap();
-        let mut keyboards = test_keyboards();
-        let mut gamepads = pads.to_vec();
-        apply_command_to(
-            snapshot,
-            &command_json,
-            &mut None,
-            &mut keyboards,
-            &mut None,
-            &mut gamepads,
-            &mut None,
-            &[],
-        )
-        .unwrap_or_else(|error| panic!("command failed: {error}"))
-    })
+    run_with_pads(snapshot, pads, &mut None, key, WireOp::Set, index, number)
 }
 
 #[test]
@@ -2586,18 +2564,24 @@ fn pad_mapping_capture_lands_override_from_own_pad() {
 }
 
 /// StartCapture on a pad mapping row, threading pads and capture through.
-fn set_with_pads_capture(
+/// One command through the vault with pads connected: radio and per-device
+/// rows only exist while their pad stays connected. `capture` threads
+/// through for capture ops; `&mut None` callers pass a fresh slot.
+fn run_with_pads(
     snapshot: &mut SettingsSnapshot,
     pads: &[GamepadInfo],
     capture: &mut CaptureSlot,
     key: &str,
+    op: WireOp,
+    index: usize,
+    number: i64,
 ) -> ViewPayload {
     with_test_deps(|| {
         let command_json = serde_json::to_string(&WireCommand {
             key: key.to_string(),
-            index: 0,
-            number: 0,
-            op: WireOp::StartCapture,
+            index,
+            number,
+            op,
             payload: serde_json::Value::Null,
         })
         .unwrap();
@@ -2615,6 +2599,15 @@ fn set_with_pads_capture(
         )
         .unwrap_or_else(|error| panic!("command failed: {error}"))
     })
+}
+
+fn set_with_pads_capture(
+    snapshot: &mut SettingsSnapshot,
+    pads: &[GamepadInfo],
+    capture: &mut CaptureSlot,
+    key: &str,
+) -> ViewPayload {
+    run_with_pads(snapshot, pads, capture, key, WireOp::StartCapture, 0, 0)
 }
 
 #[test]
@@ -2736,29 +2729,7 @@ fn set_with_pads_clear(
     pads: &[GamepadInfo],
     key: &str,
 ) -> ViewPayload {
-    with_test_deps(|| {
-        let command_json = serde_json::to_string(&WireCommand {
-            key: key.to_string(),
-            index: 0,
-            number: 0,
-            op: WireOp::ClearBinding,
-            payload: serde_json::Value::Null,
-        })
-        .unwrap();
-        let mut keyboards = test_keyboards();
-        let mut gamepads = pads.to_vec();
-        apply_command_to(
-            snapshot,
-            &command_json,
-            &mut None,
-            &mut keyboards,
-            &mut None,
-            &mut gamepads,
-            &mut None,
-            &[],
-        )
-        .unwrap_or_else(|error| panic!("command failed: {error}"))
-    })
+    run_with_pads(snapshot, pads, &mut None, key, WireOp::ClearBinding, 0, 0)
 }
 
 #[test]
