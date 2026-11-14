@@ -30,16 +30,11 @@ pub enum StandardButton {
     DpadDown,
     DpadLeft,
     DpadRight,
-    Misc1,
-    Paddle1,
-    Paddle2,
-    Paddle3,
-    Paddle4,
 }
 
 impl StandardButton {
     /// Button count; sizes the normalized state arrays.
-    pub const COUNT: usize = 20;
+    pub const COUNT: usize = 15;
 
     /// Array index for normalized state storage.
     pub const fn index(self) -> usize {
@@ -64,11 +59,6 @@ impl StandardButton {
             Self::DpadDown => "D-Down",
             Self::DpadLeft => "D-Left",
             Self::DpadRight => "D-Right",
-            Self::Misc1 => "Misc",
-            Self::Paddle1 => "P1",
-            Self::Paddle2 => "P2",
-            Self::Paddle3 => "P3",
-            Self::Paddle4 => "P4",
         }
     }
 
@@ -91,64 +81,45 @@ impl StandardButton {
             Self::DpadDown => Some(A::DpadDown),
             Self::DpadLeft => Some(A::DpadLeft),
             Self::DpadRight => Some(A::DpadRight),
-            Self::LeftStick
-            | Self::RightStick
-            | Self::Misc1
-            | Self::Paddle1
-            | Self::Paddle2
-            | Self::Paddle3
-            | Self::Paddle4 => None,
+            Self::LeftStick | Self::RightStick => None,
         }
     }
 
     /// Reverse of [`Self::abstract_key`]: the position button driving one
-    /// console-agnostic button in the fixed standard layout.
+    /// console-agnostic button in the fixed standard layout. Single table:
+    /// linear search over [`Self::abstract_key`] so the two never skew.
     pub fn with_abstract(abstract_key: crate::AbstractKey) -> Option<Self> {
-        use crate::AbstractKey as A;
-        match abstract_key {
-            A::Button1 => Some(Self::South),
-            A::Button2 => Some(Self::East),
-            A::Button3 => Some(Self::West),
-            A::Button4 => Some(Self::North),
-            A::Button5 => Some(Self::LeftShoulder),
-            A::Button6 => Some(Self::RightShoulder),
-            A::Select => Some(Self::Back),
-            A::Guide => Some(Self::Guide),
-            A::Start => Some(Self::Start),
-            A::DpadUp => Some(Self::DpadUp),
-            A::DpadDown => Some(Self::DpadDown),
-            A::DpadLeft => Some(Self::DpadLeft),
-            A::DpadRight => Some(Self::DpadRight),
-            _ => None,
-        }
+        // Explicit list: `EnumIter` exists in test builds only, and the
+        // search keeps the forward table as the single source.
+        const ALL: [StandardButton; StandardButton::COUNT] = [
+            StandardButton::South,
+            StandardButton::East,
+            StandardButton::West,
+            StandardButton::North,
+            StandardButton::Back,
+            StandardButton::Guide,
+            StandardButton::Start,
+            StandardButton::LeftStick,
+            StandardButton::RightStick,
+            StandardButton::LeftShoulder,
+            StandardButton::RightShoulder,
+            StandardButton::DpadUp,
+            StandardButton::DpadDown,
+            StandardButton::DpadLeft,
+            StandardButton::DpadRight,
+        ];
+        ALL.into_iter().find(|button| button.abstract_key() == Some(abstract_key))
     }
 }
 
-/// Android keycode to position button (single shared table).
-/// Keycodes 104/105 (L2/R2) stay unmapped: triggers are analog-only and
-/// arrive as motion axes, and `StandardButton` has no trigger buttons.
-pub fn android_keycode_to_button(keycode: i32) -> Option<StandardButton> {
-    const TABLE: [(i32, StandardButton); 15] = [
-        (19, StandardButton::DpadUp),
-        (20, StandardButton::DpadDown),
-        (21, StandardButton::DpadLeft),
-        (22, StandardButton::DpadRight),
-        (96, StandardButton::South),
-        (97, StandardButton::East),
-        (99, StandardButton::West),
-        (100, StandardButton::North),
-        (102, StandardButton::LeftShoulder),
-        (103, StandardButton::RightShoulder),
-        (106, StandardButton::LeftStick),
-        (107, StandardButton::RightStick),
-        (108, StandardButton::Start),
-        (109, StandardButton::Back),
-        (110, StandardButton::Guide),
-    ];
-    TABLE
-        .binary_search_by_key(&keycode, |(code, _)| *code)
-        .ok()
-        .map(|index| TABLE[index].1)
+/// Deadzone with rescale: inside the zone is `0.0`, the rim stays `1.0`.
+/// `deadzone >= 1.0` parks everything at neutral instead of dividing by zero.
+/// Single home for the math; backends never reimplement it.
+pub fn apply_deadzone(value: f32, deadzone: f32) -> f32 {
+    if deadzone >= 1.0 || value.abs() < deadzone {
+        return 0.0;
+    }
+    (value - deadzone.copysign(value)) / (1.0 - deadzone)
 }
 
 /// Analog axes: two sticks plus two triggers. Digital-only consoles sample
@@ -234,7 +205,7 @@ pub enum SourceEvent {
 
 /// Normalized pad snapshot: the virtual-backend seam and headless test entry.
 /// Axes are post-deadzone (`-1.0..=1.0`, `0.0` neutral); the deadzone math
-/// lives in `gamepad-db`, never per backend.
+/// lives here, never per backend.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GamepadState {
     pub buttons: [bool; StandardButton::COUNT],
@@ -329,12 +300,7 @@ mod tests {
         ] {
             assert_eq!(button.abstract_key(), Some(key));
         }
-        for button in [
-            StandardButton::LeftStick,
-            StandardButton::RightStick,
-            StandardButton::Misc1,
-            StandardButton::Paddle1,
-        ] {
+        for button in [StandardButton::LeftStick, StandardButton::RightStick] {
             assert_eq!(button.abstract_key(), None);
         }
     }
@@ -377,32 +343,15 @@ mod tests {
     }
 
     #[test]
-    fn android_keycodes_cover_face_dpad_and_system_buttons() {
-        for (keycode, button) in [
-            (19, StandardButton::DpadUp),
-            (20, StandardButton::DpadDown),
-            (21, StandardButton::DpadLeft),
-            (22, StandardButton::DpadRight),
-            (96, StandardButton::South),
-            (97, StandardButton::East),
-            (99, StandardButton::West),
-            (100, StandardButton::North),
-            (102, StandardButton::LeftShoulder),
-            (103, StandardButton::RightShoulder),
-            (106, StandardButton::LeftStick),
-            (107, StandardButton::RightStick),
-            (108, StandardButton::Start),
-            (109, StandardButton::Back),
-            (110, StandardButton::Guide),
-        ] {
-            assert_eq!(android_keycode_to_button(keycode), Some(button));
-        }
-        // Triggers stay analog-only; unknown codes map to nothing.
-        for keycode in [0, 98, 104, 105, 255] {
-            assert_eq!(android_keycode_to_button(keycode), None);
-        }
+    fn deadzone_parks_and_rescales() {
+        assert_eq!(apply_deadzone(0.05, 0.1), 0.0);
+        assert_eq!(apply_deadzone(-0.05, 0.1), 0.0);
+        assert_eq!(apply_deadzone(1.0, 0.2), 1.0);
+        assert_eq!(apply_deadzone(-1.0, 0.2), -1.0);
+        assert!((apply_deadzone(0.6, 0.2) - 0.5).abs() < 1e-6);
+        assert_eq!(apply_deadzone(0.9, 1.0), 0.0);
+        assert_eq!(apply_deadzone(0.9, 2.0), 0.0);
     }
-
     #[test]
     fn state_folds_events() {
         let mut state = GamepadState::default();

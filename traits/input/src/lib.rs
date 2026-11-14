@@ -27,7 +27,7 @@ pub use profile::{
 };
 pub use source::{
     GamepadAxis, GamepadState, MAX_PADS, PadGuid, SourceButtonId, SourceEvent, SourceId,
-    StandardButton, android_keycode_to_button,
+    StandardButton, apply_deadzone,
 };
 pub use topology::{
     AnalogControlDescriptor, AttachmentSlotDescriptor, ControlDescriptor, DeviceDescriptor,

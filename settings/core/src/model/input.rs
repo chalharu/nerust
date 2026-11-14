@@ -2,21 +2,25 @@ use std::collections::{BTreeMap, HashMap};
 
 use nerust_core_traits::identity::SystemId;
 use nerust_input_traits::Key;
-use nerust_input_traits::{AttachmentId, DigitalControlId, StandardButton};
+use nerust_input_traits::{AttachmentId, DigitalControlId, MAX_PADS, StandardButton};
 
 pub const IMPLICIT_PROFILE_ID: &str = "default";
 
 /// Default stick deadzone in percent.
 pub const DEFAULT_DEADZONE_PERCENT: u8 = 8;
 
-/// Hard ceiling for per-pad deadzones in percent.
+/// Hard ceiling for per-pad deadzones in percent: the schema range for
+/// file-loaded and direct sets. The settings UI offers `DEADZONE_STEPS`
+/// (0..=30); wider values stay representable for worn sticks.
 pub const DEADZONE_MAX_PERCENT: u8 = 90;
 
-/// Deadzone choices offered by the settings UI.
+/// Deadzone choices offered by the settings UI (common range; the schema
+/// ceiling above stays wider for worn sticks and file-loaded values).
 pub const DEADZONE_STEPS: [u8; 7] = [0, 5, 10, 15, 20, 25, 30];
 
-/// Connection-order pads tracked by settings; mirrors `MAX_PADS`.
-pub const PAD_COUNT: usize = 4;
+/// Connection-order pads tracked by settings; `MAX_PADS` is the single
+/// constant (imported, never redefined).
+pub use nerust_input_traits::MAX_PADS as PAD_COUNT;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
@@ -375,7 +379,8 @@ mod tests {
 
     #[test]
     fn pad_count_tracks_max_pads() {
-        assert_eq!(PAD_COUNT, nerust_input_traits::MAX_PADS);
+        // `PAD_COUNT` is a re-export of `MAX_PADS`: no skew possible.
+        assert_eq!(PAD_COUNT, 4);
     }
 
     #[test]

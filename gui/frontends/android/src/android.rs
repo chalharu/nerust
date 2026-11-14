@@ -4,6 +4,7 @@ mod dialog_coordinator;
 mod error_dialog;
 mod foreground_controller;
 mod input_router;
+mod keycode;
 mod lifecycle;
 mod media_loader;
 mod menu;
@@ -1122,19 +1123,7 @@ impl ApplicationHandler for AndroidFrontend {
     }
 }
 
-/// Raw Android keycode to position button for winit-delivered pad keys.
-/// Raw codes delegate to the unified table; winit's Arrow translation of
-/// the D-pad is handled here. Returns `None` for keyboard keys.
+/// Winit-delivered pad keys share the frontend keycode table.
 fn winit_pad_button(key: &PhysicalKey) -> Option<nerust_input_traits::StandardButton> {
-    use nerust_input_traits::StandardButton as Pad;
-    match key {
-        PhysicalKey::Unidentified(NativeKeyCode::Android(code)) => {
-            nerust_input_traits::android_keycode_to_button(*code)
-        }
-        PhysicalKey::Code(KeyCode::ArrowUp) => Some(Pad::DpadUp),
-        PhysicalKey::Code(KeyCode::ArrowDown) => Some(Pad::DpadDown),
-        PhysicalKey::Code(KeyCode::ArrowLeft) => Some(Pad::DpadLeft),
-        PhysicalKey::Code(KeyCode::ArrowRight) => Some(Pad::DpadRight),
-        _ => None,
-    }
+    keycode::winit_pad_button(key)
 }
