@@ -1847,8 +1847,11 @@ fn bare_rows_are_reviewed_allowlist() {
     // - player.*.devices: the value line carries the port summary.
     // - mute/vsync toggles and per-device key-mapping links: self-evident
     //   labels with no restatement (on/off, or the machine context).
-    // - pad port rows (controls.gamepads.padN): "Pad N" plus the player
-    //   choices list the whole story, like color/position rows.
+    // - pad port rows (controls.gamepads.padN): the device name plus the
+    //   `Pad N` tag list the whole story, like color/position rows.
+    //   The list is variable (connected pads only), so the empty-payload
+    //   allowlist carries none; connected rows are never bare (they always
+    //   carry the peer label as description).
     let mut bare: Vec<String> = payload_bare_keys(&test_payload().1);
     bare.sort();
     let mut expected: Vec<String> = vec![
@@ -1861,14 +1864,6 @@ fn bare_rows_are_reviewed_allowlist() {
         "general.language",
         "controls.cartridge_rumble_strength",
         "controls.cartridge_rumble_target",
-        "controls.gamepads.pad1",
-        "controls.gamepads.pad2",
-        "controls.gamepads.pad3",
-        "controls.gamepads.pad4",
-        "controls.gamepads.triggers1",
-        "controls.gamepads.triggers2",
-        "controls.gamepads.triggers3",
-        "controls.gamepads.triggers4",
         "controls.overlay_haptics",
         "controls.overlay_opacity",
         "controls.overlay_scale",
@@ -2009,8 +2004,53 @@ fn toggle_and_number_commands_round_trip() {
 #[test]
 fn gamepad_section_sets_deadzone_ports_and_resets() {
     let (mut snapshot, _) = test_payload();
+    let pads = vec![
+        GamepadInfo {
+            member: "pad:a".to_string(),
+            name: "Pad A".to_string(),
+        },
+        GamepadInfo {
+            member: "pad:b".to_string(),
+            name: "Pad B".to_string(),
+        },
+        GamepadInfo {
+            member: "pad:c".to_string(),
+            name: "Pad C".to_string(),
+        },
+    ];
+    // Local set helper threading the connected pads through: the
+    // variable list hides unconnected pads, so port rows only exist
+    // while their pad stays connected.
+    let set_with_pads = |snapshot: &mut SettingsSnapshot,
+                         pads: &[GamepadInfo],
+                         key: &str,
+                         index: usize,
+                         number: i64| {
+        with_test_deps(|| {
+            let command_json = serde_json::to_string(&WireCommand {
+                key: key.to_string(),
+                index,
+                number,
+                op: WireOp::Set,
+                payload: serde_json::Value::Null,
+            })
+            .unwrap();
+            let mut keyboards = test_keyboards();
+            let mut gamepads = pads.to_vec();
+            apply_command_to(
+                snapshot,
+                &command_json,
+                &mut None,
+                &mut keyboards,
+                &mut None,
+                &mut gamepads,
+                &mut None,
+            )
+            .unwrap_or_else(|error| panic!("command failed: {error}"))
+        })
+    };
     assert_eq!(snapshot.shared.input.gamepad.deadzone_percent, 15);
-    let next = set(&mut snapshot, "controls.gamepads.deadzone", 0, 25);
+    let next = set_with_pads(&mut snapshot, &pads, "controls.gamepads.deadzone", 0, 25);
     assert_eq!(snapshot.shared.input.gamepad.deadzone_percent, 25);
     assert_eq!(row(&next, "controls.gamepads.deadzone").number, 25);
     // Pad 3 is Off by default; parking it on player 2 sticks.
@@ -2021,7 +2061,7 @@ fn gamepad_section_sets_deadzone_ports_and_resets() {
         .iter()
         .position(|choice| choice.value == serde_json::json!(1))
         .expect("player 2 choice exists");
-    let after = set(&mut snapshot, "controls.gamepads.pad3", player2, 0);
+    let after = set_with_pads(&mut snapshot, &pads, "controls.gamepads.pad3", player2, 0);
     assert_eq!(snapshot.shared.input.gamepad.pad_ports[2].slot, Some(1));
     assert_eq!(
         row(&after, "controls.gamepads.pad3").selected,
@@ -2029,7 +2069,7 @@ fn gamepad_section_sets_deadzone_ports_and_resets() {
         "selection tracks the draft"
     );
     // Trigger doubling toggles per pad and resets with the screen.
-    let triggers = set(&mut snapshot, "controls.gamepads.triggers1", 1, 0);
+    let triggers = set_with_pads(&mut snapshot, &pads, "controls.gamepads.triggers1", 1, 0);
     assert!(snapshot.shared.input.gamepad.pad_ports[0].triggers_as_shoulders);
     assert_eq!(row(&triggers, "controls.gamepads.triggers1").selected, 1);
     // Screen reset restores the deadzone and the default table.

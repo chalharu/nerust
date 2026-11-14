@@ -720,17 +720,17 @@ fn overlay_detail_section(
     }
 }
 
-/// Gamepads screen: stick deadzone plus one port row per pad.
-/// Ports are player slots, not devices: pads are connection-ordered and
-/// transient, so the table (not device ids) is what persists. Connected
-/// names ride the row description by connection-order index, so Pad 1
-/// names the first-seen pad while it stays connected.
+/// Gamepads screen: stick deadzone plus one port row per connected pad.
+/// The list is variable: each connected pad names its own row, so Pad 1
+/// is always the first-seen pad while it stays connected. Ports are
+/// player slots, not devices: the connection-order table (not device
+/// ids) is what persists. Unconnected pads hide; their assignment stays
+/// in the table and reappears on reconnect.
 fn gamepads_section(
     snapshot: &SettingsSnapshot,
     i18n: I18n,
     gamepads: &[GamepadInfo],
 ) -> SectionWire {
-    use nerust_input_traits::MAX_PADS;
     let gamepad = &snapshot.shared.input.gamepad;
     let port_choices = [
         (None, i18n.text(UiText::Off)),
@@ -747,21 +747,32 @@ fn gamepads_section(
         30,
         "%",
     )];
-    rows.extend((0..MAX_PADS).flat_map(|index| {
-        let connected = gamepads.get(index).map(|info| info.name.clone()).unwrap_or_default();
+    if gamepads.is_empty() {
+        rows.push(info_row(
+            "controls.gamepads.none",
+            i18n.text(UiText::NotAssigned),
+            i18n.text(UiText::DescNoGamepads),
+            String::new(),
+        ));
+    }
+    rows.extend(gamepads.iter().enumerate().flat_map(|(index, info)| {
+        let pad_tag = nerust_settings_core::i18n::pad_label(i18n.language(), index);
         let port_row = choice_row(
             &format!("controls.gamepads.pad{}", index + 1),
-            nerust_settings_core::i18n::pad_label(i18n.language(), index),
-            connected,
+            info.name.clone(),
+            pad_tag,
             &port_choices,
-            &gamepad.pad_ports[index].slot,
+            &gamepad.pad_ports.get(index).and_then(|pad| pad.slot),
         );
         let trigger_row = toggle_row(
             &format!("controls.gamepads.triggers{}", index + 1),
             nerust_settings_core::i18n::pad_triggers_label(i18n.language(), index),
-            String::new(),
+            info.name.clone(),
             i18n,
-            gamepad.pad_ports[index].triggers_as_shoulders,
+            gamepad
+                .pad_ports
+                .get(index)
+                .is_some_and(|pad| pad.triggers_as_shoulders),
         );
         [port_row, trigger_row]
     }));
