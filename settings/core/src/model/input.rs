@@ -45,10 +45,21 @@ pub struct PadPort {
     pub triggers_as_shoulders: bool,
     #[serde(default = "default_pad_deadzone")]
     pub deadzone_percent: u8,
+    /// Stick→dpad substitution per stick. True by default (and for old
+    /// saves missing the fields): sticks drive digital consoles unless
+    /// the pad screen turns a stick off.
+    #[serde(default = "default_stick_substitute")]
+    pub left_stick_as_dpad: bool,
+    #[serde(default = "default_stick_substitute")]
+    pub right_stick_as_dpad: bool,
 }
 
 fn default_pad_deadzone() -> u8 {
     DEFAULT_DEADZONE_PERCENT
+}
+
+fn default_stick_substitute() -> bool {
+    true
 }
 
 impl Default for PadPort {
@@ -57,6 +68,8 @@ impl Default for PadPort {
             slot: None,
             triggers_as_shoulders: false,
             deadzone_percent: DEFAULT_DEADZONE_PERCENT,
+            left_stick_as_dpad: true,
+            right_stick_as_dpad: true,
         }
     }
 }
@@ -69,11 +82,15 @@ impl Default for GamepadSettings {
                     slot: Some(0),
                     triggers_as_shoulders: false,
                     deadzone_percent: DEFAULT_DEADZONE_PERCENT,
+                    left_stick_as_dpad: true,
+                    right_stick_as_dpad: true,
                 },
                 PadPort {
                     slot: Some(1),
                     triggers_as_shoulders: false,
                     deadzone_percent: DEFAULT_DEADZONE_PERCENT,
+                    left_stick_as_dpad: true,
+                    right_stick_as_dpad: true,
                 },
                 PadPort::default(),
                 PadPort::default(),
@@ -439,6 +456,21 @@ mod tests {
         assert_eq!(gamepad.pad_ports[0].slot, Some(0));
         assert_eq!(gamepad.pad_ports[1].slot, Some(1));
         assert_eq!(gamepad.pad_ports[2].slot, None);
+        assert!(
+            gamepad
+                .pad_ports
+                .iter()
+                .all(|port| port.left_stick_as_dpad && port.right_stick_as_dpad),
+            "sticks substitute by default, including migrated saves"
+        );
+        // Old saves lack the stick fields: they migrate on, preserving
+        // the previous always-substitute behavior.
+        let migrated: super::PadPort =
+            serde_json::from_str(r#"{"slot": 0}"#).expect("old save parses");
+        assert!(
+            migrated.left_stick_as_dpad && migrated.right_stick_as_dpad,
+            "missing stick flags default on"
+        );
         assert!(
             gamepad
                 .pad_ports

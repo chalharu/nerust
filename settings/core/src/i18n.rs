@@ -232,6 +232,8 @@ pub enum UiText {
     Gamepads,
     Deadzone,
     DescDeadzone,
+    LeftStickAsDpad,
+    RightStickAsDpad,
     DescGamepadRadio,
     DescGamepadGear,
     DescPadReset,
@@ -699,6 +701,8 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
             "Stick drift guard. 0 disables.",
             "スティックの遊び。0で無効",
         ),
+        UiText::LeftStickAsDpad => ("Left stick as D-pad", "左スティックを十字キーに"),
+        UiText::RightStickAsDpad => ("Right stick as D-pad", "右スティックを十字キーに"),
         UiText::DescGamepadRadio => (
             "Which pad drives this player. Gears adjust that pad.",
             "このプレイヤーを駆動するパッド。調整はギアから",
@@ -708,8 +712,8 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
             "このパッドの遊び・トリガー・ボタン",
         ),
         UiText::DescPadReset => (
-            "Clears deadzone, triggers, buttons. Keeps the slot.",
-            "遊び・トリガー・ボタンを消去。スロットは保持",
+            "Clears deadzone, triggers, sticks, buttons. Keeps the slot.",
+            "遊び・トリガー・スティック・ボタンを消去。スロットは保持",
         ),
         UiText::DescPadParked => (
             "Parked: no screen past the table, or pad left.",
@@ -1275,6 +1279,8 @@ mod tests {
             Gamepads,
             Deadzone,
             DescDeadzone,
+            LeftStickAsDpad,
+            RightStickAsDpad,
             DescGamepadRadio,
             DescGamepadGear,
             DescPadReset,

@@ -90,6 +90,20 @@ pub(super) fn build_pad_sections(
                     i18n,
                     port.is_some_and(|pad| pad.triggers_as_shoulders),
                 ),
+                toggle_row(
+                    &format!("{pad_id}.stick_left"),
+                    i18n.text(UiText::LeftStickAsDpad),
+                    String::new(),
+                    i18n,
+                    port.is_none_or(|pad| pad.left_stick_as_dpad),
+                ),
+                toggle_row(
+                    &format!("{pad_id}.stick_right"),
+                    i18n.text(UiText::RightStickAsDpad),
+                    String::new(),
+                    i18n,
+                    port.is_none_or(|pad| pad.right_stick_as_dpad),
+                ),
             ];
             // Unassigned pads park every press, so mapping rows would
             // only collect latent overrides: point at Devices instead.

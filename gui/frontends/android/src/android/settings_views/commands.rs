@@ -676,9 +676,10 @@ fn apply_reset_dynamic_scope(
         return Err(format!("unknown reset scope: {scope}"));
     }
     if let Some(pad) = scope.strip_prefix("pad.") {
-        // One pad's own screen: deadzone, trigger doubling, and that
-        // pad's per-system overrides return to defaults. The player-slot
-        // assignment stays: the devices radio owns it, not this screen.
+        // One pad's own screen: deadzone, trigger doubling, stick
+        // substitutes, and that pad's per-system overrides return to
+        // defaults. The player-slot assignment stays: the devices radio
+        // owns it, not this screen.
         let index: usize = pad
             .parse()
             .ok()
@@ -693,6 +694,8 @@ fn apply_reset_dynamic_scope(
         };
         port.deadzone_percent = default_port.deadzone_percent;
         port.triggers_as_shoulders = default_port.triggers_as_shoulders;
+        port.left_stick_as_dpad = default_port.left_stick_as_dpad;
+        port.right_stick_as_dpad = default_port.right_stick_as_dpad;
         for settings in snapshot.shared.input.systems.values_mut() {
             if let Some(entries) = settings.pad_bindings.get_mut(index) {
                 entries.clear();
@@ -875,6 +878,20 @@ fn apply_view_model_command(
             let value = toggle_value(row, command.index)?;
             vm.gamepads
                 .set_trigger_alias(pad, value)
+                .map_err(|error| error.to_string())
+        }
+        key if key.starts_with("pad.") && key.ends_with(".stick_left") => {
+            let pad = pad_screen_index(key)?;
+            let value = toggle_value(row, command.index)?;
+            vm.gamepads
+                .set_stick_as_dpad(pad, true, value)
+                .map_err(|error| error.to_string())
+        }
+        key if key.starts_with("pad.") && key.ends_with(".stick_right") => {
+            let pad = pad_screen_index(key)?;
+            let value = toggle_value(row, command.index)?;
+            vm.gamepads
+                .set_stick_as_dpad(pad, false, value)
                 .map_err(|error| error.to_string())
         }
         "notifications.error_enabled" => {

@@ -68,6 +68,24 @@ impl GamepadViewModel {
         })
     }
 
+    /// Stick→dpad substitution for one pad and stick: `false` parks the
+    /// stick's substitute (analogs still store), `true` restores it.
+    /// Same guard as the port setter.
+    pub fn set_stick_as_dpad(
+        &self,
+        pad: usize,
+        left: bool,
+        enabled: bool,
+    ) -> Result<(), super::editor::ViewModelError> {
+        self.update_pad(pad, |port_state| {
+            if left {
+                port_state.left_stick_as_dpad = enabled;
+            } else {
+                port_state.right_stick_as_dpad = enabled;
+            }
+        })
+    }
+
     /// One guarded write to a pad's port state; both setters share the
     /// range check so neither duplicates it.
     fn update_pad(
