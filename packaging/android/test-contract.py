@@ -131,8 +131,9 @@ class StructureTests(unittest.TestCase):
                               ("pressed: Option<bool>", "pressed: Option<Vec<bool>>"),
                               ("pressed: Option<bool>", '#[serde(rename = "down")] pressed: Option<bool>'),
                               ("version != BRIDGE_EVENT_VERSION", "version == BRIDGE_EVENT_VERSION"),
-                              ("validate_bridge_event(&mut value)?;", ""),
-                              ("serde_json::from_value(value)", "serde_json::from_str(raw)")):
+                              ("let envelope: BridgeEventV1 = serde_json::from_str(raw).ok()?;", ""),
+                              ("deny_unknown_fields", "allow_unknown_fields"),
+                              ("serde_json::from_str(raw)", "serde_json::from_value(value)")):
             with self.subTest(before=before):
                 self.assertIn(before, original)
                 self.source["decoder"] = original.replace(before, after)
@@ -189,19 +190,38 @@ class StructureTests(unittest.TestCase):
                     self.verify()
 
     def test_generated_validation_changes_for_every_schema_rule(self):
+        # Single-parse design: every schema rule must move either the
+        # generated contract (constants, required tables, bounds) or the
+        # decoder parity gate. Optional properties shift parity (the
+        # decoder struct lacks them); bounds, enums, and gates shift the
+        # generated tables both languages share.
         original = copy.deepcopy(self.schema)
         path = CONTRACT.RUST / "src/bridge_contract.rs"
         baseline = CONTRACT.outputs(original)[path]
         for mutation in ("optional", "minimum", "maximum", "enum", "conditional"):
             with self.subTest(mutation=mutation):
+                if mutation == "optional":
+                    changed = copy.deepcopy(original)
+                    changed["definitions"]["menuEvent"]["properties"]["probe"] = {"type": "boolean"}
+                    with self.assertRaises(VERIFY.ContractError):
+                        VERIFY.verify(changed, VERIFY.sources())
+                    continue
+                enum_path = CONTRACT.KOTLIN / "BridgeWire.kt"
+                enum_baseline = CONTRACT.outputs(original)[enum_path]
                 changed = copy.deepcopy(original)
                 menu = changed["definitions"]["menuEvent"]
-                if mutation == "optional":
-                    menu["properties"]["probe"] = {"type": "boolean"}
-                elif mutation in {"minimum", "maximum"}:
+                if mutation in {"minimum", "maximum"}:
                     menu["properties"]["device_id"][mutation] += 1
+                    # Bounds feed the Rust dispatch tables; Kotlin names
+                    # never carry them.
+                    self.assertNotEqual(CONTRACT.outputs(changed)[path], baseline)
+                    continue
                 elif mutation == "enum":
                     menu["properties"]["key"]["enum"].append("probe")
+                    # Key names feed the shared Kotlin tables; the Rust
+                    # side pins the full set behaviorally instead.
+                    self.assertNotEqual(CONTRACT.outputs(changed)[enum_path], enum_baseline)
+                    continue
                 else:
                     for const, field in gated_probe_mutations(original):
                         with self.subTest(gate=const):
@@ -211,7 +231,10 @@ class StructureTests(unittest.TestCase):
                     continue
 
     def test_modified_generated_validation_is_rejected(self):
-        self.source["generated"] = self.source["generated"].replace("_ => false", "_ => true")
+        self.source["generated"] = self.source["generated"].replace(
+            'pub(crate) const ACTION_EXIT: &str = "exit";',
+            'pub(crate) const ACTION_EXIT: &str = "exits";',
+        )
         self.assertNotEqual(self.source["generated"], VERIFY.sources()["generated"])
         with self.assertRaises(VERIFY.ContractError):
             self.verify()
