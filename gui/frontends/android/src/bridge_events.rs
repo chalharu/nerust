@@ -54,8 +54,8 @@ use crate::bridge_contract::{
     ACTION_ANALOG, ACTION_CONTROLLER, ACTION_CREATE_SLOT, ACTION_DELETE_SLOT, ACTION_DEVICE_ADDED,
     ACTION_DEVICE_REMOVED, ACTION_EXIT, ACTION_LOAD_STATE, ACTION_OPEN_ROM, ACTION_OPEN_SETTINGS,
     ACTION_ORIENTATION_CHANGED, ACTION_RESET, ACTION_SAVE_STATE, ACTION_SELECT_SLOT,
-    ACTION_TOGGLE_PAUSE, ACTION_TOUCH_GATE, ACTION_UNLOAD, BRIDGE_EVENT_VERSION,
-    validate_bridge_event,
+    ACTION_TOGGLE_PAUSE, ACTION_TOUCH_GATE, ACTION_UNLOAD, ANALOG_VALUE_BOUNDS,
+    BRIDGE_EVENT_VERSION, INTEGER_FIELD_BOUNDS, MENU_REQUIRED_FIELDS,
 };
 
 /// Typed controller-key mapping, checked against the shared JSON schema.
@@ -113,169 +113,411 @@ pub(crate) fn build_slot_list_json(slots: &[SlotListEntry], active: Option<u64>)
 /// Versioned bridge event envelope: v1 JSON only; anything else is `None`.
 /// Explicit optional fields (never flattened): `verify-contract.py`
 /// parses this enum textually as a schema-parity gate.
+/// Single parse: integral floats (`7.0`) decode through the flexible
+/// int helpers so no `Value` round-trip normalizes before dispatch.
+/// `deny_unknown_fields` keeps the schema's `additionalProperties: false`
+/// fail-closed without a separate validator pass.
 #[derive(Debug, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum BridgeEventV1 {
-    Menu {
-        v: u32,
-        action: String,
-        #[serde(default)]
-        device_id: Option<i32>,
-        #[serde(default)]
-        key: Option<String>,
-        #[serde(default)]
-        pressed: Option<bool>,
-        #[serde(default)]
-        axis: Option<String>,
-        #[serde(default)]
-        value: Option<f32>,
-        #[serde(default)]
-        descriptor: Option<String>,
-        #[serde(default)]
-        slot_id: Option<i64>,
-    },
-    ErrorDialogDismissed {
-        v: u32,
-        request_id: crate::error_dialog_controller::DialogRequestId,
-    },
+    Menu(MenuEvent),
+    ErrorDialogDismissed(ErrorDialogDismissedEvent),
+}
+
+/// `menu` event body: unknown JSON fields fail via `deny_unknown_fields`
+/// (the schema's `additionalProperties: false`), integral floats decode
+/// through the helpers below so no `Value` round-trip normalizes first.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MenuEvent {
+    #[serde(deserialize_with = "de_integral_u32")]
+    v: u32,
+    action: String,
+    #[serde(default, deserialize_with = "de_opt_i32")]
+    device_id: Option<i32>,
+    #[serde(default)]
+    key: Option<String>,
+    #[serde(default)]
+    pressed: Option<bool>,
+    #[serde(default)]
+    axis: Option<String>,
+    #[serde(default)]
+    value: Option<f32>,
+    #[serde(default)]
+    descriptor: Option<String>,
+    #[serde(default, deserialize_with = "de_opt_i64")]
+    slot_id: Option<i64>,
+}
+
+/// Dialog-dismiss body with the same unknown-field and integral rules.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ErrorDialogDismissedEvent {
+    #[serde(deserialize_with = "de_integral_u32")]
+    v: u32,
+    #[serde(deserialize_with = "de_request_id")]
+    request_id: crate::error_dialog_controller::DialogRequestId,
+}
+
+/// Flexible integral decoding: JSON Schema integers include integral
+/// floats (`1.0`), which plain `u32`/`i32` rejects. Accepts i64/u64/f64
+/// with zero fraction and range-checks into the target.
+fn de_integral_u32<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{Error, Unexpected, Visitor};
+    struct V;
+    impl Visitor<'_> for V {
+        type Value = u32;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("an integral u32")
+        }
+        fn visit_i64<E: Error>(self, v: i64) -> Result<u32, E> {
+            u32::try_from(v).map_err(|_| Error::invalid_value(Unexpected::Signed(v), &self))
+        }
+        fn visit_u64<E: Error>(self, v: u64) -> Result<u32, E> {
+            u32::try_from(v).map_err(|_| Error::invalid_value(Unexpected::Unsigned(v), &self))
+        }
+        fn visit_f64<E: Error>(self, v: f64) -> Result<u32, E> {
+            if v.fract() == 0.0 && (0.0..=u32::MAX as f64).contains(&v) {
+                Ok(v as u32)
+            } else {
+                Err(Error::invalid_value(Unexpected::Float(v), &self))
+            }
+        }
+    }
+    deserializer.deserialize_any(V)
+}
+
+/// Optional variant of the integral decoding above: missing/null rides
+/// `default`/`None`; present numbers range-check into the target.
+fn de_opt_i32<'de, D>(deserializer: D) -> Result<Option<i32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{Error, Unexpected, Visitor};
+    struct V;
+    impl<'de> Visitor<'de> for V {
+        type Value = Option<i32>;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("an optional integral i32")
+        }
+        fn visit_none<E: Error>(self) -> Result<Option<i32>, E> {
+            Ok(None)
+        }
+        fn visit_unit<E: Error>(self) -> Result<Option<i32>, E> {
+            Ok(None)
+        }
+        fn visit_some<D2>(self, deserializer: D2) -> Result<Option<i32>, D2::Error>
+        where
+            D2: serde::Deserializer<'de>,
+        {
+            de_integral_inner(deserializer).map(Some)
+        }
+        fn visit_i64<E: Error>(self, v: i64) -> Result<Option<i32>, E> {
+            i32::try_from(v)
+                .map(Some)
+                .map_err(|_| Error::invalid_value(Unexpected::Signed(v), &self))
+        }
+        fn visit_u64<E: Error>(self, v: u64) -> Result<Option<i32>, E> {
+            i32::try_from(v)
+                .map(Some)
+                .map_err(|_| Error::invalid_value(Unexpected::Unsigned(v), &self))
+        }
+        fn visit_f64<E: Error>(self, v: f64) -> Result<Option<i32>, E> {
+            if v.fract() == 0.0 && (i32::MIN as f64..=(i32::MAX as f64)).contains(&v) {
+                Ok(Some(v as i32))
+            } else {
+                Err(Error::invalid_value(Unexpected::Float(v), &self))
+            }
+        }
+    }
+    deserializer.deserialize_option(V)
+}
+
+/// Optional integral i64 twin for slot ids.
+fn de_opt_i64<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{Error, Unexpected, Visitor};
+    struct V;
+    impl<'de> Visitor<'de> for V {
+        type Value = Option<i64>;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("an optional integral i64")
+        }
+        fn visit_none<E: Error>(self) -> Result<Option<i64>, E> {
+            Ok(None)
+        }
+        fn visit_unit<E: Error>(self) -> Result<Option<i64>, E> {
+            Ok(None)
+        }
+        fn visit_some<D2>(self, deserializer: D2) -> Result<Option<i64>, D2::Error>
+        where
+            D2: serde::Deserializer<'de>,
+        {
+            de_integral_inner(deserializer).map(Some)
+        }
+        fn visit_i64<E: Error>(self, v: i64) -> Result<Option<i64>, E> {
+            Ok(Some(v))
+        }
+        fn visit_u64<E: Error>(self, v: u64) -> Result<Option<i64>, E> {
+            i64::try_from(v)
+                .map(Some)
+                .map_err(|_| Error::invalid_value(Unexpected::Unsigned(v), &self))
+        }
+        fn visit_f64<E: Error>(self, v: f64) -> Result<Option<i64>, E> {
+            if v.fract() == 0.0 && (i64::MIN as f64..=i64::MAX as f64).contains(&v) {
+                Ok(Some(v as i64))
+            } else {
+                Err(Error::invalid_value(Unexpected::Float(v), &self))
+            }
+        }
+    }
+    deserializer.deserialize_option(V)
+}
+
+/// Shared inner for the `visit_some` path: present numbers only.
+fn de_integral_inner<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: TryFrom<i64> + TryFrom<u64>,
+    <T as TryFrom<i64>>::Error: std::fmt::Debug,
+    <T as TryFrom<u64>>::Error: std::fmt::Debug,
+{
+    use serde::Deserialize as _;
+    use serde::de::{Error, Unexpected};
+    let value = serde_json::Value::deserialize(deserializer)?;
+    if let Some(v) = value.as_i64() {
+        return T::try_from(v)
+            .map_err(|_| Error::invalid_value(Unexpected::Signed(v), &"integral target range"));
+    }
+    if let Some(v) = value.as_u64() {
+        return T::try_from(v)
+            .map_err(|_| Error::invalid_value(Unexpected::Unsigned(v), &"integral target range"));
+    }
+    let v = value.as_f64().ok_or_else(|| {
+        Error::invalid_value(Unexpected::Other("non-numeric"), &"integral number")
+    })?;
+    if v.fract() != 0.0 {
+        return Err(Error::invalid_value(
+            Unexpected::Float(v),
+            &"integral number",
+        ));
+    }
+    // Range-check through i64/u64 before narrowing: f64 precision stops
+    // at 2^53, so values past i64::MAX cannot round-trip exactly.
+    if !(i64::MIN as f64..=i64::MAX as f64).contains(&v) {
+        return Err(Error::invalid_value(
+            Unexpected::Float(v),
+            &"integral target range",
+        ));
+    }
+    let as_i64 = v as i64;
+    if (as_i64 as f64) == v {
+        return T::try_from(as_i64)
+            .map_err(|_| Error::invalid_value(Unexpected::Float(v), &"integral target range"));
+    }
+    let as_u64 = v as u64;
+    T::try_from(as_u64)
+        .map_err(|_| Error::invalid_value(Unexpected::Float(v), &"integral target range"))
+}
+
+/// Dialog request id with the same integral-float tolerance (syntax
+/// only: the `>= 1` schema bound checks at dispatch through the table).
+fn de_request_id<'de, D>(
+    deserializer: D,
+) -> Result<crate::error_dialog_controller::DialogRequestId, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{Error, Unexpected, Visitor};
+    struct V;
+    impl Visitor<'_> for V {
+        type Value = crate::error_dialog_controller::DialogRequestId;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("an integral request id")
+        }
+        fn visit_i64<E: Error>(
+            self,
+            v: i64,
+        ) -> Result<crate::error_dialog_controller::DialogRequestId, E> {
+            u64::try_from(v)
+                .map(crate::error_dialog_controller::DialogRequestId)
+                .map_err(|_| Error::invalid_value(Unexpected::Signed(v), &self))
+        }
+        fn visit_u64<E: Error>(
+            self,
+            v: u64,
+        ) -> Result<crate::error_dialog_controller::DialogRequestId, E> {
+            Ok(crate::error_dialog_controller::DialogRequestId(v))
+        }
+        fn visit_f64<E: Error>(
+            self,
+            v: f64,
+        ) -> Result<crate::error_dialog_controller::DialogRequestId, E> {
+            if v.fract() == 0.0 && (0.0..=u64::MAX as f64).contains(&v) {
+                Ok(crate::error_dialog_controller::DialogRequestId(v as u64))
+            } else {
+                Err(Error::invalid_value(Unexpected::Float(v), &self))
+            }
+        }
+    }
+    deserializer.deserialize_any(V)
+}
+
+/// Schema-driven shape checks on one parsed menu event: required fields
+/// per action ([`MENU_REQUIRED_FIELDS`]) plus integral bounds
+/// ([`INTEGER_FIELD_BOUNDS`]). Rejects with a warn before typed
+/// dispatch, so a gate or bound the dispatch ignores fails loud instead
+/// of silently widening. Field syntax (integral floats, nulls) already
+/// settled at parse; this is semantics.
+fn check_menu_shape(action: &str, event: &MenuEvent) -> Option<()> {
+    let required = MENU_REQUIRED_FIELDS
+        .iter()
+        .copied()
+        .find(|(name, _)| *name == action)
+        .map(|(_, fields)| fields)
+        .unwrap_or(&[]);
+    for field in required {
+        if !event.has(field) {
+            log::warn!("ignoring {action} bridge event with missing {field}");
+            return None;
+        }
+    }
+    for (field, minimum, maximum) in INTEGER_FIELD_BOUNDS.iter().copied() {
+        if let Some(value) = event.get_int(field)
+            && !(minimum..=maximum).contains(&value)
+        {
+            log::warn!("ignoring {action} bridge event with out-of-range {field}={value}");
+            return None;
+        }
+    }
+    Some(())
+}
+
+impl MenuEvent {
+    /// Presence of one schema field, for the required-field table.
+    fn has(&self, field: &str) -> bool {
+        match field {
+            "device_id" => self.device_id.is_some(),
+            "key" => self.key.is_some(),
+            "pressed" => self.pressed.is_some(),
+            "axis" => self.axis.is_some(),
+            "value" => self.value.is_some(),
+            "descriptor" => self.descriptor.is_some(),
+            "slot_id" => self.slot_id.is_some(),
+            _ => false,
+        }
+    }
+
+    /// Integral value of one schema field, for the bounds table.
+    fn get_int(&self, field: &str) -> Option<i64> {
+        match field {
+            "device_id" => self.device_id.map(i64::from),
+            "slot_id" => self.slot_id,
+            _ => None,
+        }
+    }
 }
 
 fn decode_json_event(raw: &str) -> Option<FrontendEvent> {
-    let mut value: serde_json::Value = serde_json::from_str(raw).ok()?;
-    // Generated-contract validation stays: it normalizes Kotlin integers
-    // (float-encoded ids) and rejects out-of-range axes before dispatch.
-    validate_bridge_event(&mut value)?;
-    let envelope: BridgeEventV1 = serde_json::from_value(value).ok()?;
+    // Single typed parse: integral floats decode above, unknown fields
+    // fail via `deny_unknown_fields`, ranges and required fields fail at
+    // dispatch with a warn. No `Value` round-trip per input event.
+    let envelope: BridgeEventV1 = serde_json::from_str(raw).ok()?;
     let version = match &envelope {
-        BridgeEventV1::Menu { v, .. } => *v,
-        BridgeEventV1::ErrorDialogDismissed { v, .. } => *v,
+        BridgeEventV1::Menu(event) => event.v,
+        BridgeEventV1::ErrorDialogDismissed(event) => event.v,
     };
     if version != BRIDGE_EVENT_VERSION {
         log::warn!("ignoring Android bridge event with unsupported version {version}");
         return None;
     }
     match envelope {
-        BridgeEventV1::ErrorDialogDismissed { request_id, .. } => {
-            Some(FrontendEvent::ErrorDialogDismissed(request_id))
-        }
-        BridgeEventV1::Menu {
-            action,
-            device_id,
-            key,
-            pressed,
-            axis,
-            value,
-            descriptor,
-            slot_id,
-            ..
-        } => decode_json_menu_action(
-            &action,
-            MenuParts {
-                device_id,
-                key: key.as_deref(),
-                pressed,
-                axis: axis.as_deref(),
-                value,
-                descriptor: descriptor.as_deref(),
-                slot_id,
-            },
-        ),
-    }
-}
-
-/// Slot id for select/delete: a missing or negative id fails loud
-/// instead of guessing a slot.
-fn decode_slot_id(slot_id: Option<i64>) -> Option<u64> {
-    match slot_id.and_then(|id| u64::try_from(id).ok()) {
-        Some(slot_id) => Some(slot_id),
-        None => {
-            log::warn!("ignoring slot bridge event with missing or negative slot_id");
-            None
-        }
-    }
-}
-
-/// Optional envelope fields for one menu action. Bundled so the decoder
-/// stays under the argument cap as gated fields grow.
-struct MenuParts<'a> {
-    device_id: Option<i32>,
-    key: Option<&'a str>,
-    pressed: Option<bool>,
-    axis: Option<&'a str>,
-    value: Option<f32>,
-    descriptor: Option<&'a str>,
-    slot_id: Option<i64>,
-}
-
-fn decode_json_menu_action(action: &str, parts: MenuParts) -> Option<FrontendEvent> {
-    let MenuParts {
-        device_id,
-        key,
-        pressed,
-        axis,
-        value,
-        descriptor,
-        slot_id,
-    } = parts;
-    let key = key.as_deref();
-    let axis = axis.as_deref();
-    let descriptor = descriptor.as_deref();
-    if action == ACTION_CONTROLLER {
-        let (device_id, key, pressed) = match (device_id, key, pressed) {
-            (Some(device_id), Some(key), Some(pressed)) => (device_id, key, pressed),
-            _ => {
-                log::warn!("ignoring controller bridge event with missing fields");
-                return None;
+        BridgeEventV1::ErrorDialogDismissed(event) => {
+            // Schema bounds through the generated table: syntax settled
+            // at parse, so this is the single semantic check.
+            let (_, minimum, maximum) = INTEGER_FIELD_BOUNDS
+                .iter()
+                .find(|(name, _, _)| *name == "request_id")
+                .copied()
+                .unwrap_or(("request_id", 1, i64::MAX));
+            let id = event.request_id.0;
+            if id >= minimum as u64 && (id as u128) <= maximum as u128 {
+                Some(FrontendEvent::ErrorDialogDismissed(event.request_id))
+            } else {
+                log::warn!("ignoring dialog dismiss with out-of-range request id");
+                None
             }
+        }
+        BridgeEventV1::Menu(event) => {
+            check_menu_shape(&event.action, &event)?;
+            decode_json_menu_action(&event)
+        }
+    }
+}
+
+/// Slot id for select/delete: conversion only (presence and range
+/// pre-checked by the schema table). Unconvertible stays `None`.
+fn decode_slot_id(slot_id: Option<i64>) -> Option<u64> {
+    slot_id.and_then(|id| u64::try_from(id).ok())
+}
+
+fn decode_json_menu_action(event: &MenuEvent) -> Option<FrontendEvent> {
+    // Presence and integral bounds pre-checked by the schema table;
+    // the lets below bind the values (the `else` arms are unreachable
+    // defense, never a second policy).
+    let action = event.action.as_str();
+    let key = event.key.as_deref();
+    let axis = event.axis.as_deref();
+    let descriptor = event.descriptor.as_deref();
+    if action == ACTION_CONTROLLER {
+        let (Some(device_id), Some(key), Some(pressed)) = (event.device_id, key, event.pressed)
+        else {
+            return None;
         };
         return decode_controller_parts(device_id, key, pressed).map(FrontendEvent::Menu);
     }
     if action == ACTION_ANALOG {
-        let (device_id, axis, value) = match (device_id, axis, value) {
-            (Some(device_id), Some(axis), Some(value)) => (device_id, axis, value),
-            _ => {
-                log::warn!("ignoring analog bridge event with missing fields");
-                return None;
-            }
+        let (Some(device_id), Some(axis), Some(value)) = (event.device_id, axis, event.value)
+        else {
+            return None;
         };
         return decode_analog_parts(device_id, axis, value).map(FrontendEvent::Menu);
     }
     if action == ACTION_DEVICE_ADDED {
-        let (device_id, descriptor) = match (device_id, descriptor) {
-            (Some(device_id), Some(descriptor)) if !descriptor.is_empty() => {
-                (device_id, descriptor)
-            }
-            _ => {
-                log::warn!("ignoring device bridge event with missing fields");
-                return None;
-            }
+        let (Some(device_id), Some(descriptor)) = (event.device_id, descriptor) else {
+            return None;
         };
+        if descriptor.is_empty() {
+            log::warn!("ignoring device bridge event with missing fields");
+            return None;
+        }
         return Some(FrontendEvent::Menu(MenuAction::DeviceAdded {
             device_id,
             descriptor: descriptor.to_string(),
         }));
     }
     if action == ACTION_DEVICE_REMOVED {
-        let Some(device_id) = device_id else {
-            log::warn!("ignoring device bridge event with missing fields");
+        let Some(device_id) = event.device_id else {
             return None;
         };
         return Some(FrontendEvent::Menu(MenuAction::DeviceRemoved { device_id }));
     }
     if action == ACTION_TOUCH_GATE {
-        return match pressed {
-            Some(respond) => Some(FrontendEvent::Menu(MenuAction::TouchGate { respond })),
-            None => {
-                log::warn!("ignoring touch gate bridge event with missing pressed");
-                None
-            }
+        let Some(respond) = event.pressed else {
+            return None;
         };
+        return Some(FrontendEvent::Menu(MenuAction::TouchGate { respond }));
     }
     match action {
         ACTION_CREATE_SLOT => Some(FrontendEvent::Menu(MenuAction::CreateSlot)),
-        ACTION_DELETE_SLOT => decode_slot_id(slot_id)
+        ACTION_DELETE_SLOT => decode_slot_id(event.slot_id)
             .map(|slot_id| FrontendEvent::Menu(MenuAction::DeleteSlot(slot_id))),
-        ACTION_SELECT_SLOT => decode_slot_id(slot_id)
+        ACTION_SELECT_SLOT => decode_slot_id(event.slot_id)
             .map(|slot_id| FrontendEvent::Menu(MenuAction::SelectSlot(slot_id))),
         ACTION_EXIT => Some(FrontendEvent::Menu(MenuAction::Exit)),
         ACTION_LOAD_STATE => Some(FrontendEvent::Menu(MenuAction::LoadState)),
@@ -310,10 +552,10 @@ fn decode_analog_parts(device_id: i32, axis: &str, value: f32) -> Option<MenuAct
         log::warn!("ignoring unknown Android controller axis: {axis}");
         return None;
     };
-    if !(-1.0..=1.0).contains(&value) {
+    if !(ANALOG_VALUE_BOUNDS.0..=ANALOG_VALUE_BOUNDS.1).contains(&value) {
         log::warn!("ignoring out-of-range Android axis value: {value}");
         return None;
-    }
+    };
     Some(MenuAction::AnalogInput {
         device_id,
         axis,

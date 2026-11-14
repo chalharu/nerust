@@ -207,9 +207,9 @@ def validate_jni(registration, table, activity, callbacks):
     return {"native": native, "outbound": outbound}
 
 
-def _enum_body(decoder):
-    """Raw text inside the typed event enum braces."""
-    match = re.search(r'enum BridgeEventV1\s*\{', decoder)
+def _struct_body(decoder, name):
+    """Raw text inside one event struct's braces (deny-gated)."""
+    match = re.search(r'struct\s+' + name + r'\s*\{', decoder)
     require(match, MISSING_DECODER)
     depth = 0
     for index in range(match.end() - 1, len(decoder)):
@@ -223,42 +223,25 @@ def _enum_body(decoder):
     raise ContractError(MISSING_DECODER)
 
 
-def _variant_gaps(body):
-    """Decoder body split into gaps and variant pairs; commas stay in gaps."""
-    gaps = []
-    variants = []
-    pos = 0
-    for match in re.finditer(r'(\w+)\s*\{([^{}]*)\}', body):
-        gaps.append(body[pos:match.start()])
-        variants.append(match.groups())
-        pos = match.end()
-    gaps.append(body[pos:])
-    return gaps, variants
-
-
-def _gap_commas_ok(gap, allow_comma):
-    """Gap holds only whitespace plus at most one separator comma."""
-    if gap.replace(",", "").strip():
-        return False
-    return gap.count(",") <= (1 if allow_comma else 0)
-
-
 def validate_decoder(definitions, decoder):
     decoder = uncomment(decoder)
     require(re.search(r'#\[serde\(tag = "type", rename_all = "snake_case"\)\]\s*enum BridgeEventV1', decoder),
             "unsupported decoder enum representation")
-    body = _enum_body(decoder)
-    gaps, variants = _variant_gaps(body)
-    require(_gap_commas_ok(gaps[0], False), "unparsed decoder variant")
-    require(all(_gap_commas_ok(gap, True) for gap in gaps[1:]), "unparsed decoder variant")
+    require(re.search(r'enum BridgeEventV1\s*\{\s*Menu\(MenuEvent\),\s*'
+                      r'ErrorDialogDismissed\(ErrorDialogDismissedEvent\),\s*\}', decoder),
+            "unsupported decoder enum variants")
     expected = {}
-    for variant, body in variants:
-        event = re.sub(r'(?<!^)(?=[A-Z])', '_', variant).lower()
-        field_pattern = (r'(?:#\[(?:allow\(dead_code\)|serde\(default\))\]\s*)*'
+    for struct, event in (("MenuEvent", "menu"), ("ErrorDialogDismissedEvent", "error_dialog_dismissed")):
+        require(re.search(r'#\[derive\(Debug, serde::Deserialize\)\]\s*'
+                          r'#\[serde\(deny_unknown_fields\)\]\s*struct\s+' + struct, decoder),
+                f"{struct} must deny unknown fields")
+        body = _struct_body(decoder, struct)
+        field_pattern = (r'(?:#\[serde\((?:default(?:,\s*deserialize_with\s*=\s*"[^"]*")?'
+                         r'|deserialize_with\s*=\s*"[^"]*")\)\]\s*)*'
                          r'(\w+)\s*:\s*([\w:]+(?:<\w+>)?)\s*,')
         fields = re.findall(field_pattern, body)
         require(not re.sub(field_pattern, '', body).strip(), "unsupported decoder field/serde rule")
-        require(event not in expected and fields, "unparsed event variant")
+        require(fields, "unparsed event struct")
         props = {"type": ("string", True)}
         for name, kind in fields:
             optional = kind.startswith("Option<")
@@ -277,10 +260,59 @@ def validate_decoder(definitions, decoder):
     require(expected == actual, f"schema/typed decoder fields differ: {actual} != {expected}")
     require(re.search(r'if\s+version\s*!=\s*BRIDGE_EVENT_VERSION\s*\{.*?return None;', decoder, re.DOTALL),
             "decoder must reject unsupported versions")
-    require(re.search(r'let mut value: serde_json::Value = serde_json::from_str\(raw\).ok\(\)\?;\s*'
-                      r'validate_bridge_event\(&mut value\)\?;\s*'
-                      r'let envelope: BridgeEventV1 = serde_json::from_value\(value\).ok\(\)\?;', decoder),
-            "decoder must validate the same JSON value before typed dispatch")
+    require(re.search(r'let envelope: BridgeEventV1 = serde_json::from_str\(raw\)\.ok\(\)\?;', decoder),
+            "decoder must single-parse the envelope without a Value round-trip")
+    require('serde_json::from_value(value)' not in decoder,
+            "decoder must not double-parse through a Value")
+    for enum in ("action", "key", "axis"):
+        members = set()
+        for definition in definitions.values():
+            prop = definition["properties"].get(enum)
+            if prop is not None and "enum" in prop:
+                members.update(prop["enum"])
+        for member in members:
+            # Actions ride the generated `ACTION_*` constants; key/axis
+            # ids ride the decoder lookup tables. Either naming pins the
+            # id, an unnamed id fails.
+            require(json.dumps(member) in decoder or f"ACTION_{member.upper()}" in decoder,
+                    f"decoder must name every bridge {enum} id: {member}")
+
+
+def validate_generated_tables(definitions, generated):
+    """Generated tables must repeat the schema rules the decoder enforces.
+
+    Bounds, per-action required fields, and the analog range feed dispatch;
+    a schema bump the decoder ignores fails here instead of silently
+    widening. Compares the checked-in contract against the schema, so a
+    stale regeneration fails even when the decoder is untouched.
+    """
+    bounds = {}
+    for definition in definitions.values():
+        for name, prop in definition["properties"].items():
+            if GEN.field_type(prop) == "integer" and "minimum" in prop:
+                bounds[name] = (prop["minimum"], prop["maximum"])
+    table = dict(
+        (name, (int(minimum), int(maximum)))
+        for name, minimum, maximum in re.findall(
+            r'\(\s*"([^"]+)"\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*\)', generated
+        )
+    )
+    require(bounds and table == bounds,
+            f"generated integer bounds differ from schema: {table} != {bounds}")
+    gates = {}
+    for gate in definitions["menu"]["allOf"]:
+        action = gate["if"]["properties"]["action"]["const"]
+        gates[action] = sorted(gate["then"]["required"])
+    rows = re.findall(r'\(\s*"([^"]+)"\s*,\s*&\[(.*?)\]\)', generated)
+    require(rows, "generated required-field table is missing")
+    table = {action: sorted(re.findall(r'"([^"]+)"', fields)) for action, fields in rows}
+    require(table == gates,
+            f"generated required fields differ from schema gates: {table} != {gates}")
+    match = re.search(r'ANALOG_VALUE_BOUNDS[^=]*=\s*\(\s*([-\d.eE+]+)\s*,\s*([-\d.eE+]+)\s*\)', generated)
+    require(match, "generated analog range is missing")
+    value = definitions["menu"]["properties"]["value"]
+    require((float(match.group(1)), float(match.group(2))) == (value["minimum"], value["maximum"]),
+            "generated analog range differs from schema")
 
 
 def _producer_puts(body):
@@ -399,6 +431,7 @@ def verify(schema, source):
         generated = GEN.outputs(schema)[GEN.RUST / "src/bridge_contract.rs"]
         require(source["generated"] == generated, "generated structural validation is stale or modified")
         validate_decoder(definitions, source["decoder"])
+        validate_generated_tables(definitions, source["generated"])
         validate_producer(definitions, source["producer"], source["callsites"])
         require("register_native_methods(class, &methods)" in source["registration"],
                 "registration table is not registered")

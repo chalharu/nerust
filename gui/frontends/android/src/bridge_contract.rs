@@ -22,182 +22,24 @@ pub(crate) const ACTION_DEVICE_ADDED: &str = "device_added";
 pub(crate) const ACTION_DEVICE_REMOVED: &str = "device_removed";
 pub(crate) const ACTION_TOUCH_GATE: &str = "touch_gate";
 
-/// Schema-derived validation before typed dispatch. Missing is not JSON null.
-fn menu_field_valid(name: &str, value: &mut serde_json::Value) -> bool {
-    match name {
-        "v" => {
-            if normalize_bridge_integer(value).is_none() {
-                return false;
-            }
-            value.as_i64() == Some(BRIDGE_EVENT_VERSION as i64)
-        }
-        "type" => value.as_str() == Some("menu"),
-        "action" => {
-            matches!(
-                value.as_str(),
-                Some(
-                    "exit"
-                        | "load_state"
-                        | "open_rom"
-                        | "open_settings"
-                        | "orientation_changed"
-                        | "reset"
-                        | "save_state"
-                        | "toggle_pause"
-                        | "unload"
-                        | "create_slot"
-                        | "delete_slot"
-                        | "select_slot"
-                        | "controller"
-                        | "analog"
-                        | "device_added"
-                        | "device_removed"
-                        | "touch_gate"
-                )
-            )
-        }
-        "device_id" => {
-            if normalize_bridge_integer(value).is_none() {
-                return false;
-            }
-            value
-                .as_i64()
-                .is_some_and(|number| (-2147483648..=2147483647).contains(&number))
-        }
-        "key" => {
-            matches!(
-                value.as_str(),
-                Some(
-                    "button1"
-                        | "button2"
-                        | "button3"
-                        | "button4"
-                        | "button5"
-                        | "button6"
-                        | "start"
-                        | "select"
-                        | "guide"
-                        | "up"
-                        | "down"
-                        | "left"
-                        | "right"
-                        | "l3"
-                        | "r3"
-                )
-            )
-        }
-        "pressed" => value.is_boolean(),
-        "descriptor" => value.is_string(),
-        "axis" => {
-            matches!(
-                value.as_str(),
-                Some("left_x" | "left_y" | "right_x" | "right_y" | "trigger_l" | "trigger_r")
-            )
-        }
-        "value" => value
-            .as_f64()
-            .is_some_and(|number| (-1.0..=1.0).contains(&number)),
-        "slot_id" => {
-            if normalize_bridge_integer(value).is_none() {
-                return false;
-            }
-            value
-                .as_i64()
-                .is_some_and(|number| (0..=9223372036854775807).contains(&number))
-        }
-        _ => false,
-    }
-}
+/// Required fields per menu action, from the schema gates.
+/// Dispatch rejects events missing any listed field first.
+pub(crate) const MENU_REQUIRED_FIELDS: &[(&str, &[&str])] = &[
+    ("analog", &["axis", "device_id", "value"]),
+    ("controller", &["device_id", "key", "pressed"]),
+    ("delete_slot", &["slot_id"]),
+    ("device_added", &["descriptor", "device_id"]),
+    ("device_removed", &["device_id"]),
+    ("select_slot", &["slot_id"]),
+    ("touch_gate", &["pressed"]),
+];
 
-fn error_dialog_dismissed_field_valid(name: &str, value: &mut serde_json::Value) -> bool {
-    match name {
-        "v" => {
-            if normalize_bridge_integer(value).is_none() {
-                return false;
-            }
-            value.as_i64() == Some(BRIDGE_EVENT_VERSION as i64)
-        }
-        "type" => value.as_str() == Some("error_dialog_dismissed"),
-        "request_id" => {
-            if normalize_bridge_integer(value).is_none() {
-                return false;
-            }
-            value
-                .as_i64()
-                .is_some_and(|number| (1..=9223372036854775807).contains(&number))
-        }
-        _ => false,
-    }
-}
+/// Inclusive bounds for integral bridge fields, from the schema.
+pub(crate) const INTEGER_FIELD_BOUNDS: &[(&str, i64, i64)] = &[
+    ("device_id", -2147483648, 2147483647),
+    ("request_id", 1, 9223372036854775807),
+    ("slot_id", 0, 9223372036854775807),
+];
 
-pub(crate) fn validate_bridge_event(value: &mut serde_json::Value) -> Option<()> {
-    let object = value.as_object_mut()?;
-    match object.get("type")?.as_str()? {
-        "menu" => {
-            for (name, value) in object.iter_mut() {
-                if !menu_field_valid(name, value) {
-                    return None;
-                }
-            }
-            for name in ["v", "type", "action"] {
-                object.get(name)?;
-            }
-            if object.get("action")?.as_str() == Some("controller") {
-                object.get("device_id")?;
-                object.get("key")?;
-                object.get("pressed")?;
-            }
-            if object.get("action")?.as_str() == Some("analog") {
-                object.get("device_id")?;
-                object.get("axis")?;
-                object.get("value")?;
-            }
-            if object.get("action")?.as_str() == Some("device_added") {
-                object.get("device_id")?;
-                object.get("descriptor")?;
-            }
-            if object.get("action")?.as_str() == Some("device_removed") {
-                object.get("device_id")?;
-            }
-            if object.get("action")?.as_str() == Some("touch_gate") {
-                object.get("pressed")?;
-            }
-            if object.get("action")?.as_str() == Some("select_slot") {
-                object.get("slot_id")?;
-            }
-            if object.get("action")?.as_str() == Some("delete_slot") {
-                object.get("slot_id")?;
-            }
-            Some(())
-        }
-        "error_dialog_dismissed" => {
-            for (name, value) in object.iter_mut() {
-                if !error_dialog_dismissed_field_valid(name, value) {
-                    return None;
-                }
-            }
-            for name in ["v", "type", "request_id"] {
-                object.get(name)?;
-            }
-            Some(())
-        }
-        _ => None,
-    }
-}
-
-// JSON Schema integers include integral decimal/exponent numbers (e.g. 1.0).
-fn normalize_bridge_integer(value: &mut serde_json::Value) -> Option<()> {
-    if value.as_i64().is_some() {
-        return Some(());
-    }
-    // Never round an existing unsigned integer through f64.
-    if value.as_u64().is_some() {
-        return None;
-    }
-    let number = value.as_f64()?;
-    if number.fract() != 0.0 || number < i64::MIN as f64 || number >= -(i64::MIN as f64) {
-        return None;
-    }
-    *value = serde_json::Value::from(number as i64);
-    Some(())
-}
+/// Inclusive analog axis range, from the schema.
+pub(crate) const ANALOG_VALUE_BOUNDS: (f32, f32) = (-1.0, 1.0);
