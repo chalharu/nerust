@@ -41,6 +41,7 @@ def sources():
         "producer": (GEN.KOTLIN / "BridgeContract.kt").read_text(),
         "activity": activity,
         "callsites": callsites,
+        "wire": (GEN.KOTLIN / "BridgeWire.kt").read_text(),
         "table": (src / "android/bridge.rs").read_text(),
         "registration": (src / "android.rs").read_text(),
         "callbacks": [(src / f"android/{name}.rs").read_text()
@@ -438,6 +439,44 @@ def validate_producer(definitions, producer, kotlin):
             and "controllerEventJson" not in code, "obsolete typed builders remain")
 
 
+def _wire_const_values(wire, obj):
+    """`const val NAME = "value"` pairs inside one Kotlin wire object."""
+    body = re.search(rf'internal object {obj}\b\s*{{(.*?)\n}}', wire, re.DOTALL)
+    require(body, f"unparsed Kotlin {obj}")
+    return dict(re.findall(r'const val (\w+)\s*=\s*"([^"]+)"', body.group(1)))
+
+
+def _rust_table_keys(decoder, table):
+    """String keys of one Rust `(&str, _)` lookup table."""
+    body = re.search(rf'pub\(crate\) const {table}:[^=]*= &\[\s*\n(.*?)\n\];', decoder, re.DOTALL)
+    require(body, f"unparsed Rust {table}")
+    return re.findall(r'\("([^"]+)",', body.group(1))
+
+
+def validate_controller_vocabulary(decoder, kotlin, wire):
+    """Kotlin button/axis names and the Rust decoder tables name one
+    vocabulary: a Kotlin `when` arm added without a Rust row (or vice
+    versa) silently diverges to platform-fallthrough vs `None`."""
+    keys = _wire_const_values(wire, "ControllerKey")
+    axes = _wire_const_values(wire, "ControllerAxis")
+    used_keys = set(re.findall(r'ControllerKey\.(\w+)', kotlin))
+    used_axes = set(re.findall(r'ControllerAxis\.(\w+)', kotlin))
+    require(used_keys <= set(keys),
+            f"Kotlin uses unknown ControllerKey: {sorted(used_keys - set(keys))}")
+    require(used_axes <= set(axes),
+            f"Kotlin uses unknown ControllerAxis: {sorted(used_axes - set(axes))}")
+    rust_keys = set(_rust_table_keys(decoder, "CONTROLLER_KEY_TABLE"))
+    rust_axes = set(_rust_table_keys(decoder, "CONTROLLER_AXIS_TABLE"))
+    require(set(keys.values()) <= rust_keys,
+            "Kotlin button string missing from the Rust decoder table")
+    require(set(axes.values()) <= rust_axes,
+            "Kotlin axis string missing from the Rust decoder table")
+    require(rust_keys <= set(keys.values()),
+            "Rust decoder button never produced by Kotlin")
+    require(rust_axes <= set(axes.values()),
+            "Rust decoder axis never produced by Kotlin")
+
+
 def verify(schema, source):
     try:
         definitions = GEN.event_definitions(schema)
@@ -446,6 +485,7 @@ def verify(schema, source):
         validate_decoder(definitions, source["decoder"])
         validate_generated_tables(definitions, source["generated"])
         validate_producer(definitions, source["producer"], source["callsites"])
+        validate_controller_vocabulary(source["decoder"], source["callsites"], source["wire"])
         require("register_native_methods(class, &methods)" in source["registration"],
                 "registration table is not registered")
         require("register_native_methods(settings_class, &settings_methods)" in source["registration"],

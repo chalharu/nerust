@@ -134,6 +134,7 @@ class ChromeManager(private val activity: MainActivity) {
     private var fpsOverlayView: TextView? = null
     private var fpsOverlayPopup: PopupWindow? = null
     private var fpsValue: Float = 0f
+    private var lastFpsDecisecond: Int = Int.MIN_VALUE
     private var fpsVisible: Boolean = false
     var lastDrawerStateForTest = "not requested"
         private set
@@ -768,6 +769,11 @@ class ChromeManager(private val activity: MainActivity) {
         }
 
     private fun refreshFpsOverlayText() {
+        // FPS pushes arrive per frame while visible; only reformat when the
+        // displayed decisecond changes instead of allocating per push.
+        val decisecond = (fpsValue * 10).toInt()
+        if (decisecond == lastFpsDecisecond) return
+        lastFpsDecisecond = decisecond
         fpsOverlayView?.text = "%.1f fps".format(fpsValue)
     }
 

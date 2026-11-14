@@ -100,6 +100,17 @@ class MainActivity :
      * Never persisted or sent to Rust. */
     @Volatile private var gamepadDeviceIds: Set<Int> = emptySet()
 
+    /** Synchronous connect set: the async scan below can lag a physical
+     * connect, dropping the first key (the gate reads the scan). Listener
+     * callbacks and dispatch share the main thread, so a plain set updated
+     * here never skews against routing. */
+    private var connectedDeviceIds = mutableSetOf<Int>()
+
+    /** Presence-scan epoch: a scan in flight across onPause must not apply
+     * after it (overlay/capture gate flipping while paused). The resume
+     * scan below re-converges, so dropping is safe. */
+    @Volatile private var presenceEpoch = 0L
+
     /** Set only on user-initiated finish paths; native exits then, never on destroy. */
     private var userInitiatedExit = false
 
@@ -180,11 +191,37 @@ class MainActivity :
         // behavior (volume, Back, hardware keyboards in gameplay). Counted
         // pads divert by device id too: D-pad-only sources would otherwise
         // read as a TV remote and never reach the game.
-        val isController = isControllerSource(event.source) || gamepadDeviceIds.contains(event.deviceId)
+        val isController = isControllerSource(event.source) || connectedDeviceIds.contains(event.deviceId) || gamepadDeviceIds.contains(event.deviceId)
         if (Log.isLoggable(TAG, Log.DEBUG)) {
             Log.d(TAG, "game key: source=0x${event.source.toString(16)} device=${event.deviceId} keyCode=${event.keyCode} action=${event.action} controller=$isController")
         }
         if (!isController) {
+            return super.dispatchKeyEvent(event)
+        }
+        // Digital-only triggers: pads that report L2/R2 as keys with no
+        // analog trigger axes would otherwise lose them (unconsumed keys
+        // fall to the platform, Rust only reads axes). Mirror the press
+        // into the cached axes so they drive like any trigger. Pads with
+        // real trigger axes keep the falling-through platform path below.
+        if (event.keyCode == KeyEvent.KEYCODE_BUTTON_L2 || event.keyCode == KeyEvent.KEYCODE_BUTTON_R2) {
+            val axisMotion =
+                if (event.keyCode == KeyEvent.KEYCODE_BUTTON_L2) {
+                    MotionEvent.AXIS_LTRIGGER
+                } else {
+                    MotionEvent.AXIS_RTRIGGER
+                }
+            val axisKey =
+                if (event.keyCode == KeyEvent.KEYCODE_BUTTON_L2) {
+                    ControllerAxis.TRIGGER_L
+                } else {
+                    ControllerAxis.TRIGGER_R
+                }
+            if (event.device?.getMotionRange(axisMotion) == null &&
+                (event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_UP)
+            ) {
+                updateControllerTrigger(event.deviceId, axisKey, event.action == KeyEvent.ACTION_DOWN)
+                return true
+            }
             return super.dispatchKeyEvent(event)
         }
         val key =
@@ -195,8 +232,10 @@ class MainActivity :
                 KeyEvent.KEYCODE_BUTTON_Y -> ControllerKey.BUTTON4
                 KeyEvent.KEYCODE_BUTTON_L1 -> ControllerKey.BUTTON5
                 KeyEvent.KEYCODE_BUTTON_R1 -> ControllerKey.BUTTON6
-                // L2/R2 stay unconsumed: they are analog triggers (the
+                // L2/R2 stay unconsumed here: they are analog triggers (the
                 // stick/trigger motion follow-up), not digital buttons.
+                // Pads without trigger axes are mirrored into the motion
+                // batch above instead of reaching this arm.
                 KeyEvent.KEYCODE_BUTTON_MODE -> ControllerKey.GUIDE
                 KeyEvent.KEYCODE_BUTTON_THUMBL -> ControllerKey.L3
                 KeyEvent.KEYCODE_BUTTON_THUMBR -> ControllerKey.R3
@@ -249,11 +288,12 @@ class MainActivity :
         val rightY = event.getAxisValue(MotionEvent.AXIS_RZ)
         val triggerL = event.getAxisValue(MotionEvent.AXIS_LTRIGGER)
         val triggerR = event.getAxisValue(MotionEvent.AXIS_RTRIGGER)
-        if (updateControllerAxes(event.deviceId, leftX, leftY, rightX, rightY, triggerL, triggerR)) {
+        val crossed = updateControllerAxes(event.deviceId, leftX, leftY, rightX, rightY, triggerL, triggerR)
+        if (crossed != null) {
             sensorController.lastControllerDeviceId = event.deviceId
             chromeManager.noteControllerInput()
             sensorController.noteControllerInput()
-            sendMotionInput(event.deviceId, leftX, leftY, rightX, rightY, triggerL, triggerR)
+            sendMotionInput(event.deviceId, crossed)
         }
         return true
     }
@@ -296,37 +336,51 @@ class MainActivity :
         )
     }
 
-    /** Single batched motion-event producer: all six axes ride one
-     * envelope per motion callback; deadzone and dpad substitution live
-     * in Rust, never here. */
+    /** Single batched motion-event producer: only crossed axes ride the
+     * envelope (Rust treats a missing axis as neutral already). Deadzone
+     * and dpad substitution live in Rust, never here. */
     private fun sendMotionInput(
         deviceId: Int,
-        leftX: Float,
-        leftY: Float,
-        rightX: Float,
-        rightY: Float,
-        triggerL: Float,
-        triggerR: Float,
+        axes: Map<String, Float>,
     ) {
         sendMenuAction(
             menuEvent(MenuAction.MOTION) {
                 put("device_id", deviceId)
-                put("left_x", leftX)
-                put("left_y", leftY)
-                put("right_x", rightX)
-                put("right_y", rightY)
-                put("trigger_l", triggerL)
-                put("trigger_r", triggerR)
+                for ((axis, value) in axes) {
+                    put(axis, value)
+                }
             },
         )
+    }
+
+    /** Digital-trigger mirror for pads without analog trigger axes (see
+     * dispatch): keys never reach Rust, so the press lands in the cached
+     * axis map and ships like any motion batch. */
+    private fun updateControllerTrigger(
+        deviceId: Int,
+        axis: String,
+        pressed: Boolean,
+    ) {
+        val axes = controllerAxes.getOrPut(deviceId) { mutableMapOf() }
+        val value = if (pressed) 1f else 0f
+        if (axes[axis] == value) return
+        axes[axis] = value
+        sensorController.lastControllerDeviceId = deviceId
+        chromeManager.noteControllerInput()
+        sensorController.noteControllerInput()
+        sendMotionInput(deviceId, mapOf(axis to value))
     }
 
     /** First-stage Kotlin dedup for the motion stream: motion events fire
      * at sensor rate and Rust only wants crossings, so a callback with no
      * sub-epsilon crossing sends nothing. Neutral first-sends stay local
-     * too — Rust treats a missing axis as neutral already. The Rust
-     * deadzone/store is the second stage; this cache only saves JNI
-     * chatter. Returns whether anything crossed. */
+     * too — Rust treats a missing axis as neutral already. Drift between
+     * this epsilon and the Rust per-pad deadzone still crosses JNI per
+     * sample (accepted chatter: gating here would need the Rust deadzone
+     * pushed to Kotlin). The Rust deadzone/store is the second stage;
+     * this cache only saves JNI chatter. Returns the crossed axes (null
+     * when nothing crossed), so only changed values ride the envelope.
+     * No pair array per callback: names come from the hoisted table. */
     private fun updateControllerAxes(
         deviceId: Int,
         leftX: Float,
@@ -335,25 +389,27 @@ class MainActivity :
         rightY: Float,
         triggerL: Float,
         triggerR: Float,
-    ): Boolean {
+    ): Map<String, Float>? {
         val axes = controllerAxes.getOrPut(deviceId) { mutableMapOf() }
-        var changed = false
-        for ((axis, value) in
-            arrayOf(
-                ControllerAxis.LEFT_X to leftX,
-                ControllerAxis.LEFT_Y to leftY,
-                ControllerAxis.RIGHT_X to rightX,
-                ControllerAxis.RIGHT_Y to rightY,
-                ControllerAxis.TRIGGER_L to triggerL,
-                ControllerAxis.TRIGGER_R to triggerR,
-            )) {
+        var crossed: MutableMap<String, Float>? = null
+        for (i in MOTION_AXIS_NAMES.indices) {
+            val axis = MOTION_AXIS_NAMES[i]
+            val value =
+                when (i) {
+                    0 -> leftX
+                    1 -> leftY
+                    2 -> rightX
+                    3 -> rightY
+                    4 -> triggerL
+                    else -> triggerR
+                }
             val last = axes[axis]
             if (last != null && kotlin.math.abs(value - last) < CONTROLLER_AXIS_EPSILON) continue
             if (last == null && value == 0f) continue
             axes[axis] = value
-            changed = true
+            (crossed ?: mutableMapOf<String, Float>().also { crossed = it })[axis] = value
         }
-        return changed
+        return crossed
     }
 
     private fun updateControllerInput(
@@ -382,8 +438,20 @@ class MainActivity :
         }
         // Analog holds converge the same way: one batched recenter so
         // the Rust substitute releases even when the device is gone.
+        // Explicit zeros: a missing axis reads as neutral only when never
+        // sent, so the recenter names every axis.
         if (controllerAxes.remove(deviceId) != null) {
-            sendMotionInput(deviceId, 0f, 0f, 0f, 0f, 0f, 0f)
+            sendMotionInput(
+                deviceId,
+                mapOf(
+                    ControllerAxis.LEFT_X to 0f,
+                    ControllerAxis.LEFT_Y to 0f,
+                    ControllerAxis.RIGHT_X to 0f,
+                    ControllerAxis.RIGHT_Y to 0f,
+                    ControllerAxis.TRIGGER_L to 0f,
+                    ControllerAxis.TRIGGER_R to 0f,
+                ),
+            )
         }
     }
 
@@ -408,12 +476,14 @@ class MainActivity :
             if (device.supportsSource(InputDevice.SOURCE_GAMEPAD) ||
                 device.supportsSource(InputDevice.SOURCE_JOYSTICK)
             ) {
+                connectedDeviceIds.add(deviceId)
                 sendDeviceAdded(deviceId)
             }
         }
     }
 
     override fun onInputDeviceAdded(deviceId: Int) {
+        connectedDeviceIds.add(deviceId)
         sendDeviceAdded(deviceId)
         refreshControllerPresence()
     }
@@ -423,6 +493,7 @@ class MainActivity :
     }
 
     override fun onInputDeviceRemoved(deviceId: Int) {
+        connectedDeviceIds.remove(deviceId)
         releaseController(deviceId)
         sendDeviceRemoved(deviceId)
         sensorController.noteControllerRemoved(deviceId)
@@ -440,6 +511,7 @@ class MainActivity :
      * Scan runs on the shared background lane; only the chrome apply posts
      * back. Identical scans skip the apply via the last-result cache. */
     private fun refreshControllerPresence() {
+        val epoch = presenceEpoch
         BridgeIo.runIo {
             val scan =
                 try {
@@ -454,7 +526,7 @@ class MainActivity :
             val touchCapable = scan.touchCapable
             val gamepadNames = scan.gamepads.map { it.name }
             BridgeIo.postMain {
-                if (isDestroyed || isFinishing) return@postMain
+                if (epoch != presenceEpoch || isDestroyed || isFinishing) return@postMain
                 chromeManager.setTouchCapable(touchCapable)
                 if (gamepadNames.isNotEmpty() && Log.isLoggable(TAG, Log.DEBUG)) {
                     // Debug breadcrumb for Auto-hide reports: which device hid it.
@@ -466,6 +538,10 @@ class MainActivity :
     }
 
     override fun onPause() {
+        // Invalidate in-flight presence scans first: their postMain apply
+        // must not flip the overlay/capture gate while paused. The resume
+        // scan re-converges.
+        presenceEpoch++
         if (activeActivityForTest === this) {
             activeActivityForTest = null
         }
@@ -974,6 +1050,18 @@ class MainActivity :
 
         private const val CONTROLLER_AXIS_THRESHOLD = 0.5f
         private const val CONTROLLER_AXIS_EPSILON = 0.01f
+
+        /** Motion axis names in batch order: hoisted so no pair array is
+         * built per motion callback. */
+        private val MOTION_AXIS_NAMES =
+            arrayOf(
+                ControllerAxis.LEFT_X,
+                ControllerAxis.LEFT_Y,
+                ControllerAxis.RIGHT_X,
+                ControllerAxis.RIGHT_Y,
+                ControllerAxis.TRIGGER_L,
+                ControllerAxis.TRIGGER_R,
+            )
         private const val ROM_PICKER_REQUEST_CODE = 0x4E45
         private const val DIRECTORY_PICKER_REQUEST_CODE = 0x4E46
 
