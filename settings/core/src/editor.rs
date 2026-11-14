@@ -1,5 +1,7 @@
 use crate::model::{
-    input::{KeyboardBinding, PersistedAttachmentId, PersistedControlId, ShortcutAction},
+    input::{
+        KeyboardBinding, PadBinding, PersistedAttachmentId, PersistedControlId, ShortcutAction,
+    },
     snapshot::SettingsSnapshot,
 };
 use nerust_core_traits::identity::SystemId;
@@ -9,6 +11,16 @@ use nerust_input_traits::{Key, StandardButton};
 pub enum CaptureTarget {
     Binding {
         system: Box<dyn SystemId>,
+        attachment: String,
+        control: String,
+    },
+    /// One per-pad game-button override: connection-order pad `pad` drives
+    /// `(attachment, control)` with its own button. Absolute attachments
+    /// (like keyboard bindings): an explicit entry wins over the pad's
+    /// player-slot routing, and the standard layout fills every gap.
+    PadBinding {
+        system: Box<dyn SystemId>,
+        pad: usize,
         attachment: String,
         control: String,
     },
@@ -34,6 +46,9 @@ pub fn current_binding_key(snapshot: &SettingsSnapshot, target: &CaptureTarget) 
                     && matches!(&binding.control, PersistedControlId::Digital(id) if id == control)
             })
             .map(|binding| binding.key),
+        // Pad-mapping rows have no keyboard column; the shared shortcut
+        // column stays empty for them by construction.
+        CaptureTarget::PadBinding { .. } => None,
         CaptureTarget::Shortcut(action) => snapshot
             .shared
             .input
@@ -67,7 +82,37 @@ pub fn current_pad_binding(
             .iter()
             .find(|binding| &binding.action == action)
             .and_then(|binding| binding.pad),
-        CaptureTarget::Binding { .. } => None,
+        CaptureTarget::Binding { .. } | CaptureTarget::PadBinding { .. } => None,
+    }
+}
+
+/// Current override button for one per-pad mapping target, if any.
+/// `None` means the fixed standard layout drives it (callers show the
+/// layout's button as the effective value, never "Unbound").
+pub fn current_pad_game_binding(
+    snapshot: &SettingsSnapshot,
+    target: &CaptureTarget,
+) -> Option<StandardButton> {
+    match target {
+        CaptureTarget::PadBinding {
+            system,
+            pad,
+            attachment,
+            control,
+        } => snapshot
+            .shared
+            .input
+            .systems
+            .get(system)?
+            .pad_bindings
+            .get(*pad)?
+            .iter()
+            .find(|binding| {
+                binding.attachment.as_str() == attachment
+                    && matches!(&binding.control, PersistedControlId::Digital(id) if id == control)
+            })
+            .map(|binding| binding.button),
+        CaptureTarget::Binding { .. } | CaptureTarget::Shortcut(_) => None,
     }
 }
 
@@ -113,12 +158,16 @@ pub fn apply_capture_target(
                 binding.key = key;
             }
         }
+        // Keyboard capture never lands on a pad-mapping row: the row
+        // keeps its override and the press stays pending for a pad.
+        CaptureTarget::PadBinding { .. } => {}
     }
 }
 
-/// Apply one captured pad button. Only shortcut targets take pads;
-/// game binding rows keep their keyboard binding untouched and report
-/// `false` so callers can route the press elsewhere.
+/// Apply one captured pad button. Shortcut targets take the shared pad
+/// column; per-pad mapping targets take the override; game binding rows
+/// keep their keyboard binding untouched and report `false` so callers
+/// can route the press elsewhere.
 pub fn apply_capture_pad_target(
     snapshot: &mut SettingsSnapshot,
     target: &CaptureTarget,
@@ -135,6 +184,37 @@ pub fn apply_capture_pad_target(
                 .find(|b| b.action == *action)
             {
                 binding.pad = button;
+            }
+            true
+        }
+        CaptureTarget::PadBinding {
+            system,
+            pad,
+            attachment,
+            control,
+        } => {
+            // Missing system entries materialize like keyboard bindings
+            // (`.entry().or_default()`), so mapping a fresh system seeds
+            // its table instead of failing silent.
+            let settings = snapshot
+                .shared
+                .input
+                .systems
+                .entry(system.clone_box())
+                .or_default();
+            let Some(bindings) = settings.pad_bindings.get_mut(*pad) else {
+                return false;
+            };
+            bindings.retain(|binding| {
+                !(binding.attachment.as_str() == attachment
+                    && matches!(&binding.control, PersistedControlId::Digital(id) if id == control))
+            });
+            if let Some(button) = button {
+                bindings.push(PadBinding {
+                    attachment: PersistedAttachmentId::new(attachment.clone()),
+                    control: PersistedControlId::digital(control.clone()),
+                    button,
+                });
             }
             true
         }
@@ -346,5 +426,77 @@ mod tests {
         };
         let label = current_binding_label(&snapshot, &target);
         assert_eq!(label, Some("Z"));
+    }
+
+    fn pad_target(pad: usize) -> CaptureTarget {
+        CaptureTarget::PadBinding {
+            system: Box::new(TestSysId),
+            pad,
+            attachment: "test.att".into(),
+            control: "test.ctrl".into(),
+        }
+    }
+
+    #[test]
+    fn pad_game_binding_round_trips_per_pad() {
+        use nerust_input_traits::StandardButton;
+        let mut snapshot = snapshot_with_binding("test.att", "test.ctrl", Key::KeyZ);
+        let first = pad_target(0);
+        let second = pad_target(1);
+        assert_eq!(current_pad_game_binding(&snapshot, &first), None);
+        assert!(apply_capture_pad_target(
+            &mut snapshot,
+            &first,
+            Some(StandardButton::East)
+        ));
+        assert_eq!(
+            current_pad_game_binding(&snapshot, &first),
+            Some(StandardButton::East)
+        );
+        // Pads stay independent; the keyboard binding is untouched.
+        assert_eq!(current_pad_game_binding(&snapshot, &second), None);
+        assert_eq!(
+            current_binding_key(
+                &snapshot,
+                &CaptureTarget::Binding {
+                    system: Box::new(TestSysId),
+                    attachment: "test.att".into(),
+                    control: "test.ctrl".into(),
+                }
+            ),
+            Some(Key::KeyZ)
+        );
+        // Re-capture replaces; clear removes the override.
+        assert!(apply_capture_pad_target(
+            &mut snapshot,
+            &first,
+            Some(StandardButton::West)
+        ));
+        assert_eq!(
+            current_pad_game_binding(&snapshot, &first),
+            Some(StandardButton::West)
+        );
+        assert!(apply_capture_pad_target(&mut snapshot, &first, None));
+        assert_eq!(current_pad_game_binding(&snapshot, &first), None);
+    }
+
+    #[test]
+    fn pad_game_binding_rejects_out_of_range_pads() {
+        use nerust_input_traits::StandardButton;
+        let mut snapshot = snapshot_with_binding("test.att", "test.ctrl", Key::KeyZ);
+        assert!(!apply_capture_pad_target(
+            &mut snapshot,
+            &pad_target(nerust_input_traits::MAX_PADS),
+            Some(StandardButton::South)
+        ));
+    }
+
+    #[test]
+    fn pad_game_binding_ignores_keyboard_capture() {
+        let mut snapshot = snapshot_with_binding("test.att", "test.ctrl", Key::KeyZ);
+        let target = pad_target(0);
+        apply_capture_target(&mut snapshot, &target, Some(Key::KeyA));
+        assert_eq!(current_pad_game_binding(&snapshot, &target), None);
+        assert_eq!(current_binding_key(&snapshot, &target), None);
     }
 }
