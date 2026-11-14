@@ -260,9 +260,17 @@ fn apply_capture_command(
             // Pad rows name what a press can claim (face, shoulders,
             // stick clicks, Start, Back, Guide): triggers and motion
             // never decode, so the generic key prompt would strand the
-            // user on an eternal wait. Other rows keep the shared text.
+            // user on an eternal wait. Game rows take keyboard keys only;
+            // with no keyboard connected only the dpad twin lands, so say
+            // so instead of inviting a press that stays pending. Shortcuts
+            // take either side and keep the shared text.
             let prompt = if matches!(target, CaptureTarget::PadBinding { .. }) {
                 truth.i18n.text(UiText::CapturePromptPad)
+            } else if matches!(target, CaptureTarget::Binding { .. })
+                && truth.keyboards.is_empty()
+                && !truth.gamepads.is_empty()
+            {
+                truth.i18n.text(UiText::CapturePromptDpadOnly)
             } else {
                 vm.capture.view.get().prompt.clone()
             };
@@ -530,7 +538,7 @@ fn apply_reset_scope(
             snapshot.local.video.presentation.vsync = default.local.video.presentation.vsync;
             snapshot.local.cartridge_peripherals = default.local.cartridge_peripherals.clone();
         }
-        "about" | "player.1" | "player.2" | "types.1" | "types.2" => {}
+        "about" | "controllers" | "player.1" | "player.2" | "types.1" | "types.2" => {}
         "audio.detail" => {
             snapshot.local.audio.sample_rate = default.local.audio.sample_rate;
             snapshot.local.audio.latency_ms = default.local.audio.latency_ms;
@@ -538,11 +546,9 @@ fn apply_reset_scope(
         "notifications" => {
             snapshot.local.notifications = default.local.notifications.clone();
         }
-        "controllers" => {
+        "controls.overlay_detail" => {
             snapshot.local.touch_overlay.visibility = default.local.touch_overlay.visibility;
             snapshot.local.touch_overlay.haptics = default.local.touch_overlay.haptics;
-        }
-        "controls.overlay_detail" => {
             snapshot.local.touch_overlay.opacity_percent =
                 default.local.touch_overlay.opacity_percent;
             snapshot.local.touch_overlay.scale_percent = default.local.touch_overlay.scale_percent;
@@ -637,11 +643,24 @@ fn apply_reset_dynamic_scope(
         if !is_known_system(deps, system) {
             return Err(format!("unknown reset scope: {scope}"));
         }
-        copy_system_entry(
-            &mut snapshot.shared.input.systems,
-            &default.shared.input.systems,
-            system,
-        );
+        // Keys screens list keyboard bindings only: clear those overrides
+        // back to the sparse default, but keep this system's per-pad
+        // overrides. Pad mappings belong to the pad screens (`reset.pad.N`);
+        // each reset covers exactly the rows on its own screen, so a keys
+        // reset never wipes pad work.
+        let stale: Vec<_> = snapshot
+            .shared
+            .input
+            .systems
+            .keys()
+            .filter(|key| key.to_string() == system)
+            .cloned()
+            .collect();
+        for key in stale {
+            if let Some(entry) = snapshot.shared.input.systems.get_mut(&key) {
+                entry.keyboard_profiles.clear();
+            }
+        }
         return Ok(());
     }
     if let Some(member) = scope.strip_prefix("device.") {

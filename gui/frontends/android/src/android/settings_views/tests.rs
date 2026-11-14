@@ -1899,8 +1899,8 @@ fn bare_rows_are_reviewed_allowlist() {
     // labels stay bare (no AI-slop restatements). This allowlist pins
     // the policy; a new bare row fails here until it is reviewed.
     // - reset.*: the label states the action, the confirm dialog states
-    //   the consequences. Scoped resets (`devices`, per-pad) carry a
-    //   one-line scope instead and leave this list.
+    //   the consequences. Scoped per-pad resets carry a one-line scope
+    //   instead and leave this list.
     // - sliders with inline values (volume, opacity, scale, offset,
     //   rumble strength): the value line already says it.
     // - color/position/target choice rows: the choices list the options.
@@ -1961,9 +1961,10 @@ fn bare_rows_are_reviewed_allowlist() {
     for prefix in [
         "reset.all",
         "reset.audio.detail",
-        "reset.controllers",
         "reset.controls.overlay_detail",
         "reset.controls.shortcuts",
+        "reset.devices.p1",
+        "reset.devices.p2",
         "reset.input.gba",
         "reset.input.gbc",
         "reset.input.nes",
@@ -2655,6 +2656,35 @@ fn set_with_pads_capture(
     run_with_pads(snapshot, pads, capture, key, WireOp::StartCapture, 0, 0)
 }
 
+/// Screen-reset press: reset rows take `ResetSection`, never `Set`.
+fn reset_screen(snapshot: &mut SettingsSnapshot, pads: &[GamepadInfo], key: &str) {
+    let command_json = serde_json::to_string(&WireCommand {
+        key: key.to_string(),
+        index: 0,
+        number: 0,
+        op: WireOp::ResetSection,
+        payload: serde_json::Value::Null,
+    })
+    .unwrap();
+    with_test_deps(|| {
+        let mut keyboards = test_keyboards();
+        let mut gamepads = pads.to_vec();
+        apply_command_to(
+            snapshot,
+            &command_json,
+            CommandVault {
+                capture: &mut None,
+                keyboards: &mut keyboards,
+                touch_capable: &mut None,
+                gamepads: &mut gamepads,
+                system_locale: &mut None,
+                pad_order: &[],
+            },
+        )
+        .unwrap_or_else(|error| panic!("reset failed: {error}"))
+    });
+}
+
 #[test]
 fn pad_mapping_capture_ignores_other_pads_and_keys() {
     let (mut snapshot, _) = test_payload();
@@ -2897,6 +2927,252 @@ fn pad_capture_prompt_names_capturable_buttons() {
     assert!(
         prompt.contains("trigger") || prompt.contains("トリガー"),
         "pad rows warn that triggers can't map: {prompt}"
+    );
+}
+
+#[test]
+fn game_row_capture_without_keyboard_names_dpad_only() {
+    // Pad-only terminal: game rows take keyboard keys, but only the
+    // dpad twin lands. The prompt must say so instead of inviting a
+    // press that stays pending.
+    let (mut snapshot, _) = test_payload();
+    let pads = two_pads();
+    let payload = with_test_deps(|| {
+        open_payload(&snapshot, &[], None, &pads, None).expect("open payload builds")
+    });
+    let key = payload
+        .sections
+        .iter()
+        .find(|section| section.id.starts_with("keys."))
+        .and_then(|section| {
+            section
+                .rows
+                .iter()
+                .find(|row| row.kind == RowKind::Capture)
+                .map(|row| row.key.clone())
+        })
+        .expect("keys screen lists mapping rows");
+    let mut capture: CaptureSlot = None;
+    let command_json = serde_json::to_string(&WireCommand {
+        key: key.clone(),
+        index: 0,
+        number: 0,
+        op: WireOp::StartCapture,
+        payload: serde_json::Value::Null,
+    })
+    .unwrap();
+    let mut gamepads = pads;
+    with_test_deps(|| {
+        apply_command_to(
+            &mut snapshot,
+            &command_json,
+            CommandVault {
+                capture: &mut capture,
+                keyboards: &mut Vec::new(),
+                touch_capable: &mut None,
+                gamepads: &mut gamepads,
+                system_locale: &mut None,
+                pad_order: &[],
+            },
+        )
+        .expect("pad-only game capture starts")
+    });
+    let (_, prompt) = capture.expect("capture pending");
+    assert!(
+        prompt.contains("dpad") || prompt.contains("十字キー"),
+        "pad-only game rows name the dpad: {prompt}"
+    );
+}
+
+#[test]
+fn keys_reset_keeps_pad_overrides() {
+    // Each reset covers exactly the rows on its own screen: the keys
+    // screen lists keyboard bindings only, so its reset clears those
+    // overrides and leaves the pad screens' overrides alone.
+    let (mut snapshot, _) = test_payload();
+    let pads = two_pads();
+    // Keyboard override on the first keys screen.
+    let keyed = pad_payload(&snapshot, &pads);
+    let (system, key) = keyed
+        .sections
+        .iter()
+        .find(|section| section.id.starts_with("keys."))
+        .and_then(|section| {
+            section
+                .rows
+                .iter()
+                .find(|row| row.kind == RowKind::Capture)
+                .map(|row| {
+                    (
+                        section.id.trim_start_matches("keys.").to_string(),
+                        row.key.clone(),
+                    )
+                })
+        })
+        .expect("keys screen lists mapping rows");
+    let mut capture: CaptureSlot = None;
+    run_with_pads(
+        &mut snapshot,
+        &[],
+        &mut capture,
+        &key,
+        WireOp::StartCapture,
+        0,
+        0,
+    );
+    let keyboards = test_keyboards();
+    with_test_deps(|| {
+        apply_hardware_key(
+            29,
+            None,
+            true,
+            &mut snapshot,
+            &mut capture,
+            projection(
+                &keyboards,
+                None,
+                &[],
+                sys_display(AppLanguage::SystemDefault),
+            ),
+        )
+        .expect("key capture applies")
+    });
+    assert!(
+        snapshot
+            .shared
+            .input
+            .systems
+            .values()
+            .any(|settings| settings
+                .keyboard_profiles
+                .values()
+                .any(|profile| !profile.bindings.is_empty())),
+        "keyboard override stored"
+    );
+    // Pad override on the first pad screen.
+    let padded = pad_payload(&snapshot, &pads);
+    let (pad_key, _) = first_pad_mapping_row(&padded);
+    let mut pad_capture: CaptureSlot = None;
+    set_with_pads_capture(&mut snapshot, &pads, &mut pad_capture, &pad_key);
+    with_test_deps(|| {
+        apply_hardware_key(
+            96,
+            Some("a"),
+            true,
+            &mut snapshot,
+            &mut pad_capture,
+            projection(
+                &keyboards,
+                None,
+                &pads,
+                sys_display(AppLanguage::SystemDefault),
+            ),
+        )
+        .expect("pad capture applies")
+    });
+    let pads_before: Vec<_> = snapshot
+        .shared
+        .input
+        .systems
+        .values()
+        .map(|settings| settings.pad_bindings.clone())
+        .collect();
+    assert!(
+        pads_before.iter().any(|bindings| !bindings[0].is_empty()),
+        "pad override stored to protect"
+    );
+    reset_screen(&mut snapshot, &pads, &format!("reset.keys.{system}"));
+    assert!(
+        snapshot
+            .shared
+            .input
+            .systems
+            .values()
+            .all(|settings| settings
+                .keyboard_profiles
+                .values()
+                .all(|profile| profile.bindings.is_empty())),
+        "keys reset clears keyboard overrides"
+    );
+    let pads_after: Vec<_> = snapshot
+        .shared
+        .input
+        .systems
+        .values()
+        .map(|settings| settings.pad_bindings.clone())
+        .collect();
+    assert_eq!(
+        pads_before, pads_after,
+        "keys reset never wipes pad overrides"
+    );
+}
+
+#[test]
+fn assigned_slot_row_links_to_its_devices_screen() {
+    // The slot row answers "whose pad" and jumps to the Devices screen
+    // that owns the assignment radio: mapping lives here, belonging
+    // there. Parked pads keep a plain readout plus the guidance row.
+    let (mut snapshot, _) = test_payload();
+    let pads = two_pads();
+    // Defaults park Pad A on player 1.
+    let payload = pad_payload(&snapshot, &pads);
+    let slot = payload
+        .sections
+        .iter()
+        .find(|section| section.id == "pad.1")
+        .and_then(|section| section.rows.iter().find(|row| row.key == "pad.1.slot"))
+        .expect("pad.1 slot row exists");
+    assert_eq!(slot.kind, RowKind::Group, "assigned slot navigates");
+    assert_eq!(slot.target, "devices.p1", "slot jumps to its radio");
+    assert_eq!(slot.text, "Player 1", "slot names its player");
+    // Parking the pad degrades the row to a readout.
+    set_with_pads(&mut snapshot, &pads, "devices.p1.gamepad", 0, 0);
+    let parked = pad_payload(&snapshot, &pads);
+    let slot = parked
+        .sections
+        .iter()
+        .find(|section| section.id == "pad.1")
+        .and_then(|section| section.rows.iter().find(|row| row.key == "pad.1.slot"))
+        .expect("parked slot row exists");
+    assert_eq!(slot.kind, RowKind::Info, "parked slot stays put");
+    assert_eq!(slot.text, "Not assigned", "parked slot reads empty");
+}
+
+#[test]
+fn controllers_hub_carries_no_reset_and_detail_covers_overlay() {
+    // Pure navigation hub like player/about: every overlay row lives on
+    // controls.overlay_detail, so the hub needs no reset and one detail
+    // reset covers the whole overlay feature.
+    let (mut snapshot, payload) = test_payload();
+    let controllers = payload
+        .sections
+        .iter()
+        .find(|section| section.id == "controllers")
+        .expect("controllers hub exists");
+    assert!(
+        controllers
+            .rows
+            .iter()
+            .all(|row| row.kind != RowKind::Button),
+        "hub holds navigation only, no reset"
+    );
+    for key in [
+        "controls.overlay_visibility",
+        "controls.overlay_haptics",
+        "controls.overlay_opacity",
+        "controls.overlay_scale",
+        "controls.overlay_vertical_offset",
+    ] {
+        row(&payload, key);
+    }
+    set(&mut snapshot, "controls.overlay_visibility", 0, 0);
+    set(&mut snapshot, "controls.overlay_haptics", 0, 0);
+    set(&mut snapshot, "controls.overlay_opacity", 0, 10);
+    reset_screen(&mut snapshot, &[], "reset.controls.overlay_detail");
+    assert_eq!(
+        snapshot.local.touch_overlay,
+        nerust_settings_core::model::local::TouchOverlaySettings::default(),
+        "one reset covers the whole overlay feature"
     );
 }
 

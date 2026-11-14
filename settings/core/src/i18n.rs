@@ -67,6 +67,7 @@ pub enum UiText {
     ConflictDetected,
     CapturePrompt,
     CapturePromptPad,
+    CapturePromptDpadOnly,
     InvalidCustomStorageDirectory,
     Debugger,
     OpenDebugger,
@@ -233,7 +234,6 @@ pub enum UiText {
     DescDeadzone,
     DescGamepadRadio,
     DescGamepadGear,
-    DescDevicesReset,
     DescPadReset,
     DescPadParked,
     DescPadUnassigned,
@@ -489,6 +489,10 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
             "Press a pad button: face, shoulders, stick clicks, Start, Back, Guide. No triggers.",
             "パッドのボタンを押してください：フェイス、ショルダー、スティック押し込み、Start、Back、Guide。トリガー不可。",
         ),
+        UiText::CapturePromptDpadOnly => (
+            "No keyboard connected. Only the dpad binds here.",
+            "キーボード未接続。十字キーのみ割当可。",
+        ),
         UiText::InvalidCustomStorageDirectory => (
             "The custom storage directory must exist or be creatable.",
             "任意の保存先フォルダは存在するか作成可能である必要があります。",
@@ -702,10 +706,6 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::DescGamepadGear => (
             "Deadzone, triggers, buttons for this pad.",
             "このパッドの遊び・トリガー・ボタン",
-        ),
-        UiText::DescDevicesReset => (
-            "Clears this player's pad assignment.",
-            "このプレイヤーのパッド割当を消去",
         ),
         UiText::DescPadReset => (
             "Clears deadzone, triggers, buttons. Keeps the slot.",
@@ -1277,7 +1277,6 @@ mod tests {
             DescDeadzone,
             DescGamepadRadio,
             DescGamepadGear,
-            DescDevicesReset,
             DescPadReset,
             DescPadParked,
             DescPadUnassigned,
@@ -1288,6 +1287,7 @@ mod tests {
             AudioDetail,
             KeyMapping,
             CapturePromptPad,
+            CapturePromptDpadOnly,
             Connection,
             Capabilities,
             NotificationPaused,
