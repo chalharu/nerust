@@ -205,6 +205,15 @@ impl FieldPressState {
         self.neutral.clear();
     }
 
+    /// Currently asserted fields, for tests: the OR machine is otherwise
+    /// observable only through the live core input.
+    #[cfg(test)]
+    pub(crate) fn asserted_fields(&self) -> Vec<usize> {
+        let mut fields: Vec<usize> = self.holders.keys().copied().collect();
+        fields.sort_unstable();
+        fields
+    }
+
     fn is_held(&self, field: usize) -> bool {
         self.holders
             .get(&field)

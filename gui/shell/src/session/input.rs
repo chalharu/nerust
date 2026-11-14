@@ -486,6 +486,11 @@ impl SessionHandle {
     const TRIGGER_PRESS: f32 = 0.9;
     const TRIGGER_RELEASE: f32 = 0.8;
 
+    /// Corner band for stick diagonals (post-deadzone units): below it the
+    /// dominant axis wins alone, so slight off-axis drift never asserts a
+    /// diagonal the player did not push. Past it both axes assert together.
+    const DIAGONAL_MIN: f32 = 0.5;
+
     /// Substitute direction for one post-deadzone axis value. Sticks stand
     /// in for dpad on digital-only consoles; triggers only when the pad
     /// opts into shoulder doubling, else they stay analog-only.
@@ -563,41 +568,80 @@ impl SessionHandle {
                 .get(i)
                 .is_some_and(|port| port.triggers_as_shoulders)
         });
-        self.sync_axis_substitute(source, axis, value, Some(slot), alias);
+        let sticks = index
+            .and_then(|i| {
+                self.settings
+                    .snapshot
+                    .shared
+                    .input
+                    .gamepad
+                    .pad_ports
+                    .get(i)
+                    .map(|port| [port.left_stick_as_dpad, port.right_stick_as_dpad])
+            })
+            .unwrap_or([true, true]);
+        self.sync_axis_substitute(source, axis, value, Some(slot), alias, sticks);
     }
 
-    /// Edge-sync one axis substitute: press the newly deflected button,
-    /// release the stale one. Axis holders stay distinct from button
-    /// holders, so hat and stick (or shoulder and trigger) merge instead
-    /// of aliasing.
-    fn sync_axis_substitute(
+    /// Stick axis pair for joint dpad resolution, if any axis belongs to
+    /// one. Sticks resolve as a pair (see `stick_pair_substitutes`):
+    /// single-axis events only carry triggers.
+    fn stick_pair_axes(axis: GamepadAxis) -> Option<(GamepadAxis, GamepadAxis)> {
+        match axis {
+            GamepadAxis::LeftStickX | GamepadAxis::LeftStickY => {
+                Some((GamepadAxis::LeftStickX, GamepadAxis::LeftStickY))
+            }
+            GamepadAxis::RightStickX | GamepadAxis::RightStickY => {
+                Some((GamepadAxis::RightStickX, GamepadAxis::RightStickY))
+            }
+            _ => None,
+        }
+    }
+
+    /// Joint substitute for one stick: the dominant axis asserts alone
+    /// below the corner band; past it both assert the diagonal. A single
+    /// deflection always asserts, so sticks stay usable without deliberate
+    /// corners; ties below the band keep the already-held axis.
+    fn stick_pair_substitutes(x: f32, y: f32) -> (Option<StandardButton>, Option<StandardButton>) {
+        use StandardButton::{DpadDown, DpadLeft, DpadRight, DpadUp};
+        let wx = if x < 0.0 {
+            Some(DpadLeft)
+        } else if x > 0.0 {
+            Some(DpadRight)
+        } else {
+            None
+        };
+        let wy = if y < 0.0 {
+            Some(DpadUp)
+        } else if y > 0.0 {
+            Some(DpadDown)
+        } else {
+            None
+        };
+        match (wx, wy) {
+            (Some(_), Some(_)) if x.abs().min(y.abs()) >= Self::DIAGONAL_MIN => (wx, wy),
+            (Some(_), Some(_)) => {
+                if x.abs() >= y.abs() {
+                    (wx, None)
+                } else {
+                    (None, wy)
+                }
+            }
+            _ => (wx, wy),
+        }
+    }
+
+    /// Edge-sync one axis holder: release the stale button, press the
+    /// fresh one. Holders stay distinct from button holders, so hat and
+    /// stick (or shoulder and trigger) merge instead of aliasing.
+    fn sync_substitute_holder(
         &mut self,
         source: SourceId,
         axis: GamepadAxis,
-        value: f32,
+        want: Option<StandardButton>,
+        index: Option<usize>,
         slot: Option<usize>,
-        triggers_as_shoulders: bool,
     ) {
-        // One order-index lookup: both the stale release and the fresh
-        // press below share it instead of re-scanning `pad_order`.
-        let index = self.input.pads.pad_index(source);
-        let mut want = slot.and(Self::substitute_button(axis, value, triggers_as_shoulders));
-        // Trigger hysteresis: a held shoulder survives down to the release
-        // band so epsilon jitter at the press edge cannot flap. Sticks
-        // keep the zero crossing (already deadzoned, no band needed).
-        if want.is_none()
-            && triggers_as_shoulders
-            && matches!(axis, GamepadAxis::LeftTrigger | GamepadAxis::RightTrigger)
-            && value >= Self::TRIGGER_RELEASE
-            && let Some(held) = self
-                .input
-                .axis_dpad
-                .iter()
-                .find(|(held_source, held_axis, _)| *held_source == source && *held_axis == axis)
-                .map(|(_, _, button)| *button)
-        {
-            want = Some(held);
-        }
         // One axis holds at most one substitute (presses are edge-synced),
         // so a single find converges without heap work on the hot path.
         if let Some(stale) = self
@@ -616,6 +660,72 @@ impl SessionHandle {
         {
             self.commit_holder_press(FieldSource::Axis(source, axis), button, index, slot, true);
         }
+    }
+    /// Edge-sync axis substitutes: sticks resolve as a pair (dominant axis
+    /// alone below the corner band, diagonal past it); triggers resolve
+    /// alone with release-band hysteresis. Axis holders stay distinct from
+    /// button holders, so hat and stick (or shoulder and trigger) merge
+    /// instead of aliasing.
+    fn sync_axis_substitute(
+        &mut self,
+        source: SourceId,
+        axis: GamepadAxis,
+        value: f32,
+        slot: Option<usize>,
+        triggers_as_shoulders: bool,
+        sticks_as_dpad: [bool; 2],
+    ) {
+        // One order-index lookup: the stale release and the fresh press
+        // below share it instead of re-scanning `pad_order`.
+        let index = self.input.pads.pad_index(source);
+        if let Some((ax, ay)) = Self::stick_pair_axes(axis) {
+            // The current value is already stored: re-resolve the pair so
+            // both holders converge instead of stranding on stale state.
+            // A switched-off stick parks its substitute (the analog still
+            // stores above).
+            let x = self
+                .input
+                .analogs
+                .get(&(source, ax))
+                .copied()
+                .unwrap_or(0.0);
+            let y = self
+                .input
+                .analogs
+                .get(&(source, ay))
+                .copied()
+                .unwrap_or(0.0);
+            let (mut wx, mut wy) = Self::stick_pair_substitutes(x, y);
+            let left = ax == GamepadAxis::LeftStickX;
+            if !(if left {
+                sticks_as_dpad[0]
+            } else {
+                sticks_as_dpad[1]
+            }) {
+                wx = None;
+                wy = None;
+            }
+            self.sync_substitute_holder(source, ax, wx, index, slot);
+            self.sync_substitute_holder(source, ay, wy, index, slot);
+            return;
+        }
+        let mut want = slot.and(Self::substitute_button(axis, value, triggers_as_shoulders));
+        // Trigger hysteresis: a held shoulder survives down to the release
+        // band so epsilon jitter at the press edge cannot flap.
+        if want.is_none()
+            && triggers_as_shoulders
+            && matches!(axis, GamepadAxis::LeftTrigger | GamepadAxis::RightTrigger)
+            && value >= Self::TRIGGER_RELEASE
+            && let Some(held) = self
+                .input
+                .axis_dpad
+                .iter()
+                .find(|(held_source, held_axis, _)| *held_source == source && *held_axis == axis)
+                .map(|(_, _, button)| *button)
+        {
+            want = Some(held);
+        }
+        self.sync_substitute_holder(source, axis, want, index, slot);
     }
 
     /// One digital commit through the pad's assigned slot: face buttons
@@ -657,8 +767,16 @@ impl SessionHandle {
         });
         if let Some((attachment, control)) = resolved {
             let Some(field) = self.resolve_field(attachment, control) else {
+                log::debug!(
+                    "pad override without a live field: {attachment}.{control} from {button:?}"
+                );
                 return;
             };
+            if log::log_enabled!(log::Level::Debug) {
+                log::debug!(
+                    "pad override drives field {field}: {attachment}.{control} from {button:?}"
+                );
+            }
             let dpad = self.input.dpad_for(attachment, control);
             self.commit_press(field, holder, dpad, pressed);
             return;
@@ -752,6 +870,9 @@ impl SessionHandle {
                 .remove(&(source, SourceButtonId::Pad(button)));
             self.commit_pad_press(source, button, false);
         }
+        // Full release like any other: a shortcut held across the loss
+        // must fire again on the next press instead of staying suppressed.
+        self.input.shortcut_held.clear();
         let derived: Vec<(SourceId, GamepadAxis, StandardButton)> =
             self.input.axis_dpad.iter().copied().collect();
         for (source, axis, button) in derived {
@@ -779,6 +900,7 @@ impl SessionHandle {
         self.input.pressed.clear();
         self.input.analogs.clear();
         self.input.axis_dpad.clear();
+        self.input.shortcut_held.clear();
         self.input.press_state.clear();
         if let Some(gui_input) = self.emu.input_mut() {
             gui_input.clear();
@@ -1146,6 +1268,37 @@ mod tests {
     }
 
     #[test]
+    fn focus_loss_release_re_arms_shortcuts() {
+        // A shortcut held across focus loss must fire again on the next
+        // press: the bulk release clears the held action like any release.
+        use nerust_input_traits::{SourceButtonId, StandardButton};
+        use nerust_settings_core::model::input::{ShortcutAction, ShortcutBinding};
+        let mut session = crate::session::test_util::test_session();
+        let mut next = session.settings_snapshot().clone();
+        next.shared.input.shortcuts.keyboard = vec![ShortcutBinding {
+            action: ShortcutAction::TogglePause,
+            key: None,
+            pad: Some(StandardButton::Guide),
+        }];
+        session.apply_settings(next).unwrap();
+        let pad = session.pad_source_for(11);
+        assert!(
+            session
+                .handle_source_button(pad, SourceButtonId::Pad(StandardButton::Guide), true)
+                .is_some(),
+            "first press fires"
+        );
+        session.release_pad_presses();
+        assert!(
+            session
+                .handle_source_button(pad, SourceButtonId::Pad(StandardButton::Guide), true)
+                .is_some(),
+            "post-loss press fires instead of staying suppressed"
+        );
+        session.clear_input();
+    }
+
+    #[test]
     fn pad_overrides_rebuild_from_active_system_settings() {
         use nerust_input_traits::StandardButton;
         use nerust_settings_core::model::input::{
@@ -1229,6 +1382,84 @@ mod tests {
     }
 
     #[test]
+    fn pad_override_swap_drives_remapped_fields() {
+        // A/B swap on a pad screen must reach the game: South drives
+        // control b and East drives control a after the swap.
+        use nerust_input_traits::{ControlId, SourceButtonId, StandardButton};
+        use nerust_settings_core::model::input::{
+            PadBinding, PersistedControlId, SystemInputSettings,
+        };
+        let mut session = crate::session::test_util::test_session();
+        session.input.current_assignments = InputAssignments::new(vec![(
+            AttachmentId::new("test.topology.slot"),
+            Some(Rc::new(MockTopologyProfile)),
+        )]);
+        let mut next = session.settings_snapshot().clone();
+        let system = session.active_system_id_box().expect("test system active");
+        let mut system_settings = SystemInputSettings::default();
+        system_settings.pad_bindings[0] = vec![
+            PadBinding::new(
+                "test.topology.slot",
+                PersistedControlId::digital("test.topology.b"),
+                StandardButton::South,
+            ),
+            PadBinding::new(
+                "test.topology.slot",
+                PersistedControlId::digital("test.topology.a"),
+                StandardButton::East,
+            ),
+        ];
+        next.shared.input.systems.insert(system, system_settings);
+        session.apply_settings(next).unwrap();
+        // Observable runtime: the mock core contributes no field map, so
+        // install one for the swapped controls.
+        let attachment = AttachmentId::new("test.topology.slot");
+        let mut parts = crate::test_helpers::build_test_core_parts();
+        let _ = parts.field_map.insert(
+            (
+                attachment,
+                ControlId::digital(DigitalControlId::new("test.topology.a")),
+            ),
+            1,
+        );
+        let _ = parts.field_map.insert(
+            (
+                attachment,
+                ControlId::digital(DigitalControlId::new("test.topology.b")),
+            ),
+            2,
+        );
+        let (emu_core, gui_input, field_map, host_peripherals) =
+            crate::emu_core::EmuCore::from_parts(parts);
+        session.emu.runtime = Some(crate::session::ActiveRuntime {
+            core: Box::new(emu_core),
+            input: gui_input,
+            field_map,
+            host_peripherals,
+        });
+        let pad = session.pad_source_for(11);
+        session.handle_source_button(pad, SourceButtonId::Pad(StandardButton::South), true);
+        assert_eq!(
+            session.input.press_state.asserted_fields(),
+            vec![2],
+            "swapped South drives control b, not a"
+        );
+        session.handle_source_button(pad, SourceButtonId::Pad(StandardButton::South), false);
+        session.handle_source_button(pad, SourceButtonId::Pad(StandardButton::East), true);
+        assert_eq!(
+            session.input.press_state.asserted_fields(),
+            vec![1],
+            "swapped East drives control a, not b"
+        );
+        session.handle_source_button(pad, SourceButtonId::Pad(StandardButton::East), false);
+        assert!(
+            session.input.press_state.asserted_fields().is_empty(),
+            "releases unassert"
+        );
+        session.clear_input();
+    }
+
+    #[test]
     fn axis_deadzone_reads_per_pad_rows() {
         use nerust_input_traits::GamepadAxis;
         let mut session = crate::session::test_util::test_session();
@@ -1301,6 +1532,61 @@ mod tests {
         session.clear_input();
         assert!(session.input.analogs.is_empty());
         assert!(session.input.axis_dpad.is_empty());
+    }
+
+    #[test]
+    fn shallow_diagonal_asserts_dominant_axis_only() {
+        use nerust_input_traits::{GamepadAxis, StandardButton};
+        let mut session = crate::session::test_util::test_session();
+        session.input.current_assignments = InputAssignments::new(vec![(
+            AttachmentId::new("test.topology.slot"),
+            Some(Rc::new(MockTopologyProfile)),
+        )]);
+        let mut next = session.settings_snapshot().clone();
+        next.shared.input.gamepad.pad_ports[0].deadzone_percent = 0;
+        session.apply_settings(next).unwrap();
+        let pad = session.pad_source_for(11);
+        let held = |session: &SessionHandle, axis: GamepadAxis| {
+            session
+                .input
+                .axis_dpad
+                .iter()
+                .filter(|(source, held_axis, _)| *source == pad && *held_axis == axis)
+                .map(|(_, _, button)| *button)
+                .collect::<Vec<_>>()
+        };
+        // Hard right first: only Right asserts.
+        session.handle_source_axis(pad, GamepadAxis::LeftStickX, 0.8);
+        assert_eq!(
+            held(&session, GamepadAxis::LeftStickX),
+            [StandardButton::DpadRight]
+        );
+        // Slight down stays a Right: the corner band (0.5) is not met and
+        // X dominates, so no diagonal fires.
+        session.handle_source_axis(pad, GamepadAxis::LeftStickY, 0.3);
+        assert_eq!(
+            held(&session, GamepadAxis::LeftStickX),
+            [StandardButton::DpadRight]
+        );
+        assert!(held(&session, GamepadAxis::LeftStickY).is_empty());
+        // Deliberate corner: past the band both assert.
+        session.handle_source_axis(pad, GamepadAxis::LeftStickY, 0.6);
+        assert_eq!(
+            held(&session, GamepadAxis::LeftStickX),
+            [StandardButton::DpadRight]
+        );
+        assert_eq!(
+            held(&session, GamepadAxis::LeftStickY),
+            [StandardButton::DpadDown]
+        );
+        // X eases off: Right releases, Down holds alone.
+        session.handle_source_axis(pad, GamepadAxis::LeftStickX, 0.2);
+        assert!(held(&session, GamepadAxis::LeftStickX).is_empty());
+        assert_eq!(
+            held(&session, GamepadAxis::LeftStickY),
+            [StandardButton::DpadDown]
+        );
+        session.clear_input();
     }
 
     #[test]
@@ -1597,6 +1883,52 @@ mod tests {
         )));
         session.handle_source_axis(pad, GamepadAxis::LeftTrigger, 0.0);
         assert!(session.input.axis_dpad.is_empty());
+        session.clear_input();
+    }
+
+    #[test]
+    fn switched_off_stick_parks_its_substitute_only() {
+        use nerust_input_traits::{GamepadAxis, StandardButton};
+        let mut session = crate::session::test_util::test_session();
+        session.input.current_assignments = InputAssignments::new(vec![(
+            AttachmentId::new("test.topology.slot"),
+            Some(Rc::new(MockTopologyProfile)),
+        )]);
+        let pad = session.pad_source_for(11);
+        // Both sticks substitute by default.
+        session.handle_source_axis(pad, GamepadAxis::LeftStickX, 0.8);
+        assert!(session.input.axis_dpad.contains(&(
+            pad,
+            GamepadAxis::LeftStickX,
+            StandardButton::DpadRight
+        )));
+        session.clear_input();
+        // Switching the left stick off parks its substitute while the
+        // analog value still stores; the right stick is unaffected.
+        let mut next = session.settings_snapshot().clone();
+        next.shared.input.gamepad.pad_ports[0].deadzone_percent = 0;
+        next.shared.input.gamepad.pad_ports[0].left_stick_as_dpad = false;
+        session.apply_settings(next).unwrap();
+        session.handle_source_axis(pad, GamepadAxis::LeftStickX, 0.8);
+        assert_eq!(
+            session.input.analogs.get(&(pad, GamepadAxis::LeftStickX)),
+            Some(&0.8),
+            "disabled stick still stores its analog"
+        );
+        assert!(
+            !session
+                .input
+                .axis_dpad
+                .iter()
+                .any(|(source, axis, _)| *source == pad && *axis == GamepadAxis::LeftStickX),
+            "disabled stick asserts no dpad"
+        );
+        session.handle_source_axis(pad, GamepadAxis::RightStickX, 0.8);
+        assert!(session.input.axis_dpad.contains(&(
+            pad,
+            GamepadAxis::RightStickX,
+            StandardButton::DpadRight
+        )));
         session.clear_input();
     }
 
