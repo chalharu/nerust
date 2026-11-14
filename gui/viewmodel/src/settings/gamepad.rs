@@ -91,7 +91,7 @@ fn project_view(state: &super::EditorState) -> GamepadTabView {
     // Port and trigger options are identical for every pad: build once,
     // clone per row.
     let port_choices: Vec<ChoiceView<Option<usize>>> = [
-        (None, i18n.text(UiText::Off)),
+        (None, i18n.text(UiText::NotAssigned)),
         (Some(0), i18n.text(UiText::PlayerOne)),
         (Some(1), i18n.text(UiText::PlayerTwo)),
     ]

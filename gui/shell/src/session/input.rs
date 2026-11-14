@@ -282,28 +282,9 @@ impl SessionHandle {
         if old == new {
             return;
         }
-        let held: Vec<SourceButtonId> = self
-            .input
-            .pressed
-            .iter()
-            .filter_map(|(source, button)| (*source == old).then_some(*button))
-            .collect();
-        for button in held {
-            if self.input.pressed.remove(&(old, button)) {
-                self.input.pressed.insert((new, button));
-            }
-        }
-        let stored: Vec<(GamepadAxis, f32)> = self
-            .input
-            .analogs
-            .iter()
-            .filter_map(|((source, axis), value)| (*source == old).then_some((*axis, *value)))
-            .collect();
-        for (axis, value) in stored {
-            if self.input.analogs.remove(&(old, axis)).is_some() {
-                self.input.analogs.insert((new, axis), value);
-            }
-        }
+        Self::migrate_set(&mut self.input.pressed, old, new);
+        Self::migrate_values(&mut self.input.analogs, old, new);
+        // `axis_dpad` keys are triples; the generic covers pairs only.
         let derived: Vec<(GamepadAxis, StandardButton)> = self
             .input
             .axis_dpad
@@ -313,6 +294,40 @@ impl SessionHandle {
         for (axis, button) in derived {
             if self.input.axis_dpad.remove(&(old, axis, button)) {
                 self.input.axis_dpad.insert((new, axis, button));
+            }
+        }
+    }
+
+    /// Move every `(old, key)` entry of a set to `(new, key)`.
+    fn migrate_set(
+        set: &mut std::collections::HashSet<(SourceId, SourceButtonId)>,
+        old: SourceId,
+        new: SourceId,
+    ) {
+        let held: Vec<SourceButtonId> = set
+            .iter()
+            .filter_map(|(source, button)| (*source == old).then_some(*button))
+            .collect();
+        for button in held {
+            if set.remove(&(old, button)) {
+                set.insert((new, button));
+            }
+        }
+    }
+
+    /// Move every `(old, key)` entry of a map to `(new, key)`, keeping values.
+    fn migrate_values<K: Eq + std::hash::Hash + Copy, V: Copy>(
+        map: &mut std::collections::HashMap<(SourceId, K), V>,
+        old: SourceId,
+        new: SourceId,
+    ) {
+        let stored: Vec<(K, V)> = map
+            .iter()
+            .filter_map(|((source, key), value)| (*source == old).then_some((*key, *value)))
+            .collect();
+        for (key, value) in stored {
+            if map.remove(&(old, key)).is_some() {
+                map.insert((new, key), value);
             }
         }
     }
@@ -623,11 +638,7 @@ impl SessionHandle {
                 .and_then(|map| map.get(&button).copied())
         });
         if let Some((attachment, control)) = resolved {
-            let field = self
-                .emu
-                .field_map()
-                .and_then(|fields| fields.get(&(attachment, ControlId::from(control))).copied());
-            let Some(field) = field else {
+            let Some(field) = self.resolve_field(attachment, control) else {
                 return;
             };
             let dpad = self.input.dpad_for(attachment, control);
@@ -645,11 +656,7 @@ impl SessionHandle {
         else {
             return;
         };
-        let field = self
-            .emu
-            .field_map()
-            .and_then(|fields| fields.get(&(attachment, ControlId::from(control))).copied());
-        let Some(field) = field else {
+        let Some(field) = self.resolve_field(attachment, control) else {
             return;
         };
         self.commit_press(field, holder, dpad, pressed);
@@ -671,11 +678,7 @@ impl SessionHandle {
                 .and_then(|map| map.get(&button).copied())
         });
         if let Some((attachment, control)) = resolved {
-            let field = self
-                .emu
-                .field_map()
-                .and_then(|fields| fields.get(&(attachment, ControlId::from(control))).copied());
-            let Some(field) = field else {
+            let Some(field) = self.resolve_field(attachment, control) else {
                 return;
             };
             let dpad = self.input.dpad_for(attachment, control);
@@ -691,14 +694,32 @@ impl SessionHandle {
         else {
             return;
         };
-        let field = self
-            .emu
-            .field_map()
-            .and_then(|fields| fields.get(&(attachment, ControlId::from(control))).copied());
-        let Some(field) = field else {
+        let Some(field) = self.resolve_field(attachment, control) else {
             return;
         };
         self.commit_press(field, holder, dpad, false);
+    }
+
+    /// Field index for one `(attachment, control)`, or `None` when the
+    /// live topology has no such control.
+    fn resolve_field(&self, attachment: AttachmentId, control: DigitalControlId) -> Option<usize> {
+        self.emu
+            .field_map()
+            .and_then(|fields| fields.get(&(attachment, ControlId::from(control))).copied())
+    }
+
+    /// Pad-button holds in suppression order: the shared collector for
+    /// release and re-assert so the two never drift.
+    fn pad_holds(
+        pressed: &std::collections::HashSet<(SourceId, SourceButtonId)>,
+    ) -> Vec<(SourceId, StandardButton)> {
+        pressed
+            .iter()
+            .filter_map(|(source, button)| match button {
+                SourceButtonId::Pad(std_button) => Some((*source, *std_button)),
+                SourceButtonId::Key(_) => None,
+            })
+            .collect()
     }
 
     /// Event-ful release of every held pad button (surface loss): releases
@@ -706,16 +727,7 @@ impl SessionHandle {
     /// asserted. Stick-derived holds release too, and stored analogs drop
     /// (only pads ever store them; keyboards have no axis path).
     pub fn release_pad_presses(&mut self) {
-        let held: Vec<(SourceId, StandardButton)> = self
-            .input
-            .pressed
-            .iter()
-            .filter_map(|(source, button)| match button {
-                SourceButtonId::Pad(std_button) => Some((*source, *std_button)),
-                SourceButtonId::Key(_) => None,
-            })
-            .collect();
-        for (source, button) in held {
+        for (source, button) in Self::pad_holds(&self.input.pressed) {
             self.input
                 .pressed
                 .remove(&(source, SourceButtonId::Pad(button)));
@@ -738,15 +750,7 @@ impl SessionHandle {
     /// apply without a re-press. Pads re-resolve (ports may have moved);
     /// Off-parked holds simply assert nothing.
     pub(super) fn reassert_pad_presses(&mut self) {
-        let held: Vec<(SourceId, StandardButton)> = self
-            .input
-            .pressed
-            .iter()
-            .filter_map(|(source, button)| match button {
-                SourceButtonId::Pad(std_button) => Some((*source, *std_button)),
-                SourceButtonId::Key(_) => None,
-            })
-            .collect();
+        let held = Self::pad_holds(&self.input.pressed);
         for (source, button) in held {
             self.commit_pad_press(source, button, true);
         }

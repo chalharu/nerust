@@ -212,12 +212,12 @@ fn apply_capture_command(
             // Clear never strands a pad twin (and vice versa). The column
             // rides the row key suffix (`.kbd` vs `.padN`).
             match (&target, clear_column_for_key(&command.key)) {
-                (CaptureTarget::Shortcut(_), Column::Key) => {
+                (CaptureTarget::Shortcut(_), Some(Column::Key)) => {
                     vm.capture
                         .clear_key(&target)
                         .map_err(|error| error.to_string())?;
                 }
-                (CaptureTarget::Shortcut(_), Column::Pad) => {
+                (CaptureTarget::Shortcut(_), Some(Column::Pad)) => {
                     vm.capture
                         .clear_pad(&target)
                         .map_err(|error| error.to_string())?;
@@ -250,23 +250,24 @@ fn apply_capture_command(
     }
 }
 
-/// Which shortcut column a clear addresses, from the row key suffix
-/// (`.kbd` vs `.padN`). Game and per-pad mapping rows carry no suffix
-/// and clear whole.
+/// Which shortcut column a clear addresses: key or pad. `None` from
+/// [`clear_column_for_key`] clears whole.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Column {
     Key,
     Pad,
-    Whole,
 }
 
-fn clear_column_for_key(key: &str) -> Column {
+/// Which shortcut column a clear addresses, from the row key suffix
+/// (`.kbd` vs `.padN`). Game and per-pad mapping rows carry no suffix
+/// and clear whole (`None`).
+fn clear_column_for_key(key: &str) -> Option<Column> {
     if key.ends_with(".kbd") {
-        Column::Key
+        Some(Column::Key)
     } else if key.contains(".pad") {
-        Column::Pad
+        Some(Column::Pad)
     } else {
-        Column::Whole
+        None
     }
 }
 

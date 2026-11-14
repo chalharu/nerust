@@ -1891,7 +1891,8 @@ fn bare_rows_are_reviewed_allowlist() {
     // labels stay bare (no AI-slop restatements). This allowlist pins
     // the policy; a new bare row fails here until it is reviewed.
     // - reset.*: the label states the action, the confirm dialog states
-    //   the consequences.
+    //   the consequences. Scoped resets (`devices`, per-pad) carry a
+    //   one-line scope instead and leave this list.
     // - sliders with inline values (volume, opacity, scale, offset,
     //   rumble strength): the value line already says it.
     // - color/position/target choice rows: the choices list the options.
@@ -1955,8 +1956,6 @@ fn bare_rows_are_reviewed_allowlist() {
         "reset.controllers",
         "reset.controls.overlay_detail",
         "reset.controls.shortcuts",
-        "reset.devices.p1",
-        "reset.devices.p2",
         "reset.input.gba",
         "reset.input.gbc",
         "reset.input.nes",
