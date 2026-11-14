@@ -34,8 +34,11 @@ use nerust_gui_runtime::{
 use nerust_gui_shell::{
     registry::SystemRegistry,
     session::{
-        SessionError, SessionHandle,
-        access::{PauseControl, ResetControl, SessionControl, SettingsResult, SlotIo, SlotNav},
+        KeyboardShortcut, SessionError, SessionHandle,
+        access::{
+            PauseControl, ResetControl, SessionControl, SettingsResult, SlotIo, SlotNav,
+            dispatch_session_action,
+        },
         commands::{SessionCommand, SessionCommandOutcome},
         notification::FailureOrigin,
         osd::TickMetrics,
@@ -636,12 +639,14 @@ impl AndroidFrontend {
                     button,
                     pressed,
                 } => {
-                    self.chrome.input.apply_physical_controller_input(
+                    if let Some(shortcut) = self.chrome.input.apply_physical_controller_input(
                         &mut self.core.session,
                         device_id,
                         button,
                         pressed,
-                    );
+                    ) {
+                        self.dispatch_pad_shortcut(shortcut);
+                    }
                 }
                 MenuAction::AnalogInput {
                     device_id,
@@ -889,6 +894,21 @@ impl PauseControl for AndroidFrontend {
     }
 }
 
+/// Pad-button shortcut tail: the session resolves the press to a shortcut
+/// (or gameplay); this side executes the session half. Chrome-only actions
+/// (fullscreen, debugger) have no Android target and stay ignored, exactly
+/// like the desktop router's non-session arms.
+impl AndroidFrontend {
+    fn dispatch_pad_shortcut(&mut self, shortcut: KeyboardShortcut) {
+        match shortcut {
+            KeyboardShortcut::Session(action) => {
+                dispatch_session_action(self, action);
+            }
+            KeyboardShortcut::ToggleFullscreen | KeyboardShortcut::OpenDebugger => {}
+        }
+    }
+}
+
 impl SlotIo for AndroidFrontend {
     fn save_active_slot(&mut self) -> bool {
         self.exec(SessionCommand::SaveActiveSlotOrNew)
@@ -1045,11 +1065,13 @@ impl ApplicationHandler for AndroidFrontend {
                     if let Some(button) = winit_pad_button(&event.physical_key)
                         && let Some(source) = self.core.session.primary_pad_source()
                     {
-                        self.core.session.handle_source_button(
+                        if let Some(shortcut) = self.core.session.handle_source_button(
                             source,
                             nerust_input_traits::SourceButtonId::Pad(button),
                             pressed,
-                        );
+                        ) {
+                            self.dispatch_pad_shortcut(shortcut);
+                        }
                     }
                 }
             }
