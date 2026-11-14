@@ -263,7 +263,7 @@ def _decoder_names_ids(definitions, decoder):
         for member in members:
             require(json.dumps(member) in decoder or f"ACTION_{member.upper()}" in decoder,
                     f"decoder must name every bridge {enum} id: {member}")
-    for member in ("left_x", "left_y", "right_x", "right_y", "trigger_l", "trigger_r"):
+    for member in ("left_x", "left_y", "right_x", "right_y", "trigger_l", "trigger_r", "gas", "brake"):
         require(f"{member}:" in decoder or f"{member} :" in decoder,
                 f"decoder must name every motion axis: {member}")
 

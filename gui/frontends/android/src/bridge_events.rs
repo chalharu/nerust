@@ -156,6 +156,10 @@ struct MenuEvent {
     trigger_l: Option<f32>,
     #[serde(default, deserialize_with = "de_opt_null_reject")]
     trigger_r: Option<f32>,
+    #[serde(default, deserialize_with = "de_opt_null_reject")]
+    gas: Option<f32>,
+    #[serde(default, deserialize_with = "de_opt_null_reject")]
+    brake: Option<f32>,
     #[serde(default, deserialize_with = "de_opt_integral")]
     slot_id: Option<i64>,
 }
@@ -354,7 +358,7 @@ impl MenuEvent {
     /// every axis slot. Dispatch resolves each present axis through the
     /// shared axis table; absent slots stay local, unknown names fail
     /// loud per axis. No allocation: names are static, values are `Copy`.
-    fn motion_axes(&self) -> [(&'static str, Option<f32>); 6] {
+    fn motion_axes(&self) -> [(&'static str, Option<f32>); 8] {
         [
             ("left_x", self.left_x),
             ("left_y", self.left_y),
@@ -362,6 +366,8 @@ impl MenuEvent {
             ("right_y", self.right_y),
             ("trigger_l", self.trigger_l),
             ("trigger_r", self.trigger_r),
+            ("gas", self.gas),
+            ("brake", self.brake),
         ]
     }
 
@@ -530,6 +536,9 @@ pub(crate) const CONTROLLER_AXIS_TABLE: &[(&str, GamepadAxis)] = &[
     ("right_y", GamepadAxis::RightStickY),
     ("trigger_l", GamepadAxis::LeftTrigger),
     ("trigger_r", GamepadAxis::RightTrigger),
+    // Pedal-style aliases: some pads report triggers as GAS/BRAKE.
+    ("gas", GamepadAxis::LeftTrigger),
+    ("brake", GamepadAxis::RightTrigger),
 ];
 
 /// Single-table lookups; the schema test iterates the tables above.
@@ -846,6 +855,8 @@ mod tests {
             "right_y",
             "trigger_l",
             "trigger_r",
+            "gas",
+            "brake",
         ]
         .into_iter()
         .filter(|name| props[name].get("type").and_then(|kind| kind.as_str()) == Some("number"))

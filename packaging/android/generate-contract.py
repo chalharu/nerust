@@ -258,7 +258,7 @@ def outputs(schema):
     actions, keys = menu["action"]["enum"], menu["key"]["enum"]
     # Motion axes ride as optional per-axis number properties (one batched
     # event per motion callback); the property names are the wire ids.
-    axes = ["left_x", "left_y", "right_x", "right_y", "trigger_l", "trigger_r"]
+    axes = ["left_x", "left_y", "right_x", "right_y", "trigger_l", "trigger_r", "gas", "brake"]
     _require_wire_ids(menu, actions, keys, axes)
     rs = _rust_header(version, settings, chunk, summary)
     rs.extend(f'pub(crate) const ACTION_{action.upper()}: &str = "{action}";' for action in actions)

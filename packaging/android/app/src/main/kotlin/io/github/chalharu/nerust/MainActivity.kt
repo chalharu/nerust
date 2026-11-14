@@ -288,7 +288,13 @@ class MainActivity :
         val rightY = event.getAxisValue(MotionEvent.AXIS_RZ)
         val triggerL = event.getAxisValue(MotionEvent.AXIS_LTRIGGER)
         val triggerR = event.getAxisValue(MotionEvent.AXIS_RTRIGGER)
-        val crossed = updateControllerAxes(event.deviceId, leftX, leftY, rightX, rightY, triggerL, triggerR)
+        // Pedal-style aliases: pads without trigger axes report them as
+        // GAS/BRAKE instead. Read the alias only while the primary reads
+        // neutral, so pads mirroring both never double-drive the batch;
+        // absent axes read 0 and stay local in the dedup below.
+        val gas = if (triggerL == 0f) event.getAxisValue(MotionEvent.AXIS_GAS) else 0f
+        val brake = if (triggerR == 0f) event.getAxisValue(MotionEvent.AXIS_BRAKE) else 0f
+        val crossed = updateControllerAxes(event.deviceId, leftX, leftY, rightX, rightY, triggerL, triggerR, gas, brake)
         if (crossed != null) {
             sensorController.lastControllerDeviceId = event.deviceId
             chromeManager.noteControllerInput()
@@ -389,6 +395,8 @@ class MainActivity :
         rightY: Float,
         triggerL: Float,
         triggerR: Float,
+        gas: Float,
+        brake: Float,
     ): Map<String, Float>? {
         val axes = controllerAxes.getOrPut(deviceId) { mutableMapOf() }
         var crossed: MutableMap<String, Float>? = null
@@ -401,7 +409,9 @@ class MainActivity :
                     2 -> rightX
                     3 -> rightY
                     4 -> triggerL
-                    else -> triggerR
+                    5 -> triggerR
+                    6 -> gas
+                    else -> brake
                 }
             val last = axes[axis]
             if (last != null && kotlin.math.abs(value - last) < CONTROLLER_AXIS_EPSILON) continue
@@ -450,6 +460,8 @@ class MainActivity :
                     ControllerAxis.RIGHT_Y to 0f,
                     ControllerAxis.TRIGGER_L to 0f,
                     ControllerAxis.TRIGGER_R to 0f,
+                    ControllerAxis.GAS to 0f,
+                    ControllerAxis.BRAKE to 0f,
                 ),
             )
         }
@@ -1052,7 +1064,7 @@ class MainActivity :
         private const val CONTROLLER_AXIS_EPSILON = 0.01f
 
         /** Motion axis names in batch order: hoisted so no pair array is
-         * built per motion callback. */
+         * built per motion callback. GAS/BRAKE alias the triggers. */
         private val MOTION_AXIS_NAMES =
             arrayOf(
                 ControllerAxis.LEFT_X,
@@ -1061,6 +1073,8 @@ class MainActivity :
                 ControllerAxis.RIGHT_Y,
                 ControllerAxis.TRIGGER_L,
                 ControllerAxis.TRIGGER_R,
+                ControllerAxis.GAS,
+                ControllerAxis.BRAKE,
             )
         private const val ROM_PICKER_REQUEST_CODE = 0x4E45
         private const val DIRECTORY_PICKER_REQUEST_CODE = 0x4E46
