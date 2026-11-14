@@ -223,6 +223,50 @@ def _struct_body(decoder, name):
     raise ContractError(MISSING_DECODER)
 
 
+def _struct_props(decoder, struct):
+    """Field map of one event struct: name to (schema kind, required)."""
+    require(re.search(r'#\[derive\(Debug, serde::Deserialize\)\]\s*'
+                      r'#\[serde\(deny_unknown_fields\)\]\s*struct\s+' + struct, decoder),
+            f"{struct} must deny unknown fields")
+    body = _struct_body(decoder, struct)
+    field_pattern = (r'(?:#\[serde\((?:default(?:,\s*deserialize_with\s*=\s*"[^"]*")?'
+                     r'|deserialize_with\s*=\s*"[^"]*")\)\]\s*)*'
+                     r'(\w+)\s*:\s*([\w:]+(?:<\w+>)?)\s*,')
+    fields = re.findall(field_pattern, body)
+    require(not re.sub(field_pattern, '', body).strip(), "unsupported decoder field/serde rule")
+    require(fields, "unparsed event struct")
+    types = {"u32": "integer", "i32": "integer", "i64": "integer",
+             "u64": "integer", "String": "string", "bool": "boolean",
+             "f32": "number", "f64": "number",
+             "crate::error_dialog_controller::DialogRequestId": "integer"}
+    props = {"type": ("string", True)}
+    for name, kind in fields:
+        optional = kind.startswith("Option<")
+        if optional:
+            kind = kind[7:-1]
+        require(kind in types, f"unsupported decoder field type: {kind}")
+        props[name] = (types[kind], not optional)
+    return props
+
+
+def _decoder_names_ids(definitions, decoder):
+    """Every bridge id is named by the decoder: actions ride the
+    generated `ACTION_*` constants, key ids ride the lookup tables,
+    motion axes ride struct fields. An unnamed id fails."""
+    for enum in ("action", "key"):
+        members = set()
+        for definition in definitions.values():
+            prop = definition["properties"].get(enum)
+            if prop is not None and "enum" in prop:
+                members.update(prop["enum"])
+        for member in members:
+            require(json.dumps(member) in decoder or f"ACTION_{member.upper()}" in decoder,
+                    f"decoder must name every bridge {enum} id: {member}")
+    for member in ("left_x", "left_y", "right_x", "right_y", "trigger_l", "trigger_r"):
+        require(f"{member}:" in decoder or f"{member} :" in decoder,
+                f"decoder must name every motion axis: {member}")
+
+
 def validate_decoder(definitions, decoder):
     decoder = uncomment(decoder)
     require(re.search(r'#\[serde\(tag = "type", rename_all = "snake_case"\)\]\s*enum BridgeEventV1', decoder),
@@ -230,30 +274,10 @@ def validate_decoder(definitions, decoder):
     require(re.search(r'enum BridgeEventV1\s*\{\s*Menu\(MenuEvent\),\s*'
                       r'ErrorDialogDismissed\(ErrorDialogDismissedEvent\),\s*\}', decoder),
             "unsupported decoder enum variants")
-    expected = {}
-    for struct, event in (("MenuEvent", "menu"), ("ErrorDialogDismissedEvent", "error_dialog_dismissed")):
-        require(re.search(r'#\[derive\(Debug, serde::Deserialize\)\]\s*'
-                          r'#\[serde\(deny_unknown_fields\)\]\s*struct\s+' + struct, decoder),
-                f"{struct} must deny unknown fields")
-        body = _struct_body(decoder, struct)
-        field_pattern = (r'(?:#\[serde\((?:default(?:,\s*deserialize_with\s*=\s*"[^"]*")?'
-                         r'|deserialize_with\s*=\s*"[^"]*")\)\]\s*)*'
-                         r'(\w+)\s*:\s*([\w:]+(?:<\w+>)?)\s*,')
-        fields = re.findall(field_pattern, body)
-        require(not re.sub(field_pattern, '', body).strip(), "unsupported decoder field/serde rule")
-        require(fields, "unparsed event struct")
-        props = {"type": ("string", True)}
-        for name, kind in fields:
-            optional = kind.startswith("Option<")
-            if optional:
-                kind = kind[7:-1]
-            types = {"u32": "integer", "i32": "integer", "i64": "integer",
-                     "u64": "integer", "String": "string", "bool": "boolean",
-                     "f32": "number", "f64": "number",
-                     "crate::error_dialog_controller::DialogRequestId": "integer"}
-            require(kind in types, f"unsupported decoder field type: {kind}")
-            props[name] = (types[kind], not optional)
-        expected[event] = props
+    expected = {
+        event: _struct_props(decoder, struct)
+        for struct, event in (("MenuEvent", "menu"), ("ErrorDialogDismissedEvent", "error_dialog_dismissed"))
+    }
     actual = {event: {name: (GEN.field_type(prop), name in definition["required"])
                       for name, prop in definition["properties"].items()}
               for event, definition in definitions.items()}
@@ -264,23 +288,7 @@ def validate_decoder(definitions, decoder):
             "decoder must single-parse the envelope without a Value round-trip")
     require('serde_json::from_value(value)' not in decoder,
             "decoder must not double-parse through a Value")
-    for enum in ("action", "key"):
-        members = set()
-        for definition in definitions.values():
-            prop = definition["properties"].get(enum)
-            if prop is not None and "enum" in prop:
-                members.update(prop["enum"])
-        for member in members:
-            # Actions ride the generated `ACTION_*` constants; key ids
-            # ride the decoder lookup tables. Either naming pins the id,
-            # an unnamed id fails.
-            require(json.dumps(member) in decoder or f"ACTION_{member.upper()}" in decoder,
-                    f"decoder must name every bridge {enum} id: {member}")
-    # Motion axes ride as JSON keys (one batched event per callback), so
-    # the decoder pins them as struct fields rather than enum members.
-    for member in ("left_x", "left_y", "right_x", "right_y", "trigger_l", "trigger_r"):
-        require(f"{member}:" in decoder or f"{member} :" in decoder,
-                f"decoder must name every motion axis: {member}")
+    _decoder_names_ids(definitions, decoder)
 
 
 def validate_generated_tables(definitions, generated):
@@ -296,12 +304,12 @@ def validate_generated_tables(definitions, generated):
         for name, prop in definition["properties"].items():
             if GEN.field_type(prop) == "integer" and "minimum" in prop:
                 bounds[name] = (prop["minimum"], prop["maximum"])
-    table = dict(
-        (name, (int(minimum), int(maximum)))
+    table = {
+        name: (int(minimum), int(maximum))
         for name, minimum, maximum in re.findall(
             r'\(\s*"([^"]+)"\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*\)', generated
         )
-    )
+    }
     require(bounds and table == bounds,
             f"generated integer bounds differ from schema: {table} != {bounds}")
     gates = {}
