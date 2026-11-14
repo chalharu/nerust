@@ -173,6 +173,39 @@ fn set(snapshot: &mut SettingsSnapshot, key: &str, index: usize, number: i64) ->
     )
 }
 
+/// `set` threading connected pads through: radio and per-device rows only
+/// exist while their pad stays connected.
+fn set_with_pads(
+    snapshot: &mut SettingsSnapshot,
+    pads: &[GamepadInfo],
+    key: &str,
+    index: usize,
+    number: i64,
+) -> ViewPayload {
+    with_test_deps(|| {
+        let command_json = serde_json::to_string(&WireCommand {
+            key: key.to_string(),
+            index,
+            number,
+            op: WireOp::Set,
+            payload: serde_json::Value::Null,
+        })
+        .unwrap();
+        let mut keyboards = test_keyboards();
+        let mut gamepads = pads.to_vec();
+        apply_command_to(
+            snapshot,
+            &command_json,
+            &mut None,
+            &mut keyboards,
+            &mut None,
+            &mut gamepads,
+            &mut None,
+        )
+        .unwrap_or_else(|error| panic!("command failed: {error}"))
+    })
+}
+
 #[test]
 fn overlay_always_roundtrip_through_finish() {
     use nerust_settings_core::model::local::TouchOverlayVisibility;
@@ -638,7 +671,7 @@ fn machine_sections_link_to_hidden_controller_screens() {
     // overlay detail screen: port-independent and always active.
     for (id, probe_key) in [
         ("controls.overlay_detail", "controls.overlay_opacity"),
-        ("controls.shortcuts", "controls.shortcut.TogglePause"),
+        ("controls.shortcuts", "controls.shortcut.TogglePause.kbd"),
     ] {
         let hidden = payload
             .sections
@@ -666,8 +699,8 @@ fn machine_sections_link_to_hidden_controller_screens() {
         .expect("shortcuts screen exists");
     assert_eq!(
         shortcuts.rows.len(),
-        7,
-        "desktop-only actions stay out: six phone shortcuts plus the screen reset"
+        8,
+        "keyboard block: header plus six phone shortcuts plus the screen reset"
     );
     assert!(
         shortcuts
@@ -745,9 +778,23 @@ fn gamepad_alone_reopens_capture() {
         .filter(|row| row.kind == RowKind::Capture)
         .collect();
     assert!(!captures.is_empty(), "capture rows exist to enable");
+    // Per-device rows: the pad block opens, the keyboard block stays shut.
+    let pad_rows: Vec<_> = captures
+        .iter()
+        .filter(|row| row.key.contains(".pad"))
+        .collect();
+    let kbd_rows: Vec<_> = captures
+        .iter()
+        .filter(|row| row.key.ends_with(".kbd"))
+        .collect();
+    assert!(!pad_rows.is_empty(), "pad block lists its rows");
     assert!(
-        captures.iter().all(|row| row.enabled),
-        "a connected pad re-enables capture"
+        pad_rows.iter().all(|row| row.enabled),
+        "a connected pad re-enables its rows"
+    );
+    assert!(
+        kbd_rows.iter().all(|row| !row.enabled),
+        "keyboard rows stay disabled without a keyboard"
     );
 }
 
@@ -755,7 +802,7 @@ fn gamepad_alone_reopens_capture() {
 fn start_capture_rejected_without_input_device() {
     let (mut snapshot, _) = test_payload_with_keyboards(&[]);
     let mut capture: CaptureSlot = None;
-    let key = "controls.shortcut.TogglePause";
+    let key = "controls.shortcut.TogglePause.kbd";
     let command_json = serde_json::to_string(&WireCommand {
         key: key.to_string(),
         index: 0,
@@ -2021,34 +2068,6 @@ fn gamepad_section_sets_deadzone_ports_and_resets() {
     // Local set helper threading the connected pads through: the
     // variable list hides unconnected pads, so port rows only exist
     // while their pad stays connected.
-    let set_with_pads = |snapshot: &mut SettingsSnapshot,
-                         pads: &[GamepadInfo],
-                         key: &str,
-                         index: usize,
-                         number: i64| {
-        with_test_deps(|| {
-            let command_json = serde_json::to_string(&WireCommand {
-                key: key.to_string(),
-                index,
-                number,
-                op: WireOp::Set,
-                payload: serde_json::Value::Null,
-            })
-            .unwrap();
-            let mut keyboards = test_keyboards();
-            let mut gamepads = pads.to_vec();
-            apply_command_to(
-                snapshot,
-                &command_json,
-                &mut None,
-                &mut keyboards,
-                &mut None,
-                &mut gamepads,
-                &mut None,
-            )
-            .unwrap_or_else(|error| panic!("command failed: {error}"))
-        })
-    };
     assert_eq!(snapshot.shared.input.gamepad.deadzone_percent, 15);
     let next = set_with_pads(&mut snapshot, &pads, "controls.gamepads.deadzone", 0, 25);
     assert_eq!(snapshot.shared.input.gamepad.deadzone_percent, 25);
@@ -2100,6 +2119,226 @@ fn gamepad_section_sets_deadzone_ports_and_resets() {
         "screen reset restores the deadzone and the default table"
     );
     assert_eq!(row(&reset, "controls.gamepads.deadzone").number, 15);
+}
+
+fn two_pads() -> Vec<GamepadInfo> {
+    vec![
+        GamepadInfo {
+            member: "pad:a".to_string(),
+            name: "Pad A".to_string(),
+        },
+        GamepadInfo {
+            member: "pad:b".to_string(),
+            name: "Pad B".to_string(),
+        },
+    ]
+}
+
+#[test]
+fn gamepad_radio_assigns_one_pad_per_player() {
+    let (mut snapshot, _) = test_payload();
+    let pads = two_pads();
+    // Defaults park Pad A on player 1 and Pad B on player 2.
+    let first = set_with_pads(&mut snapshot, &pads, "controls.gamepads.deadzone", 0, 15);
+    assert_eq!(
+        row(&first, "devices.p1.gamepad").selected,
+        1,
+        "Pad A drives P1"
+    );
+    assert_eq!(
+        row(&first, "devices.p2.gamepad").selected,
+        2,
+        "Pad B drives P2"
+    );
+    // Move Pad A to player 2: it leaves player 1 and parks Pad B.
+    let moved = set_with_pads(&mut snapshot, &pads, "devices.p2.gamepad", 1, 0);
+    assert_eq!(snapshot.shared.input.gamepad.pad_ports[0].slot, Some(1));
+    assert_eq!(
+        snapshot.shared.input.gamepad.pad_ports[1].slot, None,
+        "mates park when a pad takes the port"
+    );
+    assert_eq!(row(&moved, "devices.p2.gamepad").selected, 1);
+    assert_eq!(row(&moved, "devices.p1.gamepad").selected, 0);
+    // Unassigned clears the port without touching the other one.
+    let cleared = set_with_pads(&mut snapshot, &pads, "devices.p2.gamepad", 0, 0);
+    assert_eq!(snapshot.shared.input.gamepad.pad_ports[0].slot, None);
+    assert_eq!(row(&cleared, "devices.p2.gamepad").selected, 0);
+    // Player summaries follow the radio, not stale slots.
+    assert_eq!(row(&cleared, "player.2.devices").text, "Not assigned");
+}
+
+#[test]
+fn gamepad_radio_rejects_unknown_pads() {
+    let (mut snapshot, _) = test_payload();
+    let pads = two_pads();
+    let bad = serde_json::to_string(&WireCommand {
+        key: "devices.p1.gamepad".to_string(),
+        index: 7,
+        number: 0,
+        op: WireOp::Set,
+        payload: serde_json::Value::Null,
+    })
+    .unwrap();
+    with_test_deps(|| {
+        let mut keyboards = test_keyboards();
+        let mut gamepads = pads;
+        assert!(
+            apply_command_to(
+                &mut snapshot,
+                &bad,
+                &mut None,
+                &mut keyboards,
+                &mut None,
+                &mut gamepads,
+                &mut None,
+            )
+            .is_err(),
+            "out-of-range pad choice fails loud"
+        );
+    });
+}
+
+#[test]
+fn shortcut_clear_is_per_column() {
+    use nerust_settings_core::model::input::ensure_default_shortcuts;
+    let (mut snapshot, _) = test_payload();
+    ensure_default_shortcuts(&mut snapshot.shared.input.shortcuts);
+    let pads = two_pads();
+    let pause = snapshot
+        .shared
+        .input
+        .shortcuts
+        .keyboard
+        .iter()
+        .find(|binding| {
+            binding.action == nerust_settings_core::model::input::ShortcutAction::TogglePause
+        })
+        .expect("pause seeded");
+    assert!(pause.key.is_some() && pause.pad.is_some());
+    // Keyboard Clear keeps the pad twin.
+    let clear_key = |snapshot: &mut SettingsSnapshot| {
+        with_test_deps(|| {
+            let command_json = serde_json::to_string(&WireCommand {
+                key: "controls.shortcut.TogglePause.kbd".to_string(),
+                index: 0,
+                number: 0,
+                op: WireOp::ClearBinding,
+                payload: serde_json::Value::Null,
+            })
+            .unwrap();
+            let mut keyboards = test_keyboards();
+            let mut gamepads = pads.clone();
+            apply_command_to(
+                snapshot,
+                &command_json,
+                &mut None,
+                &mut keyboards,
+                &mut None,
+                &mut gamepads,
+                &mut None,
+            )
+            .unwrap_or_else(|error| panic!("command failed: {error}"))
+        })
+    };
+    clear_key(&mut snapshot);
+    let pause = snapshot
+        .shared
+        .input
+        .shortcuts
+        .keyboard
+        .iter()
+        .find(|binding| {
+            binding.action == nerust_settings_core::model::input::ShortcutAction::TogglePause
+        })
+        .expect("pause persists");
+    assert!(pause.key.is_none(), "keyboard column clears");
+    assert!(pause.pad.is_some(), "pad twin survives");
+    // Pad Clear keeps the keyboard twin.
+    let clear_pad = |snapshot: &mut SettingsSnapshot| {
+        with_test_deps(|| {
+            let command_json = serde_json::to_string(&WireCommand {
+                key: "controls.shortcut.TogglePause.pad1".to_string(),
+                index: 0,
+                number: 0,
+                op: WireOp::ClearBinding,
+                payload: serde_json::Value::Null,
+            })
+            .unwrap();
+            let mut keyboards = test_keyboards();
+            let mut gamepads = two_pads();
+            apply_command_to(
+                snapshot,
+                &command_json,
+                &mut None,
+                &mut keyboards,
+                &mut None,
+                &mut gamepads,
+                &mut None,
+            )
+            .unwrap_or_else(|error| panic!("command failed: {error}"))
+        })
+    };
+    // Re-seed the key first so the pad clear has a twin to keep.
+    snapshot
+        .shared
+        .input
+        .shortcuts
+        .keyboard
+        .iter_mut()
+        .find(|binding| {
+            binding.action == nerust_settings_core::model::input::ShortcutAction::TogglePause
+        })
+        .expect("pause persists")
+        .key = Some(nerust_input_traits::Key::Space);
+    clear_pad(&mut snapshot);
+    let pause = snapshot
+        .shared
+        .input
+        .shortcuts
+        .keyboard
+        .iter()
+        .find(|binding| {
+            binding.action == nerust_settings_core::model::input::ShortcutAction::TogglePause
+        })
+        .expect("pause persists");
+    assert!(pause.pad.is_none(), "pad column clears");
+    assert!(pause.key.is_some(), "keyboard twin survives");
+}
+
+#[test]
+fn shortcuts_group_per_device_with_split_columns() {
+    use nerust_settings_core::model::input::ensure_default_shortcuts;
+    let (mut snapshot, _) = test_payload();
+    ensure_default_shortcuts(&mut snapshot.shared.input.shortcuts);
+    let pads = two_pads();
+    let payload = with_test_deps(|| {
+        let json = open_payload(&snapshot, &test_keyboards(), None, &pads, None)
+            .expect("open payload builds");
+        let payload: ViewPayload = json;
+        payload
+    });
+    let shortcuts = payload
+        .sections
+        .iter()
+        .find(|section| section.id == "controls.shortcuts")
+        .expect("shortcuts screen exists");
+    // Keyboard rows show the key column; pad rows show the pad column.
+    let kbd = shortcuts
+        .rows
+        .iter()
+        .find(|row| row.key == "controls.shortcut.TogglePause.kbd")
+        .expect("keyboard pause row exists");
+    assert_eq!(kbd.text, "Space");
+    let pad = shortcuts
+        .rows
+        .iter()
+        .find(|row| row.key == "controls.shortcut.TogglePause.pad1")
+        .expect("pad pause row exists");
+    assert_eq!(pad.text, "Guide");
+    assert!(
+        shortcuts.rows.iter().any(|row| row.label.contains("Pad B")),
+        "every connected pad gets its own block"
+    );
 }
 
 #[test]

@@ -55,6 +55,25 @@ impl CaptureViewModel {
         })
     }
 
+    /// Clear one shortcut column, keeping its twin: per-device settings
+    /// rows address the keyboard and the pad independently.
+    pub fn clear_key(&self, target: &CaptureTarget) -> Result<(), ViewModelError> {
+        self.editor.transact(|state| {
+            nerust_settings_core::editor::apply_capture_target(state.draft_mut(), target, None);
+            state.capture_target = None;
+            Ok(())
+        })
+    }
+
+    /// Clear one shortcut pad column, keeping its keyboard twin.
+    pub fn clear_pad(&self, target: &CaptureTarget) -> Result<(), ViewModelError> {
+        self.editor.transact(|state| {
+            nerust_settings_core::editor::apply_capture_pad_target(state.draft_mut(), target, None);
+            state.capture_target = None;
+            Ok(())
+        })
+    }
+
     pub fn apply_captured_key(&self, key: Key) {
         let target = self.editor.current().capture_target.clone();
         let Some(target) = target else { return };
