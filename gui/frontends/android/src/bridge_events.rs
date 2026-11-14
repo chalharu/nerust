@@ -47,14 +47,17 @@ pub(crate) enum MenuAction {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum FrontendEvent {
     Menu(MenuAction),
+    /// Batched motion axes from one motion callback: one JNI crossing
+    /// carries every changed axis instead of one crossing per axis.
+    MenuBatch(Vec<MenuAction>),
     ErrorDialogDismissed(crate::error_dialog_controller::DialogRequestId),
 }
 
 use crate::bridge_contract::{
-    ACTION_ANALOG, ACTION_CONTROLLER, ACTION_CREATE_SLOT, ACTION_DELETE_SLOT, ACTION_DEVICE_ADDED,
-    ACTION_DEVICE_REMOVED, ACTION_EXIT, ACTION_LOAD_STATE, ACTION_OPEN_ROM, ACTION_OPEN_SETTINGS,
-    ACTION_ORIENTATION_CHANGED, ACTION_RESET, ACTION_SAVE_STATE, ACTION_SELECT_SLOT,
-    ACTION_TOGGLE_PAUSE, ACTION_TOUCH_GATE, ACTION_UNLOAD, ANALOG_VALUE_BOUNDS,
+    ACTION_CONTROLLER, ACTION_CREATE_SLOT, ACTION_DELETE_SLOT, ACTION_DEVICE_ADDED,
+    ACTION_DEVICE_REMOVED, ACTION_EXIT, ACTION_LOAD_STATE, ACTION_MOTION, ACTION_OPEN_ROM,
+    ACTION_OPEN_SETTINGS, ACTION_ORIENTATION_CHANGED, ACTION_RESET, ACTION_SAVE_STATE,
+    ACTION_SELECT_SLOT, ACTION_TOGGLE_PAUSE, ACTION_TOUCH_GATE, ACTION_UNLOAD, ANALOG_VALUE_BOUNDS,
     BRIDGE_EVENT_VERSION, INTEGER_FIELD_BOUNDS, MENU_REQUIRED_FIELDS,
 };
 
@@ -135,16 +138,24 @@ struct MenuEvent {
     action: String,
     #[serde(default, deserialize_with = "de_opt_i32")]
     device_id: Option<i32>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_opt_null_reject")]
     key: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_opt_null_reject")]
     pressed: Option<bool>,
-    #[serde(default)]
-    axis: Option<String>,
-    #[serde(default)]
-    value: Option<f32>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_opt_null_reject")]
     descriptor: Option<String>,
+    #[serde(default, deserialize_with = "de_opt_null_reject")]
+    left_x: Option<f32>,
+    #[serde(default, deserialize_with = "de_opt_null_reject")]
+    left_y: Option<f32>,
+    #[serde(default, deserialize_with = "de_opt_null_reject")]
+    right_x: Option<f32>,
+    #[serde(default, deserialize_with = "de_opt_null_reject")]
+    right_y: Option<f32>,
+    #[serde(default, deserialize_with = "de_opt_null_reject")]
+    trigger_l: Option<f32>,
+    #[serde(default, deserialize_with = "de_opt_null_reject")]
+    trigger_r: Option<f32>,
     #[serde(default, deserialize_with = "de_opt_i64")]
     slot_id: Option<i64>,
 }
@@ -190,8 +201,22 @@ where
     deserializer.deserialize_any(V)
 }
 
-/// Optional variant of the integral decoding above: missing/null rides
+/// Optional passthrough that rejects explicit JSON null: missing rides
+/// `default`/`None` (the function never runs), present values decode as
+/// `Some`, and null fails like every other mistyped value. The schema
+/// has no nullable fields, so null must not decode as absent.
+fn de_opt_null_reject<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
+/// Optional variant of the integral decoding above: missing rides
 /// `default`/`None`; present numbers range-check into the target.
+/// Explicit JSON null never means missing (the schema has no nullable
+/// fields), so it fails instead of decoding as absent.
 fn de_opt_i32<'de, D>(deserializer: D) -> Result<Option<i32>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -204,10 +229,10 @@ where
             f.write_str("an optional integral i32")
         }
         fn visit_none<E: Error>(self) -> Result<Option<i32>, E> {
-            Ok(None)
+            Err(Error::invalid_type(Unexpected::Unit, &self))
         }
         fn visit_unit<E: Error>(self) -> Result<Option<i32>, E> {
-            Ok(None)
+            Err(Error::invalid_type(Unexpected::Unit, &self))
         }
         fn visit_some<D2>(self, deserializer: D2) -> Result<Option<i32>, D2::Error>
         where
@@ -236,7 +261,8 @@ where
     deserializer.deserialize_option(V)
 }
 
-/// Optional integral i64 twin for slot ids.
+/// Optional integral i64 twin for slot ids: explicit null fails like
+/// every other present-but-typeless JSON value.
 fn de_opt_i64<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -249,10 +275,10 @@ where
             f.write_str("an optional integral i64")
         }
         fn visit_none<E: Error>(self) -> Result<Option<i64>, E> {
-            Ok(None)
+            Err(Error::invalid_type(Unexpected::Unit, &self))
         }
         fn visit_unit<E: Error>(self) -> Result<Option<i64>, E> {
-            Ok(None)
+            Err(Error::invalid_type(Unexpected::Unit, &self))
         }
         fn visit_some<D2>(self, deserializer: D2) -> Result<Option<i64>, D2::Error>
         where
@@ -395,22 +421,57 @@ fn check_menu_shape(action: &str, event: &MenuEvent) -> Option<()> {
             return None;
         }
     }
+    // Value-validity for every present field, even ones this action
+    // ignores: the schema validates each present field on its own rule,
+    // so an unknown key id or an out-of-range axis fails here instead of
+    // riding along silently on an unrelated action.
+    if let Some(key) = event.key.as_deref()
+        && controller_button(key).is_none()
+    {
+        log::warn!("ignoring {action} bridge event with unknown key: {key}");
+        return None;
+    }
+    for (axis, value) in event
+        .motion_axes()
+        .iter()
+        .filter_map(|(name, value)| value.map(|value| (*name, value)))
+    {
+        if !(ANALOG_VALUE_BOUNDS.0..=ANALOG_VALUE_BOUNDS.1).contains(&value) {
+            log::warn!("ignoring {action} bridge event with out-of-range {axis}={value}");
+            return None;
+        }
+    }
     Some(())
 }
 
 impl MenuEvent {
     /// Presence of one schema field, for the required-field table.
+    /// Motion axes ride optional (the batch carries whatever changed),
+    /// so they never appear here: dispatch iterates them directly.
     fn has(&self, field: &str) -> bool {
         match field {
             "device_id" => self.device_id.is_some(),
             "key" => self.key.is_some(),
             "pressed" => self.pressed.is_some(),
-            "axis" => self.axis.is_some(),
-            "value" => self.value.is_some(),
             "descriptor" => self.descriptor.is_some(),
             "slot_id" => self.slot_id.is_some(),
             _ => false,
         }
+    }
+
+    /// Batched motion axes in SDL-canonical order: `(name, value)` for
+    /// every axis slot. Dispatch resolves each present axis through the
+    /// shared axis table; absent slots stay local, unknown names fail
+    /// loud per axis. No allocation: names are static, values are `Copy`.
+    fn motion_axes(&self) -> [(&'static str, Option<f32>); 6] {
+        [
+            ("left_x", self.left_x),
+            ("left_y", self.left_y),
+            ("right_x", self.right_x),
+            ("right_y", self.right_y),
+            ("trigger_l", self.trigger_l),
+            ("trigger_r", self.trigger_r),
+        ]
     }
 
     /// Integral value of one schema field, for the bounds table.
@@ -472,7 +533,6 @@ fn decode_json_menu_action(event: &MenuEvent) -> Option<FrontendEvent> {
     // defense, never a second policy).
     let action = event.action.as_str();
     let key = event.key.as_deref();
-    let axis = event.axis.as_deref();
     let descriptor = event.descriptor.as_deref();
     if action == ACTION_CONTROLLER {
         let (Some(device_id), Some(key), Some(pressed)) = (event.device_id, key, event.pressed)
@@ -481,12 +541,27 @@ fn decode_json_menu_action(event: &MenuEvent) -> Option<FrontendEvent> {
         };
         return decode_controller_parts(device_id, key, pressed).map(FrontendEvent::Menu);
     }
-    if action == ACTION_ANALOG {
-        let (Some(device_id), Some(axis), Some(value)) = (event.device_id, axis, event.value)
-        else {
+    if action == ACTION_MOTION {
+        let Some(device_id) = event.device_id else {
             return None;
         };
-        return decode_analog_parts(device_id, axis, value).map(FrontendEvent::Menu);
+        // One JNI crossing per motion callback: every carried axis
+        // decodes through the shared table; an empty batch fails loud.
+        let mut batch = Vec::new();
+        for (axis, value) in event.motion_axes() {
+            let Some(value) = value else {
+                continue;
+            };
+            let Some(input) = decode_analog_parts(device_id, axis, value) else {
+                return None;
+            };
+            batch.push(input);
+        }
+        if batch.is_empty() {
+            log::warn!("ignoring motion bridge event with no axes");
+            return None;
+        }
+        return Some(FrontendEvent::MenuBatch(batch));
     }
     if action == ACTION_DEVICE_ADDED {
         let (Some(device_id), Some(descriptor)) = (event.device_id, descriptor) else {
@@ -601,11 +676,11 @@ pub(crate) fn decode_frontend_event(raw: &str) -> Option<FrontendEvent> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ACTION_ANALOG, ACTION_CREATE_SLOT, ACTION_DELETE_SLOT, ACTION_DEVICE_ADDED,
-        ACTION_DEVICE_REMOVED, ACTION_EXIT, ACTION_LOAD_STATE, ACTION_OPEN_ROM,
-        ACTION_OPEN_SETTINGS, ACTION_ORIENTATION_CHANGED, ACTION_RESET, ACTION_SAVE_STATE,
-        ACTION_SELECT_SLOT, ACTION_TOGGLE_PAUSE, ACTION_TOUCH_GATE, ACTION_UNLOAD, FrontendEvent,
-        MenuAction, decode_frontend_event,
+        ACTION_CREATE_SLOT, ACTION_DELETE_SLOT, ACTION_DEVICE_ADDED, ACTION_DEVICE_REMOVED,
+        ACTION_EXIT, ACTION_LOAD_STATE, ACTION_MOTION, ACTION_OPEN_ROM, ACTION_OPEN_SETTINGS,
+        ACTION_ORIENTATION_CHANGED, ACTION_RESET, ACTION_SAVE_STATE, ACTION_SELECT_SLOT,
+        ACTION_TOGGLE_PAUSE, ACTION_TOUCH_GATE, ACTION_UNLOAD, FrontendEvent, MenuAction,
+        decode_frontend_event,
     };
     use crate::bridge_contract::BRIDGE_EVENT_VERSION;
 
@@ -816,7 +891,7 @@ mod tests {
             "new actions must also be handled by the decoder"
         );
         for action in [
-            ACTION_ANALOG,
+            ACTION_MOTION,
             ACTION_CREATE_SLOT,
             ACTION_DELETE_SLOT,
             ACTION_DEVICE_ADDED,
@@ -872,21 +947,26 @@ mod tests {
         }
     }
 
-    /// Axis parity: the decoder table and the schema axis enum list
-    /// exactly the same axes, and every one round-trips with a float.
+    /// Axis parity: the decoder table and the schema motion properties
+    /// list exactly the same axes, and every one round-trips in a batch.
     #[test]
     fn controller_axis_table_matches_schema() {
         use super::{CONTROLLER_AXIS_TABLE, decode_frontend_event};
         use nerust_input_traits::GamepadAxis;
         let doc: serde_json::Value = serde_json::from_str(include_str!("../bridge_events.v1.json"))
             .expect("bridge schema must parse");
-        let axes = doc["definitions"]["menuEvent"]["properties"]["axis"]["enum"]
-            .as_array()
-            .expect("axis enum must list every controller axis");
-        let schema_axes: Vec<&str> = axes
-            .iter()
-            .map(|value| value.as_str().expect("axis enum entries are strings"))
-            .collect();
+        let props = &doc["definitions"]["menuEvent"]["properties"];
+        let schema_axes: Vec<&str> = [
+            "left_x",
+            "left_y",
+            "right_x",
+            "right_y",
+            "trigger_l",
+            "trigger_r",
+        ]
+        .into_iter()
+        .filter(|name| props[name].get("type").and_then(|kind| kind.as_str()) == Some("number"))
+        .collect();
         assert_eq!(schema_axes.len(), CONTROLLER_AXIS_TABLE.len());
         for (name, axis) in CONTROLLER_AXIS_TABLE {
             assert!(
@@ -894,28 +974,44 @@ mod tests {
                 "schema is missing controller axis {name}"
             );
             let raw = format!(
-                r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"analog","device_id":3,"axis":"{name}","value":0.5}}"#
+                r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"motion","device_id":3,"{name}":0.5}}"#
             );
             assert_eq!(
                 decode_frontend_event(&raw),
-                Some(FrontendEvent::Menu(MenuAction::AnalogInput {
+                Some(FrontendEvent::MenuBatch(vec![MenuAction::AnalogInput {
                     device_id: 3,
                     axis: *axis,
                     value: 0.5,
-                })),
+                }])),
                 "axis {name} must round-trip"
             );
         }
+        // One callback, every axis: a single crossing carries the batch.
+        assert_eq!(
+            decode_frontend_event(&format!(
+                r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"motion","device_id":3,"left_x":0.5,"trigger_r":-0.25}}"#
+            )),
+            Some(FrontendEvent::MenuBatch(vec![
+                MenuAction::AnalogInput {
+                    device_id: 3,
+                    axis: GamepadAxis::LeftStickX,
+                    value: 0.5,
+                },
+                MenuAction::AnalogInput {
+                    device_id: 3,
+                    axis: GamepadAxis::RightTrigger,
+                    value: -0.25,
+                },
+            ])),
+        );
         for raw in [
             format!(
-                r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"analog","device_id":3,"axis":"mystery","value":0.5}}"#
+                r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"motion","device_id":3,"left_x":1.5}}"#
             ),
             format!(
-                r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"analog","device_id":3,"axis":"left_x","value":1.5}}"#
+                r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"motion","device_id":3}}"#
             ),
-            format!(
-                r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"analog","device_id":3,"axis":"left_x"}}"#
-            ),
+            format!(r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"motion"}}"#),
         ] {
             assert_eq!(decode_frontend_event(&raw), None);
         }

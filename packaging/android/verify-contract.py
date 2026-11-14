@@ -264,18 +264,23 @@ def validate_decoder(definitions, decoder):
             "decoder must single-parse the envelope without a Value round-trip")
     require('serde_json::from_value(value)' not in decoder,
             "decoder must not double-parse through a Value")
-    for enum in ("action", "key", "axis"):
+    for enum in ("action", "key"):
         members = set()
         for definition in definitions.values():
             prop = definition["properties"].get(enum)
             if prop is not None and "enum" in prop:
                 members.update(prop["enum"])
         for member in members:
-            # Actions ride the generated `ACTION_*` constants; key/axis
-            # ids ride the decoder lookup tables. Either naming pins the
-            # id, an unnamed id fails.
+            # Actions ride the generated `ACTION_*` constants; key ids
+            # ride the decoder lookup tables. Either naming pins the id,
+            # an unnamed id fails.
             require(json.dumps(member) in decoder or f"ACTION_{member.upper()}" in decoder,
                     f"decoder must name every bridge {enum} id: {member}")
+    # Motion axes ride as JSON keys (one batched event per callback), so
+    # the decoder pins them as struct fields rather than enum members.
+    for member in ("left_x", "left_y", "right_x", "right_y", "trigger_l", "trigger_r"):
+        require(f"{member}:" in decoder or f"{member} :" in decoder,
+                f"decoder must name every motion axis: {member}")
 
 
 def validate_generated_tables(definitions, generated):
@@ -310,8 +315,8 @@ def validate_generated_tables(definitions, generated):
             f"generated required fields differ from schema gates: {table} != {gates}")
     match = re.search(r'ANALOG_VALUE_BOUNDS[^=]*=\s*\(\s*([-\d.eE+]+)\s*,\s*([-\d.eE+]+)\s*\)', generated)
     require(match, "generated analog range is missing")
-    value = definitions["menu"]["properties"]["value"]
-    require((float(match.group(1)), float(match.group(2))) == (value["minimum"], value["maximum"]),
+    left = definitions["menu"]["properties"]["left_x"]
+    require((float(match.group(1)), float(match.group(2))) == (left["minimum"], left["maximum"]),
             "generated analog range differs from schema")
 
 

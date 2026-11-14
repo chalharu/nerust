@@ -17,7 +17,7 @@ pub(crate) const ACTION_CREATE_SLOT: &str = "create_slot";
 pub(crate) const ACTION_DELETE_SLOT: &str = "delete_slot";
 pub(crate) const ACTION_SELECT_SLOT: &str = "select_slot";
 pub(crate) const ACTION_CONTROLLER: &str = "controller";
-pub(crate) const ACTION_ANALOG: &str = "analog";
+pub(crate) const ACTION_MOTION: &str = "motion";
 pub(crate) const ACTION_DEVICE_ADDED: &str = "device_added";
 pub(crate) const ACTION_DEVICE_REMOVED: &str = "device_removed";
 pub(crate) const ACTION_TOUCH_GATE: &str = "touch_gate";
@@ -25,11 +25,11 @@ pub(crate) const ACTION_TOUCH_GATE: &str = "touch_gate";
 /// Required fields per menu action, from the schema gates.
 /// Dispatch rejects events missing any listed field first.
 pub(crate) const MENU_REQUIRED_FIELDS: &[(&str, &[&str])] = &[
-    ("analog", &["axis", "device_id", "value"]),
     ("controller", &["device_id", "key", "pressed"]),
     ("delete_slot", &["slot_id"]),
     ("device_added", &["descriptor", "device_id"]),
     ("device_removed", &["device_id"]),
+    ("motion", &["device_id"]),
     ("select_slot", &["slot_id"]),
     ("touch_gate", &["pressed"]),
 ];
