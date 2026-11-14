@@ -111,6 +111,8 @@ pub(crate) fn build_slot_list_json(slots: &[SlotListEntry], active: Option<u64>)
 }
 
 /// Versioned bridge event envelope: v1 JSON only; anything else is `None`.
+/// Explicit optional fields (never flattened): `verify-contract.py`
+/// parses this enum textually as a schema-parity gate.
 #[derive(Debug, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum BridgeEventV1 {
@@ -140,6 +142,8 @@ enum BridgeEventV1 {
 
 fn decode_json_event(raw: &str) -> Option<FrontendEvent> {
     let mut value: serde_json::Value = serde_json::from_str(raw).ok()?;
+    // Generated-contract validation stays: it normalizes Kotlin integers
+    // (float-encoded ids) and rejects out-of-range axes before dispatch.
     validate_bridge_event(&mut value)?;
     let envelope: BridgeEventV1 = serde_json::from_value(value).ok()?;
     let version = match &envelope {
@@ -203,7 +207,7 @@ struct MenuParts<'a> {
     slot_id: Option<i64>,
 }
 
-fn decode_json_menu_action(action: &str, parts: MenuParts<'_>) -> Option<FrontendEvent> {
+fn decode_json_menu_action(action: &str, parts: MenuParts) -> Option<FrontendEvent> {
     let MenuParts {
         device_id,
         key,
@@ -213,6 +217,9 @@ fn decode_json_menu_action(action: &str, parts: MenuParts<'_>) -> Option<Fronten
         descriptor,
         slot_id,
     } = parts;
+    let key = key.as_deref();
+    let axis = axis.as_deref();
+    let descriptor = descriptor.as_deref();
     if action == ACTION_CONTROLLER {
         let (device_id, key, pressed) = match (device_id, key, pressed) {
             (Some(device_id), Some(key), Some(pressed)) => (device_id, key, pressed),
@@ -325,19 +332,40 @@ pub(crate) const CONTROLLER_AXIS_TABLE: &[(&str, GamepadAxis)] = &[
     ("trigger_r", GamepadAxis::RightTrigger),
 ];
 
-/// Single-table key lookup; the schema test keeps it in sync.
+/// Single-table key lookup; the schema test keeps it in sync. Match
+/// dispatch over the same names (the table above stays the contract pin
+/// the schema test iterates).
 fn controller_button(key: &str) -> Option<StandardButton> {
-    CONTROLLER_KEY_TABLE
-        .iter()
-        .find(|(name, _)| *name == key)
-        .map(|(_, mapped)| *mapped)
+    Some(match key {
+        "button1" => StandardButton::South,
+        "button2" => StandardButton::East,
+        "button3" => StandardButton::West,
+        "button4" => StandardButton::North,
+        "button5" => StandardButton::LeftShoulder,
+        "button6" => StandardButton::RightShoulder,
+        "start" => StandardButton::Start,
+        "select" => StandardButton::Back,
+        "guide" => StandardButton::Guide,
+        "up" => StandardButton::DpadUp,
+        "down" => StandardButton::DpadDown,
+        "left" => StandardButton::DpadLeft,
+        "right" => StandardButton::DpadRight,
+        "l3" => StandardButton::LeftStick,
+        "r3" => StandardButton::RightStick,
+        _ => return None,
+    })
 }
 
 fn controller_axis(axis: &str) -> Option<GamepadAxis> {
-    CONTROLLER_AXIS_TABLE
-        .iter()
-        .find(|(name, _)| *name == axis)
-        .map(|(_, mapped)| *mapped)
+    Some(match axis {
+        "left_x" => GamepadAxis::LeftStickX,
+        "left_y" => GamepadAxis::LeftStickY,
+        "right_x" => GamepadAxis::RightStickX,
+        "right_y" => GamepadAxis::RightStickY,
+        "trigger_l" => GamepadAxis::LeftTrigger,
+        "trigger_r" => GamepadAxis::RightTrigger,
+        _ => return None,
+    })
 }
 
 /// Decode one raw bridge string: only v1 JSON decodes, never a silent drop.

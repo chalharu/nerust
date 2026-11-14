@@ -169,7 +169,7 @@ pub(super) fn register_main_activity_natives(
             ),
             jni::NativeMethod::from_raw_parts(
                 jni_str!("nativeHardwareKey"),
-                jni_str!("(IIZ)Ljava/lang/String;"),
+                jni_str!("(ILjava/lang/String;Z)Ljava/lang/String;"),
                 settings_bridge::Java_io_github_chalharu_nerust_SettingsActivity_nativeHardwareKey
                     as *mut c_void,
             ),
@@ -1013,8 +1013,9 @@ impl ApplicationHandler for AndroidFrontend {
                 // Dual delivery is safe: the session pressed set dedups.
                 if !event.repeat {
                     let pressed = event.state == ElementState::Pressed;
-                    if let Some(button) = winit_pad_button(&event.physical_key) {
-                        let source = self.core.session.primary_pad_source();
+                    if let Some(button) = winit_pad_button(&event.physical_key)
+                        && let Some(source) = self.core.session.primary_pad_source()
+                    {
                         self.core.session.handle_source_button(
                             source,
                             nerust_input_traits::SourceButtonId::Pad(button),
@@ -1111,30 +1112,14 @@ impl ApplicationHandler for AndroidFrontend {
 }
 
 /// Raw Android keycode to position button for winit-delivered pad keys.
-/// Mirrors the Kotlin dispatch table (L2/R2 stay analog-only) plus the
-/// D-pad codes and winit's Arrow translation of them. Returns `None` for
-/// keyboard keys, which this frontend never used and stays untouched.
+/// Raw codes delegate to the unified table; winit's Arrow translation of
+/// the D-pad is handled here. Returns `None` for keyboard keys.
 fn winit_pad_button(key: &PhysicalKey) -> Option<nerust_input_traits::StandardButton> {
     use nerust_input_traits::StandardButton as Pad;
     match key {
-        PhysicalKey::Unidentified(NativeKeyCode::Android(code)) => match code {
-            96 => Some(Pad::South),
-            97 => Some(Pad::East),
-            99 => Some(Pad::West),
-            100 => Some(Pad::North),
-            102 => Some(Pad::LeftShoulder),
-            103 => Some(Pad::RightShoulder),
-            106 => Some(Pad::LeftStick),
-            107 => Some(Pad::RightStick),
-            108 => Some(Pad::Start),
-            109 => Some(Pad::Back),
-            110 => Some(Pad::Guide),
-            19 => Some(Pad::DpadUp),
-            20 => Some(Pad::DpadDown),
-            21 => Some(Pad::DpadLeft),
-            22 => Some(Pad::DpadRight),
-            _ => None,
-        },
+        PhysicalKey::Unidentified(NativeKeyCode::Android(code)) => {
+            nerust_input_traits::android_keycode_to_button(*code)
+        }
         PhysicalKey::Code(KeyCode::ArrowUp) => Some(Pad::DpadUp),
         PhysicalKey::Code(KeyCode::ArrowDown) => Some(Pad::DpadDown),
         PhysicalKey::Code(KeyCode::ArrowLeft) => Some(Pad::DpadLeft),

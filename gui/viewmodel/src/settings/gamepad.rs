@@ -1,5 +1,6 @@
 use nerust_input_traits::MAX_PADS;
 use nerust_settings_core::i18n::{I18n, UiText, pad_label, pad_triggers_label};
+use nerust_settings_core::model::input::{DEADZONE_MAX_PERCENT, DEADZONE_STEPS};
 
 use super::{
     dto::{ChoiceView, GamepadTabView, PadPortView},
@@ -40,7 +41,7 @@ impl GamepadViewModel {
         percent: u8,
     ) -> Result<(), super::editor::ViewModelError> {
         self.update_pad(pad, |port_state| {
-            port_state.deadzone_percent = percent.min(90);
+            port_state.deadzone_percent = percent.min(DEADZONE_MAX_PERCENT);
         })
     }
 
@@ -84,10 +85,6 @@ impl GamepadViewModel {
     }
 }
 
-/// Deadzone steps offered on both frontends. Sliders would fake precision
-/// the integer-percent schema cannot keep; 5-point steps stay honest.
-const DEADZONE_STEPS: [u8; 7] = [0, 5, 10, 15, 20, 25, 30];
-
 fn project_view(state: &super::EditorState) -> GamepadTabView {
     let i18n = I18n::resolve_os(state.draft.shared.general.language);
     let gamepad = &state.draft.shared.input.gamepad;
@@ -113,8 +110,6 @@ fn project_view(state: &super::EditorState) -> GamepadTabView {
     .collect();
     GamepadTabView {
         label: i18n.text(UiText::Gamepads),
-        deadzone_label: i18n.text(UiText::Deadzone),
-        deadzone_desc: i18n.text(UiText::DescDeadzone),
         deadzone_choices: DEADZONE_STEPS
             .iter()
             .map(|step| ChoiceView {

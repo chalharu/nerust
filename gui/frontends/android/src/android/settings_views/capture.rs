@@ -2,9 +2,11 @@
 //!
 //! Keycodes arrive from Kotlin as Android keycodes; the gate derives from
 //! the vault device truth so rows and the command path cannot disagree.
-//! Pad buttons also carry the Kotlin truth-order pad index (`-1` for keys
-//! and uncounted devices): per-pad mapping rows only accept presses from
-//! their own pad, so two pads never cross-capture.
+//! Pad buttons carry the Kotlin device descriptor (`None` for keys and
+//! uncounted devices): per-pad mapping rows only accept presses from
+//! their own pad, so two pads never cross-capture. The descriptor
+//! resolves against the same vault list that built the rows, so a Kotlin
+//! scan-order index can never skew against the Rust side.
 
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_input_traits::{Key, StandardButton};
@@ -12,7 +14,8 @@ use nerust_settings_core::editor::CaptureTarget;
 
 use super::projection::project_fresh;
 use super::wire::{
-    CaptureSlot, Projection, ViewPayload, build_vm, sync_snapshot_from_vm, with_vm_deps,
+    CaptureSlot, Projection, ViewPayload, build_vm, pad_index_for_member, sync_snapshot_from_vm,
+    with_vm_deps,
 };
 
 /// Hardware key routing for capture (and future keyboard play): Android
@@ -22,7 +25,7 @@ use super::wire::{
 /// report `false` so the platform can handle them (volume, Back, ...).
 pub(crate) fn apply_hardware_key(
     keycode: i32,
-    pad_index: i32,
+    pad_descriptor: Option<&str>,
     pressed: bool,
     snapshot: &mut SettingsSnapshot,
     capture: &mut CaptureSlot,
@@ -33,29 +36,39 @@ pub(crate) fn apply_hardware_key(
         // Borrow first: releases and unmapped keys (volume, Back, ...) must
         // not pay a target+prompt clone on the hot path.
         if pressed && let Some((target, _)) = capture.as_ref() {
-            // Keyboards win on overlap (none today): one shared tail
-            // applies whichever side mapped, so the two columns never fork.
+            // Key and button decode independently: D-pad codes (19-22)
+            // name both an arrow key and a pad position, so overlap is
+            // normal. The target gates which side lands; the shared tail
+            // applies every granted side, so the two columns never fork.
             let target = target.clone();
-            let key = android_keycode_to_key(keycode);
-            let button = if key.is_none() {
-                android_keycode_to_pad(keycode)
-            } else {
-                None
-            };
-            // Per-pad mapping rows take only their own pad's buttons: a
-            // press from another pad (or a keyboard key) leaves the
-            // capture pending instead of eating it.
-            if let CaptureTarget::PadBinding { pad, .. } = &target {
-                let mine = (*pad as i32) == pad_index && pad_index >= 0;
-                if !mine || button.is_none() {
-                    return Ok((None, false));
+            let pad = pad_descriptor
+                .and_then(|descriptor| pad_index_for_member(truth.gamepads, descriptor));
+            let (key, button) = match &target {
+                CaptureTarget::PadBinding { pad: want, .. } => {
+                    // Per-pad mapping rows take only their own pad's
+                    // buttons: a press from another pad (or a keyboard key)
+                    // leaves the capture pending instead of eating it. A
+                    // D-pad press lands its position, never its arrow twin.
+                    if pad != Some(*want) {
+                        return Ok((None, false));
+                    }
+                    (None, android_keycode_to_pad(keycode))
                 }
-            // Pads only land on shortcut rows: a pad press on a game row
-            // leaves the capture pending for a keyboard key instead of
-            // eating it.
-            } else if button.is_some() && !matches!(target, CaptureTarget::Shortcut(_)) {
-                return Ok((None, false));
-            }
+                CaptureTarget::Binding { .. } => {
+                    // Game rows take keyboard keys only: pad-only buttons
+                    // leave the capture pending, while D-pad presses land
+                    // their arrow-key twin into the shared vocabulary.
+                    (android_keycode_to_key(keycode), None)
+                }
+                CaptureTarget::Shortcut(_) => {
+                    // Shortcuts take either side: a D-pad press lands both
+                    // the arrow key and the pad position in their columns.
+                    (
+                        android_keycode_to_key(keycode),
+                        android_keycode_to_pad(keycode),
+                    )
+                }
+            };
             if key.is_some() || button.is_some() {
                 let vm = build_vm(snapshot, deps, i18n)?;
                 vm.capture
@@ -79,7 +92,7 @@ pub(crate) fn apply_hardware_key(
 }
 
 /// Android keycode to emulated key. The table is sorted by keycode, so one
-/// binary search replaces the old linear scan on every key event.
+/// Sorted by keycode for binary search.
 const ANDROID_KEYCODE_TABLE: &[(i32, Key)] = {
     use nerust_input_traits::Key;
     &[
@@ -191,25 +204,6 @@ fn android_keycode_to_key(keycode: i32) -> Option<Key> {
         .map(|index| ANDROID_KEYCODE_TABLE[index].1)
 }
 
-/// Controller keycodes to position buttons. Triggers (L2/R2) and the
-/// C/Z buttons have no position: analog and unmapped respectively.
-pub(crate) const ANDROID_PAD_KEYCODE_TABLE: &[(i32, StandardButton)] = &[
-    (96, StandardButton::South),
-    (97, StandardButton::East),
-    (99, StandardButton::West),
-    (100, StandardButton::North),
-    (102, StandardButton::LeftShoulder),
-    (103, StandardButton::RightShoulder),
-    (106, StandardButton::LeftStick),
-    (107, StandardButton::RightStick),
-    (108, StandardButton::Start),
-    (109, StandardButton::Back),
-    (110, StandardButton::Guide),
-];
-
 fn android_keycode_to_pad(keycode: i32) -> Option<StandardButton> {
-    ANDROID_PAD_KEYCODE_TABLE
-        .binary_search_by_key(&keycode, |(code, _)| *code)
-        .ok()
-        .map(|index| ANDROID_PAD_KEYCODE_TABLE[index].1)
+    nerust_input_traits::android_keycode_to_button(keycode)
 }

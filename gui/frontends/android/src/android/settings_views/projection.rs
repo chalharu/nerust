@@ -11,7 +11,7 @@ use nerust_settings_core::{
     input::{BUILTIN_KEYBOARD_MEMBER, member_is_gamepad, member_is_shareable},
     model::{
         app_state::{PORT_PLAYER_1, PORT_PLAYER_2},
-        input::ShortcutAction,
+        input::{DEADZONE_STEPS, ShortcutAction},
         local::{
             NotificationColor, NotificationPosition, RumbleTarget, ScreenOrientation,
             TouchOverlayVisibility,
@@ -612,7 +612,7 @@ fn controllers_quick_section(
         }
     }
     // Connected pads link straight to their own screen (deadzone,
-    // triggers, button mapping): no gamepad hub in between.
+    // triggers, button mapping).
     if !gamepads.is_empty() {
         quick_rows.push(header_row(i18n.text(UiText::Gamepads)));
     }
@@ -774,9 +774,9 @@ fn build_pad_sections(
                         nerust_settings_core::model::input::DEFAULT_DEADZONE_PERCENT,
                         |pad| pad.deadzone_percent,
                     )),
-                    5,
-                    0,
-                    30,
+                    i64::from(DEADZONE_STEPS[1] - DEADZONE_STEPS[0]),
+                    i64::from(DEADZONE_STEPS[0]),
+                    i64::from(DEADZONE_STEPS[DEADZONE_STEPS.len() - 1]),
                     "%",
                 ),
                 toggle_row(
@@ -915,7 +915,7 @@ fn shortcuts_section(
                 &format!("controls.{}.kbd", binding_key(capture)),
                 label.clone(),
                 String::new(),
-                shortcut_key_text(snapshot, capture, i18n),
+                shortcut_binding_text(snapshot, capture, i18n, false),
                 target,
                 true,
                 &reason,
@@ -933,7 +933,7 @@ fn shortcuts_section(
                 &format!("controls.{}.pad{}", binding_key(capture), pad_index + 1),
                 label.clone(),
                 String::new(),
-                shortcut_pad_text(snapshot, capture, i18n),
+                shortcut_binding_text(snapshot, capture, i18n, true),
                 target,
                 true,
                 &reason,
@@ -962,18 +962,22 @@ fn shortcuts_section(
     }
 }
 
-/// Key column of one shortcut binding for the per-device rows.
-fn shortcut_key_text(snapshot: &SettingsSnapshot, target: &CaptureTarget, i18n: I18n) -> String {
-    nerust_settings_core::editor::current_binding_key(snapshot, target)
-        .map(|key| key.label().to_string())
-        .unwrap_or_else(|| i18n.text(UiText::Unbound))
-}
-
-/// Pad column of one shortcut binding for the per-device rows.
-fn shortcut_pad_text(snapshot: &SettingsSnapshot, target: &CaptureTarget, i18n: I18n) -> String {
-    nerust_settings_core::editor::current_pad_binding(snapshot, target)
-        .map(|button| button.label().to_string())
-        .unwrap_or_else(|| i18n.text(UiText::Unbound))
+/// One column of one shortcut binding for the per-device rows: the key
+/// column or the pad column, Unbound when empty.
+fn shortcut_binding_text(
+    snapshot: &SettingsSnapshot,
+    target: &CaptureTarget,
+    i18n: I18n,
+    pad: bool,
+) -> String {
+    let label = if pad {
+        nerust_settings_core::editor::current_pad_binding(snapshot, target)
+            .map(|button| button.label().to_string())
+    } else {
+        nerust_settings_core::editor::current_binding_key(snapshot, target)
+            .map(|key| key.label().to_string())
+    };
+    label.unwrap_or_else(|| i18n.text(UiText::Unbound))
 }
 
 fn build_controllers_sections(
@@ -1511,8 +1515,7 @@ fn build_device_sections(
         })
         .collect()
 }
-/// One key-mapping screen per machine: the shared single keyboard table
-/// (per-device split is future work). Reached from each keyboard device
+/// One key-mapping screen per machine. Reached from each keyboard device
 /// detail screen; the controller screens hold slots only. Capture takes
 /// any mapped hardware key; with no input device the rows disable.
 fn build_keys_sections(

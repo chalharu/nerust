@@ -217,8 +217,6 @@ pub struct InputConflictView {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GamepadTabView {
     pub label: String,
-    pub deadzone_label: String,
-    pub deadzone_desc: String,
     pub deadzone_choices: Vec<ChoiceView<u8>>,
     pub pads: Vec<PadPortView>,
 }
