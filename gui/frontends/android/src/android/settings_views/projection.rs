@@ -573,9 +573,7 @@ fn controllers_quick_section(
     i18n: I18n,
     keyboards: &[KeyboardInfo],
     gamepads: &[GamepadInfo],
-    touch_capable: Option<bool>,
 ) -> SectionWire {
-    let overlay = &snapshot.local.touch_overlay;
     let mut quick_rows = Vec::new();
     for (index, port) in PLAYER_PORTS.iter().enumerate() {
         let player_id = player_id(index);
@@ -589,6 +587,63 @@ fn controllers_quick_section(
         let last = quick_rows.last_mut().expect("player row pushed");
         last.text = i18n.port_summary(&names);
     }
+    // Connected pads link straight to their own screen (deadzone,
+    // triggers, button mapping).
+    if !gamepads.is_empty() {
+        quick_rows.push(header_row(i18n.text(UiText::Gamepads)));
+    }
+    // Past the persisted table a pad parks with no settings of its
+    // own: no link, no screen.
+    for (index, info) in gamepads
+        .iter()
+        .take(nerust_input_traits::MAX_PADS)
+        .enumerate()
+    {
+        quick_rows.push(group_row(
+            &format!("controls.pad{}.link", index + 1),
+            info.name.clone(),
+            i18n.text(UiText::DescGamepadGear),
+            &format!("pad.{}", index + 1),
+        ));
+    }
+    // Pure navigation hub like player/about: every editable row lives on
+    // a detail screen with its own reset, so this screen carries none.
+    // Overlay display rows (visibility, haptics, sliders) all live on
+    // `controls.overlay_detail`, one screen per feature.
+    quick_rows.extend([
+        header_row(i18n.text(UiText::TouchOverlay)),
+        group_row(
+            "controls.overlay_detail_link",
+            i18n.text(UiText::OverlayDetail),
+            i18n.text(UiText::DescOverlayDetail),
+            "controls.overlay_detail",
+        ),
+        header_row(i18n.text(UiText::Shortcuts)),
+        group_row(
+            "controls.shortcuts_link",
+            i18n.text(UiText::Shortcuts),
+            i18n.text(UiText::DescShortcutsLink),
+            "controls.shortcuts",
+        ),
+    ]);
+    SectionWire {
+        id: "controllers".to_string(),
+        label: crate::settings_sections::section_label("controllers", i18n),
+        sub: String::new(),
+        rows: quick_rows,
+        visible: true,
+    }
+}
+
+/// Overlay detail screen: every overlay setting (visibility, haptics,
+/// opacity/scale/offset) plus the gamepad status readout. One screen per
+/// feature, so the screen reset below covers the whole screen.
+fn overlay_detail_section(
+    overlay: &nerust_settings_core::model::local::TouchOverlaySettings,
+    gamepads: &[GamepadInfo],
+    touch_capable: Option<bool>,
+    i18n: I18n,
+) -> SectionWire {
     let mut visibility_row = choice_row(
         "controls.overlay_visibility",
         i18n.text(UiText::TouchOverlay),
@@ -611,69 +666,6 @@ fn controllers_quick_section(
             choice.reason = reason.clone();
         }
     }
-    // Connected pads link straight to their own screen (deadzone,
-    // triggers, button mapping).
-    if !gamepads.is_empty() {
-        quick_rows.push(header_row(i18n.text(UiText::Gamepads)));
-    }
-    // Past the persisted table a pad parks with no settings of its
-    // own: no link, no screen.
-    for (index, info) in gamepads
-        .iter()
-        .take(nerust_input_traits::MAX_PADS)
-        .enumerate()
-    {
-        quick_rows.push(group_row(
-            &format!("controls.pad{}.link", index + 1),
-            info.name.clone(),
-            i18n.text(UiText::DescGamepadGear),
-            &format!("pad.{}", index + 1),
-        ));
-    }
-    quick_rows.extend([
-        header_row(i18n.text(UiText::TouchOverlay)),
-        visibility_row,
-        group_row(
-            "controls.overlay_detail_link",
-            i18n.text(UiText::OverlayDetail),
-            i18n.text(UiText::DescOverlayDetail),
-            "controls.overlay_detail",
-        ),
-        toggle_row(
-            "controls.overlay_haptics",
-            i18n.text(UiText::OverlayHaptics),
-            String::new(),
-            i18n,
-            overlay.haptics,
-        ),
-        header_row(i18n.text(UiText::Shortcuts)),
-        group_row(
-            "controls.shortcuts_link",
-            i18n.text(UiText::Shortcuts),
-            i18n.text(UiText::DescShortcutsLink),
-            "controls.shortcuts",
-        ),
-        button_row(
-            "reset.controllers",
-            i18n.text(UiText::ResetScreen),
-            String::new(),
-        ),
-    ]);
-    SectionWire {
-        id: "controllers".to_string(),
-        label: crate::settings_sections::section_label("controllers", i18n),
-        sub: String::new(),
-        rows: quick_rows,
-        visible: true,
-    }
-}
-
-/// Overlay detail screen: gamepad status plus opacity/scale/offset.
-fn overlay_detail_section(
-    overlay: &nerust_settings_core::model::local::TouchOverlaySettings,
-    gamepads: &[GamepadInfo],
-    i18n: I18n,
-) -> SectionWire {
     SectionWire {
         id: "controls.overlay_detail".to_string(),
         label: i18n.text(UiText::TouchOverlay),
@@ -692,6 +684,14 @@ fn overlay_detail_section(
                         .collect::<Vec<_>>()
                         .join(", ")
                 },
+            ),
+            visibility_row,
+            toggle_row(
+                "controls.overlay_haptics",
+                i18n.text(UiText::OverlayHaptics),
+                String::new(),
+                i18n,
+                overlay.haptics,
             ),
             number_row(
                 "controls.overlay_opacity",
@@ -762,22 +762,30 @@ fn build_pad_sections(
             // this pad can never drive, and edits there land overrides
             // that gameplay parks, so they only mislead.
             let slot = port.and_then(|pad| pad.slot);
-            let mut rows = vec![
-                info_row(
+            // Tapping the slot jumps to the Devices screen that owns the
+            // assignment radio: the pad screen shows mapping, Devices
+            // shows belonging. Unassigned pads keep the guidance row below
+            // instead: no single Devices screen owns them.
+            let slot_row = match slot.filter(|slot| PLAYER_PORTS.get(*slot).is_some()) {
+                Some(slot) => {
+                    let mut row = group_row(
+                        &format!("{pad_id}.slot"),
+                        i18n.text(UiText::GamepadDevice),
+                        String::new(),
+                        &format!("devices.{}", PLAYER_PORTS[slot]),
+                    );
+                    row.text = player_label(slot, i18n);
+                    row
+                }
+                None => info_row(
                     &format!("{pad_id}.slot"),
                     i18n.text(UiText::GamepadDevice),
                     String::new(),
-                    slot.map_or_else(
-                        || i18n.text(UiText::NotAssigned),
-                        |slot| {
-                            if PLAYER_PORTS.get(slot).is_some() {
-                                player_label(slot, i18n)
-                            } else {
-                                i18n.text(UiText::NotAssigned)
-                            }
-                        },
-                    ),
+                    i18n.text(UiText::NotAssigned),
                 ),
+            };
+            let mut rows = vec![
+                slot_row,
                 number_row(
                     &format!("{pad_id}.deadzone"),
                     i18n.text(UiText::Deadzone),
@@ -1066,8 +1074,8 @@ fn build_controllers_sections(
     gamepads: &[GamepadInfo],
 ) -> Vec<SectionWire> {
     let mut sections = vec![
-        controllers_quick_section(snapshot, i18n, keyboards, gamepads, touch_capable),
-        overlay_detail_section(&snapshot.local.touch_overlay, gamepads, i18n),
+        controllers_quick_section(snapshot, i18n, keyboards, gamepads),
+        overlay_detail_section(&snapshot.local.touch_overlay, gamepads, touch_capable, i18n),
         shortcuts_section(vm, snapshot, i18n, keyboards, gamepads),
     ];
     sections.extend(build_pad_sections(vm, snapshot, i18n, gamepads));
@@ -1585,7 +1593,7 @@ fn build_devices_section(
     rows.push(button_row(
         &format!("reset.{devices_id}"),
         i18n.text(UiText::ResetScreen),
-        i18n.text(UiText::DescDevicesReset),
+        String::new(),
     ));
     SectionWire {
         id: devices_id.to_string(),
