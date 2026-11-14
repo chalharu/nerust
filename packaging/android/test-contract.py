@@ -203,8 +203,9 @@ class StructureTests(unittest.TestCase):
                 if mutation == "optional":
                     changed = copy.deepcopy(original)
                     changed["definitions"]["menuEvent"]["properties"]["probe"] = {"type": "boolean"}
+                    source = VERIFY.sources()
                     with self.assertRaises(VERIFY.ContractError):
-                        VERIFY.verify(changed, VERIFY.sources())
+                        VERIFY.verify(changed, source)
                     continue
                 enum_path = CONTRACT.KOTLIN / "BridgeWire.kt"
                 enum_baseline = CONTRACT.outputs(original)[enum_path]

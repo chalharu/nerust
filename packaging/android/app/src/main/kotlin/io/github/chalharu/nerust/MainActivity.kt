@@ -456,11 +456,9 @@ class MainActivity :
             BridgeIo.postMain {
                 if (isDestroyed || isFinishing) return@postMain
                 chromeManager.setTouchCapable(touchCapable)
-                if (gamepadNames.isNotEmpty()) {
+                if (gamepadNames.isNotEmpty() && Log.isLoggable(TAG, Log.DEBUG)) {
                     // Debug breadcrumb for Auto-hide reports: which device hid it.
-                    if (Log.isLoggable(TAG, Log.DEBUG)) {
-                        Log.d(TAG, "overlay auto-hide counts gamepad: ${gamepadNames.joinToString()}")
-                    }
+                    Log.d(TAG, "overlay auto-hide counts gamepad: ${gamepadNames.joinToString()}")
                 }
                 chromeManager.setControllerConnected(gamepadNames.isNotEmpty())
             }
