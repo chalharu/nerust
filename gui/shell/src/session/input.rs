@@ -157,20 +157,6 @@ impl SessionHandle {
         }
     }
 
-    /// Pad shortcut lookup: the pad column of the unified binding, or
-    /// `None` when the button drives gameplay instead. First binding wins;
-    /// shared buttons surface as pad conflicts and block submit until
-    /// disambiguated. Prebuilt map (see `rebuild_shortcut_maps`): no
-    /// linear scan on the hot path. Parked pads never reach here.
-    fn shortcut_for_pad(&self, button: StandardButton) -> Option<KeyboardShortcut> {
-        self.input
-            .pads
-            .shortcut_map
-            .get(&button)
-            .copied()
-            .map(Self::shortcut_kind)
-    }
-
     /// Assigned player slot for one event source, registering first-seen
     /// pads. `None` parks the source (Off, keyboards on the axis path,
     /// or pads past the persisted table).
@@ -207,7 +193,8 @@ impl SessionHandle {
     /// so per-pad distinction for that path needs NDK polling and stays
     /// future work. Assigned-first (not first-seen) so a parked pad 0
     /// cannot swallow pad 1's keys. Dual delivery with the Kotlin bridge
-    /// is safe: the session pressed set suppresses repeats. Never mints
+    /// resolves through `shortcut_held`, so one physical press fires its
+    /// shortcut once no matter which path arrives first. Never mints
     /// a descriptor-less transient: that would pin winit keys to a
     /// parked pad and let one player drive another.
     pub fn primary_pad_source(&self) -> Option<SourceId> {
@@ -216,17 +203,12 @@ impl SessionHandle {
             .pads
             .order
             .iter()
-            .copied()
-            .find(|guid| {
+            .enumerate()
+            .find_map(|(index, guid)| {
                 self.input
-                    .pads
-                    .order
-                    .iter()
-                    .position(|known| *known == *guid)
-                    .and_then(|index| self.input.slot_for_index(index, ports))
-                    .is_some()
+                    .slot_for_index(index, ports)
+                    .map(|_| SourceId::Pad(*guid))
             })
-            .map(SourceId::Pad)
     }
 
     /// Connect-time device registration: descriptor to order index.
@@ -341,6 +323,9 @@ impl SessionHandle {
     /// (Kotlin synthesizes releases for its path, but the winit fallback
     /// holds never see them), then drop the id mapping. The order entry
     /// stays so a reconnect reuses the index instead of drifting.
+    /// Ordering is the contract: Kotlin sends release, then removed, then
+    /// (on reconnect) added, processed in order — so input for a dropped
+    /// id always resolves transient, never to a stale source.
     pub fn note_pad_disconnected(&mut self, device_id: i32) {
         let guid = self.input.pads.device_ids.remove(&device_id);
         let Some(guid) = guid else {
@@ -357,6 +342,11 @@ impl SessionHandle {
             self.input.pressed.remove(&(source, button));
             if let SourceButtonId::Pad(std_button) = button {
                 let index = self.input.pads.pad_index(source);
+                // A disconnect releases like any other release: clear a
+                // fired shortcut so the action stays fireable.
+                if let Some(action) = self.input.pads.shortcut_map.get(&std_button).copied() {
+                    self.input.shortcut_held.remove(&action);
+                }
                 // Slot unknown by design (mapping already dropped):
                 // releases bypass the gate, so `None` still unstrands.
                 self.commit_holder_press(
@@ -390,6 +380,9 @@ impl SessionHandle {
     /// `(source, button)` set: keyboards and pads share the rule, so no
     /// adapter owns a private pressed set. Unbound pad buttons drive
     /// gameplay; bound ones resolve through the shortcut pad column.
+    /// Shortcuts fire once per action across all sources (`shortcut_held`):
+    /// dual delivery of one physical press (Kotlin bridge plus winit) or
+    /// two inputs sharing an action must not toggle twice.
     pub fn handle_source_button(
         &mut self,
         source: SourceId,
@@ -417,14 +410,15 @@ impl SessionHandle {
                     self.commit_press(field, FieldSource::Key(key), dpad, pressed);
                 }
 
-                if first_press {
-                    return self
-                        .input
-                        .keys
-                        .shortcut_map
-                        .get(&key)
-                        .copied()
-                        .map(Self::shortcut_kind);
+                let action = self.input.keys.shortcut_map.get(&key).copied();
+                if pressed {
+                    if first_press {
+                        return action
+                            .filter(|action| self.fire_shortcut(*action))
+                            .map(Self::shortcut_kind);
+                    }
+                } else if let Some(action) = action {
+                    self.input.shortcut_held.remove(&action);
                 }
                 None
             }
@@ -432,15 +426,32 @@ impl SessionHandle {
                 if changed {
                     self.commit_pad_press(source, std_button, pressed);
                 }
-                // Parked pads never fire shortcuts: without an assigned
-                // slot there is no player for the action to address, so an
-                // Off-port pad must not drive the shared pause button.
-                if pressed && first_press && self.pad_slot_for(source).is_some() {
-                    return self.shortcut_for_pad(std_button);
+                // The slot gates firing only: releases clear through the
+                // static map so unassigning mid-hold cannot strand an
+                // action unfireable.
+                let action = self.input.pads.shortcut_map.get(&std_button).copied();
+                if pressed {
+                    // Parked pads never fire shortcuts: without an assigned
+                    // slot there is no player for the action to address, so an
+                    // Off-port pad must not drive the shared pause button.
+                    if first_press && self.pad_slot_for(source).is_some() {
+                        return action
+                            .filter(|action| self.fire_shortcut(*action))
+                            .map(Self::shortcut_kind);
+                    }
+                } else if let Some(action) = action {
+                    self.input.shortcut_held.remove(&action);
                 }
                 None
             }
         }
+    }
+
+    /// One fire per held action: the first source pressing an action
+    /// returns it; further presses while held suppress. Releases clear
+    /// through the arms above, so one physical press never toggles twice.
+    fn fire_shortcut(&mut self, action: ShortcutAction) -> bool {
+        self.input.shortcut_held.insert(action)
     }
 
     /// Pad press tail: position button to the pad's assigned console
@@ -1093,6 +1104,44 @@ mod tests {
             shortcut,
             Some(KeyboardShortcut::Session(ShortcutAction::TogglePause))
         ));
+        session.clear_input();
+    }
+
+    #[test]
+    fn one_physical_press_fires_its_shortcut_once_across_sources() {
+        use nerust_input_traits::{SourceButtonId, StandardButton};
+        use nerust_settings_core::model::input::{ShortcutAction, ShortcutBinding};
+        // Dual delivery (Kotlin bridge plus winit) of one physical press,
+        // or two inputs sharing an action, must not toggle twice: the
+        // action fires once while held, from whichever source arrives
+        // first. Either trigger, not both together.
+        let mut session = crate::session::test_util::test_session();
+        let mut next = session.settings_snapshot().clone();
+        next.shared.input.shortcuts.keyboard = vec![ShortcutBinding {
+            action: ShortcutAction::TogglePause,
+            key: Some(Key::Space),
+            pad: Some(StandardButton::Guide),
+        }];
+        session.apply_settings(next).unwrap();
+        let pad = session.pad_source_for(11);
+        assert!(
+            session.handle_keyboard_key(Key::Space, true).is_some(),
+            "first source fires"
+        );
+        assert!(
+            session
+                .handle_source_button(pad, SourceButtonId::Pad(StandardButton::Guide), true)
+                .is_none(),
+            "second source suppresses while held"
+        );
+        session.handle_source_button(pad, SourceButtonId::Pad(StandardButton::Guide), false);
+        session.handle_keyboard_key(Key::Space, false);
+        assert!(
+            session
+                .handle_source_button(pad, SourceButtonId::Pad(StandardButton::Guide), true)
+                .is_some(),
+            "release re-arms the action"
+        );
         session.clear_input();
     }
 

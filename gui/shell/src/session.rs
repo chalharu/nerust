@@ -220,6 +220,10 @@ struct InputDept {
     /// Repeat suppression for every source: one `(source, button)` set, so
     /// keyboards and pads share the rule instead of each adapter owning one.
     pressed: HashSet<(SourceId, SourceButtonId)>,
+    /// Shortcut actions currently held down, across all sources (see
+    /// `handle_source_button`): one fire per action no matter how many
+    /// inputs drive it.
+    shortcut_held: HashSet<ShortcutAction>,
     /// Post-deadzone analog values per `(source, axis)`: the transport
     /// endpoint future analog consoles read; sticks also feed the
     /// dpad substitute from here.
@@ -254,6 +258,7 @@ impl InputDept {
                 shortcut_map: HashMap::new(),
             },
             pressed: HashSet::new(),
+            shortcut_held: HashSet::new(),
             analogs: HashMap::new(),
             axis_dpad: HashSet::new(),
             interner: IdInterner::default(),
@@ -315,6 +320,9 @@ impl InputDept {
     pub(crate) fn rebuild_shortcut_maps(&mut self, bindings: &[ShortcutBinding]) {
         self.keys.shortcut_map.clear();
         self.pads.shortcut_map.clear();
+        // Remaps invalidate held state: a release under the new map would
+        // clear the wrong action and strand the old one unfireable.
+        self.shortcut_held.clear();
         for binding in bindings {
             if let Some(key) = binding.key {
                 self.keys.shortcut_map.entry(key).or_insert(binding.action);
