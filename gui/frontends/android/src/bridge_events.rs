@@ -542,9 +542,7 @@ fn decode_json_menu_action(event: &MenuEvent) -> Option<FrontendEvent> {
         return decode_controller_parts(device_id, key, pressed).map(FrontendEvent::Menu);
     }
     if action == ACTION_MOTION {
-        let Some(device_id) = event.device_id else {
-            return None;
-        };
+        let device_id = event.device_id?;
         // One JNI crossing per motion callback: every carried axis
         // decodes through the shared table; an empty batch fails loud.
         let mut batch = Vec::new();
@@ -552,9 +550,7 @@ fn decode_json_menu_action(event: &MenuEvent) -> Option<FrontendEvent> {
             let Some(value) = value else {
                 continue;
             };
-            let Some(input) = decode_analog_parts(device_id, axis, value) else {
-                return None;
-            };
+            let input = decode_analog_parts(device_id, axis, value)?;
             batch.push(input);
         }
         if batch.is_empty() {
@@ -577,15 +573,11 @@ fn decode_json_menu_action(event: &MenuEvent) -> Option<FrontendEvent> {
         }));
     }
     if action == ACTION_DEVICE_REMOVED {
-        let Some(device_id) = event.device_id else {
-            return None;
-        };
+        let device_id = event.device_id?;
         return Some(FrontendEvent::Menu(MenuAction::DeviceRemoved { device_id }));
     }
     if action == ACTION_TOUCH_GATE {
-        let Some(respond) = event.pressed else {
-            return None;
-        };
+        let respond = event.pressed?;
         return Some(FrontendEvent::Menu(MenuAction::TouchGate { respond }));
     }
     match action {

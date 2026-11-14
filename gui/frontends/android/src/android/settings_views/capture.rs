@@ -10,7 +10,6 @@
 
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_input_traits::{Key, StandardButton};
-use nerust_settings_core::editor::CaptureTarget;
 
 use super::projection::project_fresh;
 use super::wire::{
@@ -200,5 +199,7 @@ fn android_keycode_to_key(keycode: i32) -> Option<Key> {
 }
 
 fn android_keycode_to_pad(keycode: i32) -> Option<StandardButton> {
-    super::keycode::android_keycode_to_button(keycode)
+    u32::try_from(keycode)
+        .ok()
+        .and_then(super::keycode::android_keycode_to_button)
 }

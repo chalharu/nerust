@@ -8,8 +8,8 @@ use nerust_input_traits::StandardButton;
 
 /// Raw Android keycode to position button. `None` for keyboard keys,
 /// triggers (104/105), and unknown codes.
-pub(crate) fn android_keycode_to_button(keycode: i32) -> Option<StandardButton> {
-    const TABLE: [(i32, StandardButton); 15] = [
+pub(crate) fn android_keycode_to_button(keycode: u32) -> Option<StandardButton> {
+    const TABLE: [(u32, StandardButton); 15] = [
         (19, StandardButton::DpadUp),
         (20, StandardButton::DpadDown),
         (21, StandardButton::DpadLeft),

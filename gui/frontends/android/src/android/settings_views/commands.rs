@@ -38,16 +38,31 @@ use super::wire::{
 /// snapshot-direct ops (device truth, reset, capture cancel) project fresh
 /// afterwards, while view-model ops reuse the same model for apply and
 /// project instead of rebuilding per op.
+/// Ephemeral vault state threading through one command: capture slot,
+/// device truth, and the session order mirror. Bundled so the entry
+/// point stays under the argument cap as vault fields grow.
+pub(crate) struct CommandVault<'a> {
+    pub capture: &'a mut CaptureSlot,
+    pub keyboards: &'a mut Vec<KeyboardInfo>,
+    pub touch_capable: &'a mut Option<bool>,
+    pub gamepads: &'a mut Vec<GamepadInfo>,
+    pub system_locale: &'a mut Option<AppLanguage>,
+    pub pad_order: &'a [String],
+}
+
 pub(crate) fn apply_command_to(
     snapshot: &mut SettingsSnapshot,
     command_json: &str,
-    capture: &mut CaptureSlot,
-    keyboards: &mut Vec<KeyboardInfo>,
-    touch_capable: &mut Option<bool>,
-    gamepads: &mut Vec<GamepadInfo>,
-    system_locale: &mut Option<AppLanguage>,
-    pad_order: &[String],
+    vault: CommandVault<'_>,
 ) -> Result<ViewPayload, String> {
+    let CommandVault {
+        capture,
+        keyboards,
+        touch_capable,
+        gamepads,
+        system_locale,
+        pad_order,
+    } = vault;
     let command: WireCommand =
         serde_json::from_str(command_json).map_err(|error| error.to_string())?;
     with_vm_deps(|deps| {

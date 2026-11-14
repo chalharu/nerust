@@ -763,9 +763,6 @@ impl AndroidFrontend {
                     let _ = self.exec(SessionCommand::SelectActiveSlot(slot_id));
                 }
                 MenuAction::TogglePause => self.toggle_pause(),
-                // Decoder-retired single delivery: motion batches arrive
-                // as `MenuBatch`; the wildcard keeps the match total.
-                _ => {}
             },
             FrontendEvent::MenuBatch(batch) => {
                 for action in batch {

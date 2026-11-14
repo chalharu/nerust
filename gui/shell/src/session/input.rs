@@ -1485,7 +1485,7 @@ mod tests {
 
     #[test]
     fn trigger_hysteresis_holds_through_the_release_band() {
-        use nerust_input_traits::{GamepadAxis, SourceButtonId, StandardButton};
+        use nerust_input_traits::{GamepadAxis, StandardButton};
         let mut session = crate::session::test_util::test_session();
         session.note_pad_connected(9, "pad-trigger-test");
         let pad = session.pad_source_for(9);
