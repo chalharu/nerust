@@ -258,12 +258,12 @@ impl SessionHandle {
                 self.input.pad_order.remove(pos);
             } else {
                 self.input.pad_order[pos] = guid;
-                self.input.insert_descriptor_at(pos, descriptor);
+                self.input.upsert_descriptor(Some(pos), descriptor);
             }
             self.migrate_pad_source(old, new);
         } else if !self.input.pad_order.contains(&guid) {
             self.input.pad_order.push(guid);
-            self.input.push_descriptor(descriptor);
+            self.input.upsert_descriptor(None, descriptor);
         }
     }
 

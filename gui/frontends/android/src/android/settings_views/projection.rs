@@ -1626,7 +1626,7 @@ fn binding_key(target: &CaptureTarget) -> String {
             attachment,
             control,
             ..
-        } => format!("pad{pad}.{attachment}.{control}"),
+        } => format!("pad{}.{attachment}.{control}", pad + 1),
         CaptureTarget::Shortcut(action) => format!("shortcut.{action:?}"),
     }
 }
