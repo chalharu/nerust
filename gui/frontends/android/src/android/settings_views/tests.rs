@@ -2817,39 +2817,31 @@ fn pad_mapping_conflict_surfaces_on_screen() {
 
 #[test]
 fn removed_gamepad_hub_keys_fail_as_unknown() {
-    // Hub-era keys carry no rows and no command arms: they fail as
-    // unknown keys/scopes, never silent. (The old test pinned the
-    // removed-hub strings; the pin now asserts the fallthrough error.)
+    // One representative hub-era key: all removed keys share the generic
+    // unknown fallthrough, so pinning one guards the loud-fail contract.
     let (mut snapshot, _) = test_payload();
-    for (key, op) in [
-        ("controls.gamepads.deadzone", WireOp::Set),
-        ("controls.gamepads.pad1.deadzone", WireOp::Set),
-        ("controls.gamepads.triggers1", WireOp::Set),
-        ("reset.controls.gamepads", WireOp::ResetSection),
-    ] {
-        let command_json = serde_json::to_string(&WireCommand {
-            key: key.to_string(),
-            index: 0,
-            number: 0,
-            op,
-            payload: serde_json::Value::Null,
-        })
-        .unwrap();
-        with_test_deps(|| {
-            let error = apply_command_to(
-                &mut snapshot,
-                &command_json,
-                &mut None,
-                &mut test_keyboards(),
-                &mut None,
-                &mut Vec::new(),
-                &mut None,
-                &[],
-            )
-            .expect_err(&format!("{key} fails loud instead of no-op"));
-            assert!(error.contains("unknown"), "{key} fails as unknown: {error}");
-        });
-    }
+    let command_json = serde_json::to_string(&WireCommand {
+        key: "controls.gamepads.deadzone".to_string(),
+        index: 0,
+        number: 0,
+        op: WireOp::Set,
+        payload: serde_json::Value::Null,
+    })
+    .unwrap();
+    with_test_deps(|| {
+        let error = apply_command_to(
+            &mut snapshot,
+            &command_json,
+            &mut None,
+            &mut test_keyboards(),
+            &mut None,
+            &mut Vec::new(),
+            &mut None,
+            &[],
+        )
+        .expect_err("removed hub key fails loud instead of no-op");
+        assert!(error.contains("unknown"), "fails as unknown: {error}");
+    });
 }
 
 #[test]

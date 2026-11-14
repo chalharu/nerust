@@ -12,6 +12,7 @@
 
 mod capture;
 mod commands;
+mod keycode;
 mod projection;
 mod wire;
 
@@ -31,6 +32,7 @@ use wire::{CaptureSlot, GamepadInfo, KeyboardInfo, ViewPayload, resolve_display}
 pub(crate) use capture::apply_hardware_key;
 #[cfg(target_os = "android")]
 pub(crate) use commands::{apply_command_to, finish_snapshot};
+pub(crate) use keycode::android_keycode_to_button;
 #[cfg(target_os = "android")]
 pub(crate) use wire::{
     CaptureSlot, GamepadInfo, KeyboardInfo, ViewPayload, app_language_tag, install_vm_deps,

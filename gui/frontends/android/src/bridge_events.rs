@@ -332,40 +332,19 @@ pub(crate) const CONTROLLER_AXIS_TABLE: &[(&str, GamepadAxis)] = &[
     ("trigger_r", GamepadAxis::RightTrigger),
 ];
 
-/// Single-table key lookup; the schema test keeps it in sync. Match
-/// dispatch over the same names (the table above stays the contract pin
-/// the schema test iterates).
+/// Single-table lookups; the schema test iterates the tables above.
 fn controller_button(key: &str) -> Option<StandardButton> {
-    Some(match key {
-        "button1" => StandardButton::South,
-        "button2" => StandardButton::East,
-        "button3" => StandardButton::West,
-        "button4" => StandardButton::North,
-        "button5" => StandardButton::LeftShoulder,
-        "button6" => StandardButton::RightShoulder,
-        "start" => StandardButton::Start,
-        "select" => StandardButton::Back,
-        "guide" => StandardButton::Guide,
-        "up" => StandardButton::DpadUp,
-        "down" => StandardButton::DpadDown,
-        "left" => StandardButton::DpadLeft,
-        "right" => StandardButton::DpadRight,
-        "l3" => StandardButton::LeftStick,
-        "r3" => StandardButton::RightStick,
-        _ => return None,
-    })
+    CONTROLLER_KEY_TABLE
+        .iter()
+        .find(|(name, _)| *name == key)
+        .map(|(_, button)| *button)
 }
 
 fn controller_axis(axis: &str) -> Option<GamepadAxis> {
-    Some(match axis {
-        "left_x" => GamepadAxis::LeftStickX,
-        "left_y" => GamepadAxis::LeftStickY,
-        "right_x" => GamepadAxis::RightStickX,
-        "right_y" => GamepadAxis::RightStickY,
-        "trigger_l" => GamepadAxis::LeftTrigger,
-        "trigger_r" => GamepadAxis::RightTrigger,
-        _ => return None,
-    })
+    CONTROLLER_AXIS_TABLE
+        .iter()
+        .find(|(name, _)| *name == axis)
+        .map(|(_, value)| *value)
 }
 
 /// Decode one raw bridge string: only v1 JSON decodes, never a silent drop.

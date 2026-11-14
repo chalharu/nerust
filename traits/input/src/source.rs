@@ -108,7 +108,8 @@ impl StandardButton {
             StandardButton::DpadLeft,
             StandardButton::DpadRight,
         ];
-        ALL.into_iter().find(|button| button.abstract_key() == Some(abstract_key))
+        ALL.into_iter()
+            .find(|button| button.abstract_key() == Some(abstract_key))
     }
 }
 

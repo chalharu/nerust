@@ -4,7 +4,6 @@ mod dialog_coordinator;
 mod error_dialog;
 mod foreground_controller;
 mod input_router;
-mod keycode;
 mod lifecycle;
 mod media_loader;
 mod menu;
@@ -627,7 +626,7 @@ impl AndroidFrontend {
     }
 
     fn handle_menu_action(&mut self, event: FrontendEvent, tick: TickMetrics) {
-        log::info!("AndroidFrontend::handle_menu_action: {:?}", event);
+        log::debug!("AndroidFrontend::handle_menu_action: {:?}", event);
         // Exhaustive over the event: a new variant fails to compile here.
         // Handlers must not re-lock; `tick` comes from the single per-pass lock.
         match event {
@@ -1123,7 +1122,18 @@ impl ApplicationHandler for AndroidFrontend {
     }
 }
 
-/// Winit-delivered pad keys share the frontend keycode table.
+/// Winit-delivered pad keys share the frontend keycode table plus winit's
+/// arrow translation for the D-pad.
 fn winit_pad_button(key: &PhysicalKey) -> Option<nerust_input_traits::StandardButton> {
-    keycode::winit_pad_button(key)
+    use nerust_input_traits::StandardButton as Pad;
+    match key {
+        PhysicalKey::Unidentified(NativeKeyCode::Android(code)) => {
+            settings_views::android_keycode_to_button(*code)
+        }
+        PhysicalKey::Code(KeyCode::ArrowUp) => Some(Pad::DpadUp),
+        PhysicalKey::Code(KeyCode::ArrowDown) => Some(Pad::DpadDown),
+        PhysicalKey::Code(KeyCode::ArrowLeft) => Some(Pad::DpadLeft),
+        PhysicalKey::Code(KeyCode::ArrowRight) => Some(Pad::DpadRight),
+        _ => None,
+    }
 }

@@ -2,10 +2,7 @@
 //!
 //! Both the JNI key path and the winit fallback share this. Keycodes
 //! 104/105 (L2/R2 key events) stay unmapped: triggers are analog-only and
-//! arrive as motion axes. Winit translates D-pad keys to arrows, so the
-//! arrow fallback lives here too; callers only see `StandardButton`.
-
-use winit::keyboard::{KeyCode, NativeKeyCode, PhysicalKey};
+//! arrive as motion axes.
 
 use nerust_input_traits::StandardButton;
 
@@ -33,21 +30,6 @@ pub(crate) fn android_keycode_to_button(keycode: i32) -> Option<StandardButton> 
         .binary_search_by_key(&keycode, |(code, _)| *code)
         .ok()
         .map(|index| TABLE[index].1)
-}
-
-/// Winit-delivered pad keys: raw codes plus winit's arrow translation.
-/// `None` for keyboard keys.
-pub(crate) fn winit_pad_button(key: &PhysicalKey) -> Option<StandardButton> {
-    match key {
-        PhysicalKey::Unidentified(NativeKeyCode::Android(code)) => {
-            android_keycode_to_button(*code)
-        }
-        PhysicalKey::Code(KeyCode::ArrowUp) => Some(StandardButton::DpadUp),
-        PhysicalKey::Code(KeyCode::ArrowDown) => Some(StandardButton::DpadDown),
-        PhysicalKey::Code(KeyCode::ArrowLeft) => Some(StandardButton::DpadLeft),
-        PhysicalKey::Code(KeyCode::ArrowRight) => Some(StandardButton::DpadRight),
-        _ => None,
-    }
 }
 
 #[cfg(test)]
