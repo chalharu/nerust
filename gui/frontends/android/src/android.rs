@@ -645,7 +645,7 @@ impl AndroidFrontend {
                         button,
                         pressed,
                     ) {
-                        self.dispatch_pad_shortcut(shortcut);
+                        self.dispatch_shortcut(shortcut);
                     }
                 }
                 MenuAction::AnalogInput {
@@ -894,12 +894,13 @@ impl PauseControl for AndroidFrontend {
     }
 }
 
-/// Pad-button shortcut tail: the session resolves the press to a shortcut
-/// (or gameplay); this side executes the session half. Chrome-only actions
-/// (fullscreen, debugger) have no Android target and stay ignored, exactly
-/// like the desktop router's non-session arms.
+/// Shared shortcut tail for pad buttons and hardware keys: the session
+/// resolves the press to a shortcut (or gameplay); this side executes the
+/// session half. Chrome-only actions (fullscreen, debugger) have no
+/// Android target and stay ignored, like the desktop router's non-session
+/// arms.
 impl AndroidFrontend {
-    fn dispatch_pad_shortcut(&mut self, shortcut: KeyboardShortcut) {
+    fn dispatch_shortcut(&mut self, shortcut: KeyboardShortcut) {
         match shortcut {
             KeyboardShortcut::Session(action) => {
                 dispatch_session_action(self, action);
@@ -1060,6 +1061,9 @@ impl ApplicationHandler for AndroidFrontend {
                 // Android keycodes winit preserves as Unidentified here so
                 // single-pad play works even when that bridge stays silent.
                 // Dual delivery is safe: the session pressed set dedups.
+                // Hardware keyboards ride the same queue: mapped keys drive
+                // gameplay fields and shortcuts, unmapped ones fall through
+                // to the platform untouched (the session no-ops on them).
                 if !event.repeat {
                     let pressed = event.state == ElementState::Pressed;
                     if let Some(button) = winit_pad_button(&event.physical_key)
@@ -1070,8 +1074,12 @@ impl ApplicationHandler for AndroidFrontend {
                             nerust_input_traits::SourceButtonId::Pad(button),
                             pressed,
                         ) {
-                            self.dispatch_pad_shortcut(shortcut);
+                            self.dispatch_shortcut(shortcut);
                         }
+                    } else if let Some(key) = settings_views::winit_key_to_key(&event.physical_key)
+                        && let Some(shortcut) = self.core.session.handle_keyboard_key(key, pressed)
+                    {
+                        self.dispatch_shortcut(shortcut);
                     }
                 }
             }

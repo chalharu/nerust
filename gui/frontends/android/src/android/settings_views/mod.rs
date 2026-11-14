@@ -33,7 +33,7 @@ pub(crate) use capture::apply_hardware_key;
 #[cfg(target_os = "android")]
 pub(crate) use commands::{CommandVault, apply_command_to, finish_snapshot};
 #[cfg(target_os = "android")]
-pub(crate) use keycode::android_keycode_to_button;
+pub(crate) use keycode::{android_keycode_to_button, winit_key_to_key};
 #[cfg(target_os = "android")]
 pub(crate) use wire::{
     CaptureSlot, GamepadInfo, KeyboardInfo, ViewPayload, app_language_tag, install_vm_deps,
