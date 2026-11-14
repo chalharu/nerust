@@ -442,8 +442,6 @@ class ChromeManager(private val activity: MainActivity) {
      * motion reach Java dispatch, hide it on disconnect so the activity
      * window takes focus back. Idempotent; the ensure pass rebuilds after
      * rotation or resume. */
-    fun setGamepadCaptureWanted(wanted: Boolean) = setControllerConnected(wanted)
-
     private fun updateGamepadCapture(wanted: Boolean) {
         if (wanted) {
             popupAnchor()?.let { ensureGamepadInputCapture(it) }

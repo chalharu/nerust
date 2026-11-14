@@ -690,7 +690,7 @@ fn overlay_detail_section(
                         .iter()
                         .map(|info| info.name.clone())
                         .collect::<Vec<_>>()
-                        .join(" · ")
+                        .join(", ")
                 },
             ),
             number_row(
@@ -854,7 +854,7 @@ fn build_pad_sections(
             rows.push(button_row(
                 &format!("reset.{pad_id}"),
                 i18n.text(UiText::ResetScreen),
-                String::new(),
+                i18n.text(UiText::DescPadReset),
             ));
             SectionWire {
                 id: pad_id.clone(),
@@ -1445,10 +1445,30 @@ fn build_devices_section(
         rows.push(choice_row(
             &format!("{devices_id}.gamepad"),
             i18n.text(UiText::GamepadDevice),
-            String::new(),
+            i18n.text(UiText::DescGamepadRadio),
             &pad_choices,
             &assigned,
         ));
+        // A disconnected pad keeps its slot: name it so "Not assigned"
+        // never lies about a reservation that restores on reconnect.
+        if assigned.is_none()
+            && let Some(stale) = port_index.and_then(|port_index| {
+                snapshot
+                    .shared
+                    .input
+                    .gamepad
+                    .pad_ports
+                    .iter()
+                    .position(|pad| pad.slot == Some(port_index))
+            })
+        {
+            rows.push(info_row(
+                &format!("{devices_id}.gamepad.stale"),
+                i18n.text(UiText::GamepadDevice),
+                i18n.text(UiText::DescPadParked),
+                format!("pad {}", stale + 1),
+            ));
+        }
         // Gear into each connected pad's own screen (deadzone, triggers,
         // button mapping): the radio above owns assignment, these own
         // the pad.
@@ -1460,15 +1480,25 @@ fn build_devices_section(
             rows.push(group_row(
                 &format!("{devices_id}.pad{}", pad_index + 1),
                 info.name.clone(),
-                i18n.text(UiText::DescDeadzone),
+                i18n.text(UiText::DescGamepadGear),
                 &format!("pad.{}", pad_index + 1),
+            ));
+        }
+        // Past the table a pad parks with no screen of its own: say so
+        // instead of vanishing silently.
+        if gamepads.len() > nerust_input_traits::MAX_PADS {
+            rows.push(info_row(
+                &format!("{devices_id}.pads.parked"),
+                i18n.text(UiText::GamepadDevice),
+                i18n.text(UiText::DescPadParked),
+                String::new(),
             ));
         }
     }
     rows.push(button_row(
         &format!("reset.{devices_id}"),
         i18n.text(UiText::ResetScreen),
-        String::new(),
+        i18n.text(UiText::DescDevicesReset),
     ));
     SectionWire {
         id: devices_id.to_string(),

@@ -106,8 +106,12 @@ class SensorController(
         applyRumble()
     }
 
+    /** Edge-only rumble engage: per-axis motion calls this at sensor
+     * rate, but the vibrator lookup (`getDevice` + `hasVibrator`) must
+     * not run per sample. An active rumble already converged, so only
+     * the silent-to-engaged edge re-evaluates. */
     fun noteControllerInput() {
-        applyRumble()
+        if (activeRumbleVibrator == null) applyRumble()
     }
 
     fun noteControllerRemoved(deviceId: Int) {
@@ -138,6 +142,13 @@ class SensorController(
         }
     }
 
+    /** Last forwarded acceleration, quantized to 0.01g: motion events
+     * fire at sensor rate and the bridge is JNI per sample, so
+     * sub-quantum repeats never cross. Rust treats small deltas as-is;
+     * this gate only saves crossings. */
+    private var lastAccelX = Float.NaN
+    private var lastAccelY = Float.NaN
+
     @Suppress("DEPRECATION")
     override fun onSensorChanged(event: SensorEvent) {
         if (event.sensor.type != Sensor.TYPE_ACCELEROMETER || !sensorRegistered) return
@@ -147,7 +158,12 @@ class SensorController(
                 event.values[1],
                 activity.windowManager.defaultDisplay.rotation,
             )
-        activity.forwardCartridgeAcceleration(sample[0], sample[1])
+        val qx = (sample[0] * 100).toInt() / 100f
+        val qy = (sample[1] * 100).toInt() / 100f
+        if (qx == lastAccelX && qy == lastAccelY) return
+        lastAccelX = qx
+        lastAccelY = qy
+        activity.forwardCartridgeAcceleration(qx, qy)
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit

@@ -24,6 +24,24 @@ pub enum CaptureTarget {
     Shortcut(ShortcutAction),
 }
 
+impl CaptureTarget {
+    /// Owning system for binding rows; shortcuts are global (`None`).
+    pub fn system_id(&self) -> Option<&dyn SystemId> {
+        match self {
+            Self::Binding { system, .. } | Self::PadBinding { system, .. } => Some(system.as_ref()),
+            Self::Shortcut(_) => None,
+        }
+    }
+
+    /// Connection-order pad for override rows; `None` elsewhere.
+    pub fn pad(&self) -> Option<usize> {
+        match self {
+            Self::PadBinding { pad, .. } => Some(*pad),
+            _ => None,
+        }
+    }
+}
+
 /// One lookup for all capture columns: `(key, shortcut pad, pad override)`.
 fn binding_cols(
     snapshot: &SettingsSnapshot,

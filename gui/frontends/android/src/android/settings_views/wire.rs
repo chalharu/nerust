@@ -605,16 +605,13 @@ pub(super) fn capture_open(keyboards: &[KeyboardInfo], gamepads: &[GamepadInfo])
 }
 
 pub(super) fn target_system(target: &CaptureTarget, deps: &VmDeps) -> String {
-    match target {
-        CaptureTarget::Binding { system, .. } | CaptureTarget::PadBinding { system, .. } => {
-            system.to_string()
-        }
-        CaptureTarget::Shortcut(_) => deps
-            .factories
-            .first()
-            .map(|factory| factory.system_id().to_string())
-            .unwrap_or_default(),
+    if let Some(system) = target.system_id() {
+        return system.to_string();
     }
+    deps.factories
+        .first()
+        .map(|factory| factory.system_id().to_string())
+        .unwrap_or_default()
 }
 
 /// Opaque capture target: newline-free JSON the key must not parse.

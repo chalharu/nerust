@@ -42,14 +42,6 @@ class SettingsActivity :
     @Volatile
     private var lastDeviceTruth: DeviceTruth? = null
 
-    /** Truth-order pad descriptors from the last scan: capture matches the
-     * event device descriptor against this order (descriptors, from the
-     * scan `pad:<descriptor>` members, survive id reuse and reconnects;
-     * raw device ids do not). Null (keys, uncounted devices) means no
-     * per-pad routing. */
-    @Volatile
-    private var gamepadOrder: List<String> = emptyList()
-
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(AppLocale.wrap(newBase))
     }
@@ -196,7 +188,6 @@ class SettingsActivity :
                 }
             if (scan == lastDeviceTruth) return@runIo
             lastDeviceTruth = scan
-            gamepadOrder = scan.gamepads.map { it.member.substringAfter("pad:") }
             if (Log.isLoggable(TAG, Log.DEBUG)) {
                 Log.d(TAG, "device truth scan: keyboards=${scan.keyboards.size} gamepads=${scan.gamepads.map { it.name }}")
             }
@@ -263,11 +254,10 @@ class SettingsActivity :
             return super.dispatchKeyEvent(event)
         }
         // Descriptor identity: the live id is recycled on reconnect, so
-        // the event device resolves to its descriptor and only counted
-        // pads in truth order route per-pad; keys and uncounted devices
-        // pass null (no per-pad routing, Rust decides the fallback).
-        val eventDescriptor = InputDevice.getDevice(event.deviceId)?.descriptor
-        val padDescriptor = eventDescriptor?.takeIf { it in gamepadOrder }
+        // the event device resolves to its descriptor; keys pass null.
+        // Rust validates against the vault list, so no Kotlin-side order
+        // copy can skew per-pad routing.
+        val padDescriptor = InputDevice.getDevice(event.deviceId)?.descriptor
         return routeSettingsKeyEvent(event.keyCode, padDescriptor, event.action) ||
             super.dispatchKeyEvent(event)
     }
