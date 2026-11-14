@@ -658,7 +658,7 @@ fn overlay_detail_section(
                 i18n.text(UiText::ConnectedGamepads),
                 String::new(),
                 if gamepads.is_empty() {
-                    i18n.text(UiText::NotAssigned)
+                    i18n.text(UiText::NoValue)
                 } else {
                     gamepads
                         .iter()
@@ -805,8 +805,8 @@ fn shortcuts_section(
     if rows.is_empty() {
         rows.push(info_row(
             "controls.shortcuts.none",
-            i18n.text(UiText::NoKeyboards),
-            i18n.text(UiText::DescNoKeyboards),
+            i18n.text(UiText::NoInputDevices),
+            i18n.text(UiText::DescNoInputDevices),
             String::new(),
         ));
     }

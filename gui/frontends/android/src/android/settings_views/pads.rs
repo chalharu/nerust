@@ -67,9 +67,11 @@ pub(super) fn build_pad_sections(
                     row.text = info.name.clone();
                     row
                 }
+                // Unassigned pads name the same vocabulary with no player:
+                // the state, not the category, is what changed.
                 None => info_row(
                     &format!("{pad_id}.slot"),
-                    i18n.text(UiText::GamepadDevice),
+                    i18n.text(UiText::Player),
                     String::new(),
                     i18n.text(UiText::NotAssigned),
                 ),
@@ -138,7 +140,7 @@ pub(super) fn build_pad_sections(
             for input in vm.inputs() {
                 let view = input.view.get();
                 let system = view.system_id.to_string();
-                let mut system_rows = Vec::new();
+                let mut system_chunks: Vec<(String, Vec<RowWire>)> = Vec::new();
                 for section in &view.sections {
                     let mut section_rows = Vec::new();
                     for binding in &section.rows {
@@ -181,14 +183,23 @@ pub(super) fn build_pad_sections(
                     if section_rows.is_empty() {
                         continue;
                     }
-                    system_rows.push(header_row(section.label.clone()));
-                    system_rows.append(&mut section_rows);
+                    // One attachment per machine here (rows scope to this
+                    // pad's own slot), so its header names nothing new:
+                    // drop it and let the machine header carry the block.
+                    // Multi-attachment machines keep their headers.
+                    system_chunks.push((section.label.clone(), section_rows));
                 }
-                if system_rows.is_empty() {
+                if system_chunks.is_empty() {
                     continue;
                 }
                 rows.push(header_row(view.label.clone()));
-                rows.append(&mut system_rows);
+                let single = system_chunks.len() == 1;
+                for (label, mut chunk) in system_chunks {
+                    if !single {
+                        rows.push(header_row(label));
+                    }
+                    rows.append(&mut chunk);
+                }
                 // One button driving two controls never fires the second:
                 // surface it on the pad's own screen, next to the rows.
                 // Scoped like the rows above: hidden attachments have no

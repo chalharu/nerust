@@ -367,7 +367,7 @@ fn gamepad_rows(
                 &format!("{devices_id}.gamepad.stale"),
                 i18n.text(UiText::GamepadDevice),
                 i18n.text(UiText::DescPadParked),
-                format!("pad {}", stale + 1),
+                format!("Pad {}", stale + 1),
             ));
         }
         return rows;

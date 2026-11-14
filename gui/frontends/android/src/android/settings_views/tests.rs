@@ -1254,8 +1254,8 @@ fn auto_hide_status_row_shows_none_when_empty() {
     let status = row(&payload, "controls.auto_hide_status");
     assert_eq!(
         status.text,
-        I18n::new(AppLanguage::English).text(UiText::NotAssigned),
-        "empty gate says so"
+        I18n::new(AppLanguage::English).text(UiText::NoValue),
+        "empty gate says none, not unassigned"
     );
 }
 
@@ -3556,6 +3556,66 @@ fn pad_screens_scope_mapping_rows_to_the_assigned_player() {
         !pad2.rows.iter().any(|row| row.key.contains("player1")),
         "player-1 defaults must not pose as this pad's mapping"
     );
+}
+
+#[test]
+fn pad_screen_drops_single_attachment_headers() {
+    // Rows scope to this pad's own slot, so each machine carries exactly
+    // one attachment: the machine header stays, the per-machine player
+    // sub-header names nothing new and goes.
+    let (snapshot, _) = test_payload();
+    let payload = pad_payload(&snapshot, &two_pads());
+    let pad1 = payload
+        .sections
+        .iter()
+        .find(|section| section.id == "pad.1")
+        .expect("pad.1 screen exists");
+    let headers: Vec<&str> = pad1
+        .rows
+        .iter()
+        .filter(|row| row.kind == RowKind::Header)
+        .map(|row| row.label.as_str())
+        .collect();
+    assert_eq!(
+        headers,
+        ["NES", "Game Boy Color", "Game Boy Advance"],
+        "machine headers stay, attachment sub-headers go: {headers:?}"
+    );
+}
+
+#[test]
+fn unassigned_pad_slot_row_keeps_player_vocabulary() {
+    // Assigned rows read `Player 1` / pad name; unassigned rows read the
+    // same vocabulary instead of switching to `Gamepad`.
+    let (mut snapshot, _) = test_payload();
+    snapshot.shared.input.gamepad.pad_ports[0].slot = None;
+    let payload = pad_payload(&snapshot, &two_pads());
+    let row = row(&payload, "pad.1.slot");
+    assert_eq!(
+        row.label, "Player",
+        "unassigned slot keeps player vocabulary"
+    );
+    assert_eq!(row.text, "Not assigned", "unassigned slot reads empty");
+}
+
+#[test]
+fn disconnected_pad_stale_row_uses_pad_display_name() {
+    // The stale reservation names `Pad N` like the pad screens do, never
+    // the lowercase member id.
+    let (snapshot, _) = test_payload();
+    let payload = pad_payload(&snapshot, &[]);
+    let row = row(&payload, "devices.p1.gamepad.stale");
+    assert_eq!(row.text, "Pad 1", "stale reservation reads Pad N");
+}
+
+#[test]
+fn shortcuts_empty_state_names_inputs_not_keyboards() {
+    // No keyboards and no pads: the empty state names inputs in general,
+    // since the screen serves both columns.
+    let (_snapshot, payload) = test_payload_with_keyboards(&[]);
+    let row = row(&payload, "controls.shortcuts.none");
+    assert_eq!(row.label, "No input devices");
+    assert_eq!(row.description, "Connect a keyboard or gamepad.");
 }
 
 #[test]
