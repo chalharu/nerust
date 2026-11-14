@@ -41,6 +41,12 @@ class SettingsActivity :
     @Volatile
     private var lastDeviceTruth: DeviceTruth? = null
 
+    /** Truth-order gamepad device ids from the last scan: per-pad mapping
+     * capture matches the event device against this order (the same order
+     * the pad screens list), `-1` when the device is not a counted pad. */
+    @Volatile
+    private var gamepadOrder: List<Int> = emptyList()
+
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(AppLocale.wrap(newBase))
     }
@@ -187,6 +193,7 @@ class SettingsActivity :
                 }
             if (scan == lastDeviceTruth) return@runIo
             lastDeviceTruth = scan
+            gamepadOrder = scan.gamepads.map { it.deviceId }
             Log.d(TAG, "device truth scan: keyboards=${scan.keyboards.size} gamepads=${scan.gamepads.map { it.name }}")
             val keyboards = JSONArray()
             scan.keyboards.forEach { row ->
@@ -250,7 +257,8 @@ class SettingsActivity :
         if (controller && !capturing) {
             return super.dispatchKeyEvent(event)
         }
-        return routeSettingsKeyEvent(event.keyCode, event.action) ||
+        val padIndex = gamepadOrder.indexOf(event.deviceId)
+        return routeSettingsKeyEvent(event.keyCode, padIndex, event.action) ||
             super.dispatchKeyEvent(event)
     }
 
@@ -280,9 +288,12 @@ class SettingsActivity :
     }
 
     /** Route a key event to Rust while a binding capture is pending. True only
-     * when Rust consumed the key; releases and unmapped keys fall through. */
+     * when Rust consumed the key; releases and unmapped keys fall through.
+     * `padIndex` is the truth-order pad (`-1` for keys and uncounted
+     * devices): per-pad mapping rows only accept their own pad. */
     private fun routeSettingsKeyEvent(
         keyCode: Int,
+        padIndex: Int,
         action: Int,
     ): Boolean {
         val nav = navActions ?: return false
@@ -292,7 +303,7 @@ class SettingsActivity :
         if (action != KeyEvent.ACTION_DOWN && action != KeyEvent.ACTION_UP) return false
         val raw =
             try {
-                nativeHardwareKey(keyCode, action == KeyEvent.ACTION_DOWN)
+                nativeHardwareKey(keyCode, padIndex, action == KeyEvent.ACTION_DOWN)
             } catch (e: Exception) {
                 Log.e(TAG, "nativeHardwareKey failed", e)
                 null
@@ -345,6 +356,7 @@ class SettingsActivity :
 
     private external fun nativeHardwareKey(
         keyCode: Int,
+        padIndex: Int,
         pressed: Boolean,
     ): String?
 
