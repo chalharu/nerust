@@ -660,6 +660,17 @@ impl AndroidFrontend {
                     descriptor,
                 } => {
                     self.core.session.note_pad_connected(device_id, &descriptor);
+                    // Mirror the session order into the vault and re-sort
+                    // the display list: a scan that raced ahead of this
+                    // event stays sorted by the last mirror until now.
+                    let order = self.core.session.pad_descriptors().to_vec();
+                    bridge::with_settings(|state| {
+                        state.pad_order = order;
+                        settings_views::sort_gamepads_by_order(
+                            &mut state.gamepads,
+                            &state.pad_order,
+                        );
+                    });
                 }
                 MenuAction::DeviceRemoved { device_id } => {
                     self.core.session.note_pad_disconnected(device_id);

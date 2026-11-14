@@ -194,12 +194,29 @@ pub(crate) struct GamepadInfo {
 /// Vault descriptor to connection-order pad index: the same vault list
 /// that built the rows, so a Kotlin scan-order descriptor can never skew
 /// against the Rust side. Accepts the raw descriptor or the `pad:`
-/// member id; `None` when the device left (stale Kotlin push).
+/// member id; `None` when the device left (stale Kotlin push) or parks
+/// past the persisted table.
 pub(crate) fn pad_index_for_member(gamepads: &[GamepadInfo], descriptor: &str) -> Option<usize> {
     let bare = descriptor.strip_prefix("pad:").unwrap_or(descriptor);
     gamepads
         .iter()
         .position(|info| info.member.strip_prefix("pad:").unwrap_or(&info.member) == bare)
+        .filter(|index| *index < nerust_input_traits::MAX_PADS)
+}
+
+/// Stable session order for the display list: vault order follows the
+/// session first-seen mirror (refreshed on every connect event), so Pad N
+/// names session pad N even after a disconnect/reconnect cycle compacts
+/// the scan. Unknown members (scan raced ahead of the connect event)
+/// keep scan order at the end; the next connect re-sorts.
+pub(crate) fn sort_gamepads_by_order(gamepads: &mut [GamepadInfo], pad_order: &[String]) {
+    gamepads.sort_by_key(|info| {
+        let bare = info.member.strip_prefix("pad:").unwrap_or(&info.member);
+        pad_order
+            .iter()
+            .position(|known| known == bare)
+            .unwrap_or(usize::MAX)
+    });
 }
 
 /// One settings edit from Kotlin: row key plus op. `set` reads the choice
