@@ -361,7 +361,7 @@ checksum = "6a1f896587b6f2c069c73d2f0913e2d590c3990285cd2f0b6aa02b786b4c679c"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.9",
+ "syn 3.0.10",
 ]
 
 [[package]]
@@ -564,7 +564,7 @@ dependencies = [
  "heck 0.5.0",
  "proc-macro2",
  "quote",
- "syn 3.0.9",
+ "syn 3.0.10",
 ]
 
 [[package]]
@@ -1073,7 +1073,7 @@ checksum = "c6232dd377dcc64799954cbd3a9bb882e9cdc1308ccd87b1c098f1fb2eaf82a8"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.9",
+ "syn 3.0.10",
 ]
 
 [[package]]
@@ -1415,7 +1415,7 @@ checksum = "ea5190182e6915eb873ddbc16e23b711b6eb1f9c00a0d0a3a91b5f6228475225"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.9",
+ "syn 3.0.10",
 ]
 
 [[package]]
@@ -1489,7 +1489,7 @@ checksum = "9fb9654ba8355388abeb8dcb4fc62f511300867002afc858860463bdd9fe0c44"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.9",
+ "syn 3.0.10",
 ]
 
 [[package]]
@@ -1859,7 +1859,7 @@ dependencies = [
  "heck 0.5.0",
  "proc-macro2",
  "quote",
- "syn 3.0.9",
+ "syn 3.0.10",
 ]
 
 [[package]]
@@ -2128,7 +2128,7 @@ dependencies = [
  "proc-macro-crate 3.5.0",
  "proc-macro2",
  "quote",
- "syn 3.0.9",
+ "syn 3.0.10",
 ]
 
 [[package]]
@@ -3499,7 +3499,7 @@ dependencies = [
  "nerust_render_filters",
  "nerust_render_ntsc",
  "nerust_render_traits",
- "pollster 1.0.1",
+ "pollster",
  "raw-window-handle",
  "wgpu 30.0.1",
  "x11-dl",
@@ -3749,6 +3749,7 @@ dependencies = [
  "objc2-core-foundation",
  "objc2-foundation 0.3.2",
  "objc2-quartz-core 0.3.2",
+ "objc2-uniform-type-identifiers 0.3.2",
 ]
 
 [[package]]
@@ -4072,7 +4073,7 @@ dependencies = [
  "objc2-link-presentation",
  "objc2-quartz-core 0.2.2",
  "objc2-symbols",
- "objc2-uniform-type-identifiers",
+ "objc2-uniform-type-identifiers 0.2.2",
  "objc2-user-notifications 0.2.2",
 ]
 
@@ -4106,6 +4107,16 @@ dependencies = [
  "block2 0.5.1",
  "objc2 0.5.3",
  "objc2-foundation 0.2.2",
+]
+
+[[package]]
+name = "objc2-uniform-type-identifiers"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7902ac02859fc1f7045f8b598c63f1ae0cc7efeaa06a9bc9f3d9a3c955974fa4"
+dependencies = [
+ "objc2 0.6.5",
+ "objc2-foundation 0.3.2",
 ]
 
 [[package]]
@@ -4213,7 +4224,7 @@ dependencies = [
 [[package]]
 name = "panechord"
 version = "0.1.0-dev"
-source = "git+https://github.com/chalharu/panechord?rev=b6bdb5f0802749440a929406abbb9168036879ab#b6bdb5f0802749440a929406abbb9168036879ab"
+source = "git+https://github.com/chalharu/panechord?rev=c1c807ae636ec4b3c89766f150e5a9108af300a5#c1c807ae636ec4b3c89766f150e5a9108af300a5"
 dependencies = [
  "panechord-gtk",
  "panechord-macros",
@@ -4225,7 +4236,7 @@ dependencies = [
 [[package]]
 name = "panechord-gtk"
 version = "0.1.0-dev"
-source = "git+https://github.com/chalharu/panechord?rev=b6bdb5f0802749440a929406abbb9168036879ab#b6bdb5f0802749440a929406abbb9168036879ab"
+source = "git+https://github.com/chalharu/panechord?rev=c1c807ae636ec4b3c89766f150e5a9108af300a5#c1c807ae636ec4b3c89766f150e5a9108af300a5"
 dependencies = [
  "futures",
  "gtk4",
@@ -4240,7 +4251,7 @@ dependencies = [
 [[package]]
 name = "panechord-macos"
 version = "0.1.0-dev"
-source = "git+https://github.com/chalharu/panechord?rev=b6bdb5f0802749440a929406abbb9168036879ab#b6bdb5f0802749440a929406abbb9168036879ab"
+source = "git+https://github.com/chalharu/panechord?rev=c1c807ae636ec4b3c89766f150e5a9108af300a5#c1c807ae636ec4b3c89766f150e5a9108af300a5"
 dependencies = [
  "futures",
  "objc2 0.6.5",
@@ -4252,7 +4263,7 @@ dependencies = [
 [[package]]
 name = "panechord-macros"
 version = "0.1.0-dev"
-source = "git+https://github.com/chalharu/panechord?rev=b6bdb5f0802749440a929406abbb9168036879ab#b6bdb5f0802749440a929406abbb9168036879ab"
+source = "git+https://github.com/chalharu/panechord?rev=c1c807ae636ec4b3c89766f150e5a9108af300a5#c1c807ae636ec4b3c89766f150e5a9108af300a5"
 dependencies = [
  "panechord-markup",
  "panechord-runtime",
@@ -4260,13 +4271,13 @@ dependencies = [
  "proc-macro2",
  "quote",
  "serde_json",
- "syn 3.0.9",
+ "syn 3.0.10",
 ]
 
 [[package]]
 name = "panechord-markup"
 version = "0.1.0-dev"
-source = "git+https://github.com/chalharu/panechord?rev=b6bdb5f0802749440a929406abbb9168036879ab#b6bdb5f0802749440a929406abbb9168036879ab"
+source = "git+https://github.com/chalharu/panechord?rev=c1c807ae636ec4b3c89766f150e5a9108af300a5#c1c807ae636ec4b3c89766f150e5a9108af300a5"
 dependencies = [
  "panechord-runtime",
  "schemars",
@@ -4279,7 +4290,7 @@ dependencies = [
 [[package]]
 name = "panechord-native"
 version = "0.1.0-dev"
-source = "git+https://github.com/chalharu/panechord?rev=b6bdb5f0802749440a929406abbb9168036879ab#b6bdb5f0802749440a929406abbb9168036879ab"
+source = "git+https://github.com/chalharu/panechord?rev=c1c807ae636ec4b3c89766f150e5a9108af300a5#c1c807ae636ec4b3c89766f150e5a9108af300a5"
 dependencies = [
  "panechord-gtk",
  "panechord-macos",
@@ -4289,7 +4300,7 @@ dependencies = [
 [[package]]
 name = "panechord-runtime"
 version = "0.1.0-dev"
-source = "git+https://github.com/chalharu/panechord?rev=b6bdb5f0802749440a929406abbb9168036879ab#b6bdb5f0802749440a929406abbb9168036879ab"
+source = "git+https://github.com/chalharu/panechord?rev=c1c807ae636ec4b3c89766f150e5a9108af300a5#c1c807ae636ec4b3c89766f150e5a9108af300a5"
 dependencies = [
  "futures",
  "futures-timer",
@@ -4299,7 +4310,7 @@ dependencies = [
 [[package]]
 name = "panechord-tao"
 version = "0.1.0-dev"
-source = "git+https://github.com/chalharu/panechord?rev=b6bdb5f0802749440a929406abbb9168036879ab#b6bdb5f0802749440a929406abbb9168036879ab"
+source = "git+https://github.com/chalharu/panechord?rev=c1c807ae636ec4b3c89766f150e5a9108af300a5#c1c807ae636ec4b3c89766f150e5a9108af300a5"
 dependencies = [
  "futures",
  "gtk",
@@ -4458,12 +4469,6 @@ dependencies = [
  "rustix 1.1.6",
  "windows-sys 0.61.2",
 ]
-
-[[package]]
-name = "pollster"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f3a9f18d041e6d0e102a0a46750538147e5e8992d3b4873aaafee2520b00ce3"
 
 [[package]]
 name = "pollster"
@@ -4741,7 +4746,7 @@ checksum = "92ecd8964f8453721699a1ed72037b0db49ce2f5a5138486ee89bed6f67cdf3a"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.9",
+ "syn 3.0.10",
 ]
 
 [[package]]
@@ -4781,9 +4786,9 @@ checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
 
 [[package]]
 name = "rfd"
-version = "0.17.2"
+version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20dafead71c16a34e1ff357ddefc8afc11e7d51d6d2b9fbd07eaa48e3e540220"
+checksum = "c4b9d4857b10297ffb0f64cae711e983a7aeaee561848d56d429d3858bd8ed93"
 dependencies = [
  "block2 0.6.2",
  "dispatch2",
@@ -4794,8 +4799,9 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-core-foundation",
  "objc2-foundation 0.3.2",
+ "objc2-uniform-type-identifiers 0.3.2",
  "percent-encoding",
- "pollster 0.4.0",
+ "pollster",
  "raw-window-handle",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -4915,7 +4921,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "serde_derive_internals",
- "syn 3.0.9",
+ "syn 3.0.10",
 ]
 
 [[package]]
@@ -5019,7 +5025,7 @@ checksum = "e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.9",
+ "syn 3.0.10",
 ]
 
 [[package]]
@@ -5030,7 +5036,7 @@ checksum = "f852137cce035d6a4df67ccce505ff6b3e9fd3a10e3e52b24dc71e650bb1a9bd"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.9",
+ "syn 3.0.10",
 ]
 
 [[package]]
@@ -5390,9 +5396,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "3.0.9"
+version = "3.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d78c8dee4c7bf0e14673097256fed6142ce9d3b85a408189d07482442145823b"
+checksum = "4ae9ccbea3a7b0b09443036490c8f34a8b1b760fd345e5c0dae0aac718faea79"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5407,7 +5413,7 @@ checksum = "901704edd0dfe137f1987838ee4f259e4e063c31371bdb423f7ae38ec6f77f02"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.9",
+ "syn 3.0.10",
 ]
 
 [[package]]
@@ -5554,7 +5560,7 @@ checksum = "fe5197923287db20a58125f0bc85c062f7f2c892de97b18c356f9efb14b28524"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.9",
+ "syn 3.0.10",
 ]
 
 [[package]]
@@ -5828,7 +5834,7 @@ checksum = "f153acc4e99a5f2a5aefa09fb078be54e26271b2813f6041200b224c098d8328"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.9",
+ "syn 3.0.10",
 ]
 
 [[package]]
@@ -5973,7 +5979,7 @@ dependencies = [
  "bumpalo",
  "proc-macro2",
  "quote",
- "syn 3.0.9",
+ "syn 3.0.10",
  "wasm-bindgen-shared",
 ]
 
@@ -6931,7 +6937,7 @@ checksum = "ec8ebde2db3681e8c9980cc27822030e68752690ddfa9473e739aeb4dbde6d71"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.9",
+ "syn 3.0.10",
  "synstructure",
 ]
 
@@ -6978,7 +6984,7 @@ checksum = "f75b4683f6c7f45248d4d64056a24298c6281e0993356d7d1b4a1a962ef10d4a"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.9",
+ "syn 3.0.10",
  "synstructure",
 ]
 
@@ -7032,7 +7038,7 @@ checksum = "c3743ddbf47738d929cd1ae2e199d40d0162979dfe31aef8ae646d2bf00bf97a"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.9",
+ "syn 3.0.10",
 ]
 
 [[package]]

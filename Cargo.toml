@@ -212,7 +212,7 @@ nerust_sound_spectrum = { path = "sound/spectrum" }
 nerust_system_traits = { path = "traits/system" }
 nerust_timer = { path = "timer" }
 open = { version = "=5.4.5" }
-panechord = { git = "https://github.com/chalharu/panechord", rev = "b6bdb5f0802749440a929406abbb9168036879ab" }
+panechord = { git = "https://github.com/chalharu/panechord", rev = "c1c807ae636ec4b3c89766f150e5a9108af300a5" }
 png = { version = "=0.18.1" }
 pollster = { version = "=1.0.1" }
 raw-window-handle = { version = "=0.6.2" }
