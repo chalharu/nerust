@@ -183,55 +183,57 @@ fn binding_page(
 }
 
 fn target_key(target: &CaptureTarget) -> String {
-    let identity = match target {
-        CaptureTarget::Shortcut(action) => format!("shortcut_{action:?}"),
-        CaptureTarget::Binding {
-            system,
-            attachment,
-            control,
-        } => {
-            let system = system.to_string();
-            format!(
-                "{}:{system}{}:{attachment}{}:{control}",
-                system.len(),
-                attachment.len(),
-                control.len()
-            )
-        }
-        // Desktop never constructs per-pad targets (mapping stays
-        // keyboard-only there); the arm keeps the match exhaustive with
-        // a distinct identity if one ever arrives.
-        CaptureTarget::PadBinding {
-            system,
-            pad,
-            attachment,
-            control,
-        } => {
-            let system = system.to_string();
-            format!(
-                "pad{pad}_{}:{system}{}:{attachment}{}:{control}",
-                system.len(),
-                attachment.len(),
-                control.len()
-            )
-        }
+    if let Some(action) = target.action() {
+        return format!("shortcut_{action:?}")
+            .bytes()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+    }
+    // Bindings and per-pad overrides share the length-prefixed identity;
+    // overrides prefix the pad. Shortcuts return above.
+    let system = target
+        .system_id()
+        .map(|system| system.to_string())
+        .unwrap_or_default();
+    let attachment = target.attachment().unwrap_or_default();
+    let control = target.control().unwrap_or_default();
+    let identity = match target.pad() {
+        Some(pad) => format!(
+            "pad{pad}_{}:{system}{}:{attachment}{}:{control}",
+            system.len(),
+            attachment.len(),
+            control.len()
+        ),
+        None => format!(
+            "{}:{system}{}:{attachment}{}:{control}",
+            system.len(),
+            attachment.len(),
+            control.len()
+        ),
     };
     identity.bytes().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn section_key(section: &BindingSectionView, index: usize) -> String {
-    match section.rows.first().map(|row| &row.target) {
-        Some(CaptureTarget::Binding {
-            system, attachment, ..
-        }) => target_key(&CaptureTarget::Binding {
-            system: system.clone_box(),
-            attachment: attachment.clone(),
-            control: String::new(),
-        }),
-        Some(CaptureTarget::Shortcut(_)) => "shortcuts".into(),
-        Some(CaptureTarget::PadBinding { .. }) => format!("padbindings_{index}"),
-        None => format!("empty_{index}"),
+    let Some(target) = section.rows.first().map(|row| &row.target) else {
+        return format!("empty_{index}");
+    };
+    if target.action().is_some() {
+        return "shortcuts".into();
     }
+    if target.pad().is_some() {
+        return format!("padbindings_{index}");
+    }
+    // Section identity folds system + attachment (not control): rows of
+    // one attachment share the page. Same length-prefixed hex shape as
+    // `target_key` with an empty control.
+    let system = target
+        .system_id()
+        .map(|system| system.to_string())
+        .unwrap_or_default();
+    let attachment = target.attachment().unwrap_or_default();
+    let identity = format!("{}:{system}{}:", system.len(), attachment.len(),);
+    identity.bytes().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn binding_sections(
@@ -366,12 +368,68 @@ pub(super) fn inputs(
                     )
                 })
                 .collect();
-            let sections = binding_sections(
-                editor.binding(input.view.clone(), |value| value.sections.clone(), None),
-                editor,
-                &capture,
-                &clear,
+            // Keyboard sections plus per-pad button overrides on the same
+            // page: one section per connection-order pad, rows mirrored
+            // from the keyboard rows with the pad routed in. Sourced on
+            // the settings revision (not the input view): pad applies and
+            // captures never change the keyboard projection, so the view
+            // alone would not notify and the pad values would go stale.
+            // The revision bumps on every transact, so the rows below
+            // always read the live draft and views.
+            let revision = vm.revision.clone();
+            let mapping_input = input.clone();
+            let mapping_gamepads = vm.gamepads.clone();
+            let all_sections = editor.binding(
+                revision,
+                move |_| {
+                    let value = mapping_input.view.get();
+                    let mut sections = value.sections.clone();
+                    let pads = mapping_gamepads.view.get().pads;
+                    for pad in pads.iter().map(|row| row.index) {
+                        let pad_label = pads
+                            .iter()
+                            .find(|row| row.index == pad)
+                            .map(|row| row.label.clone())
+                            .unwrap_or_default();
+                        let rows = value
+                            .sections
+                            .iter()
+                            .flat_map(|section| &section.rows)
+                            .filter_map(|binding| {
+                                let (Some(attachment), Some(control)) =
+                                    (binding.target.attachment(), binding.target.control())
+                                else {
+                                    return None;
+                                };
+                                let target = CaptureTarget::PadBinding {
+                                    system: value.system_id.clone_box(),
+                                    pad,
+                                    attachment: attachment.to_string(),
+                                    control: control.to_string(),
+                                };
+                                let row_value =
+                                    mapping_input.pad_row_value(&target, binding.pad_default);
+                                Some(nerust_gui_viewmodel::settings::dto::BindingRowView {
+                                    target,
+                                    label: binding.label.clone(),
+                                    value: row_value,
+                                    pad_default: binding.pad_default,
+                                })
+                            })
+                            .collect::<Vec<_>>();
+                        if rows.is_empty() {
+                            continue;
+                        }
+                        sections.push(BindingSectionView {
+                            label: format!("{} ({})", pad_label, value.label),
+                            rows,
+                        });
+                    }
+                    sections
+                },
+                None,
             );
+            let sections = binding_sections(all_sections, editor, &capture, &clear);
             Keyed::new(
                 format!("system-{index}"),
                 Store::new(
@@ -865,7 +923,18 @@ mod tests {
             assert_eq!(snapshot.label, view.label);
             assert_eq!(snapshot.has_slots, !view.slots.is_empty());
             assert_eq!(snapshot.slots.len(), view.slots.len());
-            assert_eq!(snapshot.sections.get().len(), view.sections.len());
+            // Keyboard sections plus one mapping section per pad.
+            assert_eq!(
+                snapshot.sections.get().len(),
+                view.sections.len() + nerust_input_traits::MAX_PADS
+            );
+            for section in snapshot.sections.get().iter().skip(view.sections.len()) {
+                assert!(
+                    section.key.starts_with("padbindings_"),
+                    "pad sections key by pad override target: {}",
+                    section.key
+                );
+            }
             for (slot, view_slot) in snapshot.slots.iter().zip(view.slots.iter()) {
                 let row = slot.model.snapshot();
                 assert_eq!(row.label.get(), view_slot.label);

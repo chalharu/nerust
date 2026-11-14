@@ -618,33 +618,20 @@ pub(super) fn target_system(target: &CaptureTarget, deps: &VmDeps) -> String {
 /// The `Value` form is the internal boundary (single serialization at the
 /// row edge); the command path decodes the row string once per command.
 fn encode_target_value(target: &CaptureTarget, system: &str) -> serde_json::Value {
-    match target {
-        CaptureTarget::Binding {
-            attachment,
-            control,
-            ..
-        } => serde_json::json!({
-            "kind": "binding",
-            "system": system,
-            "attachment": attachment,
-            "control": control,
-        }),
-        CaptureTarget::PadBinding {
-            pad,
-            attachment,
-            control,
-            ..
-        } => serde_json::json!({
-            "kind": "pad_binding",
-            "system": system,
-            "pad": pad,
-            "attachment": attachment,
-            "control": control,
-        }),
-        CaptureTarget::Shortcut(action) => {
-            serde_json::json!({"kind": "shortcut", "action": action})
-        }
+    if let Some(action) = target.action() {
+        return serde_json::json!({"kind": "shortcut", "action": action});
     }
+    // Bindings and overrides share the shape; overrides add the pad.
+    let mut value = serde_json::json!({
+        "kind": if target.pad().is_some() { "pad_binding" } else { "binding" },
+        "system": system,
+        "attachment": target.attachment().unwrap_or_default(),
+        "control": target.control().unwrap_or_default(),
+    });
+    if let Some(pad) = target.pad() {
+        value["pad"] = pad.into();
+    }
+    value
 }
 
 pub(super) fn encode_target(target: &CaptureTarget, system: &str) -> String {

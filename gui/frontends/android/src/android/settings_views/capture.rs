@@ -43,31 +43,27 @@ pub(crate) fn apply_hardware_key(
             let target = target.clone();
             let pad = pad_descriptor
                 .and_then(|descriptor| pad_index_for_member(truth.gamepads, descriptor));
-            let (key, button) = match &target {
-                CaptureTarget::PadBinding { pad: want, .. } => {
-                    // Per-pad mapping rows take only their own pad's
-                    // buttons: a press from another pad (or a keyboard key)
-                    // leaves the capture pending instead of eating it. A
-                    // D-pad press lands its position, never its arrow twin.
-                    if pad != Some(*want) {
-                        return Ok((None, false));
-                    }
-                    (None, android_keycode_to_pad(keycode))
+            let (key, button) = if let Some(want) = target.pad() {
+                // Per-pad mapping rows take only their own pad's
+                // buttons: a press from another pad (or a keyboard key)
+                // leaves the capture pending instead of eating it. A
+                // D-pad press lands its position, never its arrow twin.
+                if pad != Some(want) {
+                    return Ok((None, false));
                 }
-                CaptureTarget::Binding { .. } => {
-                    // Game rows take keyboard keys only: pad-only buttons
-                    // leave the capture pending, while D-pad presses land
-                    // their arrow-key twin into the shared vocabulary.
-                    (android_keycode_to_key(keycode), None)
-                }
-                CaptureTarget::Shortcut(_) => {
-                    // Shortcuts take either side: a D-pad press lands both
-                    // the arrow key and the pad position in their columns.
-                    (
-                        android_keycode_to_key(keycode),
-                        android_keycode_to_pad(keycode),
-                    )
-                }
+                (None, android_keycode_to_pad(keycode))
+            } else if target.action().is_some() {
+                // Shortcuts take either side: a D-pad press lands both
+                // the arrow key and the pad position in their columns.
+                (
+                    android_keycode_to_key(keycode),
+                    android_keycode_to_pad(keycode),
+                )
+            } else {
+                // Game rows take keyboard keys only: pad-only buttons
+                // leave the capture pending, while D-pad presses land
+                // their arrow-key twin into the shared vocabulary.
+                (android_keycode_to_key(keycode), None)
             };
             if key.is_some() || button.is_some() {
                 let vm = build_vm(snapshot, deps, i18n)?;
