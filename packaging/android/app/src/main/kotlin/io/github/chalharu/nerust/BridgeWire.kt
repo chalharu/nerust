@@ -24,26 +24,6 @@ internal object MenuAction {
     const val DEVICE_ADDED = "device_added"
     const val DEVICE_REMOVED = "device_removed"
     const val TOUCH_GATE = "touch_gate"
-
-    val ALL: Set<String> = setOf(
-        EXIT,
-        LOAD_STATE,
-        OPEN_ROM,
-        OPEN_SETTINGS,
-        ORIENTATION_CHANGED,
-        RESET,
-        SAVE_STATE,
-        TOGGLE_PAUSE,
-        UNLOAD,
-        CREATE_SLOT,
-        DELETE_SLOT,
-        SELECT_SLOT,
-        CONTROLLER,
-        ANALOG,
-        DEVICE_ADDED,
-        DEVICE_REMOVED,
-        TOUCH_GATE,
-    )
 }
 
 internal object ControllerKey {
@@ -62,24 +42,6 @@ internal object ControllerKey {
     const val RIGHT = "right"
     const val L3 = "l3"
     const val R3 = "r3"
-
-    val ALL: Set<String> = setOf(
-        BUTTON1,
-        BUTTON2,
-        BUTTON3,
-        BUTTON4,
-        BUTTON5,
-        BUTTON6,
-        START,
-        SELECT,
-        GUIDE,
-        UP,
-        DOWN,
-        LEFT,
-        RIGHT,
-        L3,
-        R3,
-    )
 }
 
 internal object ControllerAxis {
@@ -89,13 +51,4 @@ internal object ControllerAxis {
     const val RIGHT_Y = "right_y"
     const val TRIGGER_L = "trigger_l"
     const val TRIGGER_R = "trigger_r"
-
-    val ALL: Set<String> = setOf(
-        LEFT_X,
-        LEFT_Y,
-        RIGHT_X,
-        RIGHT_Y,
-        TRIGGER_L,
-        TRIGGER_R,
-    )
 }

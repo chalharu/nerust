@@ -111,15 +111,15 @@ class ChromeManager(private val activity: MainActivity) {
     // Terminal capability, pushed from MainActivity device truth. Unknown
     // starts capable: hiding by default would blank phones on day one.
     private var touchCapable = true
-    // Auto hides while a gamepad is connected; the post-press quiet
-    // window below still covers already-known devices transiently.
+    // Single connection signal for counted pads: Auto-hide reads it for
+    // the overlay gate and the capture window follows the same edge, so
+    // the two can never disagree. One field, two vocabulary setters below.
     private var controllerConnected = false
-    // Gamepad-input capture follows the same connection signal: a counted
+    // Gamepad-input capture follows the connection signal: a counted
     // pad shows the invisible capture window (and only then), so Java
     // dispatch finally reaches gameplay keys and joystick motion.
     private var gamepadInputPopup: PopupWindow? = null
     private var gamepadInputView: GamepadInputCaptureView? = null
-    private var gamepadCaptureWanted = false
     private var controlsOpacityPercent = 65
     private var controlsHaptics = true
     private var controlsPushedZones: List<PushedOverlayZone> = emptyList()
@@ -442,9 +442,9 @@ class ChromeManager(private val activity: MainActivity) {
      * motion reach Java dispatch, hide it on disconnect so the activity
      * window takes focus back. Idempotent; the ensure pass rebuilds after
      * rotation or resume. */
-    fun setGamepadCaptureWanted(wanted: Boolean) {
-        if (gamepadCaptureWanted == wanted) return
-        gamepadCaptureWanted = wanted
+    fun setGamepadCaptureWanted(wanted: Boolean) = setControllerConnected(wanted)
+
+    private fun updateGamepadCapture(wanted: Boolean) {
         if (wanted) {
             popupAnchor()?.let { ensureGamepadInputCapture(it) }
         } else {
@@ -569,7 +569,7 @@ class ChromeManager(private val activity: MainActivity) {
         val controlsAttached = ensureControlsOverlayPopup(anchor)
         val drawerAttached = ensureDrawerChromePopup(anchor)
         val fpsAttached = !fpsVisible || ensureFpsOverlayPopup(anchor)
-        val captureAttached = !gamepadCaptureWanted || ensureGamepadInputCapture(anchor)
+        val captureAttached = !controllerConnected || ensureGamepadInputCapture(anchor)
         Log.i(
             TAG,
             "ensureChromeAttached: controlsAttached=$controlsAttached drawerAttached=$drawerAttached " +
@@ -689,7 +689,7 @@ class ChromeManager(private val activity: MainActivity) {
         activity.window.decorView.removeCallbacks(restoreControllerOverlayRunnable)
         controllerOverlayHiddenUntil = 0L
         refreshOverlayChrome()
-        setGamepadCaptureWanted(connected)
+        updateGamepadCapture(connected)
     }
 
     private fun ensureDrawerChromePopup(anchor: View): Boolean {

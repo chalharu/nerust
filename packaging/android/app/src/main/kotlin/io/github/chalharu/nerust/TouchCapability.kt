@@ -92,8 +92,9 @@ internal data class KeyboardRow(
 /** One counted gamepad row: stable member id plus OS display name.
  * Member mirrors the runtime port-set scheme (`pad:<descriptor>`) so the
  * settings card and the session resolve the same device. `deviceId` is
- * the live Android id for the gameplay key gate (recycled on reconnect,
- * never persisted or sent to Rust). Plain data. */
+ * the live Android id for platform-side routing only (gameplay key gate,
+ * vibrator/motion lookup: recycled on reconnect, never persisted or sent
+ * to Rust). Plain data. */
 internal data class GamepadRow(
     val member: String,
     val name: String,

@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.hardware.input.InputManager
 import android.os.Bundle
 import android.util.Log
+import android.view.InputDevice
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
@@ -41,11 +42,13 @@ class SettingsActivity :
     @Volatile
     private var lastDeviceTruth: DeviceTruth? = null
 
-    /** Truth-order gamepad device ids from the last scan: per-pad mapping
-     * capture matches the event device against this order (the same order
-     * the pad screens list), `-1` when the device is not a counted pad. */
+    /** Truth-order pad descriptors from the last scan: capture matches the
+     * event device descriptor against this order (descriptors, from the
+     * scan `pad:<descriptor>` members, survive id reuse and reconnects;
+     * raw device ids do not). Null (keys, uncounted devices) means no
+     * per-pad routing. */
     @Volatile
-    private var gamepadOrder: List<Int> = emptyList()
+    private var gamepadOrder: List<String> = emptyList()
 
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(AppLocale.wrap(newBase))
@@ -193,8 +196,10 @@ class SettingsActivity :
                 }
             if (scan == lastDeviceTruth) return@runIo
             lastDeviceTruth = scan
-            gamepadOrder = scan.gamepads.map { it.deviceId }
-            Log.d(TAG, "device truth scan: keyboards=${scan.keyboards.size} gamepads=${scan.gamepads.map { it.name }}")
+            gamepadOrder = scan.gamepads.map { it.member.substringAfter("pad:") }
+            if (Log.isLoggable(TAG, Log.DEBUG)) {
+                Log.d(TAG, "device truth scan: keyboards=${scan.keyboards.size} gamepads=${scan.gamepads.map { it.name }}")
+            }
             val keyboards = JSONArray()
             scan.keyboards.forEach { row ->
                 keyboards.put(
@@ -248,7 +253,7 @@ class SettingsActivity :
         // capture, controller sources keep platform behavior.
         val capturing = navActions?.isCapturing == true
         val controller = isControllerSource(event.source)
-        if (controller || capturing) {
+        if ((controller || capturing) && Log.isLoggable(TAG, Log.DEBUG)) {
             Log.d(
                 TAG,
                 "settings key: source=0x${event.source.toString(16)} keyCode=${event.keyCode} action=${event.action} capturing=$capturing",
@@ -257,8 +262,13 @@ class SettingsActivity :
         if (controller && !capturing) {
             return super.dispatchKeyEvent(event)
         }
-        val padIndex = gamepadOrder.indexOf(event.deviceId)
-        return routeSettingsKeyEvent(event.keyCode, padIndex, event.action) ||
+        // Descriptor identity: the live id is recycled on reconnect, so
+        // the event device resolves to its descriptor and only counted
+        // pads in truth order route per-pad; keys and uncounted devices
+        // pass null (no per-pad routing, Rust decides the fallback).
+        val eventDescriptor = InputDevice.getDevice(event.deviceId)?.descriptor
+        val padDescriptor = eventDescriptor?.takeIf { it in gamepadOrder }
+        return routeSettingsKeyEvent(event.keyCode, padDescriptor, event.action) ||
             super.dispatchKeyEvent(event)
     }
 
@@ -289,11 +299,12 @@ class SettingsActivity :
 
     /** Route a key event to Rust while a binding capture is pending. True only
      * when Rust consumed the key; releases and unmapped keys fall through.
-     * `padIndex` is the truth-order pad (`-1` for keys and uncounted
-     * devices): per-pad mapping rows only accept their own pad. */
+     * `padDescriptor` is the truth-order pad descriptor (null for keys and
+     * uncounted devices): per-pad mapping rows only accept their own pad's
+     * descriptor, which survives id reuse and reconnects. */
     private fun routeSettingsKeyEvent(
         keyCode: Int,
-        padIndex: Int,
+        padDescriptor: String?,
         action: Int,
     ): Boolean {
         val nav = navActions ?: return false
@@ -303,7 +314,7 @@ class SettingsActivity :
         if (action != KeyEvent.ACTION_DOWN && action != KeyEvent.ACTION_UP) return false
         val raw =
             try {
-                nativeHardwareKey(keyCode, padIndex, action == KeyEvent.ACTION_DOWN)
+                nativeHardwareKey(keyCode, padDescriptor, action == KeyEvent.ACTION_DOWN)
             } catch (e: Exception) {
                 Log.e(TAG, "nativeHardwareKey failed", e)
                 null
@@ -356,7 +367,7 @@ class SettingsActivity :
 
     private external fun nativeHardwareKey(
         keyCode: Int,
-        padIndex: Int,
+        padDescriptor: String?,
         pressed: Boolean,
     ): String?
 

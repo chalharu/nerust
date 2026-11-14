@@ -165,6 +165,10 @@ def rust_predicate(prop):
     return f'value.is_{ {"string": "string", "boolean": "boolean"}[kind]}()'
 
 
+# The validator stays split across small helpers (gate lines, field arms,
+# per-event predicates, per-event blocks): one function would blow the
+# dispatch complexity budget as gated fields grow, and each helper maps to
+# one schema rule, so collapsing them saves nothing.
 def _validator_gate_lines(gate):
     """One conditional-required block for a gated action value."""
     key, condition = next(iter(gate["if"]["properties"].items()))
@@ -286,9 +290,10 @@ def outputs(schema):
     for obj, names in [("MenuAction", actions), ("ControllerKey", keys), ("ControllerAxis", axes)]:
         kt += ["", f"internal object {obj} {{"]
         kt += [f'    const val {name.upper()} = "{name}"' for name in names]
-        kt += ["", "    val ALL: Set<String> = setOf("]
-        kt += [f"        {name.upper()}," for name in names]
-        kt += ["    )", "}"]
+        # No ALL set: grep showed zero references, and an unused set would
+        # only drift from the schema tables above. Re-add if a caller needs
+        # enumeration rather than single constants.
+        kt += ["}"]
     return {RUST / "src/bridge_contract.rs": format_rust("\n".join(rs) + "\n"),
             KOTLIN / "BridgeWire.kt": "\n".join(kt) + "\n"}
 
