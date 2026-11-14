@@ -141,6 +141,9 @@ pub fn apply_deadzone(value: f32, deadzone: f32) -> f32 {
 
 /// Analog axes: two sticks plus two triggers. Digital-only consoles sample
 /// these through the backend-common threshold, never per-backend logic.
+/// Y axes are screen-down-positive on every backend (Android and winit
+/// both report stick-up as negative Y), so substitute code reads `-Y` as
+/// Up; no backend ever flips before this seam.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
 )]
@@ -326,28 +329,6 @@ mod tests {
     }
 
     #[test]
-    fn button_positions_map_to_console_keys_without_guessing() {
-        use crate::AbstractKey as A;
-        for (button, key) in [
-            (StandardButton::South, A::Button1),
-            (StandardButton::East, A::Button2),
-            (StandardButton::West, A::Button3),
-            (StandardButton::North, A::Button4),
-            (StandardButton::LeftShoulder, A::Button5),
-            (StandardButton::RightShoulder, A::Button6),
-            (StandardButton::Back, A::Select),
-            (StandardButton::Guide, A::Guide),
-            (StandardButton::Start, A::Start),
-            (StandardButton::DpadUp, A::DpadUp),
-        ] {
-            assert_eq!(button.abstract_key(), Some(key));
-        }
-        for button in [StandardButton::LeftStick, StandardButton::RightStick] {
-            assert_eq!(button.abstract_key(), None);
-        }
-    }
-
-    #[test]
     fn source_ids_cover_keyboard_and_pad() {
         assert_ne!(
             SourceId::Keyboard(0),
@@ -376,6 +357,9 @@ mod tests {
         ] {
             assert_eq!(button.abstract_key(), Some(key));
             assert_eq!(StandardButton::with_abstract(key), Some(button));
+        }
+        for button in [StandardButton::LeftStick, StandardButton::RightStick] {
+            assert_eq!(button.abstract_key(), None);
         }
         assert_eq!(
             StandardButton::with_abstract(crate::AbstractKey::Button1),
