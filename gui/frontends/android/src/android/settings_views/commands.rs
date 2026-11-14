@@ -497,7 +497,9 @@ fn apply_reset_scope(
             snapshot.shared.input.shortcuts = default.shared.input.shortcuts.clone();
         }
         "controls.gamepads" => {
-            snapshot.shared.input.gamepad = default.shared.input.gamepad.clone();
+            // Removed with the gamepad hub screen (per-pad screens carry
+            // their own resets now). Kept loud, never silent.
+            return Err(format!("removed reset scope: {scope}"));
         }
         scope => {
             return apply_reset_dynamic_scope(snapshot, default, deps, scope, truth);
@@ -599,6 +601,31 @@ fn apply_reset_dynamic_scope(
         }
         return Err(format!("unknown reset scope: {scope}"));
     }
+    if let Some(pad) = scope.strip_prefix("pad.") {
+        // One pad's own screen: deadzone, trigger doubling, and that
+        // pad's per-system overrides return to defaults. The player-slot
+        // assignment stays: the devices radio owns it, not this screen.
+        let index: usize = pad
+            .parse()
+            .ok()
+            .filter(|index: &usize| (1..=nerust_input_traits::MAX_PADS).contains(index))
+            .ok_or_else(|| format!("unknown reset scope: {scope}"))?
+            - 1;
+        let Some(default_port) = default.shared.input.gamepad.pad_ports.get(index) else {
+            return Err(format!("unknown reset scope: {scope}"));
+        };
+        let Some(port) = snapshot.shared.input.gamepad.pad_ports.get_mut(index) else {
+            return Err(format!("unknown reset scope: {scope}"));
+        };
+        port.deadzone_percent = default_port.deadzone_percent;
+        port.triggers_as_shoulders = default_port.triggers_as_shoulders;
+        for settings in snapshot.shared.input.systems.values_mut() {
+            if let Some(entries) = settings.pad_bindings.get_mut(index) {
+                entries.clear();
+            }
+        }
+        return Ok(());
+    }
     Err(format!("unknown reset scope: {scope}"))
 }
 
@@ -668,17 +695,19 @@ pub(crate) fn finish_snapshot(
     .map_err(|error| vec![error])
 }
 
-/// 1-based pad suffix (`pad3` → `2`). Rejects out-of-range keys before
-/// the view-model guard, so a tampered wire key fails loud here.
-fn gamepad_index(key: &str, prefix: &str) -> Result<usize, String> {
+/// 1-based pad-screen segment (`pad.3.deadzone` → `2`). Rejects
+/// out-of-range screens before the view-model guard, so a tampered wire
+/// key fails loud here.
+fn pad_screen_index(key: &str) -> Result<usize, String> {
     let index: usize = key
-        .strip_prefix(prefix)
-        .and_then(|suffix| suffix.parse().ok())
-        .ok_or_else(|| format!("bad gamepad key: {key}"))?;
+        .strip_prefix("pad.")
+        .and_then(|rest| rest.split('.').next())
+        .and_then(|segment| segment.parse().ok())
+        .ok_or_else(|| format!("bad pad key: {key}"))?;
     (1..=nerust_input_traits::MAX_PADS)
         .contains(&index)
         .then_some(index - 1)
-        .ok_or_else(|| format!("bad gamepad key: {key}"))
+        .ok_or_else(|| format!("bad pad key: {key}"))
 }
 
 fn apply_view_model_command(
@@ -761,20 +790,25 @@ fn apply_view_model_command(
                 .map_err(|error| error.to_string())
         }
         "controls.gamepads.deadzone" => {
-            let value: u8 = range_value(&command.key, command.number)?;
-            vm.gamepads
-                .set_deadzone(value)
-                .map_err(|error| error.to_string())
+            // Removed with the gamepad hub screen: deadzones now ride
+            // `pad.<n>.deadzone`. Kept loud, never silent.
+            return Err(format!("removed gamepad key: {}", command.key));
         }
         key if key.starts_with("controls.gamepads.pad") => {
-            let pad = gamepad_index(key, "controls.gamepads.pad")?;
-            let value: Option<usize> = choice(row, command.index)?;
-            vm.gamepads
-                .set_pad_port(pad, value)
-                .map_err(|error| error.to_string())
+            return Err(format!("removed gamepad key: {key}"));
         }
         key if key.starts_with("controls.gamepads.triggers") => {
-            let pad = gamepad_index(key, "controls.gamepads.triggers")?;
+            return Err(format!("removed gamepad key: {key}"));
+        }
+        key if key.starts_with("pad.") && key.ends_with(".deadzone") => {
+            let pad = pad_screen_index(key)?;
+            let value: u8 = range_value(&command.key, command.number)?;
+            vm.gamepads
+                .set_deadzone(pad, value)
+                .map_err(|error| error.to_string())
+        }
+        key if key.starts_with("pad.") && key.ends_with(".triggers") => {
+            let pad = pad_screen_index(key)?;
             let value = toggle_value(row, command.index)?;
             vm.gamepads
                 .set_trigger_alias(pad, value)
@@ -977,6 +1011,41 @@ fn decode_target_value(value: &serde_json::Value, deps: &VmDeps) -> Result<Captu
             let action: nerust_settings_core::model::input::ShortcutAction =
                 serde_json::from_value(raw).map_err(|error| error.to_string())?;
             Ok(CaptureTarget::Shortcut(action))
+        }
+        Some("pad_binding") => {
+            let system = value
+                .get("system")
+                .and_then(|system| system.as_str())
+                .ok_or_else(|| "capture target misses system".to_string())?;
+            let factory = deps
+                .factories
+                .iter()
+                .find(|factory| factory.system_id().to_string() == system)
+                .ok_or_else(|| format!("unknown system: {system}"))?;
+            let pad = value
+                .get("pad")
+                .and_then(|pad| pad.as_u64())
+                .ok_or_else(|| "capture target misses pad".to_string())?;
+            let pad: usize = pad
+                .try_into()
+                .map_err(|_| "capture target pad out of range".to_string())?;
+            if pad >= nerust_input_traits::MAX_PADS {
+                return Err(format!("capture target pad out of range: {pad}"));
+            }
+            let attachment = value
+                .get("attachment")
+                .and_then(|attachment| attachment.as_str())
+                .ok_or_else(|| "capture target misses attachment".to_string())?;
+            let control = value
+                .get("control")
+                .and_then(|control| control.as_str())
+                .ok_or_else(|| "capture target misses control".to_string())?;
+            Ok(CaptureTarget::PadBinding {
+                system: factory.system_id(),
+                pad,
+                attachment: attachment.to_string(),
+                control: control.to_string(),
+            })
         }
         _ => Err("unknown capture target".to_string()),
     }

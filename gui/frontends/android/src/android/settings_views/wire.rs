@@ -578,7 +578,9 @@ pub(super) fn capture_open(keyboards: &[KeyboardInfo], gamepads: &[GamepadInfo])
 
 pub(super) fn target_system(target: &CaptureTarget, deps: &VmDeps) -> String {
     match target {
-        CaptureTarget::Binding { system, .. } => system.to_string(),
+        CaptureTarget::Binding { system, .. } | CaptureTarget::PadBinding { system, .. } => {
+            system.to_string()
+        }
         CaptureTarget::Shortcut(_) => deps
             .factories
             .first()
@@ -599,6 +601,18 @@ fn encode_target_value(target: &CaptureTarget, system: &str) -> serde_json::Valu
         } => serde_json::json!({
             "kind": "binding",
             "system": system,
+            "attachment": attachment,
+            "control": control,
+        }),
+        CaptureTarget::PadBinding {
+            pad,
+            attachment,
+            control,
+            ..
+        } => serde_json::json!({
+            "kind": "pad_binding",
+            "system": system,
+            "pad": pad,
             "attachment": attachment,
             "control": control,
         }),
