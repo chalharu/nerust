@@ -33,7 +33,7 @@
             "delete_slot",
             "select_slot",
             "controller",
-            "analog",
+            "motion",
             "device_added",
             "device_removed",
             "touch_gate"
@@ -62,18 +62,12 @@
         },
         "pressed": { "type": "boolean" },
         "descriptor": { "type": "string" },
-        "axis": {
-          "type": "string",
-          "enum": [
-            "left_x",
-            "left_y",
-            "right_x",
-            "right_y",
-            "trigger_l",
-            "trigger_r"
-          ]
-        },
-        "value": { "type": "number", "minimum": -1.0, "maximum": 1.0 },
+        "left_x": { "type": "number", "minimum": -1.0, "maximum": 1.0 },
+        "left_y": { "type": "number", "minimum": -1.0, "maximum": 1.0 },
+        "right_x": { "type": "number", "minimum": -1.0, "maximum": 1.0 },
+        "right_y": { "type": "number", "minimum": -1.0, "maximum": 1.0 },
+        "trigger_l": { "type": "number", "minimum": -1.0, "maximum": 1.0 },
+        "trigger_r": { "type": "number", "minimum": -1.0, "maximum": 1.0 },
         "slot_id": { "type": "integer", "minimum": 0, "maximum": 9223372036854775807 }
       },
       "additionalProperties": false,
@@ -87,10 +81,10 @@
         },
         {
           "if": {
-            "properties": { "action": { "const": "analog" } },
+            "properties": { "action": { "const": "motion" } },
             "required": ["action"]
           },
-          "then": { "required": ["device_id", "axis", "value"] }
+          "then": { "required": ["device_id"] }
         },
         {
           "if": {
@@ -154,7 +148,7 @@
     "delete_slot": "MenuAction::DeleteSlot{slot_id}",
     "select_slot": "MenuAction::SelectSlot{slot_id}",
     "controller": "MenuAction::ControllerInput{device_id,key,pressed}",
-    "analog": "MenuAction::AnalogInput{device_id,axis,value}",
+    "motion": "MenuAction::Motion{device_id,axes}",
     "device_added": "MenuAction::DeviceAdded{device_id,descriptor}",
     "device_removed": "MenuAction::DeviceRemoved{device_id}",
     "touch_gate": "MenuAction::TouchGate{pressed}"

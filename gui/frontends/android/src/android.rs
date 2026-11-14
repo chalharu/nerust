@@ -763,7 +763,28 @@ impl AndroidFrontend {
                     let _ = self.exec(SessionCommand::SelectActiveSlot(slot_id));
                 }
                 MenuAction::TogglePause => self.toggle_pause(),
+                // Decoder-retired single delivery: motion batches arrive
+                // as `MenuBatch`; the wildcard keeps the match total.
+                _ => {}
             },
+            FrontendEvent::MenuBatch(batch) => {
+                for action in batch {
+                    let MenuAction::AnalogInput {
+                        device_id,
+                        axis,
+                        value,
+                    } = action
+                    else {
+                        continue;
+                    };
+                    self.chrome.input.apply_physical_controller_axis(
+                        &mut self.core.session,
+                        device_id,
+                        axis,
+                        value,
+                    );
+                }
+            }
             FrontendEvent::ErrorDialogDismissed(id) => self.handle_error_dialog_dismissed(id, tick),
         }
     }

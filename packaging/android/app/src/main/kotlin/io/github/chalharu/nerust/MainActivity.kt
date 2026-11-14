@@ -241,12 +241,20 @@ class MainActivity :
         updateControllerInput(event.deviceId, ControllerKey.RIGHT, hatX > CONTROLLER_AXIS_THRESHOLD)
         updateControllerInput(event.deviceId, ControllerKey.UP, hatY < -CONTROLLER_AXIS_THRESHOLD)
         updateControllerInput(event.deviceId, ControllerKey.DOWN, hatY > CONTROLLER_AXIS_THRESHOLD)
-        updateControllerAxis(event.deviceId, ControllerAxis.LEFT_X, event.getAxisValue(MotionEvent.AXIS_X))
-        updateControllerAxis(event.deviceId, ControllerAxis.LEFT_Y, event.getAxisValue(MotionEvent.AXIS_Y))
-        updateControllerAxis(event.deviceId, ControllerAxis.RIGHT_X, event.getAxisValue(MotionEvent.AXIS_Z))
-        updateControllerAxis(event.deviceId, ControllerAxis.RIGHT_Y, event.getAxisValue(MotionEvent.AXIS_RZ))
-        updateControllerAxis(event.deviceId, ControllerAxis.TRIGGER_L, event.getAxisValue(MotionEvent.AXIS_LTRIGGER))
-        updateControllerAxis(event.deviceId, ControllerAxis.TRIGGER_R, event.getAxisValue(MotionEvent.AXIS_RTRIGGER))
+        // One JNI crossing per motion callback: every axis rides one
+        // batched motion event instead of one crossing per axis.
+        val leftX = event.getAxisValue(MotionEvent.AXIS_X)
+        val leftY = event.getAxisValue(MotionEvent.AXIS_Y)
+        val rightX = event.getAxisValue(MotionEvent.AXIS_Z)
+        val rightY = event.getAxisValue(MotionEvent.AXIS_RZ)
+        val triggerL = event.getAxisValue(MotionEvent.AXIS_LTRIGGER)
+        val triggerR = event.getAxisValue(MotionEvent.AXIS_RTRIGGER)
+        if (updateControllerAxes(event.deviceId, leftX, leftY, rightX, rightY, triggerL, triggerR)) {
+            sensorController.lastControllerDeviceId = event.deviceId
+            chromeManager.noteControllerInput()
+            sensorController.noteControllerInput()
+            sendMotionInput(event.deviceId, leftX, leftY, rightX, rightY, triggerL, triggerR)
+        }
         return true
     }
 
@@ -288,35 +296,64 @@ class MainActivity :
         )
     }
 
-    /** Single analog-event producer: floats ride the same envelope;
-     * deadzone and dpad substitution live in Rust, never here. */
-    private fun sendAnalogInput(deviceId: Int, axis: String, value: Float) {
+    /** Single batched motion-event producer: all six axes ride one
+     * envelope per motion callback; deadzone and dpad substitution live
+     * in Rust, never here. */
+    private fun sendMotionInput(
+        deviceId: Int,
+        leftX: Float,
+        leftY: Float,
+        rightX: Float,
+        rightY: Float,
+        triggerL: Float,
+        triggerR: Float,
+    ) {
         sendMenuAction(
-            menuEvent(MenuAction.ANALOG) {
+            menuEvent(MenuAction.MOTION) {
                 put("device_id", deviceId)
-                put("axis", axis)
-                put("value", value)
+                put("left_x", leftX)
+                put("left_y", leftY)
+                put("right_x", rightX)
+                put("right_y", rightY)
+                put("trigger_l", triggerL)
+                put("trigger_r", triggerR)
             },
         )
     }
 
     /** First-stage Kotlin dedup for the motion stream: motion events fire
-     * at sensor rate and Rust only wants crossings, so sub-epsilon repeats
-     * never cross JNI. Neutral first-sends stay local too — Rust treats a
-     * missing axis as neutral already. The Rust deadzone/store is the
-     * second stage; this cache only saves JNI chatter. */
-    private fun updateControllerAxis(deviceId: Int, axis: String, value: Float) {
+     * at sensor rate and Rust only wants crossings, so a callback with no
+     * sub-epsilon crossing sends nothing. Neutral first-sends stay local
+     * too — Rust treats a missing axis as neutral already. The Rust
+     * deadzone/store is the second stage; this cache only saves JNI
+     * chatter. Returns whether anything crossed. */
+    private fun updateControllerAxes(
+        deviceId: Int,
+        leftX: Float,
+        leftY: Float,
+        rightX: Float,
+        rightY: Float,
+        triggerL: Float,
+        triggerR: Float,
+    ): Boolean {
         val axes = controllerAxes.getOrPut(deviceId) { mutableMapOf() }
-        val last = axes[axis]
-        if (last != null && kotlin.math.abs(value - last) < CONTROLLER_AXIS_EPSILON) return
-        if (last == null && value == 0f) return
-        axes[axis] = value
-        if (value != 0f) {
-            sensorController.lastControllerDeviceId = deviceId
-            chromeManager.noteControllerInput()
-            sensorController.noteControllerInput()
+        var changed = false
+        for ((axis, value) in
+            arrayOf(
+                ControllerAxis.LEFT_X to leftX,
+                ControllerAxis.LEFT_Y to leftY,
+                ControllerAxis.RIGHT_X to rightX,
+                ControllerAxis.RIGHT_Y to rightY,
+                ControllerAxis.TRIGGER_L to triggerL,
+                ControllerAxis.TRIGGER_R to triggerR,
+            )) {
+            val last = axes[axis]
+            if (last != null && kotlin.math.abs(value - last) < CONTROLLER_AXIS_EPSILON) continue
+            if (last == null && value == 0f) continue
+            axes[axis] = value
+            changed = true
         }
-        sendAnalogInput(deviceId, axis, value)
+        return changed
     }
 
     private fun updateControllerInput(
@@ -343,10 +380,10 @@ class MainActivity :
         controllerPressed.remove(deviceId)?.toList()?.forEach { key ->
             sendControllerInput(deviceId, key, false)
         }
-        // Analog holds converge the same way: recenter every axis so the
-        // Rust substitute releases even when the device is already gone.
-        controllerAxes.remove(deviceId)?.keys?.toList()?.forEach { axis ->
-            sendAnalogInput(deviceId, axis, 0f)
+        // Analog holds converge the same way: one batched recenter so
+        // the Rust substitute releases even when the device is gone.
+        if (controllerAxes.remove(deviceId) != null) {
+            sendMotionInput(deviceId, 0f, 0f, 0f, 0f, 0f, 0f)
         }
     }
 

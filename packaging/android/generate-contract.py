@@ -175,7 +175,13 @@ def outputs(schema):
     summary = schema["x-saf-summary-bytes"]
     require(all(type(number) is int and 0 < number < 2**31 for number in (version, settings, chunk, summary)))
     actions, keys = menu["action"]["enum"], menu["key"]["enum"]
-    axes = menu["axis"]["enum"]
+    # Motion axes ride as optional per-axis number properties (one batched
+    # event per motion callback); the property names are the wire ids.
+    axes = ["left_x", "left_y", "right_x", "right_y", "trigger_l", "trigger_r"]
+    for name in axes:
+        prop = menu[name]
+        require(field_type(prop) == "number")
+        require(prop["minimum"] == -1.0 and prop["maximum"] == 1.0)
     for names in (actions, keys, axes):
         require(len(names) == len(set(names)))
         require(all(name.isascii() and name.replace("_", "").isalnum() for name in names))
@@ -229,9 +235,9 @@ def outputs(schema):
     for name, minimum, maximum in bounds:
         rs.append(f'    ({json.dumps(name)}, {minimum}, {maximum}),')
     rs.append("];")
-    # Analog range, from the schema `value` property. Dispatch checks the
-    # axis value against this instead of a hardcoded literal.
-    value_prop = menu["value"]
+    # Analog range, shared by every motion axis property. Dispatch checks
+    # axis values against this instead of a hardcoded literal.
+    value_prop = menu["left_x"]
     rs.append("")
     rs.append("/// Inclusive analog axis range, from the schema.")
     rs.append(

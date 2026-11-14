@@ -20,7 +20,7 @@ internal object MenuAction {
     const val DELETE_SLOT = "delete_slot"
     const val SELECT_SLOT = "select_slot"
     const val CONTROLLER = "controller"
-    const val ANALOG = "analog"
+    const val MOTION = "motion"
     const val DEVICE_ADDED = "device_added"
     const val DEVICE_REMOVED = "device_removed"
     const val TOUCH_GATE = "touch_gate"
