@@ -757,12 +757,17 @@ fn build_pad_sections(
         .map(|(index, info)| {
             let pad_id = format!("pad.{}", index + 1);
             let port = gamepad.pad_ports.get(index);
+            // Assigned player slot, if any. Mapping rows below scope to
+            // this pad's own player: other players' rows carry defaults
+            // this pad can never drive, and edits there land overrides
+            // that gameplay parks, so they only mislead.
+            let slot = port.and_then(|pad| pad.slot);
             let mut rows = vec![
                 info_row(
                     &format!("{pad_id}.slot"),
                     i18n.text(UiText::GamepadDevice),
                     String::new(),
-                    port.and_then(|pad| pad.slot).map_or_else(
+                    slot.map_or_else(
                         || i18n.text(UiText::NotAssigned),
                         |slot| {
                             if PLAYER_PORTS.get(slot).is_some() {
@@ -794,12 +799,36 @@ fn build_pad_sections(
                     port.is_some_and(|pad| pad.triggers_as_shoulders),
                 ),
             ];
+            // Unassigned pads park every press, so mapping rows would
+            // only collect latent overrides: point at Devices instead.
+            // Assigned pads list only their own player's controls (all
+            // systems); other players' attachments never fire from here.
+            let Some(slot) = slot else {
+                rows.push(info_row(
+                    &format!("{pad_id}.unassigned"),
+                    i18n.text(UiText::KeyMapping),
+                    i18n.text(UiText::DescPadUnassigned),
+                    String::new(),
+                ));
+                rows.push(button_row(
+                    &format!("reset.{pad_id}"),
+                    i18n.text(UiText::ResetScreen),
+                    i18n.text(UiText::DescPadReset),
+                ));
+                return SectionWire {
+                    id: pad_id.clone(),
+                    label: info.name.clone(),
+                    sub: i18n.text(UiText::Gamepads),
+                    rows,
+                    visible: false,
+                };
+            };
             for input in vm.inputs() {
                 let view = input.view.get();
                 let system = view.system_id.to_string();
-                rows.push(header_row(view.label.clone()));
+                let mut system_rows = Vec::new();
                 for section in &view.sections {
-                    rows.push(header_row(section.label.clone()));
+                    let mut section_rows = Vec::new();
                     for binding in &section.rows {
                         // Per-pad mapping mirrors the game rows: same
                         // attachment/control, routed to this pad.
@@ -808,6 +837,13 @@ fn build_pad_sections(
                         else {
                             continue;
                         };
+                        // Attachments name their player port
+                        // (`<sys>.attachment.playerN`); unclassifiable
+                        // attachments fail open so a factory addition
+                        // never silently drops rows here.
+                        if slot_port_index(attachment).is_some_and(|port| port != slot) {
+                            continue;
+                        }
                         let target = CaptureTarget::PadBinding {
                             system: view.system_id.clone_box(),
                             pad: index,
@@ -820,7 +856,7 @@ fn build_pad_sections(
                             | BindingValueView::Bound(label)
                             | BindingValueView::Capturing(label) => label.clone(),
                         };
-                        rows.push(capture_row(
+                        section_rows.push(capture_row(
                             &format!("{pad_id}.{system}.{attachment}.{control}",),
                             binding.label.clone(),
                             String::new(),
@@ -830,17 +866,42 @@ fn build_pad_sections(
                             &reason,
                         ));
                     }
+                    if section_rows.is_empty() {
+                        continue;
+                    }
+                    system_rows.push(header_row(section.label.clone()));
+                    system_rows.append(&mut section_rows);
                 }
+                if system_rows.is_empty() {
+                    continue;
+                }
+                rows.push(header_row(view.label.clone()));
+                rows.append(&mut system_rows);
                 // One button driving two controls never fires the second:
                 // surface it on the pad's own screen, next to the rows.
+                // Scoped like the rows above: hidden attachments have no
+                // rows to disambiguate against.
                 if let Some(settings) = snapshot.shared.input.systems.get(&view.system_id)
                     && let Some(entries) = settings.pad_bindings.get(index)
                 {
                     for (button, controls) in pad_game_binding_conflicts(entries) {
+                        // Scoped like the rows above: only in-scope
+                        // controls render, and a lone survivor is no
+                        // conflict on this screen.
+                        let shown: Vec<_> = controls
+                            .iter()
+                            .filter(|(attachment, _)| {
+                                !slot_port_index(attachment.as_str())
+                                    .is_some_and(|port| port != slot)
+                            })
+                            .collect();
+                        if shown.len() < 2 {
+                            continue;
+                        }
                         rows.push(info_row(
-                            &format!("{pad_id}.{system}.conflict.{}", button.label()),
-                            button.label().to_string(),
-                            controls
+                            &format!("{pad_id}.{system}.conflict.{}", button.cap_label()),
+                            button.cap_label().to_string(),
+                            shown
                                 .iter()
                                 .map(|(attachment, control)| format!("{attachment}.{control}"))
                                 .collect::<Vec<_>>()
@@ -982,7 +1043,7 @@ fn shortcut_binding_text(
 ) -> String {
     let label = if pad {
         nerust_settings_core::editor::current_pad_binding(snapshot, target)
-            .map(|button| button.label().to_string())
+            .map(|button| button.cap_label().to_string())
     } else {
         nerust_settings_core::editor::current_binding_key(snapshot, target)
             .map(|key| key.label().to_string())
@@ -1468,14 +1529,26 @@ fn build_devices_section(
                 format!("pad {}", stale + 1),
             ));
         }
-        // Gear into each connected pad's own screen (deadzone, triggers,
-        // button mapping): the radio above owns assignment, these own
-        // the pad.
+        // Gear into this port's own pad screen (deadzone, triggers,
+        // button mapping): the radio above owns assignment, the gear
+        // owns the pad. Unassigned pads keep their gears here so they
+        // stay reachable; other players' pads do not intrude, so this
+        // screen never navigates into another player's pad.
         for (pad_index, info) in gamepads
             .iter()
             .take(nerust_input_traits::MAX_PADS)
             .enumerate()
         {
+            let assigned_here = snapshot
+                .shared
+                .input
+                .gamepad
+                .pad_ports
+                .get(pad_index)
+                .is_some_and(|pad| pad.slot.is_none_or(|slot| Some(slot) == port_index));
+            if !assigned_here {
+                continue;
+            }
             rows.push(group_row(
                 &format!("{devices_id}.pad{}", pad_index + 1),
                 info.name.clone(),
