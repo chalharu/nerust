@@ -38,13 +38,13 @@ use nerust_gui_runtime::settings::{
     manager::SettingsManager,
 };
 use nerust_input_traits::{
-    AbstractKey, AttachmentId, DigitalControlId, GamepadAxis, InputAssignments, MAX_PADS, PadGuid,
-    SourceButtonId, SourceId, StandardButton, UnifiedFieldMap,
+    AbstractKey, AttachmentId, DigitalControlId, GamepadAxis, InputAssignments, Key, MAX_PADS,
+    PadGuid, SourceButtonId, SourceId, StandardButton, UnifiedFieldMap,
 };
 use nerust_persistence::error::PersistenceError;
 use nerust_render_traits::{FrameBuffer, VideoRenderProfile};
 use nerust_settings_core::factory::settings_view;
-use nerust_settings_core::model::input::ShortcutAction;
+use nerust_settings_core::model::input::{PadPort, ShortcutAction, ShortcutBinding};
 use nerust_system_traits::factory::{
     CoreFactory, FactoryError,
     load::{DynSystemLoadOptions, MediaObject},
@@ -164,10 +164,23 @@ impl IdInterner {
 
 /// Input department: assignments, key maps, live runtime. One owner
 /// for the input domain so `SessionHandle` stays a facade.
+/// Resolved control plus its dpad context, in one topology walk.
+type ControlWithDpad = (
+    (AttachmentId, DigitalControlId),
+    Option<(AttachmentId, DigitalControlId, AbstractKey)>,
+);
+
 struct InputDept {
     current_assignments: InputAssignments,
     /// Reverse map: keyboard key → field index, rebuilt on binding/controller change.
     key_field_map: HashMap<nerust_input_traits::Key, usize>,
+    /// Key → shortcut action, rebuilt with the keyboard map (first
+    /// binding wins). The hot path reads
+    /// this instead of scanning the binding table per key event.
+    key_shortcut_map: HashMap<Key, ShortcutAction>,
+    /// Pad button → shortcut action, rebuilt with the keyboard map (first
+    /// binding wins). Parked pads never consult it (see the slot gate).
+    pad_shortcut_map: HashMap<StandardButton, ShortcutAction>,
     /// Repeat suppression for every source: one `(source, button)` set, so
     /// keyboards and pads share the rule instead of each adapter owning one.
     pressed: HashSet<(SourceId, SourceButtonId)>,
@@ -212,6 +225,8 @@ impl InputDept {
         Self {
             current_assignments,
             key_field_map: HashMap::new(),
+            key_shortcut_map: HashMap::new(),
+            pad_shortcut_map: HashMap::new(),
             pressed: HashSet::new(),
             analogs: HashMap::new(),
             axis_dpad: HashSet::new(),
@@ -269,6 +284,24 @@ impl InputDept {
                 attachment = duplicate.attachment,
                 control = duplicate.control,
             );
+        }
+    }
+
+    /// Rebuild the shortcut lookup maps from the unified binding table.
+    /// First entry wins per key and per pad button, mirroring the old
+    /// linear scans; parked pads never consult the pad map (slot gate).
+    pub(crate) fn rebuild_shortcut_maps(&mut self, bindings: &[ShortcutBinding]) {
+        self.key_shortcut_map.clear();
+        self.pad_shortcut_map.clear();
+        for binding in bindings {
+            if let Some(key) = binding.key {
+                self.key_shortcut_map.entry(key).or_insert(binding.action);
+            }
+            if let Some(button) = binding.pad {
+                self.pad_shortcut_map
+                    .entry(button)
+                    .or_insert(binding.action);
+            }
         }
     }
 
@@ -380,6 +413,24 @@ impl InputDept {
         None
     }
 
+    /// Resolve plus dpad context in one topology walk: the commit path
+    /// used to walk twice (`control_for_abstract`, then `dpad_for`
+    /// re-resolving the abstract). The dpad triple derives from the same
+    /// abstract, so no second walk is needed.
+    fn control_with_dpad_for_abstract(
+        &self,
+        abstract_key: AbstractKey,
+        slot: Option<usize>,
+    ) -> Option<ControlWithDpad> {
+        let found = self.control_for_abstract(abstract_key, slot)?;
+        let dpad = field_press::dpad_pair(abstract_key).is_some().then_some((
+            found.0,
+            found.1,
+            abstract_key,
+        ));
+        Some((found, dpad))
+    }
+
     /// Stable pad GUID for one device descriptor. FNV-1a (deterministic
     /// across runs, unlike SipHash): the same descriptor always maps to
     /// the same source, which is what makes suppression and slots
@@ -428,6 +479,19 @@ impl InputDept {
         }
     }
 
+    /// Assigned player slot for one pad order index: the persisted
+    /// table, clamped to the live slots. `None` parks the pad (Off, or
+    /// past the table). Split from `pad_slot` so hot paths scan
+    /// `pad_order` once per event and derive the slot from the index.
+    fn slot_for_index(&self, index: usize, ports: &[PadPort; MAX_PADS]) -> Option<usize> {
+        let slot = ports.get(index)?.slot?;
+        let live = self.current_assignments.slots().len();
+        if live == 0 {
+            return None;
+        }
+        Some(slot.min(live - 1))
+    }
+
     /// Assigned player slot for one source: pad order into the persisted
     /// table, clamped to the live slots. `None` parks the source (Off,
     /// keyboards, or pads past the table).
@@ -437,44 +501,7 @@ impl InputDept {
         ports: &[nerust_settings_core::model::input::PadPort; nerust_input_traits::MAX_PADS],
     ) -> Option<usize> {
         let index = self.pad_index(source)?;
-        let slot = ports.get(index)?.slot?;
-        let live = self.current_assignments.slots().len();
-        if live == 0 {
-            return None;
-        }
-        Some(slot.min(live - 1))
-    }
-
-    /// First console control carrying one analog abstract, in one slot.
-    /// Same traversal as `control_for_abstract`, over analog controls.
-    /// No console exposes analog yet, so this resolves `None` today;
-    /// the lookup (not a second spelling) is the transport endpoint.
-    fn control_for_analog_abstract(
-        &self,
-        abstract_key: AbstractKey,
-        slot: Option<usize>,
-    ) -> Option<(AttachmentId, nerust_input_traits::AnalogControlId)> {
-        use nerust_input_traits::ControlId;
-        for (index, (_slot, profile)) in self.current_assignments.slots().iter().enumerate() {
-            if slot.is_some_and(|pinned| pinned != index) {
-                continue;
-            }
-            let Some(profile) = profile else {
-                continue;
-            };
-            for set in profile.port_sets() {
-                for (port, group) in set.ports.iter().zip(profile.port_groups()) {
-                    for info in *group {
-                        if info.abstract_key == Some(abstract_key)
-                            && let ControlId::Analog(id) = info.id
-                        {
-                            return Some((*port, id));
-                        }
-                    }
-                }
-            }
-        }
-        None
+        self.slot_for_index(index, ports)
     }
 
     /// Dpad context for the OR/neutral machine: resolved abstract plus the

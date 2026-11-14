@@ -3,19 +3,13 @@ use nerust_input_traits::{
     AbstractKey, AttachmentId, ControlId, DigitalControlId, DigitalInputEvent, GamepadAxis,
     InputValue, Key, SourceButtonId, SourceId, StandardButton,
 };
-use nerust_settings_core::model::input::ShortcutAction;
-
-use crate::{
-    session::{KeyboardShortcut, SessionHandle, field_press::FieldSource},
-    settings::bindings::events::shortcut::shortcut_action_for_key,
+use nerust_settings_core::model::input::{
+    DEADZONE_MAX_PERCENT, DEFAULT_DEADZONE_PERCENT, ShortcutAction,
 };
 
-pub use nerust_settings_core::input::clear_multi_port_conflicts;
+use crate::session::{KeyboardShortcut, SessionHandle, field_press::FieldSource};
 
-/// Reserved frontend device id for winit-delivered pad keys: winit hides
-/// the Android device id behind an opaque handle, so those keys share one
-/// transient namespace until a descriptor arrives to collapse it.
-const WINIT_PAD_DEVICE_ID: i32 = i32::MIN;
+pub use nerust_settings_core::input::clear_multi_port_conflicts;
 
 fn touch_role_for_abstract_key(key: AbstractKey) -> Option<TouchControlRole> {
     match key {
@@ -166,17 +160,14 @@ impl SessionHandle {
     /// Pad shortcut lookup: the pad column of the unified binding, or
     /// `None` when the button drives gameplay instead. First binding wins;
     /// shared buttons surface as pad conflicts and block submit until
-    /// disambiguated.
+    /// disambiguated. Prebuilt map (see `rebuild_shortcut_maps`): no
+    /// linear scan on the hot path. Parked pads never reach here.
     fn shortcut_for_pad(&self, button: StandardButton) -> Option<KeyboardShortcut> {
-        self.settings
-            .snapshot
-            .shared
-            .input
-            .shortcuts
-            .keyboard
-            .iter()
-            .find(|binding| binding.pad == Some(button))
-            .map(|binding| Self::shortcut_kind(binding.action))
+        self.input
+            .pad_shortcut_map
+            .get(&button)
+            .copied()
+            .map(Self::shortcut_kind)
     }
 
     /// Assigned player slot for one event source, registering first-seen
@@ -203,36 +194,94 @@ impl SessionHandle {
         SourceId::Pad(guid)
     }
 
-    /// Source for winit-delivered pad keys: winit hides the Android device
-    /// id behind an opaque handle, so this pins those keys to the
-    /// first-seen pad (the connected one in single-pad play). Multi-pad
-    /// winit keys converge here too; per-pad distinction for that path
-    /// needs NDK polling and stays future work. Dual delivery with the
-    /// Kotlin bridge is safe: the session pressed set suppresses repeats.
-    pub fn primary_pad_source(&mut self) -> SourceId {
-        if let Some(guid) = self.input.pad_order.first().copied() {
-            return SourceId::Pad(guid);
-        }
-        self.pad_source_for(WINIT_PAD_DEVICE_ID)
+    /// Source for winit-delivered pad keys: the first-seen pad (the
+    /// connected one in single-pad play), or `None` when no pad has been
+    /// seen yet and the caller must drop the keys. Winit hides the Android
+    /// device id behind an opaque handle, so per-pad distinction for that
+    /// path needs NDK polling and stays future work. Dual delivery with
+    /// the Kotlin bridge is safe: the session pressed set suppresses
+    /// repeats. Never mints a descriptor-less transient: that would pin
+    /// winit keys to a parked pad and let one player drive another.
+    pub fn primary_pad_source(&self) -> Option<SourceId> {
+        self.input.pad_order.first().copied().map(SourceId::Pad)
     }
 
     /// Connect-time device registration: descriptor to order index.
     /// Later input from any reused device id resolves to the same pad.
     /// A transient placeholder for this id (input before connect) collapses
-    /// into the descriptor entry; holds keyed by it converge on the next
-    /// focus-loss clear.
+    /// into the descriptor entry in place, keeping its order index (and
+    /// slot); holders keyed by it migrate to the descriptor source so
+    /// pre-connect holds keep driving instead of stranding on a dead key.
     pub fn note_pad_connected(&mut self, device_id: i32, descriptor: &str) {
         if descriptor.is_empty() {
             return;
         }
         let guid = super::InputDept::guid_for_descriptor(descriptor);
         self.input.device_ids.insert(device_id, guid);
-        // Collapse a transient placeholder for this id, but never move an
-        // existing descriptor: reconnects reuse the original index.
         let transient = super::InputDept::guid_for_transient(device_id);
-        self.input.pad_order.retain(|known| *known != transient);
-        if !self.input.pad_order.contains(&guid) {
+        if transient == guid {
+            return;
+        }
+        let old = SourceId::Pad(transient);
+        let new = SourceId::Pad(guid);
+        if let Some(pos) = self
+            .input
+            .pad_order
+            .iter()
+            .position(|known| *known == transient)
+        {
+            if self.input.pad_order.contains(&guid) {
+                // An existing descriptor never moves: drop the placeholder.
+                self.input.pad_order.remove(pos);
+            } else {
+                self.input.pad_order[pos] = guid;
+            }
+            self.migrate_pad_source(old, new);
+        } else if !self.input.pad_order.contains(&guid) {
             self.input.pad_order.push(guid);
+        }
+    }
+
+    /// Rewrite holders keyed by a collapsed transient source to the
+    /// descriptor source: pressed buttons, stored analogs, and
+    /// stick-derived dpad. Without this, holds from before the connect
+    /// event strand on a dead key until the next focus-loss clear.
+    fn migrate_pad_source(&mut self, old: SourceId, new: SourceId) {
+        if old == new {
+            return;
+        }
+        let held: Vec<SourceButtonId> = self
+            .input
+            .pressed
+            .iter()
+            .filter_map(|(source, button)| (*source == old).then_some(*button))
+            .collect();
+        for button in held {
+            if self.input.pressed.remove(&(old, button)) {
+                self.input.pressed.insert((new, button));
+            }
+        }
+        let stored: Vec<(GamepadAxis, f32)> = self
+            .input
+            .analogs
+            .iter()
+            .filter_map(|((source, axis), value)| (*source == old).then_some((*axis, *value)))
+            .collect();
+        for (axis, value) in stored {
+            if self.input.analogs.remove(&(old, axis)).is_some() {
+                self.input.analogs.insert((new, axis), value);
+            }
+        }
+        let derived: Vec<(GamepadAxis, StandardButton)> = self
+            .input
+            .axis_dpad
+            .iter()
+            .filter_map(|(source, axis, button)| (*source == old).then_some((*axis, *button)))
+            .collect();
+        for (axis, button) in derived {
+            if self.input.axis_dpad.remove(&(old, axis, button)) {
+                self.input.axis_dpad.insert((new, axis, button));
+            }
         }
     }
 
@@ -275,7 +324,11 @@ impl SessionHandle {
                 }
 
                 if first_press {
-                    return shortcut_action_for_key(&self.settings.snapshot.shared, key)
+                    return self
+                        .input
+                        .key_shortcut_map
+                        .get(&key)
+                        .copied()
                         .map(Self::shortcut_kind);
                 }
                 None
@@ -284,7 +337,10 @@ impl SessionHandle {
                 if changed {
                     self.commit_pad_press(source, std_button, pressed);
                 }
-                if pressed && first_press {
+                // Parked pads never fire shortcuts: without an assigned
+                // slot there is no player for the action to address, so an
+                // Off-port pad must not drive the shared pause button.
+                if pressed && first_press && self.pad_slot_for(source).is_some() {
                     return self.shortcut_for_pad(std_button);
                 }
                 None
@@ -295,8 +351,27 @@ impl SessionHandle {
     /// Pad press tail: position button to the pad's assigned console
     /// control. Off-port pads never reach here (the slot gate parks them).
     fn commit_pad_press(&mut self, source: SourceId, button: StandardButton, pressed: bool) {
-        let slot = self.pad_slot_for(source);
-        self.commit_holder_press(FieldSource::Pad(source, button), button, slot, pressed);
+        // One order-index lookup: the slot derives from it instead of
+        // re-scanning `pad_order` inside the commit.
+        let index = self.input.pad_index(source);
+        let slot = index.and_then(|i| self.slot_for_pad_index(i));
+        self.commit_holder_press(
+            FieldSource::Pad(source, button),
+            button,
+            index,
+            slot,
+            pressed,
+        );
+    }
+
+    /// Assigned player slot for one pad order index. `None` parks the pad.
+    /// Shares the gate with `pad_slot_for`; the index form lets hot paths
+    /// scan `pad_order` once per event.
+    fn slot_for_pad_index(&self, index: usize) -> Option<usize> {
+        self.input.slot_for_index(
+            index,
+            &self.settings.snapshot.shared.input.gamepad.pad_ports,
+        )
     }
 
     /// Full-press level turning a trigger into a digital press when the
@@ -340,61 +415,50 @@ impl SessionHandle {
         }
     }
 
-    /// Analog axis entry: deadzone, store, analog-field set, and the
-    /// digital substitute (stick dpad on digital-only consoles, trigger
-    /// shoulders when the pad opts in). The substitute needs an assigned
-    /// slot, so Off-port pads park their floats silently.
+    /// Analog axis entry: deadzone, store, and the digital substitute
+    /// (stick dpad on digital-only consoles, trigger shoulders when the
+    /// pad opts in). No console exposes analog controls, so the floats
+    /// are stored as the transport endpoint and never fan out to fields.
+    /// Off-port pads park silently: no store, no substitute.
     pub fn handle_source_axis(&mut self, source: SourceId, axis: GamepadAxis, value: f32) {
-        let slot = self.pad_slot_for(source);
+        // One order-index lookup per event: the slot gate, the deadzone
+        // row, and the trigger alias all read this instead of re-scanning
+        // `pad_order`.
+        let index = self.input.pad_index(source);
+        let slot = index.and_then(|i| self.slot_for_pad_index(i));
+        let Some(slot) = slot else {
+            return;
+        };
         // Per-pad deadzone: sticks vary per unit, so the pad's own row
         // tunes it. Unmapped sources fall back to the default.
-        let percent = self
-            .input
-            .pad_index(source)
-            .and_then(|index| {
+        let percent = index
+            .and_then(|i| {
                 self.settings
                     .snapshot
                     .shared
                     .input
                     .gamepad
                     .pad_ports
-                    .get(index)
+                    .get(i)
                     .map(|port| port.deadzone_percent)
             })
-            .unwrap_or(nerust_settings_core::model::input::DEFAULT_DEADZONE_PERCENT)
-            .clamp(0, 90);
+            .unwrap_or(DEFAULT_DEADZONE_PERCENT)
+            .clamp(0, DEADZONE_MAX_PERCENT);
         let value =
             nerust_gamepad_db::apply_deadzone(value.clamp(-1.0, 1.0), f32::from(percent) / 100.0)
                 .clamp(-1.0, 1.0);
         self.input.analogs.insert((source, axis), value);
-        if let Some(abstract_key) = axis.abstract_key()
-            && let Some(slot) = slot
-            && let Some((attachment, control)) = self
+        let alias = index.is_some_and(|i| {
+            self.settings
+                .snapshot
+                .shared
                 .input
-                .control_for_analog_abstract(abstract_key, Some(slot))
-            && let Some(field) = self.emu.field_map().and_then(|fields| {
-                fields
-                    .get(&(attachment, ControlId::analog(control)))
-                    .copied()
-            })
-            && let Some(gui_input) = self.emu.input_mut()
-        {
-            let _ = gui_input.set(field, InputValue::Analog(value));
-        }
-        let alias = self
-            .input
-            .pad_index(source)
-            .and_then(|index| {
-                self.settings
-                    .snapshot
-                    .shared
-                    .input
-                    .gamepad
-                    .pad_ports
-                    .get(index)
-            })
-            .is_some_and(|port| port.triggers_as_shoulders);
-        self.sync_axis_substitute(source, axis, value, slot, alias);
+                .gamepad
+                .pad_ports
+                .get(i)
+                .is_some_and(|port| port.triggers_as_shoulders)
+        });
+        self.sync_axis_substitute(source, axis, value, Some(slot), alias);
     }
 
     /// Edge-sync one axis substitute: press the newly deflected button,
@@ -409,6 +473,9 @@ impl SessionHandle {
         slot: Option<usize>,
         triggers_as_shoulders: bool,
     ) {
+        // One order-index lookup: both the stale release and the fresh
+        // press below share it instead of re-scanning `pad_order`.
+        let index = self.input.pad_index(source);
         let want = slot.and(Self::substitute_button(axis, value, triggers_as_shoulders));
         // One axis holds at most one substitute (presses are edge-synced),
         // so a single find converges without heap work on the hot path.
@@ -421,12 +488,12 @@ impl SessionHandle {
             .filter(|button| Some(*button) != want)
         {
             self.input.axis_dpad.remove(&(source, axis, stale));
-            self.commit_holder_press(FieldSource::Axis(source, axis), stale, slot, false);
+            self.commit_holder_press(FieldSource::Axis(source, axis), stale, index, slot, false);
         }
         if let Some(button) = want
             && self.input.axis_dpad.insert((source, axis, button))
         {
-            self.commit_holder_press(FieldSource::Axis(source, axis), button, slot, true);
+            self.commit_holder_press(FieldSource::Axis(source, axis), button, index, slot, true);
         }
     }
 
@@ -441,25 +508,23 @@ impl SessionHandle {
         &mut self,
         holder: FieldSource,
         button: StandardButton,
+        pad_index: Option<usize>,
         slot: Option<usize>,
         pressed: bool,
     ) {
         let Some(slot) = slot else {
             return;
         };
-        let resolved = self
-            .input
-            .pad_index(match holder {
-                FieldSource::Pad(source, _) => source,
-                FieldSource::Axis(source, _) => source,
-                _ => return,
-            })
-            .and_then(|index| {
-                self.input
-                    .pad_binding_map
-                    .get(index)
-                    .and_then(|map| map.get(&button).copied())
-            });
+        // Per-pad overrides win inside the slot: an explicit `(attachment,
+        // control)` for this pad's button bypasses the standard layout.
+        // The index arrives with the call so the map read never re-scans
+        // `pad_order`.
+        let resolved = pad_index.and_then(|index| {
+            self.input
+                .pad_binding_map
+                .get(index)
+                .and_then(|map| map.get(&button).copied())
+        });
         if let Some((attachment, control)) = resolved {
             let field = self
                 .emu
@@ -475,7 +540,11 @@ impl SessionHandle {
         let Some(abstract_key) = button.abstract_key() else {
             return;
         };
-        let Some((attachment, control)) = self.input.control_for_abstract(abstract_key, Some(slot))
+        // One topology walk: resolve and dpad context fuse in
+        // `control_with_dpad_for_abstract`.
+        let Some(((attachment, control), dpad)) = self
+            .input
+            .control_with_dpad_for_abstract(abstract_key, Some(slot))
         else {
             return;
         };
@@ -486,7 +555,6 @@ impl SessionHandle {
         let Some(field) = field else {
             return;
         };
-        let dpad = self.input.dpad_for(attachment, control);
         self.commit_press(field, holder, dpad, pressed);
     }
 
@@ -514,8 +582,9 @@ impl SessionHandle {
             self.input.axis_dpad.iter().copied().collect();
         for (source, axis, button) in derived {
             self.input.axis_dpad.remove(&(source, axis, button));
-            let slot = self.pad_slot_for(source);
-            self.commit_holder_press(FieldSource::Axis(source, axis), button, slot, false);
+            let index = self.input.pad_index(source);
+            let slot = index.and_then(|i| self.slot_for_pad_index(i));
+            self.commit_holder_press(FieldSource::Axis(source, axis), button, index, slot, false);
         }
         self.input.analogs.clear();
     }
@@ -563,6 +632,8 @@ impl SessionHandle {
             self.emu.field_map(),
         );
         self.input.rebuild_pad_binding_map(pad_bindings);
+        self.input
+            .rebuild_shortcut_maps(&self.settings.snapshot.shared.input.shortcuts.keyboard);
     }
 }
 
@@ -1028,7 +1099,7 @@ mod tests {
     }
 
     #[test]
-    fn off_port_pads_park_their_substitute() {
+    fn off_port_pads_park_silently() {
         use nerust_input_traits::GamepadAxis;
         let mut session = crate::session::test_util::test_session();
         session.input.current_assignments = InputAssignments::new(vec![(
@@ -1041,12 +1112,99 @@ mod tests {
         let pad = session.pad_source_for(11);
         session.handle_source_axis(pad, GamepadAxis::LeftStickX, 0.8);
         assert!(
+            !session
+                .input
+                .analogs
+                .contains_key(&(pad, GamepadAxis::LeftStickX)),
+            "parked pads store nothing"
+        );
+        assert!(session.input.axis_dpad.is_empty());
+        session.clear_input();
+    }
+
+    #[test]
+    fn primary_pad_source_follows_first_seen_pad() {
+        let mut session = crate::session::test_util::test_session();
+        assert!(
+            session.primary_pad_source().is_none(),
+            "no pads seen yet: the caller must drop the keys"
+        );
+        let pad = session.pad_source_for(11);
+        assert_eq!(session.primary_pad_source(), Some(pad));
+        session.clear_input();
+    }
+
+    #[test]
+    fn parked_pads_do_not_fire_shortcuts() {
+        use nerust_input_traits::{SourceButtonId, StandardButton};
+        use nerust_settings_core::model::input::ShortcutAction;
+        let mut session = crate::session::test_util::test_session();
+        let mut next = session.settings_snapshot().clone();
+        next.shared.input.gamepad.pad_ports = Default::default();
+        next.shared.input.shortcuts.keyboard =
+            vec![nerust_settings_core::model::input::ShortcutBinding {
+                action: ShortcutAction::TogglePause,
+                key: None,
+                pad: Some(StandardButton::Guide),
+            }];
+        session.apply_settings(next).unwrap();
+        let pad = session.pad_source_for(11);
+        assert!(
+            session
+                .handle_source_button(pad, SourceButtonId::Pad(StandardButton::Guide), true)
+                .is_none(),
+            "parked pads never fire shortcuts"
+        );
+        session.clear_input();
+    }
+
+    #[test]
+    fn connect_migrates_holders_to_descriptor_source() {
+        use nerust_input_traits::{GamepadAxis, SourceButtonId, StandardButton};
+        let mut session = crate::session::test_util::test_session();
+        session.input.current_assignments = InputAssignments::new(vec![(
+            AttachmentId::new("test.topology.slot"),
+            Some(Rc::new(MockTopologyProfile)),
+        )]);
+        // Input before the connect event parks on a transient key.
+        let transient = session.pad_source_for(7);
+        session.handle_source_button(transient, SourceButtonId::Pad(StandardButton::South), true);
+        session.handle_source_axis(transient, GamepadAxis::LeftStickX, 0.8);
+        assert!(
+            session
+                .input
+                .pressed
+                .contains(&(transient, SourceButtonId::Pad(StandardButton::South)))
+        );
+        // The connect collapses in place: holders migrate to the
+        // descriptor source instead of stranding on the dead key.
+        session.note_pad_connected(7, "pad-desc-A");
+        let descriptor = session.pad_source_for(7);
+        assert_ne!(transient, descriptor);
+        assert!(
+            session
+                .input
+                .pressed
+                .contains(&(descriptor, SourceButtonId::Pad(StandardButton::South)))
+        );
+        assert!(
             session
                 .input
                 .analogs
-                .contains_key(&(pad, GamepadAxis::LeftStickX))
+                .contains_key(&(descriptor, GamepadAxis::LeftStickX))
         );
-        assert!(session.input.axis_dpad.is_empty());
+        assert!(session.input.axis_dpad.contains(&(
+            descriptor,
+            GamepadAxis::LeftStickX,
+            StandardButton::DpadRight
+        )));
+        assert!(
+            !session
+                .input
+                .pressed
+                .iter()
+                .any(|(source, _)| *source == transient)
+        );
         session.clear_input();
     }
 
