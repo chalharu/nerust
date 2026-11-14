@@ -162,15 +162,8 @@ fn apply(
 }
 
 fn set(snapshot: &mut SettingsSnapshot, key: &str, index: usize, number: i64) -> ViewPayload {
-    apply(
-        snapshot,
-        &mut None,
-        &mut test_keyboards(),
-        key,
-        WireOp::Set,
-        index,
-        number,
-    )
+    // Keyboard-only shorthand: no pads connected.
+    set_with_pads(snapshot, &[], key, index, number)
 }
 
 /// `set` threading connected pads through: radio and per-device rows only
@@ -1200,60 +1193,44 @@ fn gamepads_op_upserts_without_mutating_draft() {
         "status names the counted gamepad: {}",
         status.text
     );
-    let bad = serde_json::to_string(&WireCommand {
-        key: "device_truth".to_string(),
-        index: 0,
-        number: 0,
-        op: WireOp::DeviceTruth,
-        payload: serde_json::json!({
-            "keyboards": [],
-            "capable": true,
-            "gamepads": [{ "member": "pad:x", "name": "" }],
-        }),
-    })
-    .unwrap();
-    with_test_deps(|| {
-        assert!(
-            apply_command_to(
-                &mut snapshot,
-                &bad,
-                &mut None,
-                &mut test_keyboards(),
-                &mut None,
-                &mut gamepads,
-                &mut None,
-            )
-            .is_err(),
-            "nameless gamepads never persist"
-        );
-    });
-    let bad_member = serde_json::to_string(&WireCommand {
-        key: "device_truth".to_string(),
-        index: 0,
-        number: 0,
-        op: WireOp::DeviceTruth,
-        payload: serde_json::json!({
-            "keyboards": [],
-            "capable": true,
-            "gamepads": [{ "member": "", "name": "Pad" }],
-        }),
-    })
-    .unwrap();
-    with_test_deps(|| {
-        assert!(
-            apply_command_to(
-                &mut snapshot,
-                &bad_member,
-                &mut None,
-                &mut test_keyboards(),
-                &mut None,
-                &mut gamepads,
-                &mut None,
-            )
-            .is_err(),
-            "memberless gamepads never persist"
-        );
-    });
+    for (gamepads_payload, why) in [
+        (
+            serde_json::json!([{ "member": "pad:x", "name": "" }]),
+            "nameless gamepads never persist",
+        ),
+        (
+            serde_json::json!([{ "member": "", "name": "Pad" }]),
+            "memberless gamepads never persist",
+        ),
+    ] {
+        let bad = serde_json::to_string(&WireCommand {
+            key: "device_truth".to_string(),
+            index: 0,
+            number: 0,
+            op: WireOp::DeviceTruth,
+            payload: serde_json::json!({
+                "keyboards": [],
+                "capable": true,
+                "gamepads": gamepads_payload,
+            }),
+        })
+        .unwrap();
+        with_test_deps(|| {
+            assert!(
+                apply_command_to(
+                    &mut snapshot,
+                    &bad,
+                    &mut None,
+                    &mut test_keyboards(),
+                    &mut None,
+                    &mut gamepads,
+                    &mut None,
+                )
+                .is_err(),
+                "{why}"
+            );
+        });
+    }
 }
 
 #[test]
@@ -1566,7 +1543,7 @@ fn pad_capture_lands_on_shortcut_rows() {
     let (_, consumed) = with_test_deps(|| {
         apply_hardware_key(
             110,
-            -1,
+            None,
             true,
             &mut snapshot,
             &mut capture,
@@ -1640,7 +1617,7 @@ fn pad_press_on_game_row_leaves_capture_pending() {
     let (_, consumed) = with_test_deps(|| {
         apply_hardware_key(
             110,
-            -1,
+            None,
             true,
             &mut snapshot,
             &mut capture,
@@ -1704,7 +1681,7 @@ fn capture_round_trips_through_hardware_keys() {
     let (_, consumed_release) = with_test_deps(|| {
         apply_hardware_key(
             29,
-            -1,
+            None,
             false,
             &mut snapshot,
             &mut capture,
@@ -1722,7 +1699,7 @@ fn capture_round_trips_through_hardware_keys() {
     let (_, consumed_unknown) = with_test_deps(|| {
         apply_hardware_key(
             999,
-            -1,
+            None,
             true,
             &mut snapshot,
             &mut capture,
@@ -1740,7 +1717,7 @@ fn capture_round_trips_through_hardware_keys() {
     let (_, consumed) = with_test_deps(|| {
         apply_hardware_key(
             29,
-            -1,
+            None,
             true,
             &mut snapshot,
             &mut capture,
@@ -2456,7 +2433,7 @@ fn pad_mapping_capture_lands_override_from_own_pad() {
     let (out, consumed) = with_test_deps(|| {
         apply_hardware_key(
             96,
-            0,
+            Some("a"),
             true,
             &mut snapshot,
             &mut capture,
@@ -2540,7 +2517,7 @@ fn pad_mapping_capture_ignores_other_pads_and_keys() {
     let (_, consumed_other) = with_test_deps(|| {
         apply_hardware_key(
             97,
-            1,
+            Some("b"),
             true,
             &mut snapshot,
             &mut capture,
@@ -2559,7 +2536,7 @@ fn pad_mapping_capture_ignores_other_pads_and_keys() {
     let (_, consumed_key) = with_test_deps(|| {
         apply_hardware_key(
             29,
-            -1,
+            None,
             true,
             &mut snapshot,
             &mut capture,
@@ -2598,7 +2575,7 @@ fn pad_mapping_clear_resets_override_to_default() {
     with_test_deps(|| {
         apply_hardware_key(
             96,
-            0,
+            Some("a"),
             true,
             &mut snapshot,
             &mut capture,
@@ -2694,7 +2671,7 @@ fn pad_mapping_conflict_surfaces_on_screen() {
         with_test_deps(|| {
             apply_hardware_key(
                 96,
-                0,
+                Some("a"),
                 true,
                 &mut snapshot,
                 &mut capture,
@@ -2724,14 +2701,17 @@ fn pad_mapping_conflict_surfaces_on_screen() {
 }
 
 #[test]
-fn removed_gamepad_hub_keys_fail_loud() {
+fn removed_gamepad_hub_keys_fail_as_unknown() {
+    // Hub-era keys carry no rows and no command arms: they fail as
+    // unknown keys/scopes, never silent. (The old test pinned the
+    // removed-hub strings; the pin now asserts the fallthrough error.)
     let (mut snapshot, _) = test_payload();
-    for key in ["controls.gamepads.deadzone", "reset.controls.gamepads"] {
-        let op = if key.starts_with("reset.") {
-            WireOp::ResetSection
-        } else {
-            WireOp::Set
-        };
+    for (key, op) in [
+        ("controls.gamepads.deadzone", WireOp::Set),
+        ("controls.gamepads.pad1.deadzone", WireOp::Set),
+        ("controls.gamepads.triggers1", WireOp::Set),
+        ("reset.controls.gamepads", WireOp::ResetSection),
+    ] {
         let command_json = serde_json::to_string(&WireCommand {
             key: key.to_string(),
             index: 0,
@@ -2741,19 +2721,17 @@ fn removed_gamepad_hub_keys_fail_loud() {
         })
         .unwrap();
         with_test_deps(|| {
-            assert!(
-                apply_command_to(
-                    &mut snapshot,
-                    &command_json,
-                    &mut None,
-                    &mut test_keyboards(),
-                    &mut None,
-                    &mut Vec::new(),
-                    &mut None,
-                )
-                .is_err(),
-                "{key} fails loud instead of no-op"
-            );
+            let error = apply_command_to(
+                &mut snapshot,
+                &command_json,
+                &mut None,
+                &mut test_keyboards(),
+                &mut None,
+                &mut Vec::new(),
+                &mut None,
+            )
+            .expect_err(&format!("{key} fails loud instead of no-op"));
+            assert!(error.contains("unknown"), "{key} fails as unknown: {error}");
         });
     }
 }

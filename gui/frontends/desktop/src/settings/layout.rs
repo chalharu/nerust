@@ -429,7 +429,8 @@ pub(super) fn inputs(
 /// (ports are global, not per-system).
 /// One pad choice row: port, trigger, and deadzone rows differ only in
 /// projectors and write-back, so one generic builds all three. Missing
-/// rows fall back to `Default`, matching the per-row code.
+/// rows fail loud: the pads list and the lookup index come from the same
+/// view, so absence is a programming bug, never an empty row.
 fn pad_choice_row<T: Clone + PartialEq + Eq + Default + 'static>(
     editor: &Rc<Editor>,
     index: usize,
@@ -448,7 +449,7 @@ fn pad_choice_row<T: Clone + PartialEq + Eq + Default + 'static>(
                 .iter()
                 .find(|row| row.index == index)
                 .map(&items)
-                .unwrap_or_default()
+                .expect("pad row exists for its own index")
         },
         None,
     );
@@ -460,7 +461,7 @@ fn pad_choice_row<T: Clone + PartialEq + Eq + Default + 'static>(
                 .iter()
                 .find(|row| row.index == index)
                 .map(&selected)
-                .unwrap_or_default()
+                .expect("pad row exists for its own index")
         },
         Some(Rc::new(write) as Rc<dyn Fn(T) -> Result<(), ViewModelError>>),
     );
@@ -477,7 +478,7 @@ fn pad_choice_row<T: Clone + PartialEq + Eq + Default + 'static>(
                             .iter()
                             .find(|row| row.index == index)
                             .map(&label)
-                            .unwrap_or_default()
+                            .expect("pad row exists for its own index")
                     },
                     None,
                 ),
@@ -494,7 +495,6 @@ fn gamepads_page(editor: &Rc<Editor>) -> Keyed<InputPage> {
     let vm = &editor.vm;
     let executor = editor.executor.clone();
     let view = vm.gamepads.view.get();
-    let deadzone_label = view.deadzone_label.clone();
     let deadzone_choices = view.deadzone_choices.clone();
     let slots: Vec<Keyed<ChoiceRow>> = view
         .pads
@@ -538,7 +538,7 @@ fn gamepads_page(editor: &Rc<Editor>) -> Keyed<InputPage> {
                         .iter()
                         .find(|row| row.index == index)
                         .map(|row| row.deadzone)
-                        .unwrap_or_default()
+                        .expect("pad row exists for its own index")
                 },
                 Some(
                     Rc::new(move |percent: u8| zones.set_deadzone(index, percent))
@@ -546,7 +546,6 @@ fn gamepads_page(editor: &Rc<Editor>) -> Keyed<InputPage> {
                 ),
             );
             let zone_choice = choice(zone_items, zone_selected);
-            let zone_label_text = deadzone_label.clone();
             let deadzone_row = Keyed::new(
                 format!("pad-{index}-deadzone"),
                 Store::new(
@@ -559,7 +558,7 @@ fn gamepads_page(editor: &Rc<Editor>) -> Keyed<InputPage> {
                                     .iter()
                                     .find(|row| row.index == index)
                                     .map(|row| format!("{} deadzone", row.label))
-                                    .unwrap_or(zone_label_text.clone())
+                                    .expect("pad row exists for its own index")
                             },
                             None,
                         ),

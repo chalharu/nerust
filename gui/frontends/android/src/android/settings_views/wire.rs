@@ -191,6 +191,17 @@ pub(crate) struct GamepadInfo {
     pub name: String,
 }
 
+/// Vault descriptor to connection-order pad index: the same vault list
+/// that built the rows, so a Kotlin scan-order descriptor can never skew
+/// against the Rust side. Accepts the raw descriptor or the `pad:`
+/// member id; `None` when the device left (stale Kotlin push).
+pub(crate) fn pad_index_for_member(gamepads: &[GamepadInfo], descriptor: &str) -> Option<usize> {
+    let bare = descriptor.strip_prefix("pad:").unwrap_or(descriptor);
+    gamepads
+        .iter()
+        .position(|info| info.member.strip_prefix("pad:").unwrap_or(&info.member) == bare)
+}
+
 /// One settings edit from Kotlin: row key plus op. `set` reads the choice
 /// index or the slider number; capture ops act on the row's opaque target;
 /// `device_truth` upserts the vault's enumerated device lists from

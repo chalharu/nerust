@@ -203,22 +203,27 @@ fn apply_capture_command(
     let target = decode_target(&row.target, deps)?;
     match command.op {
         WireOp::ClearBinding => {
-            // Per-device shortcut rows clear only their own column, so a
-            // keyboard Clear never strands a pad twin (and vice versa).
-            // Game binding rows (no `.kbd`/`.pad` suffix) keep the legacy
-            // whole-row clear; they never carry pads.
-            if command.key.ends_with(".kbd") && matches!(target, CaptureTarget::Shortcut(_)) {
-                vm.capture
-                    .clear_key(&target)
-                    .map_err(|error| error.to_string())?;
-            } else if command.key.contains(".pad") && matches!(target, CaptureTarget::Shortcut(_)) {
-                vm.capture
-                    .clear_pad(&target)
-                    .map_err(|error| error.to_string())?;
-            } else {
-                vm.capture
-                    .clear_binding(&target)
-                    .map_err(|error| error.to_string())?;
+            // Target first, column second: game and per-pad mapping rows
+            // clear whole (they never carry a pad twin); per-device
+            // shortcut rows clear only their own column so a keyboard
+            // Clear never strands a pad twin (and vice versa). The column
+            // rides the row key suffix (`.kbd` vs `.padN`).
+            match (&target, clear_column_for_key(&command.key)) {
+                (CaptureTarget::Shortcut(_), Column::Key) => {
+                    vm.capture
+                        .clear_key(&target)
+                        .map_err(|error| error.to_string())?;
+                }
+                (CaptureTarget::Shortcut(_), Column::Pad) => {
+                    vm.capture
+                        .clear_pad(&target)
+                        .map_err(|error| error.to_string())?;
+                }
+                _ => {
+                    vm.capture
+                        .clear_binding(&target)
+                        .map_err(|error| error.to_string())?;
+                }
             }
             sync_snapshot_from_vm(snapshot, vm, truth.i18n);
             *capture = None;
@@ -239,6 +244,26 @@ fn apply_capture_command(
             Ok(())
         }
         op => Err(format!("unknown capture op: {op:?}")),
+    }
+}
+
+/// Which shortcut column a clear addresses, from the row key suffix
+/// (`.kbd` vs `.padN`). Game and per-pad mapping rows carry no suffix
+/// and clear whole.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Column {
+    Key,
+    Pad,
+    Whole,
+}
+
+fn clear_column_for_key(key: &str) -> Column {
+    if key.ends_with(".kbd") {
+        Column::Key
+    } else if key.contains(".pad") {
+        Column::Pad
+    } else {
+        Column::Whole
     }
 }
 
@@ -495,11 +520,6 @@ fn apply_reset_scope(
         }
         "controls.shortcuts" => {
             snapshot.shared.input.shortcuts = default.shared.input.shortcuts.clone();
-        }
-        "controls.gamepads" => {
-            // Removed with the gamepad hub screen (per-pad screens carry
-            // their own resets now). Kept loud, never silent.
-            return Err(format!("removed reset scope: {scope}"));
         }
         scope => {
             return apply_reset_dynamic_scope(snapshot, default, deps, scope, truth);
@@ -789,17 +809,6 @@ fn apply_view_model_command(
                 .set_warning_color(value)
                 .map_err(|error| error.to_string())
         }
-        "controls.gamepads.deadzone" => {
-            // Removed with the gamepad hub screen: deadzones now ride
-            // `pad.<n>.deadzone`. Kept loud, never silent.
-            return Err(format!("removed gamepad key: {}", command.key));
-        }
-        key if key.starts_with("controls.gamepads.pad") => {
-            return Err(format!("removed gamepad key: {key}"));
-        }
-        key if key.starts_with("controls.gamepads.triggers") => {
-            return Err(format!("removed gamepad key: {key}"));
-        }
         key if key.starts_with("pad.") && key.ends_with(".deadzone") => {
             let pad = pad_screen_index(key)?;
             let value: u8 = range_value(&command.key, command.number)?;
@@ -977,30 +986,47 @@ fn apply_android_local(
     Ok(true)
 }
 
+fn req_str<'a>(value: &'a serde_json::Value, field: &str) -> Result<&'a str, String> {
+    value
+        .get(field)
+        .and_then(|node| node.as_str())
+        .ok_or_else(|| format!("capture target misses {field}"))
+}
+
+fn req_system(
+    deps: &VmDeps,
+    value: &serde_json::Value,
+) -> Result<Box<dyn nerust_core_traits::identity::SystemId>, String> {
+    let system = req_str(value, "system")?;
+    deps.factories
+        .iter()
+        .find(|factory| factory.system_id().to_string() == system)
+        .map(|factory| factory.system_id())
+        .ok_or_else(|| format!("unknown system: {system}"))
+}
+
+fn req_pad(value: &serde_json::Value) -> Result<usize, String> {
+    let pad = value
+        .get("pad")
+        .and_then(|pad| pad.as_u64())
+        .ok_or_else(|| "capture target misses pad".to_string())?;
+    let pad: usize = pad
+        .try_into()
+        .map_err(|_| "capture target pad out of range".to_string())?;
+    if pad >= nerust_input_traits::MAX_PADS {
+        return Err(format!("capture target pad out of range: {pad}"));
+    }
+    Ok(pad)
+}
+
 fn decode_target_value(value: &serde_json::Value, deps: &VmDeps) -> Result<CaptureTarget, String> {
     match value.get("kind").and_then(|kind| kind.as_str()) {
         Some("binding") => {
-            let system = value
-                .get("system")
-                .and_then(|system| system.as_str())
-                .ok_or_else(|| "capture target misses system".to_string())?;
-            let factory = deps
-                .factories
-                .iter()
-                .find(|factory| factory.system_id().to_string() == system)
-                .ok_or_else(|| format!("unknown system: {system}"))?;
-            let attachment = value
-                .get("attachment")
-                .and_then(|attachment| attachment.as_str())
-                .ok_or_else(|| "capture target misses attachment".to_string())?;
-            let control = value
-                .get("control")
-                .and_then(|control| control.as_str())
-                .ok_or_else(|| "capture target misses control".to_string())?;
+            let system = req_system(deps, value)?;
             Ok(CaptureTarget::Binding {
-                system: factory.system_id(),
-                attachment: attachment.to_string(),
-                control: control.to_string(),
+                system,
+                attachment: req_str(value, "attachment")?.to_string(),
+                control: req_str(value, "control")?.to_string(),
             })
         }
         Some("shortcut") => {
@@ -1013,38 +1039,12 @@ fn decode_target_value(value: &serde_json::Value, deps: &VmDeps) -> Result<Captu
             Ok(CaptureTarget::Shortcut(action))
         }
         Some("pad_binding") => {
-            let system = value
-                .get("system")
-                .and_then(|system| system.as_str())
-                .ok_or_else(|| "capture target misses system".to_string())?;
-            let factory = deps
-                .factories
-                .iter()
-                .find(|factory| factory.system_id().to_string() == system)
-                .ok_or_else(|| format!("unknown system: {system}"))?;
-            let pad = value
-                .get("pad")
-                .and_then(|pad| pad.as_u64())
-                .ok_or_else(|| "capture target misses pad".to_string())?;
-            let pad: usize = pad
-                .try_into()
-                .map_err(|_| "capture target pad out of range".to_string())?;
-            if pad >= nerust_input_traits::MAX_PADS {
-                return Err(format!("capture target pad out of range: {pad}"));
-            }
-            let attachment = value
-                .get("attachment")
-                .and_then(|attachment| attachment.as_str())
-                .ok_or_else(|| "capture target misses attachment".to_string())?;
-            let control = value
-                .get("control")
-                .and_then(|control| control.as_str())
-                .ok_or_else(|| "capture target misses control".to_string())?;
+            let system = req_system(deps, value)?;
             Ok(CaptureTarget::PadBinding {
-                system: factory.system_id(),
-                pad,
-                attachment: attachment.to_string(),
-                control: control.to_string(),
+                system,
+                pad: req_pad(value)?,
+                attachment: req_str(value, "attachment")?.to_string(),
+                control: req_str(value, "control")?.to_string(),
             })
         }
         _ => Err("unknown capture target".to_string()),

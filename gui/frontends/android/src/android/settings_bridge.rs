@@ -264,16 +264,19 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_pushSystemLoc
 /// Hardware key routing for capture: consumes the key when a capture is
 /// pending and returns the refreshed payload (or an error envelope).
 /// Non-capture keys pass through untouched (null payload marker).
+/// Pad buttons carry the Kotlin device descriptor (`None` for keys and
+/// uncounted devices); Rust resolves it against the vault list, so no
+/// scan-order index crosses the boundary.
 /// The standalone SettingsActivity hosts capture, so only it binds this.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_io_github_chalharu_nerust_SettingsActivity_nativeHardwareKey(
     mut env: jni::EnvUnowned<'_>,
     _activity: JObject<'_>,
     keycode: jni::sys::jint,
-    pad_index: jni::sys::jint,
+    pad: JString<'_>,
     pressed: jni::sys::jboolean,
 ) -> jni::sys::jstring {
-    hardware_key(&mut env, keycode, pad_index, pressed)
+    hardware_key(&mut env, keycode, pad, pressed)
 }
 
 /// Fail envelope: every JNI error tail shares one shape.
@@ -326,15 +329,23 @@ fn envelope_key(
 fn hardware_key(
     env: &mut jni::EnvUnowned<'_>,
     keycode: jni::sys::jint,
-    pad_index: jni::sys::jint,
+    pad: JString<'_>,
     pressed: jni::sys::jboolean,
 ) -> jni::sys::jstring {
-    let parsed =
-        bridge::with_callback_env(&mut *env, |_env| -> jni::errors::Result<(i32, i32, bool)> {
-            Ok((keycode, pad_index, pressed))
-        });
+    let parsed = bridge::with_callback_env(
+        &mut *env,
+        |env| -> jni::errors::Result<(i32, Option<String>, bool)> {
+            let descriptor = if pad.is_null() {
+                None
+            } else {
+                let raw = pad.try_to_string(env)?;
+                if raw.is_empty() { None } else { Some(raw) }
+            };
+            Ok((keycode, descriptor, pressed))
+        },
+    );
     let out = match parsed {
-        jni::Outcome::Ok((keycode, pad_index, pressed)) => {
+        jni::Outcome::Ok((keycode, descriptor, pressed)) => {
             // Compute under the lock, serialize outside it: the payload
             // string is the expensive part and needs no vault access.
             // Dirty compares the draft against the pristine open copy in
@@ -348,7 +359,7 @@ fn hardware_key(
                 }
                 settings_views::apply_hardware_key(
                     keycode,
-                    pad_index,
+                    descriptor.as_deref(),
                     pressed,
                     draft,
                     &mut state.capture,
