@@ -199,6 +199,12 @@ struct InputDept {
     /// and reconnects, so a pad keeps its index (and its persisted port)
     /// across both. Guids are `Copy`: the input hot path never allocates.
     pad_order: Vec<PadGuid>,
+    /// Descriptor mirror of `pad_order`, same positions, transients
+    /// skipped: the settings vault (which never sees connect events)
+    /// sorts its display list by this so a reconnect can never skew a
+    /// pad onto another pad's slot, deadzone, or overrides. Updated
+    /// atomically with `pad_order` in `note_pad_connected`.
+    pad_descriptor_order: Vec<String>,
     /// Live frontend device id to pad guid. Dropped on disconnect; the
     /// order entry stays so a reconnect reuses the index.
     device_ids: HashMap<i32, PadGuid>,
@@ -231,6 +237,7 @@ impl InputDept {
             analogs: HashMap::new(),
             axis_dpad: HashSet::new(),
             pad_order: Vec::new(),
+            pad_descriptor_order: Vec::new(),
             device_ids: HashMap::new(),
             key_source: HashMap::new(),
             pad_binding_map: [(); MAX_PADS].map(|()| HashMap::new()),
@@ -453,6 +460,33 @@ impl InputDept {
         let mut bytes = *b"TRNS\0\0\0\0\0\0\0\0\0\0\0\0";
         bytes[4..8].copy_from_slice(&device_id.to_le_bytes());
         PadGuid(bytes)
+    }
+
+    /// Mirror insert for a transient collapse: the descriptor takes the
+    /// placeholder's slot (`pos` clamps: the mirror skips transients, so
+    /// it can be shorter than `pad_order`). Append path in `note_pad_connected`
+    /// uses [`Self::push_descriptor`]; both skip duplicates.
+    fn insert_descriptor_at(&mut self, pos: usize, descriptor: &str) {
+        if self
+            .pad_descriptor_order
+            .iter()
+            .any(|known| known == descriptor)
+        {
+            return;
+        }
+        let at = pos.min(self.pad_descriptor_order.len());
+        self.pad_descriptor_order.insert(at, descriptor.to_string());
+    }
+
+    /// Mirror append for a fresh descriptor (no transient to collapse).
+    fn push_descriptor(&mut self, descriptor: &str) {
+        if !self
+            .pad_descriptor_order
+            .iter()
+            .any(|known| known == descriptor)
+        {
+            self.pad_descriptor_order.push(descriptor.to_string());
+        }
     }
 
     /// First-seen order index of one pad GUID, registering newcomers.
