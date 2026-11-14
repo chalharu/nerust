@@ -91,8 +91,7 @@ pub(crate) fn apply_hardware_key(
     })
 }
 
-/// Android keycode to emulated key. The table is sorted by keycode, so one
-/// Sorted by keycode for binary search.
+/// Android keycode to emulated key, sorted by keycode for binary search.
 const ANDROID_KEYCODE_TABLE: &[(i32, Key)] = {
     use nerust_input_traits::Key;
     &[

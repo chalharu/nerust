@@ -225,6 +225,10 @@ pub fn shortcut_key_label(
         .map(|key| key.label())
 }
 
+/// Keep only buttons driving two or more targets; singletons never conflict.
+fn retain_conflicts<T>(by_button: &mut std::collections::BTreeMap<StandardButton, Vec<T>>) {
+    by_button.retain(|_, targets| targets.len() > 1);
+}
 /// Pad shortcut conflicts: one button driving two or more actions.
 /// Keyboard conflicts ride `conflicting_keys`; pads are global (no system
 /// topology), so they get their own map. First binding still wins at
@@ -238,7 +242,7 @@ pub fn pad_shortcut_conflicts(
             by_button.entry(button).or_default().push(binding.action);
         }
     }
-    by_button.retain(|_, actions| actions.len() > 1);
+    retain_conflicts(&mut by_button);
     by_button
 }
 
@@ -259,7 +263,7 @@ pub fn pad_game_binding_conflicts(
             ));
         }
     }
-    by_button.retain(|_, controls| controls.len() > 1);
+    retain_conflicts(&mut by_button);
     by_button
 }
 

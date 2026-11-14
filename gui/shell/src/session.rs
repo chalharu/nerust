@@ -462,11 +462,11 @@ impl InputDept {
         PadGuid(bytes)
     }
 
-    /// Mirror insert for a transient collapse: the descriptor takes the
-    /// placeholder's slot (`pos` clamps: the mirror skips transients, so
-    /// it can be shorter than `pad_order`). Append path in `note_pad_connected`
-    /// uses [`Self::push_descriptor`]; both skip duplicates.
-    fn insert_descriptor_at(&mut self, pos: usize, descriptor: &str) {
+    /// Mirror upsert for a descriptor: `None` appends (fresh connect),
+    /// `Some(pos)` takes the collapsed transient's slot (`pos` clamps:
+    /// the mirror skips transients, so it can be shorter than `pad_order`).
+    /// Duplicates never insert.
+    fn upsert_descriptor(&mut self, pos: Option<usize>, descriptor: &str) {
         if self
             .pad_descriptor_order
             .iter()
@@ -474,18 +474,12 @@ impl InputDept {
         {
             return;
         }
-        let at = pos.min(self.pad_descriptor_order.len());
-        self.pad_descriptor_order.insert(at, descriptor.to_string());
-    }
-
-    /// Mirror append for a fresh descriptor (no transient to collapse).
-    fn push_descriptor(&mut self, descriptor: &str) {
-        if !self
-            .pad_descriptor_order
-            .iter()
-            .any(|known| known == descriptor)
-        {
-            self.pad_descriptor_order.push(descriptor.to_string());
+        match pos {
+            Some(pos) => {
+                let at = pos.min(self.pad_descriptor_order.len());
+                self.pad_descriptor_order.insert(at, descriptor.to_string());
+            }
+            None => self.pad_descriptor_order.push(descriptor.to_string()),
         }
     }
 
