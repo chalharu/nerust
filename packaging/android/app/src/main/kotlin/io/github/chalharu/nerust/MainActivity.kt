@@ -91,6 +91,11 @@ class MainActivity :
     /** Last presence scan: identical hotplug/resume bursts skip the apply. */
     @Volatile private var lastPresenceTruth: DeviceTruth? = null
 
+    /** Live ids of counted gamepads: key events from these devices divert
+     * to the pad path even with a bare DPAD source (TV remotes never land
+     * here, only counted pads do). Refreshed with the presence scan. */
+    @Volatile private var gamepadDeviceIds: Set<Int> = emptySet()
+
     /** Set only on user-initiated finish paths; native exits then, never on destroy. */
     private var userInitiatedExit = false
 
@@ -168,10 +173,12 @@ class MainActivity :
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         // Settings capture lives in SettingsActivity with its own dispatch;
         // here only gamepad sources divert, everything else keeps platform
-        // behavior (volume, Back, hardware keyboards in gameplay).
-        val isController = isControllerSource(event.source)
+        // behavior (volume, Back, hardware keyboards in gameplay). Counted
+        // pads divert by device id too: D-pad-only sources would otherwise
+        // read as a TV remote and never reach the game.
+        val isController = isControllerSource(event.source) || gamepadDeviceIds.contains(event.deviceId)
+        Log.d(TAG, "game key: source=0x${event.source.toString(16)} device=${event.deviceId} keyCode=${event.keyCode} action=${event.action} controller=$isController")
         if (!isController) {
-            Log.v(TAG, "non-controller key: source=0x${event.source.toString(16)} keyCode=${event.keyCode}")
             return super.dispatchKeyEvent(event)
         }
         val key =
@@ -213,7 +220,7 @@ class MainActivity :
 
     override fun onGenericMotionEvent(event: MotionEvent): Boolean {
         if (event.source and InputDevice.SOURCE_JOYSTICK != InputDevice.SOURCE_JOYSTICK) {
-            Log.v(TAG, "non-joystick motion: source=0x${event.source.toString(16)}")
+            Log.d(TAG, "non-joystick motion: source=0x${event.source.toString(16)} device=${event.deviceId}")
             return super.onGenericMotionEvent(event)
         }
         val hatX = event.getAxisValue(MotionEvent.AXIS_HAT_X)
@@ -386,6 +393,7 @@ class MainActivity :
                 }
             if (scan == lastPresenceTruth) return@runIo
             lastPresenceTruth = scan
+            gamepadDeviceIds = scan.gamepads.map { it.deviceId }.toSet()
             val touchCapable = scan.touchCapable
             val gamepadNames = scan.gamepads.map { it.name }
             BridgeIo.postMain {

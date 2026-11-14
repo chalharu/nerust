@@ -46,8 +46,9 @@ use nerust_render_traits::renderer::PipelineFactory;
 use nerust_settings_core::model::shared::StoragePolicy;
 use winit::{
     application::ApplicationHandler,
-    event::WindowEvent,
+    event::{ElementState, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    keyboard::{KeyCode, NativeKeyCode, PhysicalKey},
     platform::android::{EventLoopBuilderExtAndroid, activity::AndroidApp},
     window::WindowId,
 };
@@ -1003,6 +1004,25 @@ impl ApplicationHandler for AndroidFrontend {
                     .input
                     .handle_touch(&mut self.core.session, &self.app, touch);
             }
+            WindowEvent::KeyboardInput { event, .. } => {
+                // NativeActivity bypass: gamepad buttons reach the native
+                // input queue (and winit) without crossing the Kotlin
+                // dispatch, which explicitly drops them there. Map the raw
+                // Android keycodes winit preserves as Unidentified here so
+                // single-pad play works even when that bridge stays silent.
+                // Dual delivery is safe: the session pressed set dedups.
+                if !event.repeat {
+                    let pressed = event.state == ElementState::Pressed;
+                    if let Some(button) = winit_pad_button(&event.physical_key) {
+                        let source = self.core.session.primary_pad_source();
+                        self.core.session.handle_source_button(
+                            source,
+                            nerust_input_traits::SourceButtonId::Pad(button),
+                            pressed,
+                        );
+                    }
+                }
+            }
             WindowEvent::RedrawRequested => {
                 // Mutating prologue releases first; the bundle then borrows
                 // shared, so settings work never waits on rasterize.
@@ -1016,6 +1036,39 @@ impl ApplicationHandler for AndroidFrontend {
                 );
             }
             _ => {}
+        }
+    }
+
+    /// Raw Android keycode to position button for winit-delivered pad keys.
+    /// Mirrors the Kotlin dispatch table (L2/R2 stay analog-only) plus the
+    /// D-pad codes and winit's Arrow translation of them. Returns `None` for
+    /// keyboard keys, which this frontend never used and stays untouched.
+    fn winit_pad_button(key: &PhysicalKey) -> Option<nerust_input_traits::StandardButton> {
+        use nerust_input_traits::StandardButton as Pad;
+        match key {
+            PhysicalKey::Unidentified(NativeKeyCode::Android(code)) => match code {
+                96 => Some(Pad::South),
+                97 => Some(Pad::East),
+                99 => Some(Pad::West),
+                100 => Some(Pad::North),
+                102 => Some(Pad::LeftShoulder),
+                103 => Some(Pad::RightShoulder),
+                106 => Some(Pad::LeftStick),
+                107 => Some(Pad::RightStick),
+                108 => Some(Pad::Start),
+                109 => Some(Pad::Back),
+                110 => Some(Pad::Guide),
+                19 => Some(Pad::DpadUp),
+                20 => Some(Pad::DpadDown),
+                21 => Some(Pad::DpadLeft),
+                22 => Some(Pad::DpadRight),
+                _ => None,
+            },
+            PhysicalKey::Code(KeyCode::ArrowUp) => Some(Pad::DpadUp),
+            PhysicalKey::Code(KeyCode::ArrowDown) => Some(Pad::DpadDown),
+            PhysicalKey::Code(KeyCode::ArrowLeft) => Some(Pad::DpadLeft),
+            PhysicalKey::Code(KeyCode::ArrowRight) => Some(Pad::DpadRight),
+            _ => None,
         }
     }
 

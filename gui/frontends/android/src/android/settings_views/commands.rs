@@ -168,6 +168,10 @@ fn apply_set_command(
     if apply_android_local(snapshot, sections, command)? {
         return Ok(false);
     }
+    if is_gamepad_radio_key(&command.key) {
+        apply_gamepad_radio_command(snapshot, sections, command)?;
+        return Ok(false);
+    }
     if is_device_key(&command.key) {
         apply_device_command(snapshot, sections, command)?;
         Ok(false)
@@ -199,9 +203,23 @@ fn apply_capture_command(
     let target = decode_target(&row.target, deps)?;
     match command.op {
         WireOp::ClearBinding => {
-            vm.capture
-                .clear_binding(&target)
-                .map_err(|error| error.to_string())?;
+            // Per-device shortcut rows clear only their own column, so a
+            // keyboard Clear never strands a pad twin (and vice versa).
+            // Game binding rows (no `.kbd`/`.pad` suffix) keep the legacy
+            // whole-row clear; they never carry pads.
+            if command.key.ends_with(".kbd") && matches!(target, CaptureTarget::Shortcut(_)) {
+                vm.capture
+                    .clear_key(&target)
+                    .map_err(|error| error.to_string())?;
+            } else if command.key.contains(".pad") && matches!(target, CaptureTarget::Shortcut(_)) {
+                vm.capture
+                    .clear_pad(&target)
+                    .map_err(|error| error.to_string())?;
+            } else {
+                vm.capture
+                    .clear_binding(&target)
+                    .map_err(|error| error.to_string())?;
+            }
             sync_snapshot_from_vm(snapshot, vm, truth.i18n);
             *capture = None;
             Ok(())
@@ -279,6 +297,63 @@ fn apply_device_truth_command(
             return Err("device_truth lang must not be empty".to_string());
         }
         *system_locale = Some(language_from_locale_tag(tag));
+    }
+    Ok(())
+}
+
+/// Gamepad radio rows: `devices.<port>.gamepad` choices. Values are the
+/// connection-order pad indices (`None` parks every pad on this port).
+/// One player drives one pad: picking a pad parks its mates on this port
+/// and pulls it off any other port, so validation never trips.
+fn is_gamepad_radio_key(key: &str) -> bool {
+    key.strip_suffix(".gamepad").is_some_and(|head| {
+        head.strip_prefix("devices.")
+            .is_some_and(|port| PLAYER_PORTS.contains(&port))
+    })
+}
+
+fn apply_gamepad_radio_command(
+    snapshot: &mut SettingsSnapshot,
+    sections: &[SectionWire],
+    command: &WireCommand,
+) -> Result<(), String> {
+    let row = find_row(sections, &command.key)?;
+    if row.kind != RowKind::Choice {
+        return Err(format!("{}: not a gamepad radio row", command.key));
+    }
+    let port = command
+        .key
+        .split('.')
+        .nth(1)
+        .ok_or_else(|| format!("malformed device key: {}", command.key))?;
+    let Some(port_index) = PLAYER_PORTS.iter().position(|known| *known == port) else {
+        return Err(format!("unknown port: {port}"));
+    };
+    let pad: Option<usize> = choice(row, command.index)?;
+    if let Some(pad) = pad {
+        if snapshot.shared.input.gamepad.pad_ports.get(pad).is_none() {
+            return Err(format!("{}: unknown pad index {pad}", command.key));
+        }
+        for (index, entry) in snapshot
+            .shared
+            .input
+            .gamepad
+            .pad_ports
+            .iter_mut()
+            .enumerate()
+        {
+            if index == pad {
+                entry.slot = Some(port_index);
+            } else if entry.slot == Some(port_index) {
+                entry.slot = None;
+            }
+        }
+    } else {
+        for entry in snapshot.shared.input.gamepad.pad_ports.iter_mut() {
+            if entry.slot == Some(port_index) {
+                entry.slot = None;
+            }
+        }
     }
     Ok(())
 }
@@ -446,7 +521,9 @@ fn apply_reset_dynamic_scope(
         .filter(|port| PLAYER_PORTS.contains(port))
     {
         // Row toggles converge on the default set; copy it (and its
-        // presence) directly instead of replaying per-row diffs.
+        // presence) directly instead of replaying per-row diffs. The radio
+        // restores this port's pad slots the same way, so one reset clears
+        // both halves of the screen.
         let members = default
             .app_state
             .port_devices
@@ -457,6 +534,28 @@ fn apply_reset_dynamic_scope(
             .app_state
             .port_devices
             .insert(port.to_string(), members);
+        if let Some(port_index) = PLAYER_PORTS.iter().position(|known| *known == port) {
+            for (index, entry) in snapshot
+                .shared
+                .input
+                .gamepad
+                .pad_ports
+                .iter_mut()
+                .enumerate()
+            {
+                let slot = default
+                    .shared
+                    .input
+                    .gamepad
+                    .pad_ports
+                    .get(index)
+                    .and_then(|pad| pad.slot)
+                    .filter(|slot| *slot == port_index);
+                if slot.is_some() || entry.slot == Some(port_index) {
+                    entry.slot = slot;
+                }
+            }
+        }
         return Ok(());
     }
     if let Some(system) = scope.strip_prefix("system.") {

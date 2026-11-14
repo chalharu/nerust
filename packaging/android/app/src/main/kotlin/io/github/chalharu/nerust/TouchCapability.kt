@@ -91,10 +91,13 @@ internal data class KeyboardRow(
 
 /** One counted gamepad row: stable member id plus OS display name.
  * Member mirrors the runtime port-set scheme (`pad:<descriptor>`) so the
- * settings card and the session resolve the same device. Plain data. */
+ * settings card and the session resolve the same device. `deviceId` is
+ * the live Android id for the gameplay key gate (recycled on reconnect,
+ * never persisted or sent to Rust). Plain data. */
 internal data class GamepadRow(
     val member: String,
     val name: String,
+    val deviceId: Int = -1,
 )
 
 /** One passive scan feeding every device-truth consumer: keyboards,
@@ -133,7 +136,7 @@ private fun scanOneDevice(device: InputDevice): DeviceTruth? {
     val keyboard = keyboardRowFor(device)
     val gamepad =
         if (isCountedGamepad(device) && device.descriptor.isNotBlank()) {
-            GamepadRow("pad:${device.descriptor}", device.name)
+            GamepadRow("pad:${device.descriptor}", device.name, device.id)
         } else {
             null
         }

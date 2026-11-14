@@ -12,6 +12,11 @@ use crate::{
 
 pub use nerust_settings_core::input::clear_multi_port_conflicts;
 
+/// Reserved frontend device id for winit-delivered pad keys: winit hides
+/// the Android device id behind an opaque handle, so those keys share one
+/// transient namespace until a descriptor arrives to collapse it.
+const WINIT_PAD_DEVICE_ID: i32 = i32::MIN;
+
 fn touch_role_for_abstract_key(key: AbstractKey) -> Option<TouchControlRole> {
     match key {
         AbstractKey::DpadUp => Some(TouchControlRole::DpadUp),
@@ -196,6 +201,19 @@ impl SessionHandle {
             .unwrap_or_else(|| super::InputDept::guid_for_transient(device_id));
         self.input.pad_index_for_guid(guid);
         SourceId::Pad(guid)
+    }
+
+    /// Source for winit-delivered pad keys: winit hides the Android device
+    /// id behind an opaque handle, so this pins those keys to the
+    /// first-seen pad (the connected one in single-pad play). Multi-pad
+    /// winit keys converge here too; per-pad distinction for that path
+    /// needs NDK polling and stays future work. Dual delivery with the
+    /// Kotlin bridge is safe: the session pressed set suppresses repeats.
+    pub fn primary_pad_source(&mut self) -> SourceId {
+        if let Some(guid) = self.input.pad_order.first().copied() {
+            return SourceId::Pad(guid);
+        }
+        self.pad_source_for(WINIT_PAD_DEVICE_ID)
     }
 
     /// Connect-time device registration: descriptor to order index.
