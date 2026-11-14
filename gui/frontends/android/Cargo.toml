@@ -51,3 +51,5 @@ nerust_gui_runtime.workspace = true
 nerust_nes_settings.workspace = true
 nerust_settings_core.workspace = true
 nerust_settings_traits.workspace = true
+# Host-side tests for the winit key tables in settings_views.
+winit.workspace = true
