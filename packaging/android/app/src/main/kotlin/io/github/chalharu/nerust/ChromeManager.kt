@@ -111,9 +111,15 @@ class ChromeManager(private val activity: MainActivity) {
     // Terminal capability, pushed from MainActivity device truth. Unknown
     // starts capable: hiding by default would blank phones on day one.
     private var touchCapable = true
-    // Auto hides while a gamepad is connected; the post-press quiet
-    // window below still covers already-known devices transiently.
+    // Single connection signal for counted pads: Auto-hide reads it for
+    // the overlay gate and the capture window follows the same edge, so
+    // the two can never disagree. One field, two vocabulary setters below.
     private var controllerConnected = false
+    // Gamepad-input capture follows the connection signal: a counted
+    // pad shows the invisible capture window (and only then), so Java
+    // dispatch finally reaches gameplay keys and joystick motion.
+    private var gamepadInputPopup: PopupWindow? = null
+    private var gamepadInputView: GamepadInputCaptureView? = null
     private var controlsOpacityPercent = 65
     private var controlsHaptics = true
     private var controlsPushedZones: List<PushedOverlayZone> = emptyList()
@@ -167,12 +173,14 @@ class ChromeManager(private val activity: MainActivity) {
         controlsOverlayPopup?.isShowing == true ||
             drawerChromePopup?.isShowing == true ||
             drawerFullScreenPopup?.isShowing == true ||
-            fpsOverlayPopup?.isShowing == true
+            fpsOverlayPopup?.isShowing == true ||
+            gamepadInputPopup?.isShowing == true
 
     fun onConfigurationChanged() {
         controlsOverlayPopup?.dismiss()
         controlsOverlayPopup = null
         controlsOverlayView = null
+        dismissGamepadInputCapture()
         drawerChromePopup?.dismiss()
         drawerChromePopup = null
         drawerEdgeHandleView = null
@@ -391,6 +399,11 @@ class ChromeManager(private val activity: MainActivity) {
         clearDrawerWindowReferences()
         // Re-show the narrow edge-handle popup for future swipe detection.
         popupAnchor()?.let { ensureDrawerChromePopup(it) }
+        // Dismissing the drawer returns key focus to the capture window
+        // (if it is showing) so pads keep driving the game.
+        if (gamepadInputPopup?.isShowing == true) {
+            gamepadInputView?.requestFocus()
+        }
         return true
     }
 
@@ -418,9 +431,64 @@ class ChromeManager(private val activity: MainActivity) {
         controlsOverlayPopup?.dismiss()
         controlsOverlayPopup = null
         controlsOverlayView = null
+        dismissGamepadInputCapture()
         fpsOverlayPopup?.dismiss()
         fpsOverlayPopup = null
         fpsOverlayView = null
+    }
+
+    /** Gamepad-input capture follows the counted-pad signal: show the
+     * invisible window while a pad is connected so keys and joystick
+     * motion reach Java dispatch, hide it on disconnect so the activity
+     * window takes focus back. Idempotent; the ensure pass rebuilds after
+     * rotation or resume. */
+    private fun updateGamepadCapture(wanted: Boolean) {
+        if (wanted) {
+            popupAnchor()?.let { ensureGamepadInputCapture(it) }
+        } else {
+            dismissGamepadInputCapture()
+        }
+    }
+
+    private fun ensureGamepadInputCapture(anchor: View): Boolean {
+        if (gamepadInputPopup?.isShowing == true && gamepadInputView != null) {
+            gamepadInputView?.requestFocus()
+            return true
+        }
+        dismissGamepadInputCapture()
+        val view = GamepadInputCaptureView(activity, activity)
+        val popup =
+            PopupWindow(
+                view,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                true,
+            ).apply {
+                isTouchable = false
+                isClippingEnabled = false
+                inputMethodMode = PopupWindow.INPUT_METHOD_NOT_NEEDED
+                setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            }
+        gamepadInputView = view
+        gamepadInputPopup = popup
+        if (!showPopupAtLocation("gamepad-input-capture", popup, anchor, Gravity.TOP or Gravity.START, 0, 0)) {
+            gamepadInputPopup = null
+            gamepadInputView = null
+            return false
+        }
+        // Touches pass through to the game, but the activity window must
+        // not take key focus back on touch: input stays on this window.
+        activity.window.addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
+        view.requestFocus()
+        Log.i(TAG, "gamepad input capture shown")
+        return true
+    }
+
+    private fun dismissGamepadInputCapture() {
+        gamepadInputPopup?.dismiss()
+        gamepadInputPopup = null
+        gamepadInputView = null
+        activity.window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
     }
 
     fun isViewShowingForTest(tag: String): Boolean? =
@@ -499,12 +567,13 @@ class ChromeManager(private val activity: MainActivity) {
         val controlsAttached = ensureControlsOverlayPopup(anchor)
         val drawerAttached = ensureDrawerChromePopup(anchor)
         val fpsAttached = !fpsVisible || ensureFpsOverlayPopup(anchor)
+        val captureAttached = !controllerConnected || ensureGamepadInputCapture(anchor)
         Log.i(
             TAG,
             "ensureChromeAttached: controlsAttached=$controlsAttached drawerAttached=$drawerAttached " +
-                "fpsAttached=$fpsAttached anchor=${anchor.debugViewState()}",
+                "fpsAttached=$fpsAttached captureAttached=$captureAttached anchor=${anchor.debugViewState()}",
         )
-        if (!controlsAttached || !drawerAttached || !fpsAttached) {
+        if (!controlsAttached || !drawerAttached || !fpsAttached || !captureAttached) {
             retryChromeAttach()
         }
     }
@@ -607,15 +676,18 @@ class ChromeManager(private val activity: MainActivity) {
     }
 
     /** Auto hides while a gamepad is connected and returns on disconnect;
-     * a press still triggers the short quiet window too. */
+     * a press still triggers the short quiet window too. The input
+     * capture window follows the same edge, so Java dispatch reaches
+     * gameplay keys and joystick motion exactly while pads are live. */
     fun setControllerConnected(connected: Boolean) {
         if (controllerConnected == connected) return
         controllerConnected = connected
-        if (connected) {
-            activity.window.decorView.removeCallbacks(restoreControllerOverlayRunnable)
-            controllerOverlayHiddenUntil = 0L
-        }
+        // Either edge converges the quiet window: connects subsume it, and
+        // disconnects must not hold the overlay hostage past removal.
+        activity.window.decorView.removeCallbacks(restoreControllerOverlayRunnable)
+        controllerOverlayHiddenUntil = 0L
         refreshOverlayChrome()
+        updateGamepadCapture(connected)
     }
 
     private fun ensureDrawerChromePopup(anchor: View): Boolean {

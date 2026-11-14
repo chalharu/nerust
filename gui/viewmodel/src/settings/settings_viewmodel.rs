@@ -4,6 +4,7 @@ use crate::settings::catalog::FactoryCatalog;
 use crate::settings::topology_adapter::build_topology;
 use nerust_input_traits::{InputAssignments, InputPorts};
 use nerust_settings_core::bindings::{BindingIndex, conflicting_keys_indexed};
+use nerust_settings_core::model::input::ShortcutAction;
 use nerust_settings_core::model::snapshot::SettingsSnapshot;
 use nerust_system_traits::factory::CoreFactory;
 
@@ -12,6 +13,7 @@ use super::{
     audio::AudioSettingsViewModel,
     capture::CaptureViewModel,
     editor::{SettingsEditor, StoragePathValidator},
+    gamepad::GamepadViewModel,
     general::GeneralSettingsViewModel,
     input::InputSettingsViewModel,
     notification::NotificationSettingsViewModel,
@@ -32,6 +34,7 @@ pub struct SettingsViewModel {
     pub notifications: NotificationSettingsViewModel,
     pub capture: CaptureViewModel,
     pub shortcuts: ShortcutsViewModel,
+    pub gamepads: GamepadViewModel,
     systems: Vec<SystemSettingsViewModel>,
     inputs: Vec<InputSettingsViewModel>,
 }
@@ -62,6 +65,7 @@ impl SettingsViewModel {
         let notifications = NotificationSettingsViewModel::new(&editor);
         let capture = CaptureViewModel::new(&editor);
         let shortcuts = ShortcutsViewModel::new(&editor);
+        let gamepads = GamepadViewModel::new(&editor);
         let systems: Vec<SystemSettingsViewModel> = factories
             .iter()
             .map(|f| SystemSettingsViewModel::new(&editor, f))
@@ -81,6 +85,7 @@ impl SettingsViewModel {
             notifications,
             capture,
             shortcuts,
+            gamepads,
             systems,
             inputs,
             editor,
@@ -305,11 +310,69 @@ fn validator(state: &super::EditorState) -> super::ValidationState {
     validate_storage_policy(state, &mut issues);
     validate_audio_settings(state, &mut issues);
     validate_notification_settings(state, &mut issues);
+    validate_pad_shortcuts(state, &mut issues);
+    validate_pad_game_bindings(state, &mut issues);
     validate_port_devices(state, &mut issues);
     for factory in state.catalog.all() {
         validate_factory_settings(state, factory, &mut issues);
     }
     super::ValidationState { issues }
+}
+
+/// Global pad-shortcut conflicts: one button driving two or more actions.
+/// Labels come from the shortcut descriptors, so the message names the
+/// rows the user must disambiguate. Same blocking semantics as keyboard
+/// key conflicts. Eight actions: a linear scan beats a map here.
+fn validate_pad_shortcuts(state: &super::EditorState, issues: &mut Vec<super::ValidationIssue>) {
+    let descriptors = nerust_settings_core::bindings::descriptors::shortcut_descriptors();
+    let label = |action: ShortcutAction| {
+        descriptors
+            .iter()
+            .find(|desc| desc.action == action)
+            .map(|desc| desc.label)
+            .unwrap_or("?")
+    };
+    for (button, actions) in nerust_settings_core::model::input::pad_shortcut_conflicts(
+        &state.draft.shared.input.shortcuts.keyboard,
+    ) {
+        let names: Vec<&str> = actions.iter().map(|action| label(*action)).collect();
+        issues.push(super::ValidationIssue {
+            scope: super::ValidationScope::Controllers,
+            kind: super::ValidationIssueKind::PadConflict {
+                button: button.cap_label().to_string(),
+                labels: names.join(", "),
+            },
+        });
+    }
+}
+
+/// Per-pad game-button conflicts: one button driving two or more controls
+/// on the same pad. The runtime keeps the first and drops the rest, so a
+/// silent second control would never fire: block submit like every other
+/// conflict, and the pad screen names the rows to disambiguate.
+fn validate_pad_game_bindings(
+    state: &super::EditorState,
+    issues: &mut Vec<super::ValidationIssue>,
+) {
+    for (system, settings) in state.draft.shared.input.systems.iter() {
+        for entries in settings.pad_bindings.iter() {
+            for (button, controls) in
+                nerust_settings_core::model::input::pad_game_binding_conflicts(entries)
+            {
+                let names: Vec<String> = controls
+                    .iter()
+                    .map(|(attachment, control)| format!("{attachment}.{control}"))
+                    .collect();
+                issues.push(super::ValidationIssue {
+                    scope: super::ValidationScope::Controllers,
+                    kind: super::ValidationIssueKind::PadConflict {
+                        button: button.cap_label().to_string(),
+                        labels: format!("{}: {}", system, names.join(", ")),
+                    },
+                });
+            }
+        }
+    }
 }
 
 /// Global port device sets: exclusive members (gamepads) must not sit in
@@ -430,6 +493,41 @@ mod tests {
         assert!(
             has_unknown_profile,
             "validator should flag unknown profile ID"
+        );
+    }
+
+    #[test]
+    fn validator_flags_shared_pad_shortcuts() {
+        use nerust_input_traits::StandardButton;
+        use nerust_settings_core::model::input::ShortcutAction;
+
+        use crate::settings::test_support::test_vm_with_default_shortcuts;
+
+        let vm = test_vm_with_default_shortcuts();
+        vm.editor
+            .transact(|state| {
+                state
+                    .draft_mut()
+                    .shared
+                    .input
+                    .shortcuts
+                    .keyboard
+                    .iter_mut()
+                    .find(|binding| binding.action == ShortcutAction::Reset)
+                    .expect("reset row")
+                    .pad = Some(StandardButton::Guide);
+                Ok(())
+            })
+            .unwrap();
+        let err = vm.finish().expect_err("shared Guide must block submit");
+        assert!(
+            err.issues.iter().any(|issue| matches!(
+                &issue.kind,
+                crate::settings::ValidationIssueKind::PadConflict { button, .. }
+                if button == "Guide"
+            )),
+            "shared Guide binding must block with a pad conflict, got {:?}",
+            err.issues
         );
     }
 }

@@ -4,7 +4,6 @@ mod dialog_coordinator;
 mod error_dialog;
 mod foreground_controller;
 mod input_router;
-mod key_tracker;
 mod lifecycle;
 mod media_loader;
 mod menu;
@@ -35,8 +34,11 @@ use nerust_gui_runtime::{
 use nerust_gui_shell::{
     registry::SystemRegistry,
     session::{
-        SessionError, SessionHandle,
-        access::{PauseControl, ResetControl, SessionControl, SettingsResult, SlotIo, SlotNav},
+        KeyboardShortcut, SessionError, SessionHandle,
+        access::{
+            PauseControl, ResetControl, SessionControl, SettingsResult, SlotIo, SlotNav,
+            dispatch_session_action,
+        },
         commands::{SessionCommand, SessionCommandOutcome},
         notification::FailureOrigin,
         osd::TickMetrics,
@@ -47,8 +49,9 @@ use nerust_render_traits::renderer::PipelineFactory;
 use nerust_settings_core::model::shared::StoragePolicy;
 use winit::{
     application::ApplicationHandler,
-    event::WindowEvent,
+    event::{ElementState, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    keyboard::{KeyCode, NativeKeyCode, PhysicalKey},
     platform::android::{EventLoopBuilderExtAndroid, activity::AndroidApp},
     window::WindowId,
 };
@@ -169,7 +172,7 @@ pub(super) fn register_main_activity_natives(
             ),
             jni::NativeMethod::from_raw_parts(
                 jni_str!("nativeHardwareKey"),
-                jni_str!("(IZ)Ljava/lang/String;"),
+                jni_str!("(ILjava/lang/String;Z)Ljava/lang/String;"),
                 settings_bridge::Java_io_github_chalharu_nerust_SettingsActivity_nativeHardwareKey
                     as *mut c_void,
             ),
@@ -528,7 +531,6 @@ impl AndroidFrontend {
         self.chrome
             .input
             .reset_touch_tracking(&mut self.core.session, &self.app);
-        self.chrome.input.forget_physical_pressed();
         // Pure decision; the frontend executes marker and session I/O.
         // A fetch killed by the suspend reset keeps the marker for resume refetch.
         let saved_hidden = self.core.session.save_hidden_lifecycle_state();
@@ -565,9 +567,9 @@ impl AndroidFrontend {
         self.chrome
             .input
             .reset_touch_tracking(&mut self.core.session, &self.app);
-        self.chrome
-            .input
-            .release_physical_tracking(&mut self.core.session);
+        // Surface loss releases pads event-fully (other sources holding
+        // the same field stay asserted); keyboards keep their holds.
+        self.core.session.release_pad_presses();
         self.core.shell.needs_redraw = true;
     }
 
@@ -627,22 +629,56 @@ impl AndroidFrontend {
     }
 
     fn handle_menu_action(&mut self, event: FrontendEvent, tick: TickMetrics) {
-        log::info!("AndroidFrontend::handle_menu_action: {:?}", event);
+        log::debug!("AndroidFrontend::handle_menu_action: {:?}", event);
         // Exhaustive over the event: a new variant fails to compile here.
         // Handlers must not re-lock; `tick` comes from the single per-pass lock.
         match event {
             FrontendEvent::Menu(action) => match action {
                 MenuAction::ControllerInput {
                     device_id,
-                    key,
+                    button,
                     pressed,
                 } => {
-                    self.chrome.input.apply_physical_controller_input(
+                    if let Some(shortcut) = self.chrome.input.apply_physical_controller_input(
                         &mut self.core.session,
                         device_id,
-                        key,
+                        button,
                         pressed,
+                    ) {
+                        self.dispatch_shortcut(shortcut);
+                    }
+                }
+                MenuAction::AnalogInput {
+                    device_id,
+                    axis,
+                    value,
+                } => {
+                    self.chrome.input.apply_physical_controller_axis(
+                        &mut self.core.session,
+                        device_id,
+                        axis,
+                        value,
                     );
+                }
+                MenuAction::DeviceAdded {
+                    device_id,
+                    descriptor,
+                } => {
+                    self.core.session.note_pad_connected(device_id, &descriptor);
+                    // Mirror the session order into the vault and re-sort
+                    // the display list: a scan that raced ahead of this
+                    // event stays sorted by the last mirror until now.
+                    let order = self.core.session.pad_descriptors().to_vec();
+                    bridge::with_settings(|state| {
+                        state.pad_order = order;
+                        settings_views::sort_gamepads_by_order(
+                            &mut state.gamepads,
+                            &state.pad_order,
+                        );
+                    });
+                }
+                MenuAction::DeviceRemoved { device_id } => {
+                    self.core.session.note_pad_disconnected(device_id);
                 }
                 MenuAction::CreateSlot => {
                     let _ = self.exec(SessionCommand::CreateSlot);
@@ -733,6 +769,24 @@ impl AndroidFrontend {
                 }
                 MenuAction::TogglePause => self.toggle_pause(),
             },
+            FrontendEvent::MenuBatch(batch) => {
+                for action in batch {
+                    let MenuAction::AnalogInput {
+                        device_id,
+                        axis,
+                        value,
+                    } = action
+                    else {
+                        continue;
+                    };
+                    self.chrome.input.apply_physical_controller_axis(
+                        &mut self.core.session,
+                        device_id,
+                        axis,
+                        value,
+                    );
+                }
+            }
             FrontendEvent::ErrorDialogDismissed(id) => self.handle_error_dialog_dismissed(id, tick),
         }
     }
@@ -837,6 +891,22 @@ impl PauseControl for AndroidFrontend {
 
     fn toggle_pause(&mut self) {
         self.exec(SessionCommand::TogglePause);
+    }
+}
+
+/// Shared shortcut tail for pad buttons and hardware keys: the session
+/// resolves the press to a shortcut (or gameplay); this side executes the
+/// session half. Chrome-only actions (fullscreen, debugger) have no
+/// Android target and stay ignored, like the desktop router's non-session
+/// arms.
+impl AndroidFrontend {
+    fn dispatch_shortcut(&mut self, shortcut: KeyboardShortcut) {
+        match shortcut {
+            KeyboardShortcut::Session(action) => {
+                dispatch_session_action(self, action);
+            }
+            KeyboardShortcut::ToggleFullscreen | KeyboardShortcut::OpenDebugger => {}
+        }
     }
 }
 
@@ -968,7 +1038,6 @@ impl ApplicationHandler for AndroidFrontend {
             WindowEvent::Focused(false) => {
                 log::info!("window_event: focus lost");
                 self.core.session.clear_input();
-                self.chrome.input.forget_physical_pressed();
             }
             WindowEvent::Resized(size) => {
                 log::info!("window_event: resized to {}x{}", size.width, size.height);
@@ -984,6 +1053,41 @@ impl ApplicationHandler for AndroidFrontend {
                 self.chrome
                     .input
                     .handle_touch(&mut self.core.session, &self.app, touch);
+            }
+            WindowEvent::KeyboardInput { event, .. } => {
+                // NativeActivity bypass: gamepad buttons reach the native
+                // input queue (and winit) without crossing the Kotlin
+                // dispatch, which explicitly drops them there. Map the raw
+                // Android keycodes winit preserves as Unidentified here so
+                // single-pad play works even when that bridge stays silent.
+                // Dual delivery is safe: the session pressed set dedups.
+                // Hardware keyboards ride the same queue: mapped keys drive
+                // gameplay fields and shortcuts, unmapped ones fall through
+                // to the platform untouched (the session no-ops on them).
+                if !event.repeat {
+                    let pressed = event.state == ElementState::Pressed;
+                    if let Some(button) = winit_pad_button(&event.physical_key)
+                        && let Some(source) = self.core.session.primary_pad_source()
+                    {
+                        if let Some(shortcut) = self.core.session.handle_source_button(
+                            source,
+                            nerust_input_traits::SourceButtonId::Pad(button),
+                            pressed,
+                        ) {
+                            self.dispatch_shortcut(shortcut);
+                        }
+                    } else if let Some(key) = settings_views::winit_key_to_key(&event.physical_key)
+                    {
+                        // Breadcrumb for field verification (logcat): which
+                        // hardware key the native queue delivered, since the
+                        // Kotlin dispatch never sees this path.
+                        log::debug!("gameplay key: {} pressed={pressed}", key.label());
+                        if let Some(shortcut) = self.core.session.handle_keyboard_key(key, pressed)
+                        {
+                            self.dispatch_shortcut(shortcut);
+                        }
+                    }
+                }
             }
             WindowEvent::RedrawRequested => {
                 // Mutating prologue releases first; the bundle then borrows
@@ -1069,5 +1173,21 @@ impl ApplicationHandler for AndroidFrontend {
             self.chrome.osd.wakeup(now),
         );
         event_loop.set_control_flow(deadline.map_or(ControlFlow::Wait, ControlFlow::WaitUntil));
+    }
+}
+
+/// Winit-delivered pad keys share the frontend keycode table plus winit's
+/// arrow translation for the D-pad.
+fn winit_pad_button(key: &PhysicalKey) -> Option<nerust_input_traits::StandardButton> {
+    use nerust_input_traits::StandardButton as Pad;
+    match key {
+        PhysicalKey::Unidentified(NativeKeyCode::Android(code)) => {
+            settings_views::android_keycode_to_button(*code)
+        }
+        PhysicalKey::Code(KeyCode::ArrowUp) => Some(Pad::DpadUp),
+        PhysicalKey::Code(KeyCode::ArrowDown) => Some(Pad::DpadDown),
+        PhysicalKey::Code(KeyCode::ArrowLeft) => Some(Pad::DpadLeft),
+        PhysicalKey::Code(KeyCode::ArrowRight) => Some(Pad::DpadRight),
+        _ => None,
     }
 }

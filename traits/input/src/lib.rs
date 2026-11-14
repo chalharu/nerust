@@ -6,6 +6,7 @@ mod events;
 mod ids;
 mod key;
 mod profile;
+mod source;
 mod topology;
 
 pub use devices::{
@@ -23,6 +24,10 @@ pub use profile::{
     AbstractKey, BufferFactory, ControlInfo, ControlKind, ControllerProfile, CreateSplitError,
     InputAssignments, InputPorts, InputResources, InputSystemFactory, PortSet, SlotInfo,
     TypedInputResources, UnifiedFieldMap, collect_first_wins,
+};
+pub use source::{
+    GamepadAxis, GamepadState, MAX_PADS, PadGuid, SourceButtonId, SourceEvent, SourceId,
+    StandardButton, apply_deadzone,
 };
 pub use topology::{
     AnalogControlDescriptor, AttachmentSlotDescriptor, ControlDescriptor, DeviceDescriptor,

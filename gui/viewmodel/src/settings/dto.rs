@@ -1,7 +1,7 @@
 use std::fmt;
 
 use nerust_core_traits::identity::SystemId;
-use nerust_input_traits::AttachmentId;
+use nerust_input_traits::{AttachmentId, StandardButton};
 use nerust_settings_core::editor::CaptureTarget;
 use nerust_settings_core::model::{
     language::AppLanguage,
@@ -191,6 +191,10 @@ pub struct BindingRowView {
     pub target: CaptureTarget,
     pub label: String,
     pub value: BindingValueView,
+    /// Fixed-layout default pad button for this control, if the console
+    /// maps it to one. Per-pad mapping screens show it when the pad
+    /// carries no override (never "Unbound" for mapped controls).
+    pub pad_default: Option<StandardButton>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -203,6 +207,32 @@ pub enum BindingValueView {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InputConflictView {
     pub message: String,
+}
+
+// ── Gamepads ─────────────────────────────────────────────────────────
+
+/// Per-pad gamepads screen: each connection-order pad carries its own
+/// deadzone plus its player port. Labels and steps stay tab-level
+/// (identical for every pad); values ride the pad rows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GamepadTabView {
+    pub label: String,
+    pub deadzone_choices: Vec<ChoiceView<u8>>,
+    pub pads: Vec<PadPortView>,
+}
+
+/// One connection-order pad: player port, trigger doubling, and its own
+/// stick deadzone.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PadPortView {
+    pub index: usize,
+    pub label: String,
+    pub port: Option<usize>,
+    pub choices: Vec<ChoiceView<Option<usize>>>,
+    pub trigger_label: String,
+    pub trigger_alias: bool,
+    pub trigger_choices: Vec<ChoiceView<bool>>,
+    pub deadzone: u8,
 }
 
 // ── Capture ──────────────────────────────────────────────────────────

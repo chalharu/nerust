@@ -66,6 +66,13 @@ pub enum ValidationIssueKind {
         key: String,
         labels: String,
     },
+    /// Duplicate physical pad button: button label plus the joined
+    /// shortcut labels. Same shape as [`ValidationIssueKind::KeyConflict`],
+    /// but global (shortcuts are not per-system).
+    PadConflict {
+        button: String,
+        labels: String,
+    },
     ExclusiveMember {
         member: String,
         ports: String,
@@ -93,6 +100,7 @@ impl ValidationIssueKind {
             }
             Self::Placement { system, detail } => format!("{system}: {detail}"),
             Self::KeyConflict { key, labels } => format!("{key}: {labels}"),
+            Self::PadConflict { button, labels } => format!("{button}: {labels}"),
             Self::ExclusiveMember { member, ports } => {
                 core_i18n::exclusive_member(lang, member, ports)
             }

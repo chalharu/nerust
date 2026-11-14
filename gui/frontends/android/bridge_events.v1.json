@@ -33,6 +33,9 @@
             "delete_slot",
             "select_slot",
             "controller",
+            "motion",
+            "device_added",
+            "device_removed",
             "touch_gate"
           ]
         },
@@ -42,17 +45,29 @@
           "enum": [
             "button1",
             "button2",
+            "button3",
+            "button4",
             "button5",
             "button6",
             "start",
             "select",
+            "guide",
             "up",
             "down",
             "left",
-            "right"
+            "right",
+            "l3",
+            "r3"
           ]
         },
         "pressed": { "type": "boolean" },
+        "descriptor": { "type": "string" },
+        "left_x": { "type": "number", "minimum": -1.0, "maximum": 1.0 },
+        "left_y": { "type": "number", "minimum": -1.0, "maximum": 1.0 },
+        "right_x": { "type": "number", "minimum": -1.0, "maximum": 1.0 },
+        "right_y": { "type": "number", "minimum": -1.0, "maximum": 1.0 },
+        "trigger_l": { "type": "number", "minimum": -1.0, "maximum": 1.0 },
+        "trigger_r": { "type": "number", "minimum": -1.0, "maximum": 1.0 },
         "slot_id": { "type": "integer", "minimum": 0, "maximum": 9223372036854775807 }
       },
       "additionalProperties": false,
@@ -63,6 +78,27 @@
             "required": ["action"]
           },
           "then": { "required": ["device_id", "key", "pressed"] }
+        },
+        {
+          "if": {
+            "properties": { "action": { "const": "motion" } },
+            "required": ["action"]
+          },
+          "then": { "required": ["device_id"] }
+        },
+        {
+          "if": {
+            "properties": { "action": { "const": "device_added" } },
+            "required": ["action"]
+          },
+          "then": { "required": ["device_id", "descriptor"] }
+        },
+        {
+          "if": {
+            "properties": { "action": { "const": "device_removed" } },
+            "required": ["action"]
+          },
+          "then": { "required": ["device_id"] }
         },
         {
           "if": {
@@ -112,6 +148,9 @@
     "delete_slot": "MenuAction::DeleteSlot{slot_id}",
     "select_slot": "MenuAction::SelectSlot{slot_id}",
     "controller": "MenuAction::ControllerInput{device_id,key,pressed}",
+    "motion": "MenuAction::Motion{device_id,axes}",
+    "device_added": "MenuAction::DeviceAdded{device_id,descriptor}",
+    "device_removed": "MenuAction::DeviceRemoved{device_id}",
     "touch_gate": "MenuAction::TouchGate{pressed}"
   },
   "x-kotlin-constants": {

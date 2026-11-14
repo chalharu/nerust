@@ -11,7 +11,7 @@ use nerust_settings_core::{
     input::{BUILTIN_KEYBOARD_MEMBER, member_is_gamepad, member_is_shareable},
     model::{
         app_state::{PORT_PLAYER_1, PORT_PLAYER_2},
-        input::ShortcutAction,
+        input::{DEADZONE_STEPS, ShortcutAction},
         local::{
             NotificationColor, NotificationPosition, RumbleTarget, ScreenOrientation,
             TouchOverlayVisibility,
@@ -107,7 +107,13 @@ pub(super) fn build_sections(
         truth.touch_capable,
         truth.gamepads,
     ));
-    sections.extend(build_player_sections(vm, snapshot, i18n, truth.keyboards));
+    sections.extend(build_player_sections(
+        vm,
+        snapshot,
+        i18n,
+        truth.keyboards,
+        truth.gamepads,
+    ));
     sections.extend(build_system_sections(vm, i18n));
     sections.extend(build_input_sections(vm, i18n));
     sections.extend(build_keys_sections(
@@ -566,13 +572,12 @@ fn controllers_quick_section(
     snapshot: &SettingsSnapshot,
     i18n: I18n,
     keyboards: &[KeyboardInfo],
-    touch_capable: Option<bool>,
+    gamepads: &[GamepadInfo],
 ) -> SectionWire {
-    let overlay = &snapshot.local.touch_overlay;
     let mut quick_rows = Vec::new();
     for (index, port) in PLAYER_PORTS.iter().enumerate() {
         let player_id = player_id(index);
-        let names = port_member_names(port, snapshot, keyboards, i18n);
+        let names = port_member_names(port, snapshot, keyboards, gamepads, i18n);
         quick_rows.push(group_row(
             &format!("controllers.{player_id}"),
             player_label(index, i18n),
@@ -582,6 +587,63 @@ fn controllers_quick_section(
         let last = quick_rows.last_mut().expect("player row pushed");
         last.text = i18n.port_summary(&names);
     }
+    // Connected pads link straight to their own screen (deadzone,
+    // triggers, button mapping).
+    if !gamepads.is_empty() {
+        quick_rows.push(header_row(i18n.text(UiText::Gamepads)));
+    }
+    // Past the persisted table a pad parks with no settings of its
+    // own: no link, no screen.
+    for (index, info) in gamepads
+        .iter()
+        .take(nerust_input_traits::MAX_PADS)
+        .enumerate()
+    {
+        quick_rows.push(group_row(
+            &format!("controls.pad{}.link", index + 1),
+            info.name.clone(),
+            i18n.text(UiText::DescGamepadGear),
+            &format!("pad.{}", index + 1),
+        ));
+    }
+    // Pure navigation hub like player/about: every editable row lives on
+    // a detail screen with its own reset, so this screen carries none.
+    // Overlay display rows (visibility, haptics, sliders) all live on
+    // `controls.overlay_detail`, one screen per feature.
+    quick_rows.extend([
+        header_row(i18n.text(UiText::TouchOverlay)),
+        group_row(
+            "controls.overlay_detail_link",
+            i18n.text(UiText::OverlayDetail),
+            i18n.text(UiText::DescOverlayDetail),
+            "controls.overlay_detail",
+        ),
+        header_row(i18n.text(UiText::Shortcuts)),
+        group_row(
+            "controls.shortcuts_link",
+            i18n.text(UiText::Shortcuts),
+            i18n.text(UiText::DescShortcutsLink),
+            "controls.shortcuts",
+        ),
+    ]);
+    SectionWire {
+        id: "controllers".to_string(),
+        label: crate::settings_sections::section_label("controllers", i18n),
+        sub: String::new(),
+        rows: quick_rows,
+        visible: true,
+    }
+}
+
+/// Overlay detail screen: every overlay setting (visibility, haptics,
+/// opacity/scale/offset) plus the gamepad status readout. One screen per
+/// feature, so the screen reset below covers the whole screen.
+fn overlay_detail_section(
+    overlay: &nerust_settings_core::model::local::TouchOverlaySettings,
+    gamepads: &[GamepadInfo],
+    touch_capable: Option<bool>,
+    i18n: I18n,
+) -> SectionWire {
     let mut visibility_row = choice_row(
         "controls.overlay_visibility",
         i18n.text(UiText::TouchOverlay),
@@ -604,50 +666,6 @@ fn controllers_quick_section(
             choice.reason = reason.clone();
         }
     }
-    quick_rows.extend([
-        header_row(i18n.text(UiText::TouchOverlay)),
-        visibility_row,
-        group_row(
-            "controls.overlay_detail_link",
-            i18n.text(UiText::OverlayDetail),
-            i18n.text(UiText::DescOverlayDetail),
-            "controls.overlay_detail",
-        ),
-        toggle_row(
-            "controls.overlay_haptics",
-            i18n.text(UiText::OverlayHaptics),
-            String::new(),
-            i18n,
-            overlay.haptics,
-        ),
-        header_row(i18n.text(UiText::Shortcuts)),
-        group_row(
-            "controls.shortcuts_link",
-            i18n.text(UiText::Shortcuts),
-            i18n.text(UiText::DescShortcutsLink),
-            "controls.shortcuts",
-        ),
-        button_row(
-            "reset.controllers",
-            i18n.text(UiText::ResetScreen),
-            String::new(),
-        ),
-    ]);
-    SectionWire {
-        id: "controllers".to_string(),
-        label: crate::settings_sections::section_label("controllers", i18n),
-        sub: String::new(),
-        rows: quick_rows,
-        visible: true,
-    }
-}
-
-/// Overlay detail screen: gamepad status plus opacity/scale/offset.
-fn overlay_detail_section(
-    overlay: &nerust_settings_core::model::local::TouchOverlaySettings,
-    gamepads: &[GamepadInfo],
-    i18n: I18n,
-) -> SectionWire {
     SectionWire {
         id: "controls.overlay_detail".to_string(),
         label: i18n.text(UiText::TouchOverlay),
@@ -664,8 +682,16 @@ fn overlay_detail_section(
                         .iter()
                         .map(|info| info.name.clone())
                         .collect::<Vec<_>>()
-                        .join(" · ")
+                        .join(", ")
                 },
+            ),
+            visibility_row,
+            toggle_row(
+                "controls.overlay_haptics",
+                i18n.text(UiText::OverlayHaptics),
+                String::new(),
+                i18n,
+                overlay.haptics,
             ),
             number_row(
                 "controls.overlay_opacity",
@@ -707,20 +733,226 @@ fn overlay_detail_section(
     }
 }
 
-/// Global shortcuts screen: one capture row per binding plus reset.
-/// Fullscreen and debugger are desktop-only (window chrome the phone has
-/// no equivalent for): their rows never reach Android, though the shared
-/// bindings persist for desktop. Capture takes any mapped hardware key,
-/// keyboard or pad; with neither device connected the rows disable with
-/// a reason instead of opening a dead prompt.
+/// Per-pad settings screens: one `pad.<n>` screen per connected pad
+/// with its own deadzone, trigger doubling, and per-system button
+/// mapping. The list is variable: each connected pad names its own
+/// screen, so Pad 1 is always the first-seen pad while it stays
+/// connected. Ports are player slots, not devices: the connection-order
+/// table (not device ids) is what persists. Unconnected pads hide; their
+/// assignment and overrides stay in the tables and reappear on reconnect.
+fn build_pad_sections(
+    vm: &SettingsViewModel,
+    snapshot: &SettingsSnapshot,
+    i18n: I18n,
+    gamepads: &[GamepadInfo],
+) -> Vec<SectionWire> {
+    use nerust_gui_viewmodel::settings::dto::BindingValueView;
+    use nerust_settings_core::model::input::pad_game_binding_conflicts;
+    let reason = i18n.text(UiText::InputDeviceRequired);
+    let gamepad = &snapshot.shared.input.gamepad;
+    gamepads
+        .iter()
+        .take(nerust_input_traits::MAX_PADS)
+        .enumerate()
+        .map(|(index, info)| {
+            let pad_id = format!("pad.{}", index + 1);
+            let port = gamepad.pad_ports.get(index);
+            // Assigned player slot, if any. Mapping rows below scope to
+            // this pad's own player: other players' rows carry defaults
+            // this pad can never drive, and edits there land overrides
+            // that gameplay parks, so they only mislead.
+            let slot = port.and_then(|pad| pad.slot);
+            // Tapping the slot jumps to the Devices screen that owns the
+            // assignment radio: the pad screen shows mapping, Devices
+            // shows belonging. Unassigned pads keep the guidance row below
+            // instead: no single Devices screen owns them.
+            let slot_row = match slot.filter(|slot| PLAYER_PORTS.get(*slot).is_some()) {
+                Some(slot) => {
+                    let mut row = group_row(
+                        &format!("{pad_id}.slot"),
+                        i18n.text(UiText::GamepadDevice),
+                        String::new(),
+                        &format!("devices.{}", PLAYER_PORTS[slot]),
+                    );
+                    row.text = player_label(slot, i18n);
+                    row
+                }
+                None => info_row(
+                    &format!("{pad_id}.slot"),
+                    i18n.text(UiText::GamepadDevice),
+                    String::new(),
+                    i18n.text(UiText::NotAssigned),
+                ),
+            };
+            let mut rows = vec![
+                slot_row,
+                number_row(
+                    &format!("{pad_id}.deadzone"),
+                    i18n.text(UiText::Deadzone),
+                    i18n.text(UiText::DescDeadzone),
+                    i64::from(port.map_or(
+                        nerust_settings_core::model::input::DEFAULT_DEADZONE_PERCENT,
+                        |pad| pad.deadzone_percent,
+                    )),
+                    i64::from(DEADZONE_STEPS[1] - DEADZONE_STEPS[0]),
+                    i64::from(DEADZONE_STEPS[0]),
+                    i64::from(DEADZONE_STEPS[DEADZONE_STEPS.len() - 1]),
+                    "%",
+                ),
+                toggle_row(
+                    &format!("{pad_id}.triggers"),
+                    nerust_settings_core::i18n::pad_triggers_label(i18n.language(), index),
+                    info.name.clone(),
+                    i18n,
+                    port.is_some_and(|pad| pad.triggers_as_shoulders),
+                ),
+            ];
+            // Unassigned pads park every press, so mapping rows would
+            // only collect latent overrides: point at Devices instead.
+            // Assigned pads list only their own player's controls (all
+            // systems); other players' attachments never fire from here.
+            let Some(slot) = slot else {
+                rows.push(info_row(
+                    &format!("{pad_id}.unassigned"),
+                    i18n.text(UiText::KeyMapping),
+                    i18n.text(UiText::DescPadUnassigned),
+                    String::new(),
+                ));
+                rows.push(button_row(
+                    &format!("reset.{pad_id}"),
+                    i18n.text(UiText::ResetScreen),
+                    i18n.text(UiText::DescPadReset),
+                ));
+                return SectionWire {
+                    id: pad_id.clone(),
+                    label: info.name.clone(),
+                    sub: i18n.text(UiText::Gamepads),
+                    rows,
+                    visible: false,
+                };
+            };
+            for input in vm.inputs() {
+                let view = input.view.get();
+                let system = view.system_id.to_string();
+                let mut system_rows = Vec::new();
+                for section in &view.sections {
+                    let mut section_rows = Vec::new();
+                    for binding in &section.rows {
+                        // Per-pad mapping mirrors the game rows: same
+                        // attachment/control, routed to this pad.
+                        let (Some(attachment), Some(control)) =
+                            (binding.target.attachment(), binding.target.control())
+                        else {
+                            continue;
+                        };
+                        // Attachments name their player port
+                        // (`<sys>.attachment.playerN`); unclassifiable
+                        // attachments fail open so a factory addition
+                        // never silently drops rows here.
+                        if slot_port_index(attachment).is_some_and(|port| port != slot) {
+                            continue;
+                        }
+                        let target = CaptureTarget::PadBinding {
+                            system: view.system_id.clone_box(),
+                            pad: index,
+                            attachment: attachment.to_string(),
+                            control: control.to_string(),
+                        };
+                        let value = input.pad_row_value(&target, binding.pad_default);
+                        let text = match &value {
+                            BindingValueView::Unbound(label)
+                            | BindingValueView::Bound(label)
+                            | BindingValueView::Capturing(label) => label.clone(),
+                        };
+                        section_rows.push(capture_row(
+                            &format!("{pad_id}.{system}.{attachment}.{control}",),
+                            binding.label.clone(),
+                            String::new(),
+                            text,
+                            &encode_target(&target, &system),
+                            true,
+                            &reason,
+                        ));
+                    }
+                    if section_rows.is_empty() {
+                        continue;
+                    }
+                    system_rows.push(header_row(section.label.clone()));
+                    system_rows.append(&mut section_rows);
+                }
+                if system_rows.is_empty() {
+                    continue;
+                }
+                rows.push(header_row(view.label.clone()));
+                rows.append(&mut system_rows);
+                // One button driving two controls never fires the second:
+                // surface it on the pad's own screen, next to the rows.
+                // Scoped like the rows above: hidden attachments have no
+                // rows to disambiguate against.
+                if let Some(settings) = snapshot.shared.input.systems.get(&view.system_id)
+                    && let Some(entries) = settings.pad_bindings.get(index)
+                {
+                    for (button, controls) in pad_game_binding_conflicts(entries) {
+                        // Scoped like the rows above: only in-scope
+                        // controls render, and a lone survivor is no
+                        // conflict on this screen.
+                        let shown: Vec<_> = controls
+                            .iter()
+                            .filter(|(attachment, _)| {
+                                !slot_port_index(attachment.as_str())
+                                    .is_some_and(|port| port != slot)
+                            })
+                            .collect();
+                        if shown.len() < 2 {
+                            continue;
+                        }
+                        let name = i18n.pad_button_label(button);
+                        rows.push(info_row(
+                            &format!("{pad_id}.{system}.conflict.{name}"),
+                            name.clone(),
+                            shown
+                                .iter()
+                                .map(|(attachment, control)| format!("{attachment}.{control}"))
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                            String::new(),
+                        ));
+                    }
+                }
+            }
+            rows.push(button_row(
+                &format!("reset.{pad_id}"),
+                i18n.text(UiText::ResetScreen),
+                i18n.text(UiText::DescPadReset),
+            ));
+            SectionWire {
+                id: pad_id.clone(),
+                label: info.name.clone(),
+                sub: i18n.text(UiText::Gamepads),
+                rows,
+                visible: false,
+            }
+        })
+        .collect()
+}
+
+/// Global shortcuts screen: one device block per CONNECTED input, each
+/// with one capture row per binding. The keyboard block shows only while
+/// a keyboard is connected (keyboards are hot-pluggable like pads now);
+/// every connected pad gets its own `Gamepad (name)` block showing only
+/// its pad column. Capture accepts either input from any row and lands
+/// it in the matching column; Clear on a row clears only that row's
+/// column. With neither device connected, an empty-state row explains
+/// itself instead of opening a dead prompt. Fullscreen and debugger are
+/// desktop-only (window chrome the phone has no equivalent for): their
+/// rows never reach Android, though the shared bindings persist.
 fn shortcuts_section(
     vm: &SettingsViewModel,
+    snapshot: &SettingsSnapshot,
     i18n: I18n,
     keyboards: &[KeyboardInfo],
     gamepads: &[GamepadInfo],
 ) -> SectionWire {
-    let shortcuts_view = vm.shortcuts.view.get();
-    let open = capture_open(keyboards, gamepads);
     let reason = i18n.text(UiText::InputDeviceRequired);
     // Shortcut targets encode a system only as a decoding hint; every
     // global shortcut decodes identically, so the first system suffices.
@@ -729,40 +961,108 @@ fn shortcuts_section(
         .first()
         .map(|system| system.system_id().to_string())
         .unwrap_or_default();
+    let actions: Vec<_> = vm
+        .shortcuts
+        .view
+        .get()
+        .rows
+        .iter()
+        .filter(|binding| {
+            !matches!(
+                binding.target,
+                CaptureTarget::Shortcut(
+                    ShortcutAction::ToggleFullscreen | ShortcutAction::OpenDebugger
+                )
+            )
+        })
+        .map(|binding| {
+            (
+                binding.label.clone(),
+                encode_target(&binding.target, &shortcut_system),
+                binding.target.clone(),
+            )
+        })
+        .collect();
+    let mut rows = Vec::new();
+    if !keyboards.is_empty() {
+        rows.push(header_row(i18n.text(UiText::Keyboard)));
+        for (label, target, capture) in &actions {
+            rows.push(capture_row(
+                &format!("controls.{}.kbd", binding_key(capture)),
+                label.clone(),
+                String::new(),
+                shortcut_binding_text(snapshot, capture, i18n, false),
+                target,
+                true,
+                &reason,
+            ));
+        }
+    }
+    // One shared pad block: the pad column is global (one button per
+    // action across all pads), so per-pad blocks would show N copies of
+    // the same value. The block lists every connected pad by name; capture
+    // from any row accepts any pad's button.
+    if !gamepads.is_empty() {
+        let names: Vec<_> = gamepads
+            .iter()
+            .take(nerust_input_traits::MAX_PADS)
+            .map(|info| info.name.clone())
+            .collect();
+        rows.push(header_row(format!(
+            "{} ({})",
+            i18n.text(UiText::GamepadDevice),
+            names.join(", ")
+        )));
+        for (label, target, capture) in &actions {
+            rows.push(capture_row(
+                &format!("controls.{}.pad", binding_key(capture)),
+                label.clone(),
+                String::new(),
+                shortcut_binding_text(snapshot, capture, i18n, true),
+                target,
+                true,
+                &reason,
+            ));
+        }
+    }
+    if rows.is_empty() {
+        rows.push(info_row(
+            "controls.shortcuts.none",
+            i18n.text(UiText::NoKeyboards),
+            i18n.text(UiText::DescNoKeyboards),
+            String::new(),
+        ));
+    }
+    rows.push(button_row(
+        "reset.controls.shortcuts",
+        i18n.text(UiText::ResetScreen),
+        String::new(),
+    ));
     SectionWire {
         id: "controls.shortcuts".to_string(),
         label: i18n.text(UiText::Shortcuts),
         sub: i18n.text(UiText::SectionControllers),
-        rows: shortcuts_view
-            .rows
-            .iter()
-            .filter(|binding| {
-                !matches!(
-                    binding.target,
-                    CaptureTarget::Shortcut(
-                        ShortcutAction::ToggleFullscreen | ShortcutAction::OpenDebugger
-                    )
-                )
-            })
-            .map(|binding| {
-                capture_row(
-                    &format!("controls.{}", binding_key(&binding.target)),
-                    binding.label.clone(),
-                    String::new(),
-                    binding_value_text(binding),
-                    &encode_target(&binding.target, &shortcut_system),
-                    open,
-                    &reason,
-                )
-            })
-            .chain(std::iter::once(button_row(
-                "reset.controls.shortcuts",
-                i18n.text(UiText::ResetScreen),
-                String::new(),
-            )))
-            .collect(),
+        rows,
         visible: false,
     }
+}
+
+/// One column of one shortcut binding for the per-device rows: the key
+/// column or the pad column, Unbound when empty.
+fn shortcut_binding_text(
+    snapshot: &SettingsSnapshot,
+    target: &CaptureTarget,
+    i18n: I18n,
+    pad: bool,
+) -> String {
+    let label = if pad {
+        nerust_settings_core::editor::current_pad_binding(snapshot, target)
+            .map(|button| i18n.pad_button_label(button))
+    } else {
+        nerust_settings_core::editor::current_binding_key(snapshot, target)
+            .map(|key| key.label().to_string())
+    };
+    label.unwrap_or_else(|| i18n.text(UiText::Unbound))
 }
 
 fn build_controllers_sections(
@@ -773,11 +1073,13 @@ fn build_controllers_sections(
     touch_capable: Option<bool>,
     gamepads: &[GamepadInfo],
 ) -> Vec<SectionWire> {
-    vec![
-        controllers_quick_section(snapshot, i18n, keyboards, touch_capable),
-        overlay_detail_section(&snapshot.local.touch_overlay, gamepads, i18n),
-        shortcuts_section(vm, i18n, keyboards, gamepads),
-    ]
+    let mut sections = vec![
+        controllers_quick_section(snapshot, i18n, keyboards, gamepads),
+        overlay_detail_section(&snapshot.local.touch_overlay, gamepads, touch_capable, i18n),
+        shortcuts_section(vm, snapshot, i18n, keyboards, gamepads),
+    ];
+    sections.extend(build_pad_sections(vm, snapshot, i18n, gamepads));
+    sections
 }
 
 /// One section per machine: settings fields plus a navigation row into the
@@ -906,12 +1208,14 @@ fn slot_rows(view: &nerust_gui_viewmodel::settings::dto::InputTabView, i18n: I18
 
 /// Player screens (one per global port): the Devices row opens the device
 /// picker, the Controller-type row opens the per-machine type list.
-/// Summaries read from the port device set, never from machine sections.
+/// Summaries read from the port device set plus pad-port assignments,
+/// never from machine sections.
 fn build_player_sections(
     vm: &SettingsViewModel,
     snapshot: &SettingsSnapshot,
     i18n: I18n,
     keyboards: &[KeyboardInfo],
+    gamepads: &[GamepadInfo],
 ) -> Vec<SectionWire> {
     let mut sections = Vec::new();
     for (index, port) in PLAYER_PORTS.iter().enumerate() {
@@ -919,7 +1223,7 @@ fn build_player_sections(
         let devices_id = devices_id(port);
         let types_id = types_id(index);
         let label = player_label(index, i18n);
-        let names = port_member_names(port, snapshot, keyboards, i18n);
+        let names = port_member_names(port, snapshot, keyboards, gamepads, i18n);
         sections.push(SectionWire {
             id: player_id.clone(),
             label: label.clone(),
@@ -994,6 +1298,7 @@ fn build_player_sections(
             &label,
             snapshot,
             keyboards,
+            gamepads,
             i18n,
         ));
     }
@@ -1034,24 +1339,28 @@ fn type_profile_summary(
         .unwrap_or_else(|| i18n.text(UiText::NotAssigned))
 }
 
-/// Display names for a port's member ids in set order. Unknown members
-/// fall back to a generic label so a stale id never renders blank.
+/// Display names for a port in set order: keyboards from the port device
+/// set plus gamepads from the pad-port table. Unknown members fall back
+/// to a generic label so a stale id never renders blank. Gamepad names
+/// resolve by connection-order index (Pad N = Nth connected pad); an
+/// assigned but disconnected pad keeps its `Pad N` label so the
+/// assignment stays visible.
 fn port_member_names(
     port: &str,
     snapshot: &SettingsSnapshot,
     keyboards: &[KeyboardInfo],
+    gamepads: &[GamepadInfo],
     i18n: I18n,
 ) -> Vec<String> {
     // Effective members only: rows render solely while the terminal
     // enumerates them, so every screen shares one enumeration truth.
     // Otherwise a reconnectable USB keyboard would read as assigned on
     // the player screens while the device list reports none connected.
-    // Unplugged USB descriptors stay assigned (reconnect restores them);
-    // gamepads always count (no enumeration to check against yet).
+    // Unplugged USB descriptors stay assigned (reconnect restores them).
     let builtin_present = keyboards
         .iter()
         .any(|info| info.member == BUILTIN_KEYBOARD_MEMBER);
-    snapshot
+    let mut names: Vec<String> = snapshot
         .app_state
         .port_devices
         .get(port)
@@ -1070,7 +1379,18 @@ fn port_member_names(
                 .map(|member| keyboard_member_name(member, keyboards, i18n))
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    let port_index = PLAYER_PORTS.iter().position(|known| *known == port);
+    if let Some(port_index) = port_index {
+        for (pad_index, pad) in snapshot.shared.input.gamepad.pad_ports.iter().enumerate() {
+            if pad.slot == Some(port_index)
+                && let Some(info) = gamepads.get(pad_index)
+            {
+                names.push(info.name.clone());
+            }
+        }
+    }
+    names
 }
 
 /// Drop the built-in membership when fresh enumeration reports no
@@ -1117,14 +1437,17 @@ fn keyboard_member_name(member: &str, keyboards: &[KeyboardInfo], i18n: I18n) ->
 /// Device picker: the dynamic keyboard enumeration (built-in row when
 /// present, one row per external descriptor, BT/USB agnostic, virtual
 /// devices excluded — classified Kotlin-side). Row tap toggles port
-/// membership; Details opens the device screen. Gamepad rows appear here
-/// once the gamepad backend lands; the gamepad group is omitted until then.
+/// membership; Details opens the device screen. Gamepads are radio
+/// assigned here: at most one connected pad drives a player, Unassigned
+/// parks them all. The choice edits the same pad-port table as Controls
+/// > Gamepads (deadzone and triggers stay there).
 fn build_devices_section(
     port: &str,
     devices_id: &str,
     player: &str,
     snapshot: &SettingsSnapshot,
     keyboards: &[KeyboardInfo],
+    gamepads: &[GamepadInfo],
     i18n: I18n,
 ) -> SectionWire {
     let members = snapshot.app_state.port_devices.get(port);
@@ -1158,6 +1481,114 @@ fn build_devices_section(
         row.target = info.member.clone();
         row.detail_target = format!("device.{}", info.member);
         rows.push(row);
+    }
+    rows.push(header_row(i18n.text(UiText::Gamepads)));
+    let port_index = PLAYER_PORTS.iter().position(|known| *known == port);
+    if gamepads.is_empty() {
+        rows.push(info_row(
+            &format!("{devices_id}.pads.none"),
+            i18n.text(UiText::NotAssigned),
+            String::new(),
+            String::new(),
+        ));
+    } else {
+        // Radio over the connected pads: one player, one pad. Values are
+        // the connection-order pad indices (`None` parks every pad).
+        let mut pad_choices: Vec<(Option<usize>, String)> =
+            vec![(None, i18n.text(UiText::NotAssigned))];
+        for (pad_index, info) in gamepads
+            .iter()
+            .take(nerust_input_traits::MAX_PADS)
+            .enumerate()
+        {
+            pad_choices.push((Some(pad_index), info.name.clone()));
+        }
+        let assigned: Option<usize> = port_index
+            .and_then(|port_index| {
+                snapshot
+                    .shared
+                    .input
+                    .gamepad
+                    .pad_ports
+                    .iter()
+                    .position(|pad| pad.slot == Some(port_index))
+            })
+            // Disconnected assigned pads hide: the radio only names
+            // connected pads, and the stale slot restores on reconnect.
+            .filter(|index| *index < gamepads.len());
+        rows.push(choice_row(
+            &format!("{devices_id}.gamepad"),
+            i18n.text(UiText::GamepadDevice),
+            i18n.text(UiText::DescGamepadRadio),
+            &pad_choices,
+            &assigned,
+        ));
+        // A disconnected pad keeps its slot: name it so "Not assigned"
+        // never lies about a reservation that restores on reconnect.
+        if assigned.is_none()
+            && let Some(stale) = port_index.and_then(|port_index| {
+                snapshot
+                    .shared
+                    .input
+                    .gamepad
+                    .pad_ports
+                    .iter()
+                    .position(|pad| pad.slot == Some(port_index))
+            })
+        {
+            rows.push(info_row(
+                &format!("{devices_id}.gamepad.stale"),
+                i18n.text(UiText::GamepadDevice),
+                i18n.text(UiText::DescPadParked),
+                format!("pad {}", stale + 1),
+            ));
+        }
+        // Gear into this port's own pad screen (deadzone, triggers,
+        // button mapping): the radio above owns assignment, the gear
+        // owns the pad. Unassigned pads keep their gears here so they
+        // stay reachable; other players' pads do not intrude, so this
+        // screen never navigates into another player's pad.
+        for (pad_index, info) in gamepads
+            .iter()
+            .take(nerust_input_traits::MAX_PADS)
+            .enumerate()
+        {
+            let entry_slot: Option<usize> = snapshot
+                .shared
+                .input
+                .gamepad
+                .pad_ports
+                .get(pad_index)
+                .and_then(|pad| pad.slot);
+            let assigned_here = entry_slot.is_none_or(|slot| Some(slot) == port_index);
+            if !assigned_here {
+                continue;
+            }
+            // Unassigned pads stay reachable from both players: say so on
+            // the gear itself, so this screen never promises another
+            // player's pad.
+            let gear_description = if entry_slot.is_none() {
+                i18n.text(UiText::NotAssigned)
+            } else {
+                i18n.text(UiText::DescGamepadGear)
+            };
+            rows.push(group_row(
+                &format!("{devices_id}.pad{}", pad_index + 1),
+                info.name.clone(),
+                gear_description,
+                &format!("pad.{}", pad_index + 1),
+            ));
+        }
+        // Past the table a pad parks with no screen of its own: say so
+        // instead of vanishing silently.
+        if gamepads.len() > nerust_input_traits::MAX_PADS {
+            rows.push(info_row(
+                &format!("{devices_id}.pads.parked"),
+                i18n.text(UiText::GamepadDevice),
+                i18n.text(UiText::DescPadParked),
+                String::new(),
+            ));
+        }
     }
     rows.push(button_row(
         &format!("reset.{devices_id}"),
@@ -1228,8 +1659,7 @@ fn build_device_sections(
         })
         .collect()
 }
-/// One key-mapping screen per machine: the shared single keyboard table
-/// (per-device split is future work). Reached from each keyboard device
+/// One key-mapping screen per machine. Reached from each keyboard device
 /// detail screen; the controller screens hold slots only. Capture takes
 /// any mapped hardware key; with no input device the rows disable.
 fn build_keys_sections(
@@ -1280,13 +1710,19 @@ fn build_keys_sections(
 }
 
 fn binding_key(target: &CaptureTarget) -> String {
-    match target {
-        CaptureTarget::Binding {
-            attachment,
-            control,
-            ..
-        } => format!("{attachment}.{control}"),
-        CaptureTarget::Shortcut(action) => format!("shortcut.{action:?}"),
+    if let Some(action) = target.action() {
+        return format!("shortcut.{action:?}");
+    }
+    // Bindings and overrides share the attachment/control identity;
+    // overrides prefix the 1-based pad. Shortcuts return above, so both
+    // accessors hold here.
+    let (attachment, control) = (
+        target.attachment().unwrap_or_default(),
+        target.control().unwrap_or_default(),
+    );
+    match target.pad() {
+        Some(pad) => format!("pad{}.{attachment}.{control}", pad + 1),
+        None => format!("{attachment}.{control}"),
     }
 }
 

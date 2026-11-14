@@ -17,138 +17,29 @@ pub(crate) const ACTION_CREATE_SLOT: &str = "create_slot";
 pub(crate) const ACTION_DELETE_SLOT: &str = "delete_slot";
 pub(crate) const ACTION_SELECT_SLOT: &str = "select_slot";
 pub(crate) const ACTION_CONTROLLER: &str = "controller";
+pub(crate) const ACTION_MOTION: &str = "motion";
+pub(crate) const ACTION_DEVICE_ADDED: &str = "device_added";
+pub(crate) const ACTION_DEVICE_REMOVED: &str = "device_removed";
 pub(crate) const ACTION_TOUCH_GATE: &str = "touch_gate";
 
-/// Schema-derived validation before typed dispatch. Missing is not JSON null.
-pub(crate) fn validate_bridge_event(value: &mut serde_json::Value) -> Option<()> {
-    let object = value.as_object_mut()?;
-    match object.get("type")?.as_str()? {
-        "menu" => {
-            for (name, value) in object.iter_mut() {
-                let valid = match name.as_str() {
-                    "v" => {
-                        normalize_bridge_integer(value)?;
-                        value.as_i64() == Some(BRIDGE_EVENT_VERSION as i64)
-                    }
-                    "type" => value.as_str() == Some("menu"),
-                    "action" => {
-                        matches!(
-                            value.as_str(),
-                            Some(
-                                "exit"
-                                    | "load_state"
-                                    | "open_rom"
-                                    | "open_settings"
-                                    | "orientation_changed"
-                                    | "reset"
-                                    | "save_state"
-                                    | "toggle_pause"
-                                    | "unload"
-                                    | "create_slot"
-                                    | "delete_slot"
-                                    | "select_slot"
-                                    | "controller"
-                                    | "touch_gate"
-                            )
-                        )
-                    }
-                    "device_id" => {
-                        normalize_bridge_integer(value)?;
-                        value
-                            .as_i64()
-                            .is_some_and(|number| (-2147483648..=2147483647).contains(&number))
-                    }
-                    "key" => {
-                        matches!(
-                            value.as_str(),
-                            Some(
-                                "button1"
-                                    | "button2"
-                                    | "button5"
-                                    | "button6"
-                                    | "start"
-                                    | "select"
-                                    | "up"
-                                    | "down"
-                                    | "left"
-                                    | "right"
-                            )
-                        )
-                    }
-                    "pressed" => value.is_boolean(),
-                    "slot_id" => {
-                        normalize_bridge_integer(value)?;
-                        value
-                            .as_i64()
-                            .is_some_and(|number| (0..=9223372036854775807).contains(&number))
-                    }
-                    _ => false,
-                };
-                if !valid {
-                    return None;
-                }
-            }
-            for name in ["v", "type", "action"] {
-                object.get(name)?;
-            }
-            if object.get("action")?.as_str() == Some("controller") {
-                object.get("device_id")?;
-                object.get("key")?;
-                object.get("pressed")?;
-            }
-            if object.get("action")?.as_str() == Some("touch_gate") {
-                object.get("pressed")?;
-            }
-            if object.get("action")?.as_str() == Some("select_slot") {
-                object.get("slot_id")?;
-            }
-            if object.get("action")?.as_str() == Some("delete_slot") {
-                object.get("slot_id")?;
-            }
-            Some(())
-        }
-        "error_dialog_dismissed" => {
-            for (name, value) in object.iter_mut() {
-                let valid = match name.as_str() {
-                    "v" => {
-                        normalize_bridge_integer(value)?;
-                        value.as_i64() == Some(BRIDGE_EVENT_VERSION as i64)
-                    }
-                    "type" => value.as_str() == Some("error_dialog_dismissed"),
-                    "request_id" => {
-                        normalize_bridge_integer(value)?;
-                        value
-                            .as_i64()
-                            .is_some_and(|number| (1..=9223372036854775807).contains(&number))
-                    }
-                    _ => false,
-                };
-                if !valid {
-                    return None;
-                }
-            }
-            for name in ["v", "type", "request_id"] {
-                object.get(name)?;
-            }
-            Some(())
-        }
-        _ => None,
-    }
-}
+/// Required fields per menu action, from the schema gates.
+/// Dispatch rejects events missing any listed field first.
+pub(crate) const MENU_REQUIRED_FIELDS: &[(&str, &[&str])] = &[
+    ("controller", &["device_id", "key", "pressed"]),
+    ("delete_slot", &["slot_id"]),
+    ("device_added", &["descriptor", "device_id"]),
+    ("device_removed", &["device_id"]),
+    ("motion", &["device_id"]),
+    ("select_slot", &["slot_id"]),
+    ("touch_gate", &["pressed"]),
+];
 
-// JSON Schema integers include integral decimal/exponent numbers (e.g. 1.0).
-fn normalize_bridge_integer(value: &mut serde_json::Value) -> Option<()> {
-    if value.as_i64().is_some() {
-        return Some(());
-    }
-    // Never round an existing unsigned integer through f64.
-    if value.as_u64().is_some() {
-        return None;
-    }
-    let number = value.as_f64()?;
-    if number.fract() != 0.0 || number < i64::MIN as f64 || number >= -(i64::MIN as f64) {
-        return None;
-    }
-    *value = serde_json::Value::from(number as i64);
-    Some(())
-}
+/// Inclusive bounds for integral bridge fields, from the schema.
+pub(crate) const INTEGER_FIELD_BOUNDS: &[(&str, i64, i64)] = &[
+    ("device_id", -2147483648, 2147483647),
+    ("request_id", 1, 9223372036854775807),
+    ("slot_id", 0, 9223372036854775807),
+];
+
+/// Inclusive analog axis range, from the schema.
+pub(crate) const ANALOG_VALUE_BOUNDS: (f32, f32) = (-1.0, 1.0);

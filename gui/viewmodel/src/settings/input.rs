@@ -1,11 +1,14 @@
 use std::{rc::Rc, sync::Arc};
 
 use nerust_core_traits::identity::SystemId;
-use nerust_input_traits::{AttachmentId, ControllerProfile, SlotInfo};
+use nerust_input_traits::{
+    AbstractKey, AttachmentId, ControlId, ControllerProfile, DigitalControlId, SlotInfo,
+    StandardButton,
+};
 use nerust_settings_core::{
     bindings::descriptors::KeyboardBindingDescriptor,
     bindings::{conflicting_keys, descriptors::keyboard_binding_sections},
-    editor::{CaptureTarget, current_binding_label},
+    editor::{CaptureTarget, current_binding_label, current_pad_binding, current_pad_game_binding},
     i18n::{I18n, UiText},
     input::clear_multi_port_conflicts,
 };
@@ -106,6 +109,22 @@ impl InputSettingsViewModel {
         self.display_name
     }
 
+    /// Display value for one per-pad mapping row, resolved against the
+    /// live draft (override else fixed-layout default). Per-pad mapping
+    /// screens call this per row instead of reading the shared keyboard
+    /// view, which never carries pad columns.
+    pub fn pad_row_value(
+        &self,
+        target: &CaptureTarget,
+        default: Option<StandardButton>,
+    ) -> BindingValueView {
+        let current = self.editor.current();
+        let i18n = I18n::resolve_os(current.draft.shared.general.language);
+        let value = pad_binding_value(&current, target, default, i18n);
+        drop(current);
+        value
+    }
+
     pub fn set_controller_slot(
         &self,
         slot: AttachmentId,
@@ -195,8 +214,36 @@ pub(super) fn binding_value(
     if state.capture_target.as_ref() == Some(target) {
         BindingValueView::Capturing(i18n.text(UiText::CapturePrompt))
     } else {
-        match current_binding_label(&state.draft, target) {
-            Some(label) => BindingValueView::Bound(label.to_string()),
+        // Shortcut rows show both columns (`Space / Guide` means either
+        // triggers, not both together); a lone pad shows its own cap.
+        // Game rows never carry pads (`current_pad_binding` is `None`
+        // for them by construction).
+        let pad = current_pad_binding(&state.draft, target);
+        match (current_binding_label(&state.draft, target), pad) {
+            (Some(key), Some(pad)) => {
+                BindingValueView::Bound(format!("{key} / {}", i18n.pad_button_label(pad)))
+            }
+            (Some(key), None) => BindingValueView::Bound(key.to_string()),
+            (None, Some(pad)) => BindingValueView::Bound(i18n.pad_button_label(pad)),
+            (None, None) => BindingValueView::Unbound(i18n.text(UiText::Unbound)),
+        }
+    }
+}
+
+/// Value for one per-pad mapping row: the override button, else the
+/// fixed-layout default, else unbound (the console maps no button to
+/// this control, so only an override can drive it).
+pub fn pad_binding_value(
+    state: &EditorState,
+    target: &CaptureTarget,
+    default: Option<StandardButton>,
+    i18n: I18n,
+) -> BindingValueView {
+    if state.capture_target.as_ref() == Some(target) {
+        BindingValueView::Capturing(i18n.text(UiText::CapturePrompt))
+    } else {
+        match current_pad_game_binding(&state.draft, target).or(default) {
+            Some(button) => BindingValueView::Bound(i18n.pad_button_label(button)),
             None => BindingValueView::Unbound(i18n.text(UiText::Unbound)),
         }
     }
@@ -249,6 +296,7 @@ fn project_slot_view(
 
 fn project_binding_row(
     state: &EditorState,
+    assignments: &[(AttachmentId, Option<Rc<dyn ControllerProfile>>)],
     descriptor: &KeyboardBindingDescriptor,
     i18n: I18n,
 ) -> BindingRowView {
@@ -258,17 +306,61 @@ fn project_binding_row(
         control: descriptor.control.as_str().to_string(),
     };
     let value = binding_value(state, &target, i18n);
+    // Fixed-layout default for per-pad mapping screens: the position
+    // button driving this control's abstract, if the console maps one.
+    // Same traversal as the session's `abstract_for`, over the draft
+    // assignments so swapped controller profiles track.
+    let pad_default = abstract_for(assignments, descriptor.attachment, descriptor.control)
+        .and_then(StandardButton::with_abstract);
     BindingRowView {
         target,
         label: descriptor.control_label.to_string(),
         value,
+        pad_default,
     }
+}
+
+/// Console-agnostic button of one emulated control, resolved through the
+/// draft assignments. Display twin of the session resolver (same port
+/// traversal, default assignments never diverge here).
+fn abstract_for(
+    assignments: &[(AttachmentId, Option<Rc<dyn ControllerProfile>>)],
+    attachment: AttachmentId,
+    control: DigitalControlId,
+) -> Option<AbstractKey> {
+    for (port, profile) in assignments {
+        if *port != attachment {
+            continue;
+        }
+        let Some(profile) = profile else {
+            continue;
+        };
+        for set in profile.port_sets() {
+            if !set.ports.contains(&attachment) {
+                continue;
+            }
+            for (slot_port, group) in set.ports.iter().zip(profile.port_groups()) {
+                if *slot_port != attachment {
+                    continue;
+                }
+                for info in *group {
+                    if let ControlId::Digital(id) = info.id
+                        && id == control
+                    {
+                        return info.abstract_key;
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 fn project_binding_sections(
     state: &EditorState,
     system_id: &dyn SystemId,
     topology: &nerust_input_traits::InputTopologyDescriptor,
+    assignments: &[(AttachmentId, Option<Rc<dyn ControllerProfile>>)],
 ) -> Vec<BindingSectionView> {
     let i18n = I18n::resolve_os(state.draft.shared.general.language);
     keyboard_binding_sections(topology, system_id)
@@ -277,7 +369,7 @@ fn project_binding_sections(
             let rows: Vec<BindingRowView> = section
                 .bindings
                 .iter()
-                .map(|descriptor| project_binding_row(state, descriptor, i18n))
+                .map(|descriptor| project_binding_row(state, assignments, descriptor, i18n))
                 .collect();
             BindingSectionView {
                 label: section.attachment_label.to_string(),
@@ -310,7 +402,7 @@ fn project_view(state: &EditorState, factory: &dyn CoreFactory) -> InputTabView 
         .get(system_id.as_ref())
         .cloned()
         .unwrap_or_else(|| Rc::new(build_topology(&assignments, slots_descs)));
-    let sections = project_binding_sections(state, system_id.as_ref(), &topology);
+    let sections = project_binding_sections(state, system_id.as_ref(), &topology, &assignments);
 
     // Build conflict messages — prefer cached result from validator
     let conflicts: Vec<InputConflictView> = state

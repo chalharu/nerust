@@ -70,6 +70,7 @@ class MainActivity :
     private val registryController = SavedStateRegistryController.create(this)
     private val store = ViewModelStore()
     private val controllerPressed = mutableMapOf<Int, MutableSet<String>>()
+    private val controllerAxes = mutableMapOf<Int, MutableMap<String, Float>>()
     private val sensorController = SensorController(this)
     private val chromeManager = ChromeManager(this)
     private val dialogManager = DialogManager(this)
@@ -89,6 +90,15 @@ class MainActivity :
 
     /** Last presence scan: identical hotplug/resume bursts skip the apply. */
     @Volatile private var lastPresenceTruth: DeviceTruth? = null
+
+    /** Live ids of counted gamepads: key events from these devices divert
+     * to the pad path even with a bare DPAD source (TV remotes never land
+     * here, only counted pads do). Refreshed with the presence scan.
+     * Kept alongside the descriptor identity Rust uses: the live id is
+     * what Android routing needs (key gate here, vibrator lookup in
+     * SensorController), while Rust port assignment uses descriptors.
+     * Never persisted or sent to Rust. */
+    @Volatile private var gamepadDeviceIds: Set<Int> = emptySet()
 
     /** Set only on user-initiated finish paths; native exits then, never on destroy. */
     private var userInitiatedExit = false
@@ -139,6 +149,7 @@ class MainActivity :
         sensorController.onResume()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
         (getSystemService(INPUT_SERVICE) as InputManager).registerInputDeviceListener(this, null)
+        sendInitialDeviceAdded()
         refreshControllerPresence()
         chromeManager.scheduleChromeAttach()
     }
@@ -166,8 +177,13 @@ class MainActivity :
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         // Settings capture lives in SettingsActivity with its own dispatch;
         // here only gamepad sources divert, everything else keeps platform
-        // behavior (volume, Back, hardware keyboards in gameplay).
-        val isController = isControllerSource(event.source)
+        // behavior (volume, Back, hardware keyboards in gameplay). Counted
+        // pads divert by device id too: D-pad-only sources would otherwise
+        // read as a TV remote and never reach the game.
+        val isController = isControllerSource(event.source) || gamepadDeviceIds.contains(event.deviceId)
+        if (Log.isLoggable(TAG, Log.DEBUG)) {
+            Log.d(TAG, "game key: source=0x${event.source.toString(16)} device=${event.deviceId} keyCode=${event.keyCode} action=${event.action} controller=$isController")
+        }
         if (!isController) {
             return super.dispatchKeyEvent(event)
         }
@@ -175,15 +191,27 @@ class MainActivity :
             when (event.keyCode) {
                 KeyEvent.KEYCODE_BUTTON_A -> ControllerKey.BUTTON1
                 KeyEvent.KEYCODE_BUTTON_B -> ControllerKey.BUTTON2
+                KeyEvent.KEYCODE_BUTTON_X -> ControllerKey.BUTTON3
+                KeyEvent.KEYCODE_BUTTON_Y -> ControllerKey.BUTTON4
                 KeyEvent.KEYCODE_BUTTON_L1 -> ControllerKey.BUTTON5
                 KeyEvent.KEYCODE_BUTTON_R1 -> ControllerKey.BUTTON6
+                // L2/R2 stay unconsumed: they are analog triggers (the
+                // stick/trigger motion follow-up), not digital buttons.
+                KeyEvent.KEYCODE_BUTTON_MODE -> ControllerKey.GUIDE
+                KeyEvent.KEYCODE_BUTTON_THUMBL -> ControllerKey.L3
+                KeyEvent.KEYCODE_BUTTON_THUMBR -> ControllerKey.R3
                 KeyEvent.KEYCODE_BUTTON_START -> ControllerKey.START
                 KeyEvent.KEYCODE_BUTTON_SELECT -> ControllerKey.SELECT
                 KeyEvent.KEYCODE_DPAD_UP -> ControllerKey.UP
                 KeyEvent.KEYCODE_DPAD_DOWN -> ControllerKey.DOWN
                 KeyEvent.KEYCODE_DPAD_LEFT -> ControllerKey.LEFT
                 KeyEvent.KEYCODE_DPAD_RIGHT -> ControllerKey.RIGHT
-                else -> return super.dispatchKeyEvent(event)
+                else -> {
+                    if (Log.isLoggable(TAG, Log.DEBUG)) {
+                        Log.d(TAG, "unmapped controller key: source=0x${event.source.toString(16)} keyCode=${event.keyCode}")
+                    }
+                    return super.dispatchKeyEvent(event)
+                }
             }
         val pressed = event.action == KeyEvent.ACTION_DOWN
         if (pressed && event.repeatCount > 0) {
@@ -200,14 +228,33 @@ class MainActivity :
 
     override fun onGenericMotionEvent(event: MotionEvent): Boolean {
         if (event.source and InputDevice.SOURCE_JOYSTICK != InputDevice.SOURCE_JOYSTICK) {
+            if (Log.isLoggable(TAG, Log.DEBUG)) {
+                Log.d(TAG, "non-joystick motion: source=0x${event.source.toString(16)} device=${event.deviceId}")
+            }
             return super.onGenericMotionEvent(event)
         }
-        val horizontal = event.getAxisValue(MotionEvent.AXIS_HAT_X)
-        val vertical = event.getAxisValue(MotionEvent.AXIS_HAT_Y)
-        updateControllerInput(event.deviceId, ControllerKey.LEFT, horizontal < -CONTROLLER_AXIS_THRESHOLD)
-        updateControllerInput(event.deviceId, ControllerKey.RIGHT, horizontal > CONTROLLER_AXIS_THRESHOLD)
-        updateControllerInput(event.deviceId, ControllerKey.UP, vertical < -CONTROLLER_AXIS_THRESHOLD)
-        updateControllerInput(event.deviceId, ControllerKey.DOWN, vertical > CONTROLLER_AXIS_THRESHOLD)
+        val hatX = event.getAxisValue(MotionEvent.AXIS_HAT_X)
+        val hatY = event.getAxisValue(MotionEvent.AXIS_HAT_Y)
+        // The hat is genuinely digital; sticks ride analog floats and Rust
+        // derives dpad from them, so Kotlin never digitizes sticks here.
+        updateControllerInput(event.deviceId, ControllerKey.LEFT, hatX < -CONTROLLER_AXIS_THRESHOLD)
+        updateControllerInput(event.deviceId, ControllerKey.RIGHT, hatX > CONTROLLER_AXIS_THRESHOLD)
+        updateControllerInput(event.deviceId, ControllerKey.UP, hatY < -CONTROLLER_AXIS_THRESHOLD)
+        updateControllerInput(event.deviceId, ControllerKey.DOWN, hatY > CONTROLLER_AXIS_THRESHOLD)
+        // One JNI crossing per motion callback: every axis rides one
+        // batched motion event instead of one crossing per axis.
+        val leftX = event.getAxisValue(MotionEvent.AXIS_X)
+        val leftY = event.getAxisValue(MotionEvent.AXIS_Y)
+        val rightX = event.getAxisValue(MotionEvent.AXIS_Z)
+        val rightY = event.getAxisValue(MotionEvent.AXIS_RZ)
+        val triggerL = event.getAxisValue(MotionEvent.AXIS_LTRIGGER)
+        val triggerR = event.getAxisValue(MotionEvent.AXIS_RTRIGGER)
+        if (updateControllerAxes(event.deviceId, leftX, leftY, rightX, rightY, triggerL, triggerR)) {
+            sensorController.lastControllerDeviceId = event.deviceId
+            chromeManager.noteControllerInput()
+            sensorController.noteControllerInput()
+            sendMotionInput(event.deviceId, leftX, leftY, rightX, rightY, triggerL, triggerR)
+        }
         return true
     }
 
@@ -223,6 +270,92 @@ class MainActivity :
         )
     }
 
+    /** Stable device identity for Rust port assignment: the OS descriptor
+     * survives id reuse and reconnects, the raw id does not. Devices that
+     * vanish before a descriptor read contribute nothing. */
+    private fun sendDeviceAdded(deviceId: Int) {
+        // A vanished device contributes no identity; loud here so a pad
+        // that never registers stays diagnosable in logcat.
+        val descriptor = InputDevice.getDevice(deviceId)?.descriptor ?: run {
+            Log.w(TAG, "device_added without descriptor: deviceId=$deviceId")
+            return
+        }
+        sendMenuAction(
+            menuEvent(MenuAction.DEVICE_ADDED) {
+                put("device_id", deviceId)
+                put("descriptor", descriptor)
+            },
+        )
+    }
+
+    private fun sendDeviceRemoved(deviceId: Int) {
+        sendMenuAction(
+            menuEvent(MenuAction.DEVICE_REMOVED) {
+                put("device_id", deviceId)
+            },
+        )
+    }
+
+    /** Single batched motion-event producer: all six axes ride one
+     * envelope per motion callback; deadzone and dpad substitution live
+     * in Rust, never here. */
+    private fun sendMotionInput(
+        deviceId: Int,
+        leftX: Float,
+        leftY: Float,
+        rightX: Float,
+        rightY: Float,
+        triggerL: Float,
+        triggerR: Float,
+    ) {
+        sendMenuAction(
+            menuEvent(MenuAction.MOTION) {
+                put("device_id", deviceId)
+                put("left_x", leftX)
+                put("left_y", leftY)
+                put("right_x", rightX)
+                put("right_y", rightY)
+                put("trigger_l", triggerL)
+                put("trigger_r", triggerR)
+            },
+        )
+    }
+
+    /** First-stage Kotlin dedup for the motion stream: motion events fire
+     * at sensor rate and Rust only wants crossings, so a callback with no
+     * sub-epsilon crossing sends nothing. Neutral first-sends stay local
+     * too — Rust treats a missing axis as neutral already. The Rust
+     * deadzone/store is the second stage; this cache only saves JNI
+     * chatter. Returns whether anything crossed. */
+    private fun updateControllerAxes(
+        deviceId: Int,
+        leftX: Float,
+        leftY: Float,
+        rightX: Float,
+        rightY: Float,
+        triggerL: Float,
+        triggerR: Float,
+    ): Boolean {
+        val axes = controllerAxes.getOrPut(deviceId) { mutableMapOf() }
+        var changed = false
+        for ((axis, value) in
+            arrayOf(
+                ControllerAxis.LEFT_X to leftX,
+                ControllerAxis.LEFT_Y to leftY,
+                ControllerAxis.RIGHT_X to rightX,
+                ControllerAxis.RIGHT_Y to rightY,
+                ControllerAxis.TRIGGER_L to triggerL,
+                ControllerAxis.TRIGGER_R to triggerR,
+            )) {
+            val last = axes[axis]
+            if (last != null && kotlin.math.abs(value - last) < CONTROLLER_AXIS_EPSILON) continue
+            if (last == null && value == 0f) continue
+            axes[axis] = value
+            changed = true
+        }
+        return changed
+    }
+
     private fun updateControllerInput(
         deviceId: Int,
         key: String,
@@ -231,6 +364,9 @@ class MainActivity :
         val keys = controllerPressed.getOrPut(deviceId) { mutableSetOf() }
         val changed = if (pressed) keys.add(key) else keys.remove(key)
         if (!changed) return
+        if (Log.isLoggable(TAG, Log.DEBUG)) {
+            Log.d(TAG, "controller key: deviceId=$deviceId key=$key pressed=$pressed")
+        }
         if (pressed) {
             sensorController.lastControllerDeviceId = deviceId
             chromeManager.noteControllerInput()
@@ -244,14 +380,41 @@ class MainActivity :
         controllerPressed.remove(deviceId)?.toList()?.forEach { key ->
             sendControllerInput(deviceId, key, false)
         }
+        // Analog holds converge the same way: one batched recenter so
+        // the Rust substitute releases even when the device is gone.
+        if (controllerAxes.remove(deviceId) != null) {
+            sendMotionInput(deviceId, 0f, 0f, 0f, 0f, 0f, 0f)
+        }
     }
 
-    /** Mirror of the Rust tracker for edge-detect and device-removal synthesis; focus loss converges via session clear. */
-    private fun releaseAllControllers() {
+    /** Mirror of the Rust tracker for edge-detect and device-removal synthesis;
+     * focus loss converges via session clear. `internal` (not private) because
+     * the capture window calls this when it loses window focus so a focus
+     * steal never strands a hold. */
+    internal fun releaseAllControllers() {
         controllerPressed.keys.toList().forEach(::releaseController)
     }
 
+    /** Boot sweep: pads connected before resume never fire
+     * `onInputDeviceAdded`, so enumerate them once. Kept alongside
+     * [refreshControllerPresence] on purpose: the sweep pushes device
+     * identities (Rust port assignment) while the presence scan only drives
+     * the overlay/capture gate, so neither subsumes the other. Listener
+     * registration comes first; a racing add re-sends the same descriptor,
+     * and Rust collapses duplicates to one index. */
+    private fun sendInitialDeviceAdded() {
+        for (deviceId in InputDevice.getDeviceIds()) {
+            val device = InputDevice.getDevice(deviceId) ?: continue
+            if (device.supportsSource(InputDevice.SOURCE_GAMEPAD) ||
+                device.supportsSource(InputDevice.SOURCE_JOYSTICK)
+            ) {
+                sendDeviceAdded(deviceId)
+            }
+        }
+    }
+
     override fun onInputDeviceAdded(deviceId: Int) {
+        sendDeviceAdded(deviceId)
         refreshControllerPresence()
     }
 
@@ -261,6 +424,7 @@ class MainActivity :
 
     override fun onInputDeviceRemoved(deviceId: Int) {
         releaseController(deviceId)
+        sendDeviceRemoved(deviceId)
         sensorController.noteControllerRemoved(deviceId)
         refreshControllerPresence()
     }
@@ -286,12 +450,13 @@ class MainActivity :
                 }
             if (scan == lastPresenceTruth) return@runIo
             lastPresenceTruth = scan
+            gamepadDeviceIds = scan.gamepads.map { it.deviceId }.toSet()
             val touchCapable = scan.touchCapable
-            val gamepadNames = scan.gamepadNames
+            val gamepadNames = scan.gamepads.map { it.name }
             BridgeIo.postMain {
                 if (isDestroyed || isFinishing) return@postMain
                 chromeManager.setTouchCapable(touchCapable)
-                if (gamepadNames.isNotEmpty()) {
+                if (gamepadNames.isNotEmpty() && Log.isLoggable(TAG, Log.DEBUG)) {
                     // Debug breadcrumb for Auto-hide reports: which device hid it.
                     Log.d(TAG, "overlay auto-hide counts gamepad: ${gamepadNames.joinToString()}")
                 }
@@ -356,7 +521,11 @@ class MainActivity :
         onCartridgeAcceleration(xG, yG)
     }
 
-    private fun handleBackNavigation() {
+    /** Back stack shared with the gamepad-input capture window (each
+     * window has its own dispatcher, so the capture view calls this
+     * directly instead of reaching the activity dispatcher). `internal`
+     * (not private) for that cross-window call; not a public API leak. */
+    internal fun handleBackNavigation() {
         if (!chromeManager.removeDrawerOverlay()) {
             userInitiatedExit = true
             finish()
@@ -804,6 +973,7 @@ class MainActivity :
         }
 
         private const val CONTROLLER_AXIS_THRESHOLD = 0.5f
+        private const val CONTROLLER_AXIS_EPSILON = 0.01f
         private const val ROM_PICKER_REQUEST_CODE = 0x4E45
         private const val DIRECTORY_PICKER_REQUEST_CODE = 0x4E46
 

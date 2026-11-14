@@ -66,6 +66,8 @@ pub enum UiText {
     Cancel,
     ConflictDetected,
     CapturePrompt,
+    CapturePromptPad,
+    CapturePromptDpadOnly,
     InvalidCustomStorageDirectory,
     Debugger,
     OpenDebugger,
@@ -152,6 +154,10 @@ pub enum UiText {
     PosTopRight,
     PosBottomLeft,
     PosBottomRight,
+    PosTop,
+    PosBottom,
+    PosLeft,
+    PosRight,
     AreaOverlay,
     AreaStrip,
     CrashTitle,
@@ -217,11 +223,20 @@ pub enum UiText {
     DescNoKeyboards,
     ResetSettings,
     ResetScreen,
+    SearchFilter,
     Version,
     License,
     BuiltInKeyboard,
     ExternalKeyboard,
     GamepadDevice,
+    Gamepads,
+    Deadzone,
+    DescDeadzone,
+    DescGamepadRadio,
+    DescGamepadGear,
+    DescPadReset,
+    DescPadParked,
+    DescPadUnassigned,
     AlwaysAvailable,
     Connected,
     SharesAcrossPlayers,
@@ -342,6 +357,26 @@ impl I18n {
         lookup(self.language, key).to_string()
     }
 
+    /// Display text for one pad button in mapping rows: cap print plus a
+    /// plain position for the four face buttons (`A (bottom)`), cap alone
+    /// elsewhere. Caps follow the dominant print and the Android `BUTTON_*`
+    /// names; the position word keeps Nintendo-layout pads interpretable
+    /// without per-vendor branches.
+    pub fn pad_button_label(self, button: nerust_input_traits::StandardButton) -> String {
+        use nerust_input_traits::StandardButton as Pad;
+        let position = match button {
+            Pad::South => Some(UiText::PosBottom),
+            Pad::East => Some(UiText::PosRight),
+            Pad::West => Some(UiText::PosLeft),
+            Pad::North => Some(UiText::PosTop),
+            _ => None,
+        };
+        match position {
+            Some(place) => format!("{} ({})", button.cap_label(), self.text(place)),
+            None => button.cap_label().to_string(),
+        }
+    }
+
     pub fn port_summary(self, names: &[String]) -> String {
         port_summary(self.language, names)
     }
@@ -450,6 +485,14 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
             "重複したキー割り当てを解消してください。",
         ),
         UiText::CapturePrompt => ("Press a key…", "キーを押してください…"),
+        UiText::CapturePromptPad => (
+            "Press a pad button: face, shoulders, stick clicks, Start, Back, Guide. No triggers.",
+            "パッドのボタンを押してください：フェイス、ショルダー、スティック押し込み、Start、Back、Guide。トリガー不可。",
+        ),
+        UiText::CapturePromptDpadOnly => (
+            "No keyboard connected. Only the dpad binds here.",
+            "キーボード未接続。十字キーのみ割当可。",
+        ),
         UiText::InvalidCustomStorageDirectory => (
             "The custom storage directory must exist or be creatable.",
             "任意の保存先フォルダは存在するか作成可能である必要があります。",
@@ -551,6 +594,10 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::PosTopRight => ("Top right", "右上"),
         UiText::PosBottomLeft => ("Bottom left", "左下"),
         UiText::PosBottomRight => ("Bottom right", "右下"),
+        UiText::PosTop => ("top", "上"),
+        UiText::PosBottom => ("bottom", "下"),
+        UiText::PosLeft => ("left", "左"),
+        UiText::PosRight => ("right", "右"),
         UiText::AreaOverlay => ("Overlay", "重ねる"),
         UiText::AreaStrip => ("Strip", "専用帯"),
         UiText::CrashTitle => ("nerust", "nerust"),
@@ -640,11 +687,38 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         ),
         UiText::ResetSettings => ("Reset settings", "設定初期化"),
         UiText::ResetScreen => ("Reset this screen", "この画面初期化"),
+        UiText::SearchFilter => ("Filter bindings", "割り当てを絞り込む"),
         UiText::Version => ("Version", "バージョン"),
         UiText::License => ("License", "ライセンス"),
         UiText::BuiltInKeyboard => ("Built-in Keyboard", "内蔵キーボード"),
         UiText::ExternalKeyboard => ("External keyboard", "外付けキーボード"),
         UiText::GamepadDevice => ("Gamepad", "ゲームパッド"),
+        UiText::Gamepads => ("Gamepads", "ゲームパッド"),
+        UiText::Deadzone => ("Deadzone", "デッドゾーン"),
+        UiText::DescDeadzone => (
+            "Stick drift guard. 0 disables.",
+            "スティックの遊び。0で無効",
+        ),
+        UiText::DescGamepadRadio => (
+            "Which pad drives this player. Gears adjust that pad.",
+            "このプレイヤーを駆動するパッド。調整はギアから",
+        ),
+        UiText::DescGamepadGear => (
+            "Deadzone, triggers, buttons for this pad.",
+            "このパッドの遊び・トリガー・ボタン",
+        ),
+        UiText::DescPadReset => (
+            "Clears deadzone, triggers, buttons. Keeps the slot.",
+            "遊び・トリガー・ボタンを消去。スロットは保持",
+        ),
+        UiText::DescPadParked => (
+            "Parked: no screen past the table, or pad left.",
+            "待機中：テーブル外または切断中のため非表示",
+        ),
+        UiText::DescPadUnassigned => (
+            "Assign a player in Devices to map buttons.",
+            "ボタンの割当には「機器」でプレイヤーを割当",
+        ),
         UiText::AlwaysAvailable => ("Always available", "常に利用可能"),
         UiText::Connected => ("Connected", "接続中"),
         UiText::SharesAcrossPlayers => ("Shares across players", "複数プレイヤー共有可"),
@@ -749,6 +823,24 @@ pub fn slot_failure(language: AppLanguage, slot: Option<u64>, what: &str) -> Str
         ),
         None => what.to_string(),
     }
+}
+
+/// Connection-order pad label (`Pad 1` / `パッド 1`). The number is
+/// connection order, never the player slot, in both languages.
+pub fn pad_label(language: AppLanguage, index: usize) -> String {
+    let pad = index + 1;
+    localized!(language, format!("Pad {pad}"), format!("パッド {pad}"))
+}
+
+/// Per-pad trigger row (`Pad 1 triggers` / `パッド 1 トリガー`):
+/// the shoulder-doubling opt-in shares the pad's number.
+pub fn pad_triggers_label(language: AppLanguage, index: usize) -> String {
+    let pad = index + 1;
+    localized!(
+        language,
+        format!("Pad {pad} triggers"),
+        format!("パッド {pad} トリガー")
+    )
 }
 
 /// Bare command failure (`{id} failed[: detail]`). Origin prefixes ride on
@@ -1107,6 +1199,10 @@ mod tests {
             PosTopRight,
             PosBottomLeft,
             PosBottomRight,
+            PosTop,
+            PosBottom,
+            PosLeft,
+            PosRight,
             AreaOverlay,
             AreaStrip,
             CrashBody,
@@ -1170,17 +1266,28 @@ mod tests {
             DescNoKeyboards,
             ResetSettings,
             ResetScreen,
+            SearchFilter,
             Version,
             License,
             BuiltInKeyboard,
             ExternalKeyboard,
             GamepadDevice,
+            Gamepads,
+            Deadzone,
+            DescDeadzone,
+            DescGamepadRadio,
+            DescGamepadGear,
+            DescPadReset,
+            DescPadParked,
+            DescPadUnassigned,
             AlwaysAvailable,
             Connected,
             SharesAcrossPlayers,
             Keyboard,
             AudioDetail,
             KeyMapping,
+            CapturePromptPad,
+            CapturePromptDpadOnly,
             Connection,
             Capabilities,
             NotificationPaused,
@@ -1213,6 +1320,18 @@ mod tests {
             assert!(!ja_text.text(key).is_empty());
             assert_ne!(en_text.text(key), ja_text.text(key));
         }
+    }
+
+    #[test]
+    fn pad_button_labels_pair_cap_with_plain_position() {
+        use nerust_input_traits::StandardButton as Pad;
+        let en_text = I18n::new(en());
+        let ja_text = I18n::new(ja());
+        assert_eq!(en_text.pad_button_label(Pad::South), "A (bottom)");
+        assert_eq!(ja_text.pad_button_label(Pad::South), "A (下)");
+        assert_eq!(en_text.pad_button_label(Pad::North), "Y (top)");
+        assert_eq!(en_text.pad_button_label(Pad::Guide), "Guide");
+        assert_eq!(ja_text.pad_button_label(Pad::LeftShoulder), "LB");
     }
 
     #[test]

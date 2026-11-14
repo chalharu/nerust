@@ -502,6 +502,18 @@ internal fun NerustSettingsDialogCard(
         }
     }
 
+    // Hotplug can delete the section under the user (pad unplugged):
+    // drop vanished ids so the screen falls back to the nearest live
+    // ancestor instead of stranding the stack on a missing section.
+    // Stale row keys clear with the same push.
+    LaunchedEffect(sections) {
+        val live = backStack.filter { id -> sections.any { it.id == id } }
+        if (live.size != backStack.size) backStack = live
+        if (activeRowKey != null && sections.none { section -> section.rows.any { it.key == activeRowKey } }) {
+            activeRowKey = null
+        }
+    }
+
     fun requestCancel() {
         if (isDirty) {
             confirmDiscard = true
@@ -616,7 +628,10 @@ internal fun NerustSettingsDialogCard(
                     title = screenTitle,
                     subtitle = subtitle,
                     canNavigateUp = canNavigateUp,
-                    canSave = isDirty,
+                    // Issues block the save path (finish rejects them), so
+                    // the button stays disabled until they clear: no wasted
+                    // save-reject round trip.
+                    canSave = isDirty && issues.isEmpty(),
                     onNavigateUp = ::navigateUp,
                     onCancel = ::requestCancel,
                     onSave = onSave,

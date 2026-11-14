@@ -89,13 +89,25 @@ internal data class KeyboardRow(
     val builtin: Boolean,
 )
 
+/** One counted gamepad row: stable member id plus OS display name.
+ * Member mirrors the runtime port-set scheme (`pad:<descriptor>`) so the
+ * settings card and the session resolve the same device. `deviceId` is
+ * the live Android id for platform-side routing only (gameplay key gate,
+ * vibrator/motion lookup: recycled on reconnect, never persisted or sent
+ * to Rust). Plain data. */
+internal data class GamepadRow(
+    val member: String,
+    val name: String,
+    val deviceId: Int = -1,
+)
+
 /** One passive scan feeding every device-truth consumer: keyboards,
  * counted gamepads, and touch capability from a single `getDeviceIds()`
  * walk. Hotplug/resume paths share this so settings and runtime can
  * never disagree about what is connected. */
 internal data class DeviceTruth(
     val keyboards: List<KeyboardRow>,
-    val gamepadNames: List<String>,
+    val gamepads: List<GamepadRow>,
     val touchCapable: Boolean,
 )
 
@@ -123,11 +135,16 @@ private fun scanOneDevice(device: InputDevice): DeviceTruth? {
     if (Build.VERSION.SDK_INT >= 29 && device.isVirtual) return null
     val touch = device.supportsSource(InputDevice.SOURCE_TOUCHSCREEN)
     val keyboard = keyboardRowFor(device)
-    val gamepad = if (isCountedGamepad(device)) device.name else null
+    val gamepad =
+        if (isCountedGamepad(device) && device.descriptor.isNotBlank()) {
+            GamepadRow("pad:${device.descriptor}", device.name, device.id)
+        } else {
+            null
+        }
     if (!touch && keyboard == null && gamepad == null) return null
     return DeviceTruth(
         keyboards = listOfNotNull(keyboard),
-        gamepadNames = listOfNotNull(gamepad),
+        gamepads = listOfNotNull(gamepad),
         touchCapable = touch,
     )
 }
@@ -142,7 +159,7 @@ internal fun scanDeviceTruth(packageManager: PackageManager): DeviceTruth {
     var builtin: KeyboardRow? = null
     val keyboards = mutableListOf<KeyboardRow>()
     val seen = mutableSetOf<String>()
-    val gamepads = mutableListOf<String>()
+    val gamepads = mutableListOf<GamepadRow>()
     for (id in InputDevice.getDeviceIds()) {
         val device = InputDevice.getDevice(id) ?: continue
         val hit = scanOneDevice(device) ?: continue
@@ -150,8 +167,10 @@ internal fun scanDeviceTruth(packageManager: PackageManager): DeviceTruth {
         hit.keyboards.firstOrNull()?.let { row ->
             if (row.builtin) builtin = row else if (seen.add(row.member)) keyboards += row
         }
-        gamepads += hit.gamepadNames
+        for (pad in hit.gamepads) {
+            if (seen.add(pad.member)) gamepads += pad
+        }
     }
     val rows = listOfNotNull(builtin) + keyboards
-    return DeviceTruth(rows, gamepads.distinct(), touch)
+    return DeviceTruth(rows, gamepads, touch)
 }

@@ -27,7 +27,8 @@ use super::projection::{
 use super::wire::{
     CaptureSlot, GamepadInfo, I18n, KeyboardInfo, Projection, RowKind, RowWire, SectionWire,
     ViewPayload, VmDeps, WireCommand, WireOp, build_vm, choice, find_row, pin_draft_language,
-    projection, range_value, resolve_display, sync_snapshot_from_vm, toggle_value, with_vm_deps,
+    projection, range_value, resolve_display, sort_gamepads_by_order, sync_snapshot_from_vm,
+    toggle_value, with_vm_deps,
 };
 
 /// Apply one wire command to the draft snapshot in place, returning the
@@ -37,15 +38,31 @@ use super::wire::{
 /// snapshot-direct ops (device truth, reset, capture cancel) project fresh
 /// afterwards, while view-model ops reuse the same model for apply and
 /// project instead of rebuilding per op.
+/// Ephemeral vault state threading through one command: capture slot,
+/// device truth, and the session order mirror. Bundled so the entry
+/// point stays under the argument cap as vault fields grow.
+pub(crate) struct CommandVault<'a> {
+    pub capture: &'a mut CaptureSlot,
+    pub keyboards: &'a mut Vec<KeyboardInfo>,
+    pub touch_capable: &'a mut Option<bool>,
+    pub gamepads: &'a mut Vec<GamepadInfo>,
+    pub system_locale: &'a mut Option<AppLanguage>,
+    pub pad_order: &'a [String],
+}
+
 pub(crate) fn apply_command_to(
     snapshot: &mut SettingsSnapshot,
     command_json: &str,
-    capture: &mut CaptureSlot,
-    keyboards: &mut Vec<KeyboardInfo>,
-    touch_capable: &mut Option<bool>,
-    gamepads: &mut Vec<GamepadInfo>,
-    system_locale: &mut Option<AppLanguage>,
+    vault: CommandVault<'_>,
 ) -> Result<ViewPayload, String> {
+    let CommandVault {
+        capture,
+        keyboards,
+        touch_capable,
+        gamepads,
+        system_locale,
+        pad_order,
+    } = vault;
     let command: WireCommand =
         serde_json::from_str(command_json).map_err(|error| error.to_string())?;
     with_vm_deps(|deps| {
@@ -59,6 +76,7 @@ pub(crate) fn apply_command_to(
                     gamepads,
                     system_locale,
                     &command,
+                    pad_order,
                 )?;
                 prune_missing_builtin(snapshot, keyboards);
                 project_after_snapshot_edit(
@@ -168,6 +186,10 @@ fn apply_set_command(
     if apply_android_local(snapshot, sections, command)? {
         return Ok(false);
     }
+    if is_gamepad_radio_key(&command.key) {
+        apply_gamepad_radio_command(snapshot, sections, command)?;
+        return Ok(false);
+    }
     if is_device_key(&command.key) {
         apply_device_command(snapshot, sections, command)?;
         Ok(false)
@@ -199,9 +221,28 @@ fn apply_capture_command(
     let target = decode_target(&row.target, deps)?;
     match command.op {
         WireOp::ClearBinding => {
-            vm.capture
-                .clear_binding(&target)
-                .map_err(|error| error.to_string())?;
+            // Target first, column second: game and per-pad mapping rows
+            // clear whole (they never carry a pad twin); per-device
+            // shortcut rows clear only their own column so a keyboard
+            // Clear never strands a pad twin (and vice versa). The column
+            // rides the row key suffix (`.kbd` vs `.padN`).
+            match (&target, clear_column_for_key(&command.key)) {
+                (CaptureTarget::Shortcut(_), Some(Column::Key)) => {
+                    vm.capture
+                        .clear_key(&target)
+                        .map_err(|error| error.to_string())?;
+                }
+                (CaptureTarget::Shortcut(_), Some(Column::Pad)) => {
+                    vm.capture
+                        .clear_pad(&target)
+                        .map_err(|error| error.to_string())?;
+                }
+                _ => {
+                    vm.capture
+                        .clear_binding(&target)
+                        .map_err(|error| error.to_string())?;
+                }
+            }
             sync_snapshot_from_vm(snapshot, vm, truth.i18n);
             *capture = None;
             Ok(())
@@ -216,11 +257,48 @@ fn apply_capture_command(
             vm.capture
                 .start_capture(target.clone())
                 .map_err(|error| error.to_string())?;
-            let prompt = vm.capture.view.get().prompt.clone();
+            // Pad rows name what a press can claim (face, shoulders,
+            // stick clicks, Start, Back, Guide): triggers and motion
+            // never decode, so the generic key prompt would strand the
+            // user on an eternal wait. Game rows take keyboard keys only;
+            // with no keyboard connected only the dpad twin lands, so say
+            // so instead of inviting a press that stays pending. Shortcuts
+            // take either side and keep the shared text.
+            let prompt = if matches!(target, CaptureTarget::PadBinding { .. }) {
+                truth.i18n.text(UiText::CapturePromptPad)
+            } else if matches!(target, CaptureTarget::Binding { .. })
+                && truth.keyboards.is_empty()
+                && !truth.gamepads.is_empty()
+            {
+                truth.i18n.text(UiText::CapturePromptDpadOnly)
+            } else {
+                vm.capture.view.get().prompt.clone()
+            };
             *capture = Some((target, prompt));
             Ok(())
         }
         op => Err(format!("unknown capture op: {op:?}")),
+    }
+}
+
+/// Which shortcut column a clear addresses: key or pad. `None` from
+/// [`clear_column_for_key`] clears whole.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Column {
+    Key,
+    Pad,
+}
+
+/// Which shortcut column a clear addresses, from the row key suffix
+/// (`.kbd` vs `.padN`). Game and per-pad mapping rows carry no suffix
+/// and clear whole (`None`).
+fn clear_column_for_key(key: &str) -> Option<Column> {
+    if key.ends_with(".kbd") {
+        Some(Column::Key)
+    } else if key.contains(".pad") {
+        Some(Column::Pad)
+    } else {
+        None
     }
 }
 
@@ -247,6 +325,7 @@ fn apply_device_truth_command(
     gamepads: &mut Vec<GamepadInfo>,
     system_locale: &mut Option<AppLanguage>,
     command: &WireCommand,
+    pad_order: &[String],
 ) -> Result<(), String> {
     let list: Vec<KeyboardInfo> = payload_vec(command, "keyboards")?;
     for info in &list {
@@ -263,11 +342,17 @@ fn apply_device_truth_command(
         Some(serde_json::from_value(capable_raw.clone()).map_err(|error| error.to_string())?);
     let names: Vec<GamepadInfo> = payload_vec(command, "gamepads")?;
     for info in &names {
+        if info.member.is_empty() {
+            return Err("gamepad member id must not be empty".to_string());
+        }
         if info.name.is_empty() {
             return Err("gamepad name must not be empty".to_string());
         }
     }
     *gamepads = names;
+    // Session order, not scan order: Pad N must name session pad N, or a
+    // reconnect compacts the scan onto another pad's slot and settings.
+    sort_gamepads_by_order(gamepads, pad_order);
     if let Some(raw) = command.payload.get("lang") {
         let tag = raw
             .as_str()
@@ -276,6 +361,63 @@ fn apply_device_truth_command(
             return Err("device_truth lang must not be empty".to_string());
         }
         *system_locale = Some(language_from_locale_tag(tag));
+    }
+    Ok(())
+}
+
+/// Gamepad radio rows: `devices.<port>.gamepad` choices. Values are the
+/// connection-order pad indices (`None` parks every pad on this port).
+/// One player drives one pad: picking a pad parks its mates on this port
+/// and pulls it off any other port, so validation never trips.
+fn is_gamepad_radio_key(key: &str) -> bool {
+    key.strip_suffix(".gamepad").is_some_and(|head| {
+        head.strip_prefix("devices.")
+            .is_some_and(|port| PLAYER_PORTS.contains(&port))
+    })
+}
+
+fn apply_gamepad_radio_command(
+    snapshot: &mut SettingsSnapshot,
+    sections: &[SectionWire],
+    command: &WireCommand,
+) -> Result<(), String> {
+    let row = find_row(sections, &command.key)?;
+    if row.kind != RowKind::Choice {
+        return Err(format!("{}: not a gamepad radio row", command.key));
+    }
+    let port = command
+        .key
+        .split('.')
+        .nth(1)
+        .ok_or_else(|| format!("malformed device key: {}", command.key))?;
+    let Some(port_index) = PLAYER_PORTS.iter().position(|known| *known == port) else {
+        return Err(format!("unknown port: {port}"));
+    };
+    let pad: Option<usize> = choice(row, command.index)?;
+    if let Some(pad) = pad {
+        if snapshot.shared.input.gamepad.pad_ports.get(pad).is_none() {
+            return Err(format!("{}: unknown pad index {pad}", command.key));
+        }
+        for (index, entry) in snapshot
+            .shared
+            .input
+            .gamepad
+            .pad_ports
+            .iter_mut()
+            .enumerate()
+        {
+            if index == pad {
+                entry.slot = Some(port_index);
+            } else if entry.slot == Some(port_index) {
+                entry.slot = None;
+            }
+        }
+    } else {
+        for entry in snapshot.shared.input.gamepad.pad_ports.iter_mut() {
+            if entry.slot == Some(port_index) {
+                entry.slot = None;
+            }
+        }
     }
     Ok(())
 }
@@ -396,7 +538,7 @@ fn apply_reset_scope(
             snapshot.local.video.presentation.vsync = default.local.video.presentation.vsync;
             snapshot.local.cartridge_peripherals = default.local.cartridge_peripherals.clone();
         }
-        "about" | "player.1" | "player.2" | "types.1" | "types.2" => {}
+        "about" | "controllers" | "player.1" | "player.2" | "types.1" | "types.2" => {}
         "audio.detail" => {
             snapshot.local.audio.sample_rate = default.local.audio.sample_rate;
             snapshot.local.audio.latency_ms = default.local.audio.latency_ms;
@@ -404,11 +546,9 @@ fn apply_reset_scope(
         "notifications" => {
             snapshot.local.notifications = default.local.notifications.clone();
         }
-        "controllers" => {
+        "controls.overlay_detail" => {
             snapshot.local.touch_overlay.visibility = default.local.touch_overlay.visibility;
             snapshot.local.touch_overlay.haptics = default.local.touch_overlay.haptics;
-        }
-        "controls.overlay_detail" => {
             snapshot.local.touch_overlay.opacity_percent =
                 default.local.touch_overlay.opacity_percent;
             snapshot.local.touch_overlay.scale_percent = default.local.touch_overlay.scale_percent;
@@ -440,7 +580,9 @@ fn apply_reset_dynamic_scope(
         .filter(|port| PLAYER_PORTS.contains(port))
     {
         // Row toggles converge on the default set; copy it (and its
-        // presence) directly instead of replaying per-row diffs.
+        // presence) directly instead of replaying per-row diffs. The radio
+        // restores this port's pad slots the same way, so one reset clears
+        // both halves of the screen.
         let members = default
             .app_state
             .port_devices
@@ -451,6 +593,28 @@ fn apply_reset_dynamic_scope(
             .app_state
             .port_devices
             .insert(port.to_string(), members);
+        if let Some(port_index) = PLAYER_PORTS.iter().position(|known| *known == port) {
+            for (index, entry) in snapshot
+                .shared
+                .input
+                .gamepad
+                .pad_ports
+                .iter_mut()
+                .enumerate()
+            {
+                let slot = default
+                    .shared
+                    .input
+                    .gamepad
+                    .pad_ports
+                    .get(index)
+                    .and_then(|pad| pad.slot)
+                    .filter(|slot| *slot == port_index);
+                if slot.is_some() || entry.slot == Some(port_index) {
+                    entry.slot = slot;
+                }
+            }
+        }
         return Ok(());
     }
     if let Some(system) = scope.strip_prefix("system.") {
@@ -479,11 +643,24 @@ fn apply_reset_dynamic_scope(
         if !is_known_system(deps, system) {
             return Err(format!("unknown reset scope: {scope}"));
         }
-        copy_system_entry(
-            &mut snapshot.shared.input.systems,
-            &default.shared.input.systems,
-            system,
-        );
+        // Keys screens list keyboard bindings only: clear those overrides
+        // back to the sparse default, but keep this system's per-pad
+        // overrides. Pad mappings belong to the pad screens (`reset.pad.N`);
+        // each reset covers exactly the rows on its own screen, so a keys
+        // reset never wipes pad work.
+        let stale: Vec<_> = snapshot
+            .shared
+            .input
+            .systems
+            .keys()
+            .filter(|key| key.to_string() == system)
+            .cloned()
+            .collect();
+        for key in stale {
+            if let Some(entry) = snapshot.shared.input.systems.get_mut(&key) {
+                entry.keyboard_profiles.clear();
+            }
+        }
         return Ok(());
     }
     if let Some(member) = scope.strip_prefix("device.") {
@@ -493,6 +670,31 @@ fn apply_reset_dynamic_scope(
             return Ok(());
         }
         return Err(format!("unknown reset scope: {scope}"));
+    }
+    if let Some(pad) = scope.strip_prefix("pad.") {
+        // One pad's own screen: deadzone, trigger doubling, and that
+        // pad's per-system overrides return to defaults. The player-slot
+        // assignment stays: the devices radio owns it, not this screen.
+        let index: usize = pad
+            .parse()
+            .ok()
+            .filter(|index: &usize| (1..=nerust_input_traits::MAX_PADS).contains(index))
+            .ok_or_else(|| format!("unknown reset scope: {scope}"))?
+            - 1;
+        let Some(default_port) = default.shared.input.gamepad.pad_ports.get(index) else {
+            return Err(format!("unknown reset scope: {scope}"));
+        };
+        let Some(port) = snapshot.shared.input.gamepad.pad_ports.get_mut(index) else {
+            return Err(format!("unknown reset scope: {scope}"));
+        };
+        port.deadzone_percent = default_port.deadzone_percent;
+        port.triggers_as_shoulders = default_port.triggers_as_shoulders;
+        for settings in snapshot.shared.input.systems.values_mut() {
+            if let Some(entries) = settings.pad_bindings.get_mut(index) {
+                entries.clear();
+            }
+        }
+        return Ok(());
     }
     Err(format!("unknown reset scope: {scope}"))
 }
@@ -561,6 +763,21 @@ pub(crate) fn finish_snapshot(
             })
     })
     .map_err(|error| vec![error])
+}
+
+/// 1-based pad-screen segment (`pad.3.deadzone` → `2`). Rejects
+/// out-of-range screens before the view-model guard, so a tampered wire
+/// key fails loud here.
+fn pad_screen_index(key: &str) -> Result<usize, String> {
+    let index: usize = key
+        .strip_prefix("pad.")
+        .and_then(|rest| rest.split('.').next())
+        .and_then(|segment| segment.parse().ok())
+        .ok_or_else(|| format!("bad pad key: {key}"))?;
+    (1..=nerust_input_traits::MAX_PADS)
+        .contains(&index)
+        .then_some(index - 1)
+        .ok_or_else(|| format!("bad pad key: {key}"))
 }
 
 fn apply_view_model_command(
@@ -640,6 +857,20 @@ fn apply_view_model_command(
             let value: NotificationColor = choice(row, command.index)?;
             vm.notifications
                 .set_warning_color(value)
+                .map_err(|error| error.to_string())
+        }
+        key if key.starts_with("pad.") && key.ends_with(".deadzone") => {
+            let pad = pad_screen_index(key)?;
+            let value: u8 = range_value(&command.key, command.number)?;
+            vm.gamepads
+                .set_deadzone(pad, value)
+                .map_err(|error| error.to_string())
+        }
+        key if key.starts_with("pad.") && key.ends_with(".triggers") => {
+            let pad = pad_screen_index(key)?;
+            let value = toggle_value(row, command.index)?;
+            vm.gamepads
+                .set_trigger_alias(pad, value)
                 .map_err(|error| error.to_string())
         }
         "notifications.error_enabled" => {
@@ -805,30 +1036,47 @@ fn apply_android_local(
     Ok(true)
 }
 
+fn req_str<'a>(value: &'a serde_json::Value, field: &str) -> Result<&'a str, String> {
+    value
+        .get(field)
+        .and_then(|node| node.as_str())
+        .ok_or_else(|| format!("capture target misses {field}"))
+}
+
+fn req_system(
+    deps: &VmDeps,
+    value: &serde_json::Value,
+) -> Result<Box<dyn nerust_core_traits::identity::SystemId>, String> {
+    let system = req_str(value, "system")?;
+    deps.factories
+        .iter()
+        .find(|factory| factory.system_id().to_string() == system)
+        .map(|factory| factory.system_id())
+        .ok_or_else(|| format!("unknown system: {system}"))
+}
+
+fn req_pad(value: &serde_json::Value) -> Result<usize, String> {
+    let pad = value
+        .get("pad")
+        .and_then(|pad| pad.as_u64())
+        .ok_or_else(|| "capture target misses pad".to_string())?;
+    let pad: usize = pad
+        .try_into()
+        .map_err(|_| "capture target pad out of range".to_string())?;
+    if pad >= nerust_input_traits::MAX_PADS {
+        return Err(format!("capture target pad out of range: {pad}"));
+    }
+    Ok(pad)
+}
+
 fn decode_target_value(value: &serde_json::Value, deps: &VmDeps) -> Result<CaptureTarget, String> {
     match value.get("kind").and_then(|kind| kind.as_str()) {
         Some("binding") => {
-            let system = value
-                .get("system")
-                .and_then(|system| system.as_str())
-                .ok_or_else(|| "capture target misses system".to_string())?;
-            let factory = deps
-                .factories
-                .iter()
-                .find(|factory| factory.system_id().to_string() == system)
-                .ok_or_else(|| format!("unknown system: {system}"))?;
-            let attachment = value
-                .get("attachment")
-                .and_then(|attachment| attachment.as_str())
-                .ok_or_else(|| "capture target misses attachment".to_string())?;
-            let control = value
-                .get("control")
-                .and_then(|control| control.as_str())
-                .ok_or_else(|| "capture target misses control".to_string())?;
+            let system = req_system(deps, value)?;
             Ok(CaptureTarget::Binding {
-                system: factory.system_id(),
-                attachment: attachment.to_string(),
-                control: control.to_string(),
+                system,
+                attachment: req_str(value, "attachment")?.to_string(),
+                control: req_str(value, "control")?.to_string(),
             })
         }
         Some("shortcut") => {
@@ -839,6 +1087,15 @@ fn decode_target_value(value: &serde_json::Value, deps: &VmDeps) -> Result<Captu
             let action: nerust_settings_core::model::input::ShortcutAction =
                 serde_json::from_value(raw).map_err(|error| error.to_string())?;
             Ok(CaptureTarget::Shortcut(action))
+        }
+        Some("pad_binding") => {
+            let system = req_system(deps, value)?;
+            Ok(CaptureTarget::PadBinding {
+                system,
+                pad: req_pad(value)?,
+                attachment: req_str(value, "attachment")?.to_string(),
+                control: req_str(value, "control")?.to_string(),
+            })
         }
         _ => Err("unknown capture target".to_string()),
     }

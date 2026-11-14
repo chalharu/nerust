@@ -151,26 +151,34 @@ fn apply(
         apply_command_to(
             snapshot,
             &command_json,
-            capture,
-            keyboards,
-            &mut None,
-            &mut Vec::new(),
-            &mut None,
+            CommandVault {
+                capture,
+                keyboards,
+                touch_capable: &mut None,
+                gamepads: &mut Vec::new(),
+                system_locale: &mut None,
+                pad_order: &[],
+            },
         )
         .unwrap_or_else(|error| panic!("command failed: {error}"))
     })
 }
 
 fn set(snapshot: &mut SettingsSnapshot, key: &str, index: usize, number: i64) -> ViewPayload {
-    apply(
-        snapshot,
-        &mut None,
-        &mut test_keyboards(),
-        key,
-        WireOp::Set,
-        index,
-        number,
-    )
+    // Keyboard-only shorthand: no pads connected.
+    set_with_pads(snapshot, &[], key, index, number)
+}
+
+/// `set` threading connected pads through: radio and per-device rows only
+/// exist while their pad stays connected.
+fn set_with_pads(
+    snapshot: &mut SettingsSnapshot,
+    pads: &[GamepadInfo],
+    key: &str,
+    index: usize,
+    number: i64,
+) -> ViewPayload {
+    run_with_pads(snapshot, pads, &mut None, key, WireOp::Set, index, number)
 }
 
 #[test]
@@ -339,11 +347,14 @@ fn explicit_japanese_under_ja_system_persists_as_japanese() {
                 payload: serde_json::Value::Null,
             })
             .unwrap(),
-            &mut None,
-            &mut keyboards,
-            &mut None,
-            &mut Vec::new(),
-            &mut locale,
+            CommandVault {
+                capture: &mut None,
+                keyboards: &mut keyboards,
+                touch_capable: &mut None,
+                gamepads: &mut Vec::new(),
+                system_locale: &mut locale,
+                pad_order: &[],
+            },
         )
         .expect("language set applies")
     });
@@ -380,11 +391,14 @@ fn display_resolution_never_concretes_the_draft() {
                 payload: serde_json::Value::Null,
             })
             .unwrap(),
-            &mut None,
-            &mut keyboards,
-            &mut None,
-            &mut Vec::new(),
-            &mut locale,
+            CommandVault {
+                capture: &mut None,
+                keyboards: &mut keyboards,
+                touch_capable: &mut None,
+                gamepads: &mut Vec::new(),
+                system_locale: &mut locale,
+                pad_order: &[],
+            },
         )
         .expect("volume set applies")
     });
@@ -437,11 +451,14 @@ fn display_resolution_never_concretes_the_draft() {
                 payload: serde_json::Value::Null,
             })
             .unwrap(),
-            &mut None,
-            &mut keyboards,
-            &mut None,
-            &mut Vec::new(),
-            &mut locale,
+            CommandVault {
+                capture: &mut None,
+                keyboards: &mut keyboards,
+                touch_capable: &mut None,
+                gamepads: &mut Vec::new(),
+                system_locale: &mut locale,
+                pad_order: &[],
+            },
         )
         .expect("language set applies")
     });
@@ -472,11 +489,14 @@ fn locale_op_upserts_without_mutating_draft() {
         apply_command_to(
             &mut snapshot,
             &command_json,
-            &mut None,
-            &mut keyboards,
-            &mut None,
-            &mut Vec::new(),
-            &mut locale,
+            CommandVault {
+                capture: &mut None,
+                keyboards: &mut keyboards,
+                touch_capable: &mut None,
+                gamepads: &mut Vec::new(),
+                system_locale: &mut locale,
+                pad_order: &[],
+            },
         )
         .expect("locale op applies")
     });
@@ -517,11 +537,14 @@ fn locale_op_upserts_without_mutating_draft() {
                 apply_command_to(
                     &mut snapshot,
                     &bad_json,
-                    &mut None,
-                    &mut keyboards,
-                    &mut None,
-                    &mut Vec::new(),
-                    &mut locale,
+                    CommandVault {
+                        capture: &mut None,
+                        keyboards: &mut keyboards,
+                        touch_capable: &mut None,
+                        gamepads: &mut Vec::new(),
+                        system_locale: &mut locale,
+                        pad_order: &[]
+                    },
                 )
                 .is_err(),
                 "bad locale never persists"
@@ -638,7 +661,7 @@ fn machine_sections_link_to_hidden_controller_screens() {
     // overlay detail screen: port-independent and always active.
     for (id, probe_key) in [
         ("controls.overlay_detail", "controls.overlay_opacity"),
-        ("controls.shortcuts", "controls.shortcut.TogglePause"),
+        ("controls.shortcuts", "controls.shortcut.TogglePause.kbd"),
     ] {
         let hidden = payload
             .sections
@@ -666,8 +689,8 @@ fn machine_sections_link_to_hidden_controller_screens() {
         .expect("shortcuts screen exists");
     assert_eq!(
         shortcuts.rows.len(),
-        7,
-        "desktop-only actions stay out: six phone shortcuts plus the screen reset"
+        8,
+        "keyboard block: header plus six phone shortcuts plus the screen reset"
     );
     assert!(
         shortcuts
@@ -728,6 +751,7 @@ fn gamepad_alone_reopens_capture() {
     // even with no keyboard: pad buttons fall through when unmapped,
     // mapped keys (dpad) capture into the shared vocabulary.
     let gamepads = vec![GamepadInfo {
+        member: "pad:desc-1".to_string(),
         name: "Pad".to_string(),
     }];
     let (_snapshot, payload) = with_test_deps(|| {
@@ -744,17 +768,44 @@ fn gamepad_alone_reopens_capture() {
         .filter(|row| row.kind == RowKind::Capture)
         .collect();
     assert!(!captures.is_empty(), "capture rows exist to enable");
+    // Per-device blocks: the pad block opens; with no keyboard
+    // connected there is no keyboard block at all (connected-only).
+    let pad_rows: Vec<_> = captures
+        .iter()
+        .filter(|row| row.key.contains(".pad"))
+        .collect();
+    assert!(!pad_rows.is_empty(), "pad block lists its rows");
     assert!(
-        captures.iter().all(|row| row.enabled),
-        "a connected pad re-enables capture"
+        pad_rows.iter().all(|row| row.enabled),
+        "a connected pad re-enables its rows"
+    );
+    assert!(
+        captures.iter().all(|row| !row.key.ends_with(".kbd")),
+        "no keyboard rows without a keyboard"
     );
 }
 
 #[test]
 fn start_capture_rejected_without_input_device() {
-    let (mut snapshot, _) = test_payload_with_keyboards(&[]);
+    let (mut snapshot, payload) = test_payload_with_keyboards(&[]);
+    // With no input device the shortcut screen holds no capture rows at
+    // all; the keyboard mapping rows exist but disabled with the reason.
+    assert!(
+        !payload
+            .sections
+            .iter()
+            .any(|section| section.id == "controls.shortcuts"
+                && section.rows.iter().any(|row| row.kind == RowKind::Capture)),
+        "shortcut screen lists no rows without a device"
+    );
+    let key = payload
+        .sections
+        .iter()
+        .flat_map(|section| &section.rows)
+        .find(|row| row.kind == RowKind::Capture)
+        .map(|row| row.key.clone())
+        .expect("key mapping rows exist to disable");
     let mut capture: CaptureSlot = None;
-    let key = "controls.shortcut.TogglePause";
     let command_json = serde_json::to_string(&WireCommand {
         key: key.to_string(),
         index: 0,
@@ -767,11 +818,14 @@ fn start_capture_rejected_without_input_device() {
         apply_command_to(
             &mut snapshot,
             &command_json,
-            &mut capture,
-            &mut Vec::new(),
-            &mut None,
-            &mut Vec::new(),
-            &mut None,
+            CommandVault {
+                capture: &mut capture,
+                keyboards: &mut Vec::new(),
+                touch_capable: &mut None,
+                gamepads: &mut Vec::new(),
+                system_locale: &mut None,
+                pad_order: &[],
+            },
         )
         .expect_err("start with no input device must fail")
     });
@@ -993,11 +1047,14 @@ fn phantom_builtin_never_surfaces_without_hardware() {
         apply_command_to(
             &mut snapshot,
             &command_json,
-            &mut None,
-            &mut keyboards,
-            &mut None,
-            &mut Vec::new(),
-            &mut None,
+            CommandVault {
+                capture: &mut None,
+                keyboards: &mut keyboards,
+                touch_capable: &mut None,
+                gamepads: &mut Vec::new(),
+                system_locale: &mut None,
+                pad_order: &[],
+            },
         )
         .expect("keyboards op applies")
     });
@@ -1028,11 +1085,14 @@ fn phantom_builtin_never_surfaces_without_hardware() {
                 payload: serde_json::json!({ "keyboards": [], "capable": true, "gamepads": [] }),
             })
             .unwrap(),
-            &mut None,
-            &mut Vec::new(),
-            &mut None,
-            &mut Vec::new(),
-            &mut None,
+            CommandVault {
+                capture: &mut None,
+                keyboards: &mut Vec::new(),
+                touch_capable: &mut None,
+                gamepads: &mut Vec::new(),
+                system_locale: &mut None,
+                pad_order: &[],
+            },
         )
         .expect("empty enumeration applies")
     });
@@ -1073,11 +1133,14 @@ fn keyboards_op_upserts_enumeration_without_mutating_draft() {
         apply_command_to(
             &mut snapshot,
             &command_json,
-            &mut None,
-            &mut keyboards,
-            &mut None,
-            &mut Vec::new(),
-            &mut None,
+            CommandVault {
+                capture: &mut None,
+                keyboards: &mut keyboards,
+                touch_capable: &mut None,
+                gamepads: &mut Vec::new(),
+                system_locale: &mut None,
+                pad_order: &[],
+            },
         )
         .expect("keyboards op applies")
     });
@@ -1096,6 +1159,7 @@ fn keyboards_op_upserts_enumeration_without_mutating_draft() {
 
 fn test_gamepads() -> Vec<GamepadInfo> {
     vec![GamepadInfo {
+        member: "pad:wireless-1".to_string(),
         name: "Wireless Controller".to_string(),
     }]
 }
@@ -1121,11 +1185,14 @@ fn gamepads_op_upserts_without_mutating_draft() {
         apply_command_to(
             &mut snapshot,
             &command_json,
-            &mut None,
-            &mut test_keyboards(),
-            &mut None,
-            &mut gamepads,
-            &mut None,
+            CommandVault {
+                capture: &mut None,
+                keyboards: &mut test_keyboards(),
+                touch_capable: &mut None,
+                gamepads: &mut gamepads,
+                system_locale: &mut None,
+                pad_order: &[],
+            },
         )
         .expect("gamepads op applies")
     });
@@ -1138,33 +1205,47 @@ fn gamepads_op_upserts_without_mutating_draft() {
         "status names the counted gamepad: {}",
         status.text
     );
-    let bad = serde_json::to_string(&WireCommand {
-        key: "device_truth".to_string(),
-        index: 0,
-        number: 0,
-        op: WireOp::DeviceTruth,
-        payload: serde_json::json!({
-            "keyboards": [],
-            "capable": true,
-            "gamepads": [{ "name": "" }],
-        }),
-    })
-    .unwrap();
-    with_test_deps(|| {
-        assert!(
-            apply_command_to(
-                &mut snapshot,
-                &bad,
-                &mut None,
-                &mut test_keyboards(),
-                &mut None,
-                &mut gamepads,
-                &mut None,
-            )
-            .is_err(),
-            "nameless gamepads never persist"
-        );
-    });
+    for (gamepads_payload, why) in [
+        (
+            serde_json::json!([{ "member": "pad:x", "name": "" }]),
+            "nameless gamepads never persist",
+        ),
+        (
+            serde_json::json!([{ "member": "", "name": "Pad" }]),
+            "memberless gamepads never persist",
+        ),
+    ] {
+        let bad = serde_json::to_string(&WireCommand {
+            key: "device_truth".to_string(),
+            index: 0,
+            number: 0,
+            op: WireOp::DeviceTruth,
+            payload: serde_json::json!({
+                "keyboards": [],
+                "capable": true,
+                "gamepads": gamepads_payload,
+            }),
+        })
+        .unwrap();
+        with_test_deps(|| {
+            assert!(
+                apply_command_to(
+                    &mut snapshot,
+                    &bad,
+                    CommandVault {
+                        capture: &mut None,
+                        keyboards: &mut test_keyboards(),
+                        touch_capable: &mut None,
+                        gamepads: &mut gamepads,
+                        system_locale: &mut None,
+                        pad_order: &[]
+                    },
+                )
+                .is_err(),
+                "{why}"
+            );
+        });
+    }
 }
 
 #[test]
@@ -1198,11 +1279,14 @@ fn touch_payload(capable: Option<bool>) -> ViewPayload {
             apply_command_to(
                 &mut snapshot,
                 &command_json,
-                &mut None,
-                &mut test_keyboards(),
-                &mut touch,
-                &mut Vec::new(),
-                &mut None,
+                CommandVault {
+                    capture: &mut None,
+                    keyboards: &mut test_keyboards(),
+                    touch_capable: &mut touch,
+                    gamepads: &mut Vec::new(),
+                    system_locale: &mut None,
+                    pad_order: &[],
+                },
             )
             .expect("touch op applies")
         });
@@ -1270,11 +1354,14 @@ fn reset_section_restores_screen_defaults() {
         apply_command_to(
             &mut snapshot,
             &reset,
-            &mut None,
-            &mut keyboards,
-            &mut None,
-            &mut Vec::new(),
-            &mut None,
+            CommandVault {
+                capture: &mut None,
+                keyboards: &mut keyboards,
+                touch_capable: &mut None,
+                gamepads: &mut Vec::new(),
+                system_locale: &mut None,
+                pad_order: &[],
+            },
         )
         .expect("reset applies")
     });
@@ -1317,11 +1404,14 @@ fn every_emitted_reset_key_executes() {
             apply_command_to(
                 &mut snapshot,
                 &reset,
-                &mut None,
-                &mut keyboards,
-                &mut None,
-                &mut Vec::new(),
-                &mut None,
+                CommandVault {
+                    capture: &mut None,
+                    keyboards: &mut keyboards,
+                    touch_capable: &mut None,
+                    gamepads: &mut Vec::new(),
+                    system_locale: &mut None,
+                    pad_order: &[],
+                },
             )
         })
         .unwrap_or_else(|_| panic!("reset executes: {key}"));
@@ -1427,6 +1517,151 @@ fn covered_slot_disables_concrete_controllers() {
 }
 
 #[test]
+fn pad_capture_lands_on_shortcut_rows() {
+    use nerust_input_traits::StandardButton;
+    let (mut snapshot, _) = test_payload();
+    // Production seeds shortcut rows at load; the payload fixture skips
+    // that, so capture would find no entry to update.
+    nerust_settings_core::model::input::ensure_default_shortcuts(
+        &mut snapshot.shared.input.shortcuts,
+    );
+    let mut capture: CaptureSlot = None;
+    // Any shortcut capture row: pads only land on shortcuts.
+    let target_key = with_test_deps(|| {
+        let vm = build_vm(
+            &snapshot,
+            &test_deps(),
+            sys_display(AppLanguage::SystemDefault),
+        )
+        .expect("vm builds");
+        let keyboards = test_keyboards();
+        let truth = projection(
+            &keyboards,
+            None,
+            &[],
+            sys_display(AppLanguage::SystemDefault),
+        );
+        let sections = build_sections(&vm, &snapshot, truth);
+        let shortcuts = sections
+            .iter()
+            .find(|section| section.id == "controls.shortcuts")
+            .expect("shortcuts screen exists");
+        shortcuts
+            .rows
+            .iter()
+            .find(|row| row.kind == RowKind::Capture)
+            .map(|row| row.key.clone())
+            .expect("shortcut capture row exists")
+    });
+    let started = apply(
+        &mut snapshot,
+        &mut capture,
+        &mut test_keyboards(),
+        &target_key,
+        WireOp::StartCapture,
+        0,
+        0,
+    );
+    assert!(started.capture.is_some(), "shortcut capture pending");
+    // BUTTON_MODE (110) captures Guide into the pad column.
+    let (_, consumed) = with_test_deps(|| {
+        apply_hardware_key(
+            110,
+            None,
+            true,
+            &mut snapshot,
+            &mut capture,
+            projection(
+                &test_keyboards(),
+                None,
+                &[],
+                sys_display(AppLanguage::SystemDefault),
+            ),
+        )
+        .expect("pad capture applies")
+    });
+    assert!(consumed, "pad press is consumed");
+    assert!(capture.is_none(), "capture closes after one pad");
+    assert!(
+        snapshot
+            .shared
+            .input
+            .shortcuts
+            .keyboard
+            .iter()
+            .any(|binding| binding.pad == Some(StandardButton::Guide)),
+        "Guide landed in a shortcut pad column"
+    );
+}
+
+#[test]
+fn pad_press_on_game_row_leaves_capture_pending() {
+    let (mut snapshot, _) = test_payload();
+    let mut capture: CaptureSlot = None;
+    // A game (binding) capture row on the NES controller screen: pads
+    // never land here, so the press must not eat the capture.
+    let target_key = with_test_deps(|| {
+        let vm = build_vm(
+            &snapshot,
+            &test_deps(),
+            sys_display(AppLanguage::SystemDefault),
+        )
+        .expect("vm builds");
+        let keyboards = test_keyboards();
+        let truth = projection(
+            &keyboards,
+            None,
+            &[],
+            sys_display(AppLanguage::SystemDefault),
+        );
+        let sections = build_sections(&vm, &snapshot, truth);
+        sections
+            .iter()
+            .flat_map(|section| &section.rows)
+            .find(|row| {
+                row.kind == RowKind::Capture
+                    && serde_json::from_str::<serde_json::Value>(&row.target)
+                        .ok()
+                        .and_then(|target| target.get("kind")?.as_str().map(str::to_string))
+                        == Some("binding".to_string())
+            })
+            .map(|row| row.key.clone())
+            .expect("game capture row exists")
+    });
+    let started = apply(
+        &mut snapshot,
+        &mut capture,
+        &mut test_keyboards(),
+        &target_key,
+        WireOp::StartCapture,
+        0,
+        0,
+    );
+    assert!(started.capture.is_some(), "game capture pending");
+    let (_, consumed) = with_test_deps(|| {
+        apply_hardware_key(
+            110,
+            None,
+            true,
+            &mut snapshot,
+            &mut capture,
+            projection(
+                &test_keyboards(),
+                None,
+                &[],
+                sys_display(AppLanguage::SystemDefault),
+            ),
+        )
+        .expect("pad press probes a game row")
+    });
+    assert!(!consumed, "pad press on a game row is not consumed");
+    assert!(
+        capture.is_some(),
+        "capture stays pending for a keyboard key"
+    );
+}
+
+#[test]
 fn capture_round_trips_through_hardware_keys() {
     let (mut snapshot, _) = test_payload();
     let mut capture: CaptureSlot = None;
@@ -1470,6 +1705,7 @@ fn capture_round_trips_through_hardware_keys() {
     let (_, consumed_release) = with_test_deps(|| {
         apply_hardware_key(
             29,
+            None,
             false,
             &mut snapshot,
             &mut capture,
@@ -1487,6 +1723,7 @@ fn capture_round_trips_through_hardware_keys() {
     let (_, consumed_unknown) = with_test_deps(|| {
         apply_hardware_key(
             999,
+            None,
             true,
             &mut snapshot,
             &mut capture,
@@ -1504,6 +1741,7 @@ fn capture_round_trips_through_hardware_keys() {
     let (_, consumed) = with_test_deps(|| {
         apply_hardware_key(
             29,
+            None,
             true,
             &mut snapshot,
             &mut capture,
@@ -1661,7 +1899,8 @@ fn bare_rows_are_reviewed_allowlist() {
     // labels stay bare (no AI-slop restatements). This allowlist pins
     // the policy; a new bare row fails here until it is reviewed.
     // - reset.*: the label states the action, the confirm dialog states
-    //   the consequences.
+    //   the consequences. Scoped per-pad resets carry a one-line scope
+    //   instead and leave this list.
     // - sliders with inline values (volume, opacity, scale, offset,
     //   rumble strength): the value line already says it.
     // - color/position/target choice rows: the choices list the options.
@@ -1675,6 +1914,9 @@ fn bare_rows_are_reviewed_allowlist() {
     // - player.*.devices: the value line carries the port summary.
     // - mute/vsync toggles and per-device key-mapping links: self-evident
     //   labels with no restatement (on/off, or the machine context).
+    // - pad screens (`pad.N.*`): only exist while their pad stays
+    //   connected, so the empty-payload allowlist carries none. Device
+    //   gear rows (`devices.pN.padN`) are likewise connection-gated.
     let mut bare: Vec<String> = payload_bare_keys(&test_payload().1);
     bare.sort();
     let mut expected: Vec<String> = vec![
@@ -1719,7 +1961,6 @@ fn bare_rows_are_reviewed_allowlist() {
     for prefix in [
         "reset.all",
         "reset.audio.detail",
-        "reset.controllers",
         "reset.controls.overlay_detail",
         "reset.controls.shortcuts",
         "reset.devices.p1",
@@ -1822,6 +2063,1186 @@ fn toggle_and_number_commands_round_trip() {
 }
 
 #[test]
+fn pad_screen_sets_deadzone_triggers_and_resets() {
+    use nerust_settings_core::model::input::DEFAULT_DEADZONE_PERCENT;
+    let (mut snapshot, _) = test_payload();
+    let pads = vec![
+        GamepadInfo {
+            member: "pad:a".to_string(),
+            name: "Pad A".to_string(),
+        },
+        GamepadInfo {
+            member: "pad:b".to_string(),
+            name: "Pad B".to_string(),
+        },
+        GamepadInfo {
+            member: "pad:c".to_string(),
+            name: "Pad C".to_string(),
+        },
+    ];
+    // Per-pad deadzone starts at the default.
+    assert_eq!(
+        snapshot.shared.input.gamepad.pad_ports[0].deadzone_percent,
+        DEFAULT_DEADZONE_PERCENT
+    );
+    let next = set_with_pads(&mut snapshot, &pads, "pad.1.deadzone", 0, 25);
+    assert_eq!(
+        snapshot.shared.input.gamepad.pad_ports[0].deadzone_percent,
+        25
+    );
+    assert_eq!(row(&next, "pad.1.deadzone").number, 25);
+    // Pad 2 tunes independently.
+    assert_eq!(
+        snapshot.shared.input.gamepad.pad_ports[1].deadzone_percent,
+        DEFAULT_DEADZONE_PERCENT
+    );
+    // Trigger doubling toggles per pad and resets with the screen.
+    let triggers = set_with_pads(&mut snapshot, &pads, "pad.1.triggers", 1, 0);
+    assert!(snapshot.shared.input.gamepad.pad_ports[0].triggers_as_shoulders);
+    assert_eq!(row(&triggers, "pad.1.triggers").selected, 1);
+    // Screen reset restores this pad's deadzone and trigger, keeps the
+    // player slot (the devices radio owns assignment, not this screen).
+    assert_eq!(snapshot.shared.input.gamepad.pad_ports[0].slot, Some(0));
+    let mut capture: CaptureSlot = None;
+    let reset = with_test_deps(|| {
+        let mut gamepads = pads.clone();
+        apply_command_to(
+            &mut snapshot,
+            &serde_json::to_string(&WireCommand {
+                key: "reset.pad.1".to_string(),
+                index: 0,
+                number: 0,
+                op: WireOp::ResetSection,
+                payload: serde_json::Value::Null,
+            })
+            .unwrap(),
+            CommandVault {
+                capture: &mut capture,
+                keyboards: &mut test_keyboards(),
+                touch_capable: &mut None,
+                gamepads: &mut gamepads,
+                system_locale: &mut None,
+                pad_order: &[],
+            },
+        )
+        .expect("reset applies")
+    });
+    assert_eq!(
+        snapshot.shared.input.gamepad.pad_ports[0].deadzone_percent,
+        DEFAULT_DEADZONE_PERCENT
+    );
+    assert!(!snapshot.shared.input.gamepad.pad_ports[0].triggers_as_shoulders);
+    assert_eq!(
+        snapshot.shared.input.gamepad.pad_ports[0].slot,
+        Some(0),
+        "pad reset never moves the player assignment"
+    );
+    assert_eq!(
+        row(&reset, "pad.1.deadzone").number,
+        i64::from(DEFAULT_DEADZONE_PERCENT)
+    );
+}
+
+fn two_pads() -> Vec<GamepadInfo> {
+    vec![
+        GamepadInfo {
+            member: "pad:a".to_string(),
+            name: "Pad A".to_string(),
+        },
+        GamepadInfo {
+            member: "pad:b".to_string(),
+            name: "Pad B".to_string(),
+        },
+    ]
+}
+
+/// Ingest a device-truth scan with a session order mirror, returning the
+/// stored vault order (sorted into session order at ingest).
+fn ingest_truth(pads: &[GamepadInfo], pad_order: &[String]) -> Vec<GamepadInfo> {
+    let (mut snapshot, _) = test_payload();
+    let mut gamepads = Vec::new();
+    let command_json = serde_json::to_string(&WireCommand {
+        key: "device_truth".to_string(),
+        index: 0,
+        number: 0,
+        op: WireOp::DeviceTruth,
+        payload: serde_json::json!({
+            "keyboards": serde_json::to_value(test_keyboards()).unwrap(),
+            "capable": true,
+            "gamepads": serde_json::to_value(pads).unwrap(),
+        }),
+    })
+    .unwrap();
+    with_test_deps(|| {
+        apply_command_to(
+            &mut snapshot,
+            &command_json,
+            CommandVault {
+                capture: &mut None,
+                keyboards: &mut test_keyboards(),
+                touch_capable: &mut None,
+                gamepads: &mut gamepads,
+                system_locale: &mut None,
+                pad_order,
+            },
+        )
+        .expect("device truth applies")
+    });
+    gamepads
+}
+
+#[test]
+fn device_truth_sorts_vault_into_session_order() {
+    // Scan arrives B-first (reconnect compacted it); the session saw
+    // A first, so Pad 1 must stay Pad A with Pad A's slot and settings.
+    let pads = vec![
+        GamepadInfo {
+            member: "pad:b".to_string(),
+            name: "Pad B".to_string(),
+        },
+        GamepadInfo {
+            member: "pad:a".to_string(),
+            name: "Pad A".to_string(),
+        },
+    ];
+    let order = ["a".to_string(), "b".to_string()];
+    let gamepads = ingest_truth(&pads, &order);
+    assert_eq!(gamepads[0].member, "pad:a");
+    assert_eq!(gamepads[1].member, "pad:b");
+    // Unknown scans (raced ahead of the connect event) trail in scan
+    // order instead of skewing the known pads.
+    let pads = vec![
+        GamepadInfo {
+            member: "pad:c".to_string(),
+            name: "Pad C".to_string(),
+        },
+        GamepadInfo {
+            member: "pad:a".to_string(),
+            name: "Pad A".to_string(),
+        },
+    ];
+    let gamepads = ingest_truth(&pads, &order);
+    assert_eq!(gamepads[0].member, "pad:a");
+    assert_eq!(gamepads[1].member, "pad:c");
+}
+
+#[test]
+fn over_table_pads_have_no_screens_or_links() {
+    let pads: Vec<GamepadInfo> = (0..5)
+        .map(|n| GamepadInfo {
+            member: format!("pad:p{n}"),
+            name: format!("Pad {n}"),
+        })
+        .collect();
+    let payload = pad_payload(&test_payload().0, &pads);
+    let ids: Vec<&str> = payload.sections.iter().map(|s| s.id.as_str()).collect();
+    assert!(ids.contains(&"pad.4"), "fourth pad keeps its screen");
+    assert!(
+        !ids.contains(&"pad.5"),
+        "past the table a pad parks with no screen"
+    );
+    assert!(
+        payload
+            .sections
+            .iter()
+            .flat_map(|s| &s.rows)
+            .all(|row| !row.key.starts_with("controls.pad5") && !row.key.ends_with(".pad5")),
+        "no links, gears, or shortcut blocks for the parked pad"
+    );
+}
+
+#[test]
+fn gamepad_radio_assigns_one_pad_per_player() {
+    let (mut snapshot, _) = test_payload();
+    let pads = two_pads();
+    // Defaults park Pad A on player 1 and Pad B on player 2.
+    let first = set_with_pads(&mut snapshot, &pads, "audio.volume", 0, 42);
+    assert_eq!(
+        row(&first, "devices.p1.gamepad").selected,
+        1,
+        "Pad A drives P1"
+    );
+    assert_eq!(
+        row(&first, "devices.p2.gamepad").selected,
+        2,
+        "Pad B drives P2"
+    );
+    // Move Pad A to player 2: it leaves player 1 and parks Pad B.
+    let moved = set_with_pads(&mut snapshot, &pads, "devices.p2.gamepad", 1, 0);
+    assert_eq!(snapshot.shared.input.gamepad.pad_ports[0].slot, Some(1));
+    assert_eq!(
+        snapshot.shared.input.gamepad.pad_ports[1].slot, None,
+        "mates park when a pad takes the port"
+    );
+    assert_eq!(row(&moved, "devices.p2.gamepad").selected, 1);
+    assert_eq!(row(&moved, "devices.p1.gamepad").selected, 0);
+    // Unassigned clears the port without touching the other one.
+    let cleared = set_with_pads(&mut snapshot, &pads, "devices.p2.gamepad", 0, 0);
+    assert_eq!(snapshot.shared.input.gamepad.pad_ports[0].slot, None);
+    assert_eq!(row(&cleared, "devices.p2.gamepad").selected, 0);
+    // Player summaries follow the radio, not stale slots.
+    assert_eq!(row(&cleared, "player.2.devices").text, "Not assigned");
+}
+
+#[test]
+fn gamepad_radio_rejects_unknown_pads() {
+    let (mut snapshot, _) = test_payload();
+    let pads = two_pads();
+    let bad = serde_json::to_string(&WireCommand {
+        key: "devices.p1.gamepad".to_string(),
+        index: 7,
+        number: 0,
+        op: WireOp::Set,
+        payload: serde_json::Value::Null,
+    })
+    .unwrap();
+    with_test_deps(|| {
+        let mut keyboards = test_keyboards();
+        let mut gamepads = pads;
+        assert!(
+            apply_command_to(
+                &mut snapshot,
+                &bad,
+                CommandVault {
+                    capture: &mut None,
+                    keyboards: &mut keyboards,
+                    touch_capable: &mut None,
+                    gamepads: &mut gamepads,
+                    system_locale: &mut None,
+                    pad_order: &[]
+                },
+            )
+            .is_err(),
+            "out-of-range pad choice fails loud"
+        );
+    });
+}
+
+#[test]
+fn shortcut_clear_is_per_column() {
+    use nerust_settings_core::model::input::ensure_default_shortcuts;
+    let (mut snapshot, _) = test_payload();
+    ensure_default_shortcuts(&mut snapshot.shared.input.shortcuts);
+    let pads = two_pads();
+    let pause = snapshot
+        .shared
+        .input
+        .shortcuts
+        .keyboard
+        .iter()
+        .find(|binding| {
+            binding.action == nerust_settings_core::model::input::ShortcutAction::TogglePause
+        })
+        .expect("pause seeded");
+    assert!(pause.key.is_some() && pause.pad.is_some());
+    // Keyboard Clear keeps the pad twin.
+    let clear_key = |snapshot: &mut SettingsSnapshot| {
+        with_test_deps(|| {
+            let command_json = serde_json::to_string(&WireCommand {
+                key: "controls.shortcut.TogglePause.kbd".to_string(),
+                index: 0,
+                number: 0,
+                op: WireOp::ClearBinding,
+                payload: serde_json::Value::Null,
+            })
+            .unwrap();
+            let mut keyboards = test_keyboards();
+            let mut gamepads = pads.clone();
+            apply_command_to(
+                snapshot,
+                &command_json,
+                CommandVault {
+                    capture: &mut None,
+                    keyboards: &mut keyboards,
+                    touch_capable: &mut None,
+                    gamepads: &mut gamepads,
+                    system_locale: &mut None,
+                    pad_order: &[],
+                },
+            )
+            .unwrap_or_else(|error| panic!("command failed: {error}"))
+        })
+    };
+    clear_key(&mut snapshot);
+    let pause = snapshot
+        .shared
+        .input
+        .shortcuts
+        .keyboard
+        .iter()
+        .find(|binding| {
+            binding.action == nerust_settings_core::model::input::ShortcutAction::TogglePause
+        })
+        .expect("pause persists");
+    assert!(pause.key.is_none(), "keyboard column clears");
+    assert!(pause.pad.is_some(), "pad twin survives");
+    // Pad Clear keeps the keyboard twin.
+    let clear_pad = |snapshot: &mut SettingsSnapshot| {
+        with_test_deps(|| {
+            let command_json = serde_json::to_string(&WireCommand {
+                key: "controls.shortcut.TogglePause.pad".to_string(),
+                index: 0,
+                number: 0,
+                op: WireOp::ClearBinding,
+                payload: serde_json::Value::Null,
+            })
+            .unwrap();
+            let mut keyboards = test_keyboards();
+            let mut gamepads = two_pads();
+            apply_command_to(
+                snapshot,
+                &command_json,
+                CommandVault {
+                    capture: &mut None,
+                    keyboards: &mut keyboards,
+                    touch_capable: &mut None,
+                    gamepads: &mut gamepads,
+                    system_locale: &mut None,
+                    pad_order: &[],
+                },
+            )
+            .unwrap_or_else(|error| panic!("command failed: {error}"))
+        })
+    };
+    // Re-seed the key first so the pad clear has a twin to keep.
+    snapshot
+        .shared
+        .input
+        .shortcuts
+        .keyboard
+        .iter_mut()
+        .find(|binding| {
+            binding.action == nerust_settings_core::model::input::ShortcutAction::TogglePause
+        })
+        .expect("pause persists")
+        .key = Some(nerust_input_traits::Key::Space);
+    clear_pad(&mut snapshot);
+    let pause = snapshot
+        .shared
+        .input
+        .shortcuts
+        .keyboard
+        .iter()
+        .find(|binding| {
+            binding.action == nerust_settings_core::model::input::ShortcutAction::TogglePause
+        })
+        .expect("pause persists");
+    assert!(pause.pad.is_none(), "pad column clears");
+    assert!(pause.key.is_some(), "keyboard twin survives");
+}
+
+#[test]
+fn shortcuts_group_per_device_with_split_columns() {
+    use nerust_settings_core::model::input::ensure_default_shortcuts;
+    let (mut snapshot, _) = test_payload();
+    ensure_default_shortcuts(&mut snapshot.shared.input.shortcuts);
+    let pads = two_pads();
+    let payload = with_test_deps(|| {
+        let json = open_payload(&snapshot, &test_keyboards(), None, &pads, None)
+            .expect("open payload builds");
+        let payload: ViewPayload = json;
+        payload
+    });
+    let shortcuts = payload
+        .sections
+        .iter()
+        .find(|section| section.id == "controls.shortcuts")
+        .expect("shortcuts screen exists");
+    // Keyboard rows show the key column; pad rows show the pad column.
+    let kbd = shortcuts
+        .rows
+        .iter()
+        .find(|row| row.key == "controls.shortcut.TogglePause.kbd")
+        .expect("keyboard pause row exists");
+    assert_eq!(kbd.text, "Space");
+    let pad = shortcuts
+        .rows
+        .iter()
+        .find(|row| row.key == "controls.shortcut.TogglePause.pad")
+        .expect("pad pause row exists");
+    assert_eq!(pad.text, "Guide");
+    assert_eq!(
+        shortcuts
+            .rows
+            .iter()
+            .filter(|row| row.kind == RowKind::Capture)
+            .count(),
+        12,
+        "one shared pad block: six keyboard rows plus six pad rows"
+    );
+}
+
+#[test]
+fn shortcuts_hide_keyboard_block_without_keyboard() {
+    // No keyboards, no pads: the screen explains instead of prompting.
+    let (_snapshot, payload) = test_payload_with_keyboards(&[]);
+    let shortcuts = payload
+        .sections
+        .iter()
+        .find(|section| section.id == "controls.shortcuts")
+        .expect("shortcuts screen exists");
+    assert!(
+        shortcuts
+            .rows
+            .iter()
+            .all(|row| row.kind != RowKind::Capture),
+        "no capture rows without a device"
+    );
+    assert!(
+        shortcuts
+            .rows
+            .iter()
+            .any(|row| row.key == "controls.shortcuts.none"),
+        "empty state names the missing keyboard"
+    );
+    // Pads alone: pad blocks only, no keyboard header.
+    let pads = two_pads();
+    let wired = with_test_deps(|| {
+        let json =
+            open_payload(&default_snapshot(), &[], None, &pads, None).expect("open payload builds");
+        let payload: ViewPayload = json;
+        payload
+    });
+    let shortcuts = wired
+        .sections
+        .iter()
+        .find(|section| section.id == "controls.shortcuts")
+        .expect("shortcuts screen exists");
+    assert!(
+        shortcuts
+            .rows
+            .iter()
+            .any(|row| row.kind == RowKind::Capture),
+        "pad blocks list their rows"
+    );
+    assert!(
+        !shortcuts.rows.iter().any(|row| row.key.ends_with(".kbd")),
+        "no keyboard block without a keyboard"
+    );
+}
+
+/// First capture row of the first pad screen, with its opaque target.
+fn first_pad_mapping_row(payload: &ViewPayload) -> (String, String) {
+    let section = payload
+        .sections
+        .iter()
+        .find(|section| section.id == "pad.1")
+        .expect("pad.1 screen exists while connected");
+    section
+        .rows
+        .iter()
+        .find(|row| row.kind == RowKind::Capture)
+        .map(|row| (row.key.clone(), row.target.clone()))
+        .expect("pad mapping rows exist")
+}
+
+fn pad_payload(snapshot: &SettingsSnapshot, pads: &[GamepadInfo]) -> ViewPayload {
+    with_test_deps(|| {
+        open_payload(snapshot, &test_keyboards(), None, pads, None).expect("open payload builds")
+    })
+}
+
+#[test]
+fn pad_mapping_capture_lands_override_from_own_pad() {
+    use nerust_input_traits::StandardButton;
+    let (mut snapshot, _) = test_payload();
+    let pads = two_pads();
+    let payload = pad_payload(&snapshot, &pads);
+    let (key, _) = first_pad_mapping_row(&payload);
+    // Slot, deadzone, and trigger rows share the screen with mapping.
+    for probe in ["pad.1.slot", "pad.1.deadzone", "pad.1.triggers"] {
+        assert!(
+            payload
+                .sections
+                .iter()
+                .flat_map(|section| &section.rows)
+                .any(|row| row.key == probe),
+            "{probe} rides the pad screen"
+        );
+    }
+    let mut capture: CaptureSlot = None;
+    let started = set_with_pads_capture(&mut snapshot, &pads, &mut capture, &key);
+    assert!(started.capture.is_some(), "pad mapping capture pending");
+    // BUTTON_A (96) from pad 0 lands South in that pad's overrides.
+    let (out, consumed) = with_test_deps(|| {
+        apply_hardware_key(
+            96,
+            Some("a"),
+            true,
+            &mut snapshot,
+            &mut capture,
+            projection(
+                &test_keyboards(),
+                None,
+                &pads,
+                sys_display(AppLanguage::SystemDefault),
+            ),
+        )
+        .expect("pad capture applies")
+    });
+    assert!(consumed, "own-pad press is consumed");
+    assert!(capture.is_none(), "capture closes after one button");
+    let overrides: Vec<_> = snapshot
+        .shared
+        .input
+        .systems
+        .values()
+        .flat_map(|settings| settings.pad_bindings[0].iter())
+        .collect();
+    assert_eq!(overrides.len(), 1, "one override stored on pad 0");
+    assert_eq!(
+        overrides[0].button,
+        StandardButton::South,
+        "keycode 96 lands South"
+    );
+    // The row now shows the override, not the standard default.
+    let refreshed = pad_payload(&snapshot, &pads);
+    let row = refreshed
+        .sections
+        .iter()
+        .flat_map(|section| &section.rows)
+        .find(|row| row.key == key)
+        .expect("mapping row persists");
+    assert_eq!(row.text, "A (bottom)", "face buttons show cap and position");
+    let _ = out;
+}
+
+/// StartCapture on a pad mapping row, threading pads and capture through.
+/// One command through the vault with pads connected: radio and per-device
+/// rows only exist while their pad stays connected. `capture` threads
+/// through for capture ops; `&mut None` callers pass a fresh slot.
+fn run_with_pads(
+    snapshot: &mut SettingsSnapshot,
+    pads: &[GamepadInfo],
+    capture: &mut CaptureSlot,
+    key: &str,
+    op: WireOp,
+    index: usize,
+    number: i64,
+) -> ViewPayload {
+    with_test_deps(|| {
+        let command_json = serde_json::to_string(&WireCommand {
+            key: key.to_string(),
+            index,
+            number,
+            op,
+            payload: serde_json::Value::Null,
+        })
+        .unwrap();
+        let mut keyboards = test_keyboards();
+        let mut gamepads = pads.to_vec();
+        apply_command_to(
+            snapshot,
+            &command_json,
+            CommandVault {
+                capture,
+                keyboards: &mut keyboards,
+                touch_capable: &mut None,
+                gamepads: &mut gamepads,
+                system_locale: &mut None,
+                pad_order: &[],
+            },
+        )
+        .unwrap_or_else(|error| panic!("command failed: {error}"))
+    })
+}
+
+fn set_with_pads_capture(
+    snapshot: &mut SettingsSnapshot,
+    pads: &[GamepadInfo],
+    capture: &mut CaptureSlot,
+    key: &str,
+) -> ViewPayload {
+    run_with_pads(snapshot, pads, capture, key, WireOp::StartCapture, 0, 0)
+}
+
+/// Screen-reset press: reset rows take `ResetSection`, never `Set`.
+fn reset_screen(snapshot: &mut SettingsSnapshot, pads: &[GamepadInfo], key: &str) {
+    let command_json = serde_json::to_string(&WireCommand {
+        key: key.to_string(),
+        index: 0,
+        number: 0,
+        op: WireOp::ResetSection,
+        payload: serde_json::Value::Null,
+    })
+    .unwrap();
+    with_test_deps(|| {
+        let mut keyboards = test_keyboards();
+        let mut gamepads = pads.to_vec();
+        apply_command_to(
+            snapshot,
+            &command_json,
+            CommandVault {
+                capture: &mut None,
+                keyboards: &mut keyboards,
+                touch_capable: &mut None,
+                gamepads: &mut gamepads,
+                system_locale: &mut None,
+                pad_order: &[],
+            },
+        )
+        .unwrap_or_else(|error| panic!("reset failed: {error}"))
+    });
+}
+
+#[test]
+fn pad_mapping_capture_ignores_other_pads_and_keys() {
+    let (mut snapshot, _) = test_payload();
+    let pads = two_pads();
+    let payload = pad_payload(&snapshot, &pads);
+    let (key, _) = first_pad_mapping_row(&payload);
+    let mut capture: CaptureSlot = None;
+    set_with_pads_capture(&mut snapshot, &pads, &mut capture, &key);
+    assert!(capture.is_some(), "pad mapping capture pending");
+    // Pad 1's button must not land on pad 0's row.
+    let (_, consumed_other) = with_test_deps(|| {
+        apply_hardware_key(
+            97,
+            Some("b"),
+            true,
+            &mut snapshot,
+            &mut capture,
+            projection(
+                &test_keyboards(),
+                None,
+                &pads,
+                sys_display(AppLanguage::SystemDefault),
+            ),
+        )
+        .expect("probe applies")
+    });
+    assert!(!consumed_other, "other-pad press is not consumed");
+    assert!(capture.is_some(), "capture stays pending");
+    // Keyboard keys never land on pad rows either.
+    let (_, consumed_key) = with_test_deps(|| {
+        apply_hardware_key(
+            29,
+            None,
+            true,
+            &mut snapshot,
+            &mut capture,
+            projection(
+                &test_keyboards(),
+                None,
+                &pads,
+                sys_display(AppLanguage::SystemDefault),
+            ),
+        )
+        .expect("probe applies")
+    });
+    assert!(!consumed_key, "keyboard key is not consumed");
+    assert!(capture.is_some(), "capture stays pending");
+    // The row still shows the standard default, and nothing stored.
+    assert!(
+        snapshot
+            .shared
+            .input
+            .systems
+            .values()
+            .all(|settings| settings.pad_bindings[0].is_empty()),
+        "ignored presses store nothing"
+    );
+}
+
+#[test]
+fn pad_mapping_clear_resets_override_to_default() {
+    let (mut snapshot, _) = test_payload();
+    let pads = two_pads();
+    let payload = pad_payload(&snapshot, &pads);
+    let (key, _) = first_pad_mapping_row(&payload);
+    // Seed an override first.
+    let mut capture: CaptureSlot = None;
+    set_with_pads_capture(&mut snapshot, &pads, &mut capture, &key);
+    with_test_deps(|| {
+        apply_hardware_key(
+            96,
+            Some("a"),
+            true,
+            &mut snapshot,
+            &mut capture,
+            projection(
+                &test_keyboards(),
+                None,
+                &pads,
+                sys_display(AppLanguage::SystemDefault),
+            ),
+        )
+        .expect("pad capture applies")
+    });
+    assert!(
+        snapshot
+            .shared
+            .input
+            .systems
+            .values()
+            .any(|settings| !settings.pad_bindings[0].is_empty()),
+        "override seeded"
+    );
+    // Clear removes the override; the row falls back to the default.
+    let cleared = set_with_pads_clear(&mut snapshot, &pads, &key);
+    assert!(
+        snapshot
+            .shared
+            .input
+            .systems
+            .values()
+            .all(|settings| settings.pad_bindings[0].is_empty()),
+        "clear drops the override"
+    );
+    let row = cleared
+        .sections
+        .iter()
+        .flat_map(|section| &section.rows)
+        .find(|row| row.key == key)
+        .expect("mapping row persists");
+    assert!(!row.text.is_empty(), "row falls back to a label");
+}
+
+/// ClearBinding on a pad mapping row.
+fn set_with_pads_clear(
+    snapshot: &mut SettingsSnapshot,
+    pads: &[GamepadInfo],
+    key: &str,
+) -> ViewPayload {
+    run_with_pads(snapshot, pads, &mut None, key, WireOp::ClearBinding, 0, 0)
+}
+
+#[test]
+fn pad_mapping_conflict_surfaces_on_screen() {
+    let (mut snapshot, _) = test_payload();
+    let pads = two_pads();
+    let payload = pad_payload(&snapshot, &pads);
+    // Two mapping rows on the same pad screen: override both to South.
+    let keys: Vec<String> = payload
+        .sections
+        .iter()
+        .find(|section| section.id == "pad.1")
+        .expect("pad.1 screen exists")
+        .rows
+        .iter()
+        .filter(|row| row.kind == RowKind::Capture)
+        .take(2)
+        .map(|row| row.key.clone())
+        .collect();
+    assert_eq!(keys.len(), 2, "pad screen lists mapping rows");
+    for key in &keys {
+        let mut capture: CaptureSlot = None;
+        set_with_pads_capture(&mut snapshot, &pads, &mut capture, key);
+        with_test_deps(|| {
+            apply_hardware_key(
+                96,
+                Some("a"),
+                true,
+                &mut snapshot,
+                &mut capture,
+                projection(
+                    &test_keyboards(),
+                    None,
+                    &pads,
+                    sys_display(AppLanguage::SystemDefault),
+                ),
+            )
+            .expect("pad capture applies")
+        });
+    }
+    let conflicted = pad_payload(&snapshot, &pads);
+    let section = conflicted
+        .sections
+        .iter()
+        .find(|section| section.id == "pad.1")
+        .expect("pad.1 screen exists");
+    assert!(
+        section
+            .rows
+            .iter()
+            .any(|row| row.key.contains(".conflict.") && row.label == "A (bottom)"),
+        "one button driving two controls surfaces on the pad screen"
+    );
+}
+
+#[test]
+fn double_mapping_surfaces_issue_in_the_capture_payload() {
+    // Conflicts block submit, so the waiter must see them at capture
+    // time, not only at save: the capture payload already carries issues.
+    let (mut snapshot, _) = test_payload();
+    let pads = two_pads();
+    let payload = pad_payload(&snapshot, &pads);
+    let keys: Vec<String> = payload
+        .sections
+        .iter()
+        .find(|section| section.id == "pad.1")
+        .expect("pad.1 screen exists")
+        .rows
+        .iter()
+        .filter(|row| row.kind == RowKind::Capture)
+        .take(2)
+        .map(|row| row.key.clone())
+        .collect();
+    assert_eq!(keys.len(), 2, "pad screen lists mapping rows");
+    let mut second_out = None;
+    for (n, key) in keys.iter().enumerate() {
+        let mut capture: CaptureSlot = None;
+        set_with_pads_capture(&mut snapshot, &pads, &mut capture, key);
+        let (out, _) = with_test_deps(|| {
+            apply_hardware_key(
+                96,
+                Some("a"),
+                true,
+                &mut snapshot,
+                &mut capture,
+                projection(
+                    &test_keyboards(),
+                    None,
+                    &pads,
+                    sys_display(AppLanguage::SystemDefault),
+                ),
+            )
+            .expect("pad capture applies")
+        });
+        if n == 1 {
+            second_out = out;
+        }
+    }
+    let out = second_out.expect("second capture projects");
+    assert!(
+        !out.issues.is_empty(),
+        "conflict surfaces immediately, not only at save"
+    );
+    assert!(
+        out.issues.iter().any(|issue| issue.contains('A')),
+        "issue names the double-mapped button: {:?}",
+        out.issues
+    );
+}
+
+#[test]
+fn pad_capture_prompt_names_capturable_buttons() {
+    let (mut snapshot, _) = test_payload();
+    let pads = two_pads();
+    let payload = pad_payload(&snapshot, &pads);
+    let (key, _) = first_pad_mapping_row(&payload);
+    let mut capture: CaptureSlot = None;
+    set_with_pads_capture(&mut snapshot, &pads, &mut capture, &key);
+    let (_, prompt) = capture.expect("capture pending");
+    assert!(
+        prompt.contains("trigger") || prompt.contains("トリガー"),
+        "pad rows warn that triggers can't map: {prompt}"
+    );
+}
+
+#[test]
+fn game_row_capture_without_keyboard_names_dpad_only() {
+    // Pad-only terminal: game rows take keyboard keys, but only the
+    // dpad twin lands. The prompt must say so instead of inviting a
+    // press that stays pending.
+    let (mut snapshot, _) = test_payload();
+    let pads = two_pads();
+    let payload = with_test_deps(|| {
+        open_payload(&snapshot, &[], None, &pads, None).expect("open payload builds")
+    });
+    let key = payload
+        .sections
+        .iter()
+        .find(|section| section.id.starts_with("keys."))
+        .and_then(|section| {
+            section
+                .rows
+                .iter()
+                .find(|row| row.kind == RowKind::Capture)
+                .map(|row| row.key.clone())
+        })
+        .expect("keys screen lists mapping rows");
+    let mut capture: CaptureSlot = None;
+    let command_json = serde_json::to_string(&WireCommand {
+        key: key.clone(),
+        index: 0,
+        number: 0,
+        op: WireOp::StartCapture,
+        payload: serde_json::Value::Null,
+    })
+    .unwrap();
+    let mut gamepads = pads;
+    with_test_deps(|| {
+        apply_command_to(
+            &mut snapshot,
+            &command_json,
+            CommandVault {
+                capture: &mut capture,
+                keyboards: &mut Vec::new(),
+                touch_capable: &mut None,
+                gamepads: &mut gamepads,
+                system_locale: &mut None,
+                pad_order: &[],
+            },
+        )
+        .expect("pad-only game capture starts")
+    });
+    let (_, prompt) = capture.expect("capture pending");
+    assert!(
+        prompt.contains("dpad") || prompt.contains("十字キー"),
+        "pad-only game rows name the dpad: {prompt}"
+    );
+}
+
+#[test]
+fn keys_reset_keeps_pad_overrides() {
+    // Each reset covers exactly the rows on its own screen: the keys
+    // screen lists keyboard bindings only, so its reset clears those
+    // overrides and leaves the pad screens' overrides alone.
+    let (mut snapshot, _) = test_payload();
+    let pads = two_pads();
+    // Keyboard override on the first keys screen.
+    let keyed = pad_payload(&snapshot, &pads);
+    let (system, key) = keyed
+        .sections
+        .iter()
+        .find(|section| section.id.starts_with("keys."))
+        .and_then(|section| {
+            section
+                .rows
+                .iter()
+                .find(|row| row.kind == RowKind::Capture)
+                .map(|row| {
+                    (
+                        section.id.trim_start_matches("keys.").to_string(),
+                        row.key.clone(),
+                    )
+                })
+        })
+        .expect("keys screen lists mapping rows");
+    let mut capture: CaptureSlot = None;
+    run_with_pads(
+        &mut snapshot,
+        &[],
+        &mut capture,
+        &key,
+        WireOp::StartCapture,
+        0,
+        0,
+    );
+    let keyboards = test_keyboards();
+    with_test_deps(|| {
+        apply_hardware_key(
+            29,
+            None,
+            true,
+            &mut snapshot,
+            &mut capture,
+            projection(
+                &keyboards,
+                None,
+                &[],
+                sys_display(AppLanguage::SystemDefault),
+            ),
+        )
+        .expect("key capture applies")
+    });
+    assert!(
+        snapshot
+            .shared
+            .input
+            .systems
+            .values()
+            .any(|settings| settings
+                .keyboard_profiles
+                .values()
+                .any(|profile| !profile.bindings.is_empty())),
+        "keyboard override stored"
+    );
+    // Pad override on the first pad screen.
+    let padded = pad_payload(&snapshot, &pads);
+    let (pad_key, _) = first_pad_mapping_row(&padded);
+    let mut pad_capture: CaptureSlot = None;
+    set_with_pads_capture(&mut snapshot, &pads, &mut pad_capture, &pad_key);
+    with_test_deps(|| {
+        apply_hardware_key(
+            96,
+            Some("a"),
+            true,
+            &mut snapshot,
+            &mut pad_capture,
+            projection(
+                &keyboards,
+                None,
+                &pads,
+                sys_display(AppLanguage::SystemDefault),
+            ),
+        )
+        .expect("pad capture applies")
+    });
+    let pads_before: Vec<_> = snapshot
+        .shared
+        .input
+        .systems
+        .values()
+        .map(|settings| settings.pad_bindings.clone())
+        .collect();
+    assert!(
+        pads_before.iter().any(|bindings| !bindings[0].is_empty()),
+        "pad override stored to protect"
+    );
+    reset_screen(&mut snapshot, &pads, &format!("reset.keys.{system}"));
+    assert!(
+        snapshot
+            .shared
+            .input
+            .systems
+            .values()
+            .all(|settings| settings
+                .keyboard_profiles
+                .values()
+                .all(|profile| profile.bindings.is_empty())),
+        "keys reset clears keyboard overrides"
+    );
+    let pads_after: Vec<_> = snapshot
+        .shared
+        .input
+        .systems
+        .values()
+        .map(|settings| settings.pad_bindings.clone())
+        .collect();
+    assert_eq!(
+        pads_before, pads_after,
+        "keys reset never wipes pad overrides"
+    );
+}
+
+#[test]
+fn assigned_slot_row_links_to_its_devices_screen() {
+    // The slot row answers "whose pad" and jumps to the Devices screen
+    // that owns the assignment radio: mapping lives here, belonging
+    // there. Parked pads keep a plain readout plus the guidance row.
+    let (mut snapshot, _) = test_payload();
+    let pads = two_pads();
+    // Defaults park Pad A on player 1.
+    let payload = pad_payload(&snapshot, &pads);
+    let slot = payload
+        .sections
+        .iter()
+        .find(|section| section.id == "pad.1")
+        .and_then(|section| section.rows.iter().find(|row| row.key == "pad.1.slot"))
+        .expect("pad.1 slot row exists");
+    assert_eq!(slot.kind, RowKind::Group, "assigned slot navigates");
+    assert_eq!(slot.target, "devices.p1", "slot jumps to its radio");
+    assert_eq!(slot.text, "Player 1", "slot names its player");
+    // Parking the pad degrades the row to a readout.
+    set_with_pads(&mut snapshot, &pads, "devices.p1.gamepad", 0, 0);
+    let parked = pad_payload(&snapshot, &pads);
+    let slot = parked
+        .sections
+        .iter()
+        .find(|section| section.id == "pad.1")
+        .and_then(|section| section.rows.iter().find(|row| row.key == "pad.1.slot"))
+        .expect("parked slot row exists");
+    assert_eq!(slot.kind, RowKind::Info, "parked slot stays put");
+    assert_eq!(slot.text, "Not assigned", "parked slot reads empty");
+}
+
+#[test]
+fn controllers_hub_carries_no_reset_and_detail_covers_overlay() {
+    // Pure navigation hub like player/about: every overlay row lives on
+    // controls.overlay_detail, so the hub needs no reset and one detail
+    // reset covers the whole overlay feature.
+    let (mut snapshot, payload) = test_payload();
+    let controllers = payload
+        .sections
+        .iter()
+        .find(|section| section.id == "controllers")
+        .expect("controllers hub exists");
+    assert!(
+        controllers
+            .rows
+            .iter()
+            .all(|row| row.kind != RowKind::Button),
+        "hub holds navigation only, no reset"
+    );
+    for key in [
+        "controls.overlay_visibility",
+        "controls.overlay_haptics",
+        "controls.overlay_opacity",
+        "controls.overlay_scale",
+        "controls.overlay_vertical_offset",
+    ] {
+        row(&payload, key);
+    }
+    set(&mut snapshot, "controls.overlay_visibility", 0, 0);
+    set(&mut snapshot, "controls.overlay_haptics", 0, 0);
+    set(&mut snapshot, "controls.overlay_opacity", 0, 10);
+    reset_screen(&mut snapshot, &[], "reset.controls.overlay_detail");
+    assert_eq!(
+        snapshot.local.touch_overlay,
+        nerust_settings_core::model::local::TouchOverlaySettings::default(),
+        "one reset covers the whole overlay feature"
+    );
+}
+
+#[test]
+fn removed_gamepad_hub_keys_fail_as_unknown() {
+    // One representative hub-era key: all removed keys share the generic
+    // unknown fallthrough, so pinning one guards the loud-fail contract.
+    let (mut snapshot, _) = test_payload();
+    let command_json = serde_json::to_string(&WireCommand {
+        key: "controls.gamepads.deadzone".to_string(),
+        index: 0,
+        number: 0,
+        op: WireOp::Set,
+        payload: serde_json::Value::Null,
+    })
+    .unwrap();
+    with_test_deps(|| {
+        let error = apply_command_to(
+            &mut snapshot,
+            &command_json,
+            CommandVault {
+                capture: &mut None,
+                keyboards: &mut test_keyboards(),
+                touch_capable: &mut None,
+                gamepads: &mut Vec::new(),
+                system_locale: &mut None,
+                pad_order: &[],
+            },
+        )
+        .expect_err("removed hub key fails loud instead of no-op");
+        assert!(error.contains("unknown"), "fails as unknown: {error}");
+    });
+}
+
+#[test]
+fn devices_screen_gears_into_pad_screens() {
+    let (snapshot, _) = test_payload();
+    let pads = two_pads();
+    let payload = with_test_deps(|| {
+        let json = open_payload(&snapshot, &test_keyboards(), None, &pads, None)
+            .expect("open payload builds");
+        let payload: ViewPayload = json;
+        payload
+    });
+    // Radio still assigns; gears open the pad's own screen.
+    let devices = payload
+        .sections
+        .iter()
+        .find(|section| section.id == "devices.p1")
+        .expect("devices screen exists");
+    assert!(
+        devices
+            .rows
+            .iter()
+            .any(|row| row.key == "devices.p1.gamepad"),
+        "radio assigns the pad"
+    );
+    let gear = devices
+        .rows
+        .iter()
+        .find(|row| row.key == "devices.p1.pad1")
+        .expect("gear into pad 1 exists");
+    assert_eq!(gear.target, "pad.1");
+    assert!(
+        payload.sections.iter().any(|section| section.id == "pad.1"),
+        "pad screen exists while connected"
+    );
+}
+
+#[test]
 fn choice_command_updates_language_and_system_field() {
     let (mut snapshot, payload) = test_payload();
     let language_row = row(&payload, "general.language");
@@ -1866,11 +3287,14 @@ fn unknown_keys_and_indices_fail_without_mutation() {
             apply_command_to(
                 &mut snapshot,
                 &bad_key,
-                &mut None,
-                &mut test_keyboards(),
-                &mut None,
-                &mut Vec::new(),
-                &mut None
+                CommandVault {
+                    capture: &mut None,
+                    keyboards: &mut test_keyboards(),
+                    touch_capable: &mut None,
+                    gamepads: &mut Vec::new(),
+                    system_locale: &mut None,
+                    pad_order: &[]
+                },
             )
             .is_err()
         );
@@ -1887,11 +3311,14 @@ fn unknown_keys_and_indices_fail_without_mutation() {
             apply_command_to(
                 &mut snapshot,
                 &bad_index,
-                &mut None,
-                &mut test_keyboards(),
-                &mut None,
-                &mut Vec::new(),
-                &mut None
+                CommandVault {
+                    capture: &mut None,
+                    keyboards: &mut test_keyboards(),
+                    touch_capable: &mut None,
+                    gamepads: &mut Vec::new(),
+                    system_locale: &mut None,
+                    pad_order: &[]
+                },
             )
             .is_err()
         );
@@ -1904,11 +3331,14 @@ fn unknown_keys_and_indices_fail_without_mutation() {
             apply_command_to(
                 &mut snapshot,
                 bad_op,
-                &mut None,
-                &mut test_keyboards(),
-                &mut None,
-                &mut Vec::new(),
-                &mut None
+                CommandVault {
+                    capture: &mut None,
+                    keyboards: &mut test_keyboards(),
+                    touch_capable: &mut None,
+                    gamepads: &mut Vec::new(),
+                    system_locale: &mut None,
+                    pad_order: &[]
+                },
             )
             .is_err()
         );
@@ -1925,11 +3355,14 @@ fn unknown_keys_and_indices_fail_without_mutation() {
             apply_command_to(
                 &mut snapshot,
                 &bad_port,
-                &mut None,
-                &mut test_keyboards(),
-                &mut None,
-                &mut Vec::new(),
-                &mut None
+                CommandVault {
+                    capture: &mut None,
+                    keyboards: &mut test_keyboards(),
+                    touch_capable: &mut None,
+                    gamepads: &mut Vec::new(),
+                    system_locale: &mut None,
+                    pad_order: &[]
+                },
             )
             .is_err(),
             "unknown ports never persist"
@@ -1947,11 +3380,14 @@ fn unknown_keys_and_indices_fail_without_mutation() {
             apply_command_to(
                 &mut snapshot,
                 &bad_scope,
-                &mut None,
-                &mut test_keyboards(),
-                &mut None,
-                &mut Vec::new(),
-                &mut None
+                CommandVault {
+                    capture: &mut None,
+                    keyboards: &mut test_keyboards(),
+                    touch_capable: &mut None,
+                    gamepads: &mut Vec::new(),
+                    system_locale: &mut None,
+                    pad_order: &[]
+                },
             )
             .is_err(),
             "unknown reset scopes never no-op silently"
@@ -1973,4 +3409,146 @@ fn finish_rejects_conflicting_bindings() {
         snapshot.local.audio.latency_ms = 5;
         assert!(finish_snapshot(&snapshot, None).is_err());
     });
+}
+
+#[test]
+fn pad_screens_scope_mapping_rows_to_the_assigned_player() {
+    // Defaults park Pad A on player 1 and Pad B on player 2.
+    let (snapshot, _) = test_payload();
+    let payload = pad_payload(&snapshot, &two_pads());
+    let pad1 = payload
+        .sections
+        .iter()
+        .find(|section| section.id == "pad.1")
+        .expect("pad.1 screen exists");
+    assert!(
+        pad1.rows
+            .iter()
+            .any(|row| row.key.contains("player1") && row.kind == RowKind::Capture),
+        "own player rows stay"
+    );
+    assert!(
+        !pad1.rows.iter().any(|row| row.key.contains("player2")),
+        "player-2 attachments never ride player-1's pad"
+    );
+    let pad2 = payload
+        .sections
+        .iter()
+        .find(|section| section.id == "pad.2")
+        .expect("pad.2 screen exists");
+    assert!(
+        pad2.rows
+            .iter()
+            .any(|row| row.key.contains("player2") && row.kind == RowKind::Capture),
+        "player-2 rows stay on player-2's pad"
+    );
+    assert!(
+        !pad2.rows.iter().any(|row| row.key.contains("player1")),
+        "player-1 defaults must not pose as this pad's mapping"
+    );
+}
+
+#[test]
+fn unassigned_pad_points_at_devices_instead_of_mapping_rows() {
+    let (mut snapshot, _) = test_payload();
+    snapshot.shared.input.gamepad.pad_ports[0].slot = None;
+    let payload = pad_payload(&snapshot, &two_pads());
+    let pad1 = payload
+        .sections
+        .iter()
+        .find(|section| section.id == "pad.1")
+        .expect("pad.1 screen exists");
+    assert!(
+        pad1.rows.iter().any(|row| row.key == "pad.1.unassigned"),
+        "unassigned pad explains where to assign"
+    );
+    assert!(
+        !pad1.rows.iter().any(|row| row.kind == RowKind::Capture),
+        "parked pads collect no latent overrides"
+    );
+}
+
+#[test]
+fn devices_gears_stay_within_their_player() {
+    // Defaults park Pad A on player 1 and Pad B on player 2.
+    let (snapshot, _) = test_payload();
+    let payload = pad_payload(&snapshot, &two_pads());
+    let devices_p1 = payload
+        .sections
+        .iter()
+        .find(|section| section.id == "devices.p1")
+        .expect("devices.p1 exists");
+    assert!(
+        devices_p1
+            .rows
+            .iter()
+            .any(|row| row.key == "devices.p1.pad1"),
+        "own pad keeps its gear"
+    );
+    assert!(
+        !devices_p1
+            .rows
+            .iter()
+            .any(|row| row.key == "devices.p1.pad2"),
+        "player-2's pad has no gear on player-1's screen"
+    );
+    let devices_p2 = payload
+        .sections
+        .iter()
+        .find(|section| section.id == "devices.p2")
+        .expect("devices.p2 exists");
+    assert!(
+        devices_p2
+            .rows
+            .iter()
+            .any(|row| row.key == "devices.p2.pad2"),
+        "own pad keeps its gear"
+    );
+    assert!(
+        !devices_p2
+            .rows
+            .iter()
+            .any(|row| row.key == "devices.p2.pad1"),
+        "player-1's pad has no gear on player-2's screen"
+    );
+}
+
+#[test]
+fn unassigned_pad_gears_stay_reachable_from_both_players() {
+    let (mut snapshot, _) = test_payload();
+    snapshot.shared.input.gamepad.pad_ports[1].slot = None;
+    let payload = pad_payload(&snapshot, &two_pads());
+    for devices_id in ["devices.p1", "devices.p2"] {
+        let devices = payload
+            .sections
+            .iter()
+            .find(|section| section.id == devices_id)
+            .unwrap_or_else(|| panic!("{devices_id} exists"));
+        assert!(
+            devices.rows.iter().any(|row| row.target == "pad.2"),
+            "unassigned pad stays reachable from {devices_id}"
+        );
+    }
+}
+
+#[test]
+fn pad_rows_show_cap_prints_not_positions() {
+    let (snapshot, _) = test_payload();
+    let payload = pad_payload(&snapshot, &two_pads());
+    for (key, want) in [
+        (
+            "pad.1.nes.nes.attachment.player1.nes.control.a",
+            "A (bottom)",
+        ),
+        (
+            "pad.1.nes.nes.attachment.player1.nes.control.b",
+            "B (right)",
+        ),
+        (
+            "pad.1.nes.nes.attachment.player1.nes.control.select",
+            "Back",
+        ),
+    ] {
+        assert_eq!(row(&payload, key).text, *want, "{key} shows its cap");
+    }
 }

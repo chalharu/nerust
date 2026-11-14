@@ -55,6 +55,9 @@ fn project_shortcut_row(
         target,
         label: desc.label.to_string(),
         value,
+        // Shortcuts have no fixed-layout default; their pad column is a
+        // binding, not a fallback.
+        pad_default: None,
     }
 }
 
@@ -63,6 +66,35 @@ mod tests {
     use nerust_settings_core::editor::CaptureTarget;
 
     use crate::settings::test_support::test_vm;
+
+    #[test]
+    fn shortcut_row_combines_key_and_pad_labels() {
+        use nerust_settings_core::model::input::ShortcutAction;
+
+        use super::super::dto::BindingValueView;
+        use crate::settings::test_support::test_vm_with_default_shortcuts;
+
+        let vm = test_vm_with_default_shortcuts();
+        let rows = vm.shortcuts.view.get().rows;
+        let pause = rows
+            .iter()
+            .find(|row| row.target == CaptureTarget::Shortcut(ShortcutAction::TogglePause))
+            .expect("pause row");
+        assert!(
+            matches!(&pause.value, BindingValueView::Bound(label) if label == "Space / Guide"),
+            "pause row shows both columns, got {:?}",
+            pause.value
+        );
+        let reset = rows
+            .iter()
+            .find(|row| row.target == CaptureTarget::Shortcut(ShortcutAction::Reset))
+            .expect("reset row");
+        assert!(
+            matches!(&reset.value, BindingValueView::Unbound(_)),
+            "unbound row stays unbound, got {:?}",
+            reset.value
+        );
+    }
 
     #[test]
     fn shortcuts_lists_all_global_actions_once() {

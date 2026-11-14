@@ -65,14 +65,17 @@ def _require_prop(prop):
     """Single property rule this codegen supports."""
     require(set(prop) <= {"type", "const", "enum", "minimum", "maximum"})
     kind = field_type(prop)
-    require(kind in {"integer", "string", "boolean"})
+    require(kind in {"integer", "string", "boolean", "number"})
     if kind == "integer" and "const" not in prop:
         _require_integer_bounds(prop)
+    if kind == "number":
+        require(prop.get("minimum") is not None and prop.get("maximum") is not None)
+        require(type(prop["minimum"]) in {int, float} and type(prop["maximum"]) in {int, float})
     if "enum" in prop:
         _require_enum_values(prop, kind)
     if "const" in prop:
         _require_const_value(prop, kind)
-    require(not ({"minimum", "maximum"} & prop.keys()) or kind == "integer")
+    require(not ({"minimum", "maximum"} & prop.keys()) or kind in {"integer", "number"})
 
 
 def _require_gate(gate, props):
@@ -131,7 +134,7 @@ def event_definitions(schema):
 def field_type(prop):
     require(type(prop) is dict)
     if "type" in prop:
-        require(type(prop["type"]) is str and prop["type"] in {"integer", "string", "boolean"})
+        require(type(prop["type"]) is str and prop["type"] in {"integer", "string", "boolean", "number"})
         return prop["type"]
     require(type(prop.get("const")) in {int, str, bool})
     return {int: "integer", str: "string", bool: "boolean"}[type(prop["const"])]
@@ -156,87 +159,27 @@ def rust_predicate(prop):
     if kind == "integer":
         return (f'value\n    .as_i64()\n    .is_some_and(|number| '
                 f'({prop["minimum"]}..={prop["maximum"]}).contains(&number))')
+    if kind == "number":
+        return (f'value\n    .as_f64()\n    .is_some_and(|number| '
+                f'({prop["minimum"]}..={prop["maximum"]}).contains(&number))')
     return f'value.is_{ {"string": "string", "boolean": "boolean"}[kind]}()'
 
 
-def _validator_gate_lines(gate):
-    """One conditional-required block for a gated action value."""
-    key, condition = next(iter(gate["if"]["properties"].items()))
-    lines = [f'            if object.get({json.dumps(key)})?.as_str() == Some({json.dumps(condition["const"])}) {{']
-    for name in gate["then"]["required"]:
-        lines += [f'                object.get({json.dumps(name)})?;']
-    return lines + ["            }"]
-
-
-def _validator_event_lines(event, definition):
-    """Validation block for one event type."""
-    props = definition["properties"]
-    lines = [f'        {json.dumps(event)} => {{', "            for (name, value) in object.iter_mut() {",
-              "                let valid = match name.as_str() {"]
-    for name, prop in props.items():
-        if name == "v" and prop.get("const") == 1:
-            # Envelope version: normalize like any integer, but compare
-            # against the generated constant so a schema bump cannot leave
-            # a stale literal behind.
-            lines += [f'                    {json.dumps(name)} => {{',
-                      '                        normalize_bridge_integer(value)?;',
-                      '                        value.as_i64() == Some(BRIDGE_EVENT_VERSION as i64)',
-                      '                    }']
-            continue
-        if field_type(prop) != "integer" and "enum" not in prop:
-            lines += [f'                    {json.dumps(name)} => {rust_predicate(prop)},']
-            continue
-        lines += [f'                    {json.dumps(name)} => {{']
-        if field_type(prop) == "integer":
-            lines += ["                        normalize_bridge_integer(value)?;"]
-        lines += [f'                        {line}' for line in rust_predicate(prop).splitlines()]
-        lines += ["                    }"]
-    lines += ["                    _ => false,", "                };", "                if !valid {",
-              "                    return None;", "                }", "            }"]
-    required = ", ".join(json.dumps(name) for name in definition["required"])
-    lines += [f'            for name in [{required}] {{',
-              "                object.get(name)?;", "            }"]
-    gates = definition.get("allOf", [])
-    require("if" not in definition, "legacy top-level if/then shape removed; use allOf")
-    for gate in gates:
-        lines += _validator_gate_lines(gate)
-    return lines + ["            Some(())", "        }"]
-
-
-def rust_validator(definitions):
-    lines = ["", "/// Schema-derived validation before typed dispatch. Missing is not JSON null.",
-             "pub(crate) fn validate_bridge_event(value: &mut serde_json::Value) -> Option<()> {",
-             "    let object = value.as_object_mut()?;",
-             '    match object.get("type")?.as_str()? {']
-    for event, definition in definitions.items():
-        lines += _validator_event_lines(event, definition)
-    lines += ["        _ => None,", "    }", "}", "",
-              "// JSON Schema integers include integral decimal/exponent numbers (e.g. 1.0).",
-              "fn normalize_bridge_integer(value: &mut serde_json::Value) -> Option<()> {",
-              "    if value.as_i64().is_some() {", "        return Some(());", "    }",
-              "    // Never round an existing unsigned integer through f64.",
-              "    if value.as_u64().is_some() {", "        return None;", "    }",
-              "    let number = value.as_f64()?;",
-              "    if number.fract() != 0.0 || number < i64::MIN as f64 || number >= -(i64::MIN as f64) {",
-              "        return None;", "    }", "    *value = serde_json::Value::from(number as i64);",
-              "    Some(())", "}"]
-    return lines
-
-
-def outputs(schema):
-    definitions = event_definitions(schema)
-    menu = schema["definitions"]["menuEvent"]["properties"]
-    version = menu["v"]["const"]
-    require(version == schema["definitions"]["errorDialogDismissedEvent"]["properties"]["v"]["const"])
-    settings = schema["x-settings-schema-version"]
-    chunk = schema["x-saf-chunk-bytes"]
-    summary = schema["x-saf-summary-bytes"]
-    require(all(type(number) is int and 0 < number < 2**31 for number in (version, settings, chunk, summary)))
-    actions, keys = menu["action"]["enum"], menu["key"]["enum"]
-    for names in (actions, keys):
+def _require_wire_ids(menu, actions, keys, axes):
+    """Wire ids are ASCII, unique, and case-fold distinct; motion axes
+    share one range so a single batch carries them all."""
+    for names in (actions, keys, axes):
         require(len(names) == len(set(names)))
         require(all(name.isascii() and name.replace("_", "").isalnum() for name in names))
         require(len({name.upper() for name in names}) == len(names))
+    # No float equality: canonical JSON must match across all six axes.
+    canonical = {json.dumps(menu[name], sort_keys=True) for name in axes}
+    require(len(canonical) == 1, "motion axes must share one number range")
+    require(json.loads(next(iter(canonical)))["type"] == "number")
+
+
+def _rust_header(version, settings, chunk, summary):
+    """Version pins; shape gates live in `event_definitions` above."""
     rs = ["// Generated by packaging/android/generate-contract.py; do not edit."]
     for name, kind, value in [("BRIDGE_EVENT_VERSION", "u32", version),
                               ("SETTINGS_SCHEMA_VERSION", "u32", settings),
@@ -251,21 +194,88 @@ def outputs(schema):
             rs.append(f"#[allow(dead_code)]\npub(crate) const {name}: {kind} = {value};")
         else:
             rs.append(f"pub(crate) const {name}: {kind} = {value};")
-    for action in actions:
-        rs.append(f'pub(crate) const ACTION_{action.upper()}: &str = "{action}";')
-    rs += rust_validator(definitions)
+    return rs
+
+
+def _rust_tables(schema, menu):
+    """Required-field, bound, and analog-range tables from schema rules.
+
+    Dispatch checks presence and ranges through these, so a gate or bound
+    the decoder ignores fails the regeneration check instead of silently
+    widening. Sorted for a stable diff.
+    """
+    gates = sorted(
+        (gate["if"]["properties"]["action"]["const"], sorted(gate["then"]["required"]))
+        for gate in schema["definitions"]["menuEvent"].get("allOf", [])
+    )
+    bounds = sorted(
+        (name, prop["minimum"], prop["maximum"])
+        for event in ("menuEvent", "errorDialogDismissedEvent")
+        for name, prop in schema["definitions"][event]["properties"].items()
+        if field_type(prop) == "integer" and "minimum" in prop
+    )
+    value_prop = menu["left_x"]
+    lines = [
+        "",
+        "/// Required fields per menu action, from the schema gates.",
+        "/// Dispatch rejects events missing any listed field first.",
+        "pub(crate) const MENU_REQUIRED_FIELDS: &[(&str, &[&str])] = &[",
+    ]
+    lines.extend(
+        f'    ({json.dumps(action)}, &[{", ".join(json.dumps(name) for name in required)}]),'
+        for action, required in gates
+    )
+    lines.extend([
+        "];",
+        "",
+        "/// Inclusive bounds for integral bridge fields, from the schema.",
+        "pub(crate) const INTEGER_FIELD_BOUNDS: &[(&str, i64, i64)] = &[",
+    ])
+    lines.extend(
+        f'    ({json.dumps(name)}, {minimum}, {maximum}),'
+        for name, minimum, maximum in bounds
+    )
+    lines.extend([
+        "];",
+        "",
+        "/// Inclusive analog axis range, from the schema.",
+        f'pub(crate) const ANALOG_VALUE_BOUNDS: (f32, f32) = ({float(value_prop["minimum"])}, {float(value_prop["maximum"])});',
+    ])
+    return lines
+
+
+def outputs(schema):
+    # Validates the full schema shape (event/prop/gate rules); the return
+    # is unused because every emitter reads the schema directly.
+    require(event_definitions(schema))
+    menu = schema["definitions"]["menuEvent"]["properties"]
+    version = menu["v"]["const"]
+    require(version == schema["definitions"]["errorDialogDismissedEvent"]["properties"]["v"]["const"])
+    settings = schema["x-settings-schema-version"]
+    chunk = schema["x-saf-chunk-bytes"]
+    summary = schema["x-saf-summary-bytes"]
+    require(all(type(number) is int and 0 < number < 2**31 for number in (version, settings, chunk, summary)))
+    actions, keys = menu["action"]["enum"], menu["key"]["enum"]
+    # Motion axes ride as optional per-axis number properties (one batched
+    # event per motion callback); the property names are the wire ids.
+    axes = ["left_x", "left_y", "right_x", "right_y", "trigger_l", "trigger_r"]
+    _require_wire_ids(menu, actions, keys, axes)
+    rs = _rust_header(version, settings, chunk, summary)
+    rs.extend(f'pub(crate) const ACTION_{action.upper()}: &str = "{action}";' for action in actions)
+    rs.extend(_rust_tables(schema, menu))
     kt = ["// Generated by packaging/android/generate-contract.py; do not edit.",
           "package io.github.chalharu.nerust", "",
           f"internal const val BRIDGE_EVENT_VERSION = {version}",
           f"internal const val SETTINGS_SCHEMA_VERSION = {settings}",
           f"internal const val SAF_CHUNK_BYTES = {chunk}",
           f"internal const val SAF_SUMMARY_BYTES = {summary}"]
-    for obj, names in [("MenuAction", actions), ("ControllerKey", keys)]:
+    for obj, names in [("MenuAction", actions), ("ControllerKey", keys), ("ControllerAxis", axes)]:
         kt += ["", f"internal object {obj} {{"]
         kt += [f'    const val {name.upper()} = "{name}"' for name in names]
-        kt += ["", "    val ALL: Set<String> = setOf("]
-        kt += [f"        {name.upper()}," for name in names]
-        kt += ["    )", "}"]
+        # No ALL set: grep showed zero references, and an unused set would
+        # only drift from the schema tables above. Re-add if a caller needs
+        # enumeration rather than single constants.
+        kt += ["}"]
     return {RUST / "src/bridge_contract.rs": format_rust("\n".join(rs) + "\n"),
             KOTLIN / "BridgeWire.kt": "\n".join(kt) + "\n"}
 

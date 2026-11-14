@@ -182,11 +182,41 @@ pub(crate) struct KeyboardInfo {
 }
 
 /// One gamepad the Auto overlay gate counts (Kotlin `InputDevice`,
-/// same rule as the runtime gate). Names only: Rust displays them in the
-/// overlay detail screen so users see why Auto hides, without logcat.
+/// same rule as the runtime gate). Member is the stable port-set id
+/// (`pad:<descriptor>`); name is the OS display string. Display-only
+/// device truth, never persisted.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct GamepadInfo {
+    pub member: String,
     pub name: String,
+}
+
+/// Vault descriptor to connection-order pad index: the same vault list
+/// that built the rows, so a Kotlin scan-order descriptor can never skew
+/// against the Rust side. Accepts the raw descriptor or the `pad:`
+/// member id; `None` when the device left (stale Kotlin push) or parks
+/// past the persisted table.
+pub(crate) fn pad_index_for_member(gamepads: &[GamepadInfo], descriptor: &str) -> Option<usize> {
+    let bare = descriptor.strip_prefix("pad:").unwrap_or(descriptor);
+    gamepads
+        .iter()
+        .position(|info| info.member.strip_prefix("pad:").unwrap_or(&info.member) == bare)
+        .filter(|index| *index < nerust_input_traits::MAX_PADS)
+}
+
+/// Stable session order for the display list: vault order follows the
+/// session first-seen mirror (refreshed on every connect event), so Pad N
+/// names session pad N even after a disconnect/reconnect cycle compacts
+/// the scan. Unknown members (scan raced ahead of the connect event)
+/// keep scan order at the end; the next connect re-sorts.
+pub(crate) fn sort_gamepads_by_order(gamepads: &mut [GamepadInfo], pad_order: &[String]) {
+    gamepads.sort_by_key(|info| {
+        let bare = info.member.strip_prefix("pad:").unwrap_or(&info.member);
+        pad_order
+            .iter()
+            .position(|known| known == bare)
+            .unwrap_or(usize::MAX)
+    });
 }
 
 /// One settings edit from Kotlin: row key plus op. `set` reads the choice
@@ -575,35 +605,33 @@ pub(super) fn capture_open(keyboards: &[KeyboardInfo], gamepads: &[GamepadInfo])
 }
 
 pub(super) fn target_system(target: &CaptureTarget, deps: &VmDeps) -> String {
-    match target {
-        CaptureTarget::Binding { system, .. } => system.to_string(),
-        CaptureTarget::Shortcut(_) => deps
-            .factories
-            .first()
-            .map(|factory| factory.system_id().to_string())
-            .unwrap_or_default(),
+    if let Some(system) = target.system_id() {
+        return system.to_string();
     }
+    deps.factories
+        .first()
+        .map(|factory| factory.system_id().to_string())
+        .unwrap_or_default()
 }
 
 /// Opaque capture target: newline-free JSON the key must not parse.
 /// The `Value` form is the internal boundary (single serialization at the
 /// row edge); the command path decodes the row string once per command.
 fn encode_target_value(target: &CaptureTarget, system: &str) -> serde_json::Value {
-    match target {
-        CaptureTarget::Binding {
-            attachment,
-            control,
-            ..
-        } => serde_json::json!({
-            "kind": "binding",
-            "system": system,
-            "attachment": attachment,
-            "control": control,
-        }),
-        CaptureTarget::Shortcut(action) => {
-            serde_json::json!({"kind": "shortcut", "action": action})
-        }
+    if let Some(action) = target.action() {
+        return serde_json::json!({"kind": "shortcut", "action": action});
     }
+    // Bindings and overrides share the shape; overrides add the pad.
+    let mut value = serde_json::json!({
+        "kind": if target.pad().is_some() { "pad_binding" } else { "binding" },
+        "system": system,
+        "attachment": target.attachment().unwrap_or_default(),
+        "control": target.control().unwrap_or_default(),
+    });
+    if let Some(pad) = target.pad() {
+        value["pad"] = pad.into();
+    }
+    value
 }
 
 pub(super) fn encode_target(target: &CaptureTarget, system: &str) -> String {

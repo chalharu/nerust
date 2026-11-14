@@ -2,21 +2,97 @@ use std::collections::{BTreeMap, HashMap};
 
 use nerust_core_traits::identity::SystemId;
 use nerust_input_traits::Key;
-use nerust_input_traits::{AttachmentId, DigitalControlId};
+use nerust_input_traits::{AttachmentId, DigitalControlId, StandardButton};
 
 pub const IMPLICIT_PROFILE_ID: &str = "default";
+
+/// Default stick deadzone in percent.
+pub const DEFAULT_DEADZONE_PERCENT: u8 = 8;
+
+/// Hard ceiling for per-pad deadzones in percent: the schema range for
+/// file-loaded and direct sets. The settings UI offers `DEADZONE_STEPS`
+/// (0..=30); wider values stay representable for worn sticks.
+pub const DEADZONE_MAX_PERCENT: u8 = 90;
+
+/// Deadzone choices offered by the settings UI (common range; the schema
+/// ceiling above stays wider for worn sticks and file-loaded values).
+pub const DEADZONE_STEPS: [u8; 7] = [0, 5, 10, 15, 20, 25, 30];
+
+/// Connection-order pads tracked by settings; `MAX_PADS` is the single
+/// constant (imported, never redefined).
+pub use nerust_input_traits::MAX_PADS as PAD_COUNT;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct InputSettings {
     pub systems: HashMap<Box<dyn SystemId>, SystemInputSettings>,
     pub shortcuts: ShortcutSettings,
+    pub gamepad: GamepadSettings,
+}
+
+/// Pad-level preferences shared by every system.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct GamepadSettings {
+    pub pad_ports: [PadPort; PAD_COUNT],
+}
+
+/// One connection-order pad: its player slot plus its stick deadzone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct PadPort {
+    pub slot: Option<usize>,
+    pub triggers_as_shoulders: bool,
+    #[serde(default = "default_pad_deadzone")]
+    pub deadzone_percent: u8,
+}
+
+fn default_pad_deadzone() -> u8 {
+    DEFAULT_DEADZONE_PERCENT
+}
+
+impl Default for PadPort {
+    fn default() -> Self {
+        Self {
+            slot: None,
+            triggers_as_shoulders: false,
+            deadzone_percent: DEFAULT_DEADZONE_PERCENT,
+        }
+    }
+}
+
+impl Default for GamepadSettings {
+    fn default() -> Self {
+        Self {
+            pad_ports: [
+                PadPort {
+                    slot: Some(0),
+                    triggers_as_shoulders: false,
+                    deadzone_percent: DEFAULT_DEADZONE_PERCENT,
+                },
+                PadPort {
+                    slot: Some(1),
+                    triggers_as_shoulders: false,
+                    deadzone_percent: DEFAULT_DEADZONE_PERCENT,
+                },
+                PadPort::default(),
+                PadPort::default(),
+            ],
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct SystemInputSettings {
     pub keyboard_profiles: BTreeMap<String, KeyboardProfile>,
+    /// Per-pad game-button overrides, indexed by connection-order pad.
+    /// Sparse: entries name only remapped `(attachment, control)` pairs;
+    /// everything else falls back to the fixed standard layout, so an
+    /// empty table behaves exactly like the old build. Absolute
+    /// attachments (like keyboard bindings): an explicit entry wins over
+    /// the pad's player-slot routing.
+    pub pad_bindings: [Vec<PadBinding>; PAD_COUNT],
 }
 
 impl SystemInputSettings {
@@ -54,6 +130,31 @@ impl KeyboardBinding {
     }
 }
 
+/// One per-pad game-button override: `(attachment, control)` driven by
+/// `button` instead of the fixed standard layout. Digital controls only;
+/// analog sticks keep the standard path (session ignores non-digital
+/// entries). Sparse by design: reset clears the pad's vec.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PadBinding {
+    pub attachment: PersistedAttachmentId,
+    pub control: PersistedControlId,
+    pub button: StandardButton,
+}
+
+impl PadBinding {
+    pub fn new(
+        attachment: impl Into<String>,
+        control: PersistedControlId,
+        button: StandardButton,
+    ) -> Self {
+        Self {
+            attachment: PersistedAttachmentId::new(attachment.into()),
+            control,
+            button,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct ShortcutSettings {
@@ -67,34 +168,44 @@ pub fn default_shortcut_bindings() -> Vec<ShortcutBinding> {
         ShortcutBinding {
             action: ShortcutAction::TogglePause,
             key: Some(Key::Space),
+            // The out-of-box pad button: Guide pauses, everything else
+            // unbound until the user captures it.
+            pad: Some(StandardButton::Guide),
         },
         ShortcutBinding {
             action: ShortcutAction::SaveActiveSlot,
             key: Some(Key::F5),
+            pad: None,
         },
         ShortcutBinding {
             action: ShortcutAction::SelectNextSlot,
             key: Some(Key::F6),
+            pad: None,
         },
         ShortcutBinding {
             action: ShortcutAction::SelectPreviousSlot,
             key: Some(Key::F7),
+            pad: None,
         },
         ShortcutBinding {
             action: ShortcutAction::LoadActiveSlot,
             key: Some(Key::F8),
+            pad: None,
         },
         ShortcutBinding {
             action: ShortcutAction::ToggleFullscreen,
             key: Some(Key::F11),
+            pad: None,
         },
         ShortcutBinding {
             action: ShortcutAction::Reset,
             key: None,
+            pad: None,
         },
         ShortcutBinding {
             action: ShortcutAction::OpenDebugger,
             key: Some(Key::F4),
+            pad: None,
         },
     ]
 }
@@ -112,6 +223,48 @@ pub fn shortcut_key_label(
         .find(|binding| binding.action == action)
         .and_then(|binding| binding.key.as_ref())
         .map(|key| key.label())
+}
+
+/// Keep only buttons driving two or more targets; singletons never conflict.
+fn retain_conflicts<T>(by_button: &mut std::collections::BTreeMap<StandardButton, Vec<T>>) {
+    by_button.retain(|_, targets| targets.len() > 1);
+}
+/// Pad shortcut conflicts: one button driving two or more actions.
+/// Keyboard conflicts ride `conflicting_keys`; pads are global (no system
+/// topology), so they get their own map. First binding still wins at
+/// runtime; this only feeds validation.
+pub fn pad_shortcut_conflicts(
+    bindings: &[ShortcutBinding],
+) -> std::collections::BTreeMap<StandardButton, Vec<ShortcutAction>> {
+    let mut by_button = std::collections::BTreeMap::<StandardButton, Vec<ShortcutAction>>::new();
+    for binding in bindings {
+        if let Some(button) = binding.pad {
+            by_button.entry(button).or_default().push(binding.action);
+        }
+    }
+    retain_conflicts(&mut by_button);
+    by_button
+}
+
+/// Per-pad mapping conflicts: one button driving two or more controls on
+/// the same pad. The second control never fires (first entry wins in the
+/// session map), so the settings screen must surface it instead of
+/// silently dropping the press. Two buttons driving one control is fine
+/// (the field OR-merges), so only the button side is reported.
+pub fn pad_game_binding_conflicts(
+    bindings: &[PadBinding],
+) -> std::collections::BTreeMap<StandardButton, Vec<(String, String)>> {
+    let mut by_button = std::collections::BTreeMap::<StandardButton, Vec<(String, String)>>::new();
+    for binding in bindings {
+        if matches!(binding.control, PersistedControlId::Digital(_)) {
+            by_button.entry(binding.button).or_default().push((
+                binding.attachment.as_str().to_string(),
+                binding.control.as_str().to_string(),
+            ));
+        }
+    }
+    retain_conflicts(&mut by_button);
+    by_button
 }
 
 /// Migrate persisted shortcuts forward: append defaults for actions
@@ -142,6 +295,7 @@ pub fn ensure_default_shortcuts(settings: &mut ShortcutSettings) {
         settings.keyboard.push(ShortcutBinding {
             action: default.action,
             key,
+            pad: default.pad,
         });
     }
 }
@@ -150,6 +304,8 @@ pub fn ensure_default_shortcuts(settings: &mut ShortcutSettings) {
 pub struct ShortcutBinding {
     pub action: ShortcutAction,
     pub key: Option<Key>,
+    #[serde(default)]
+    pub pad: Option<StandardButton>,
 }
 
 #[derive(
@@ -226,6 +382,52 @@ mod tests {
     use super::*;
 
     #[test]
+    fn pad_count_tracks_max_pads() {
+        // `PAD_COUNT` is a re-export of `MAX_PADS`: no skew possible.
+        assert_eq!(PAD_COUNT, 4);
+    }
+
+    #[test]
+    fn pad_shortcut_conflicts_groups_shared_buttons() {
+        use super::pad_shortcut_conflicts;
+        let defaults = default_shortcut_bindings();
+        assert!(pad_shortcut_conflicts(&defaults).is_empty());
+        let mut doubled = defaults;
+        doubled
+            .iter_mut()
+            .find(|binding| binding.action == ShortcutAction::Reset)
+            .expect("reset row")
+            .pad = Some(StandardButton::Guide);
+        let conflicts = pad_shortcut_conflicts(&doubled);
+        assert_eq!(conflicts.len(), 1);
+        let actions = &conflicts[&StandardButton::Guide];
+        assert!(actions.contains(&ShortcutAction::TogglePause));
+        assert!(actions.contains(&ShortcutAction::Reset));
+    }
+
+    #[test]
+    fn gamepad_defaults_park_extra_pads_without_alias() {
+        use super::DEFAULT_DEADZONE_PERCENT;
+        let gamepad = super::GamepadSettings::default();
+        assert!(
+            gamepad
+                .pad_ports
+                .iter()
+                .all(|port| port.deadzone_percent == DEFAULT_DEADZONE_PERCENT),
+            "every pad starts at the default deadzone"
+        );
+        assert_eq!(gamepad.pad_ports[0].slot, Some(0));
+        assert_eq!(gamepad.pad_ports[1].slot, Some(1));
+        assert_eq!(gamepad.pad_ports[2].slot, None);
+        assert!(
+            gamepad
+                .pad_ports
+                .iter()
+                .all(|port| !port.triggers_as_shoulders)
+        );
+    }
+
+    #[test]
     fn ensure_adds_missing_actions_without_touching_users() {
         let mut settings = ShortcutSettings {
             keyboard: Vec::new(),
@@ -245,6 +447,7 @@ mod tests {
             keyboard: vec![ShortcutBinding {
                 action: ShortcutAction::TogglePause,
                 key: Some(Key::F4),
+                pad: None,
             }],
         };
         ensure_default_shortcuts(&mut settings);
@@ -274,6 +477,7 @@ mod tests {
         let rebound = vec![ShortcutBinding {
             action: ShortcutAction::OpenDebugger,
             key: Some(Key::F2),
+            pad: None,
         }];
         assert_eq!(
             shortcut_key_label(&rebound, ShortcutAction::OpenDebugger),
@@ -283,6 +487,7 @@ mod tests {
         let unbound = vec![ShortcutBinding {
             action: ShortcutAction::OpenDebugger,
             key: None,
+            pad: None,
         }];
         assert_eq!(
             shortcut_key_label(&unbound, ShortcutAction::OpenDebugger),

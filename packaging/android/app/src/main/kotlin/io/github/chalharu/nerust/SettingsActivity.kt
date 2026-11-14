@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.hardware.input.InputManager
 import android.os.Bundle
 import android.util.Log
+import android.view.InputDevice
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
@@ -172,6 +173,11 @@ class SettingsActivity :
      * only the nav apply posts back. Identical scans skip the push via the
      * last-result cache. Payload shape is unchanged. */
     internal fun pushDeviceTruth() {
+        // The card only exists after the first composition publish. Caching
+        // a scan the card can never receive would suppress the real first
+        // push (identical-scan skip), stranding device-dependent rows
+        // (connected pads, capture enablement) empty until the next hotplug.
+        if (navActions == null) return
         BridgeIo.runIo {
             val scan =
                 try {
@@ -182,6 +188,9 @@ class SettingsActivity :
                 }
             if (scan == lastDeviceTruth) return@runIo
             lastDeviceTruth = scan
+            if (Log.isLoggable(TAG, Log.DEBUG)) {
+                Log.d(TAG, "device truth scan: keyboards=${scan.keyboards.size} gamepads=${scan.gamepads.map { it.name }}")
+            }
             val keyboards = JSONArray()
             scan.keyboards.forEach { row ->
                 keyboards.put(
@@ -192,7 +201,7 @@ class SettingsActivity :
                 )
             }
             val gamepads = JSONArray()
-            scan.gamepadNames.forEach { gamepads.put(JSONObject().put("name", it)) }
+            scan.gamepads.forEach { gamepads.put(JSONObject().put("member", it.member).put("name", it.name)) }
             val payload =
                 JSONObject()
                     .put("keyboards", keyboards)
@@ -233,10 +242,23 @@ class SettingsActivity :
         // Capture wait takes every hardware key first, keyboard and pad
         // alike; unmapped keys fall through to the platform. Outside
         // capture, controller sources keep platform behavior.
-        if (isControllerSource(event.source) && navActions?.isCapturing != true) {
+        val capturing = navActions?.isCapturing == true
+        val controller = isControllerSource(event.source)
+        if ((controller || capturing) && Log.isLoggable(TAG, Log.DEBUG)) {
+            Log.d(
+                TAG,
+                "settings key: source=0x${event.source.toString(16)} keyCode=${event.keyCode} action=${event.action} capturing=$capturing",
+            )
+        }
+        if (controller && !capturing) {
             return super.dispatchKeyEvent(event)
         }
-        return routeSettingsKeyEvent(event.keyCode, event.action) ||
+        // Descriptor identity: the live id is recycled on reconnect, so
+        // the event device resolves to its descriptor; keys pass null.
+        // Rust validates against the vault list, so no Kotlin-side order
+        // copy can skew per-pad routing.
+        val padDescriptor = InputDevice.getDevice(event.deviceId)?.descriptor
+        return routeSettingsKeyEvent(event.keyCode, padDescriptor, event.action) ||
             super.dispatchKeyEvent(event)
     }
 
@@ -266,9 +288,13 @@ class SettingsActivity :
     }
 
     /** Route a key event to Rust while a binding capture is pending. True only
-     * when Rust consumed the key; releases and unmapped keys fall through. */
+     * when Rust consumed the key; releases and unmapped keys fall through.
+     * `padDescriptor` is the truth-order pad descriptor (null for keys and
+     * uncounted devices): per-pad mapping rows only accept their own pad's
+     * descriptor, which survives id reuse and reconnects. */
     private fun routeSettingsKeyEvent(
         keyCode: Int,
+        padDescriptor: String?,
         action: Int,
     ): Boolean {
         val nav = navActions ?: return false
@@ -278,7 +304,7 @@ class SettingsActivity :
         if (action != KeyEvent.ACTION_DOWN && action != KeyEvent.ACTION_UP) return false
         val raw =
             try {
-                nativeHardwareKey(keyCode, action == KeyEvent.ACTION_DOWN)
+                nativeHardwareKey(keyCode, padDescriptor, action == KeyEvent.ACTION_DOWN)
             } catch (e: Exception) {
                 Log.e(TAG, "nativeHardwareKey failed", e)
                 null
@@ -331,6 +357,7 @@ class SettingsActivity :
 
     private external fun nativeHardwareKey(
         keyCode: Int,
+        padDescriptor: String?,
         pressed: Boolean,
     ): String?
 

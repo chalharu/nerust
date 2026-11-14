@@ -53,6 +53,7 @@ fn unbound_shortcut_serializes_stably() {
     let encoded = serde_saphyr::to_string(&ShortcutBinding {
         action: ShortcutAction::Reset,
         key: None,
+        pad: None,
     })
     .unwrap();
 
@@ -65,6 +66,7 @@ fn bound_shortcut_serializes_key_name() {
     let encoded = serde_saphyr::to_string(&ShortcutBinding {
         action: ShortcutAction::TogglePause,
         key: Some(Key::Space),
+        pad: None,
     })
     .unwrap();
 
