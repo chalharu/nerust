@@ -11,22 +11,6 @@ use crate::session::{KeyboardShortcut, SessionHandle, field_press::FieldSource};
 
 pub use nerust_settings_core::input::clear_multi_port_conflicts;
 
-fn touch_role_for_abstract_key(key: AbstractKey) -> Option<TouchControlRole> {
-    match key {
-        AbstractKey::DpadUp => Some(TouchControlRole::DpadUp),
-        AbstractKey::DpadDown => Some(TouchControlRole::DpadDown),
-        AbstractKey::DpadLeft => Some(TouchControlRole::DpadLeft),
-        AbstractKey::DpadRight => Some(TouchControlRole::DpadRight),
-        AbstractKey::Button1 => Some(TouchControlRole::FaceButton1),
-        AbstractKey::Button2 => Some(TouchControlRole::FaceButton2),
-        AbstractKey::Button5 => Some(TouchControlRole::LeftShoulder),
-        AbstractKey::Button6 => Some(TouchControlRole::RightShoulder),
-        AbstractKey::Start => Some(TouchControlRole::Start),
-        AbstractKey::Select => Some(TouchControlRole::Select),
-        _ => None,
-    }
-}
-
 impl SessionHandle {
     /// Last served overlay, keyed by caller revision and the session topology epoch.
     pub fn touch_overlay_model_cached(&mut self, revision: u64) -> &TouchOverlayModel {
@@ -80,7 +64,7 @@ fn build_touch_overlay(
                 let Some(control_id) = info.id.as_digital() else {
                     continue;
                 };
-                let Some(role) = info.abstract_key.and_then(touch_role_for_abstract_key) else {
+                let Some(role) = info.abstract_key.and_then(TouchControlRole::for_abstract) else {
                     continue;
                 };
                 if !seen.insert((port, control_id)) {
@@ -2132,19 +2116,20 @@ mod tests {
 
     #[test]
     fn touch_role_maps_shoulder_buttons() {
+        use nerust_core_traits::touch::TouchControlRole;
         assert_eq!(
-            touch_role_for_abstract_key(AbstractKey::Button5),
+            TouchControlRole::for_abstract(AbstractKey::Button5),
             Some(TouchControlRole::LeftShoulder)
         );
         assert_eq!(
-            touch_role_for_abstract_key(AbstractKey::Button6),
+            TouchControlRole::for_abstract(AbstractKey::Button6),
             Some(TouchControlRole::RightShoulder)
         );
         assert_eq!(
-            touch_role_for_abstract_key(AbstractKey::Button1),
+            TouchControlRole::for_abstract(AbstractKey::Button1),
             Some(TouchControlRole::FaceButton1)
         );
-        assert_eq!(touch_role_for_abstract_key(AbstractKey::Guide), None);
+        assert_eq!(TouchControlRole::for_abstract(AbstractKey::Guide), None);
     }
 }
 
@@ -2164,9 +2149,9 @@ mod input_cov_tests {
             (AbstractKey::Start, TouchControlRole::Start),
             (AbstractKey::Select, TouchControlRole::Select),
         ] {
-            assert_eq!(touch_role_for_abstract_key(key), Some(role));
+            assert_eq!(TouchControlRole::for_abstract(key), Some(role));
         }
-        assert_eq!(touch_role_for_abstract_key(AbstractKey::Guide), None);
+        assert_eq!(TouchControlRole::for_abstract(AbstractKey::Guide), None);
     }
 
     #[test]

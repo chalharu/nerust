@@ -171,6 +171,40 @@ pub trait InputPorts: std::fmt::Debug {
 /// One placed controller: the assigned profile plus its port-group index.
 pub type Placement = Option<(Rc<dyn ControllerProfile>, usize)>;
 
+/// Console-agnostic button of one emulated control, through live
+/// assignments. Single home for the port traversal: the session resolver
+/// and the viewmodel draft projector both call here so swapped controller
+/// profiles track in both.
+pub fn abstract_for_attachment(
+    ports: &[(AttachmentId, Option<Rc<dyn ControllerProfile>>)],
+    attachment: AttachmentId,
+    control: crate::ids::DigitalControlId,
+) -> Option<AbstractKey> {
+    for (_slot, profile) in ports {
+        let Some(profile) = profile else {
+            continue;
+        };
+        for set in profile.port_sets() {
+            if !set.ports.contains(&attachment) {
+                continue;
+            }
+            for (port, group) in set.ports.iter().zip(profile.port_groups()) {
+                if *port != attachment {
+                    continue;
+                }
+                for info in *group {
+                    if let ControlId::Digital(id) = info.id
+                        && id == control
+                    {
+                        return info.abstract_key;
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Slot-to-controller assignments.
 /// Equality is order-sensitive and structural (slot order + [`ProfileId`] compare).
 #[derive(Clone)]
@@ -186,7 +220,6 @@ impl InputAssignments {
     pub fn slots(&self) -> &[(AttachmentId, Option<Rc<dyn ControllerProfile>>)] {
         &self.slots
     }
-
     /// Validate once and place (registered profile, port-group index) at each
     /// physical slot. Canonical factory metadata, not caller-supplied metadata,
     /// determines topology. Missing assignments remain unconnected holes.

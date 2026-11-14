@@ -23,7 +23,7 @@ pub use key::Key;
 pub use profile::{
     AbstractKey, BufferFactory, ControlInfo, ControlKind, ControllerProfile, CreateSplitError,
     InputAssignments, InputPorts, InputResources, InputSystemFactory, PortSet, SlotInfo,
-    TypedInputResources, UnifiedFieldMap, collect_first_wins,
+    TypedInputResources, UnifiedFieldMap, abstract_for_attachment, collect_first_wins,
 };
 pub use source::{
     GamepadAxis, GamepadState, MAX_PADS, PadGuid, SourceButtonId, SourceEvent, SourceId,

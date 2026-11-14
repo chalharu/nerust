@@ -14,6 +14,28 @@ pub enum TouchControlRole {
     Select,
 }
 
+impl TouchControlRole {
+    /// Overlay role for one console-agnostic button. Presentation mapping,
+    /// owned by the role: the session only fans out assignments through it.
+    /// Unmapped abstracts (sticks, misc) stay `None` and never render.
+    pub fn for_abstract(key: nerust_input_traits::AbstractKey) -> Option<Self> {
+        use nerust_input_traits::AbstractKey as A;
+        match key {
+            A::DpadUp => Some(Self::DpadUp),
+            A::DpadDown => Some(Self::DpadDown),
+            A::DpadLeft => Some(Self::DpadLeft),
+            A::DpadRight => Some(Self::DpadRight),
+            A::Button1 => Some(Self::FaceButton1),
+            A::Button2 => Some(Self::FaceButton2),
+            A::Button5 => Some(Self::LeftShoulder),
+            A::Button6 => Some(Self::RightShoulder),
+            A::Start => Some(Self::Start),
+            A::Select => Some(Self::Select),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TouchControl {
     pub attachment_id: AttachmentId,

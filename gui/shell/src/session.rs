@@ -387,30 +387,11 @@ impl InputDept {
         attachment: AttachmentId,
         control: DigitalControlId,
     ) -> Option<AbstractKey> {
-        use nerust_input_traits::ControlId;
-        for (_slot, profile) in self.current_assignments.slots() {
-            let Some(profile) = profile else {
-                continue;
-            };
-            for set in profile.port_sets() {
-                if !set.ports.contains(&attachment) {
-                    continue;
-                }
-                for (port, group) in set.ports.iter().zip(profile.port_groups()) {
-                    if *port != attachment {
-                        continue;
-                    }
-                    for info in *group {
-                        if let ControlId::Digital(id) = info.id
-                            && id == control
-                        {
-                            return info.abstract_key;
-                        }
-                    }
-                }
-            }
-        }
-        None
+        nerust_input_traits::abstract_for_attachment(
+            self.current_assignments.slots(),
+            attachment,
+            control,
+        )
     }
 
     /// First console control carrying one abstract button, in slot order.

@@ -2,8 +2,7 @@ use std::{rc::Rc, sync::Arc};
 
 use nerust_core_traits::identity::SystemId;
 use nerust_input_traits::{
-    AbstractKey, AttachmentId, ControlId, ControllerProfile, DigitalControlId, SlotInfo,
-    StandardButton,
+    AbstractKey, AttachmentId, ControllerProfile, DigitalControlId, SlotInfo, StandardButton,
 };
 use nerust_settings_core::{
     bindings::descriptors::KeyboardBindingDescriptor,
@@ -321,39 +320,14 @@ fn project_binding_row(
 }
 
 /// Console-agnostic button of one emulated control, resolved through the
-/// draft assignments. Display twin of the session resolver (same port
-/// traversal, default assignments never diverge here).
+/// draft assignments. Display twin of the session resolver: both call the
+/// shared traversal, so default assignments never diverge here.
 fn abstract_for(
     assignments: &[(AttachmentId, Option<Rc<dyn ControllerProfile>>)],
     attachment: AttachmentId,
     control: DigitalControlId,
 ) -> Option<AbstractKey> {
-    for (port, profile) in assignments {
-        if *port != attachment {
-            continue;
-        }
-        let Some(profile) = profile else {
-            continue;
-        };
-        for set in profile.port_sets() {
-            if !set.ports.contains(&attachment) {
-                continue;
-            }
-            for (slot_port, group) in set.ports.iter().zip(profile.port_groups()) {
-                if *slot_port != attachment {
-                    continue;
-                }
-                for info in *group {
-                    if let ControlId::Digital(id) = info.id
-                        && id == control
-                    {
-                        return info.abstract_key;
-                    }
-                }
-            }
-        }
-    }
-    None
+    nerust_input_traits::abstract_for_attachment(assignments, attachment, control)
 }
 
 fn project_binding_sections(
