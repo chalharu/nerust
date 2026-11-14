@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use nerust_core_traits::identity::SystemId;
 use nerust_input_traits::Key;
-use nerust_input_traits::{AttachmentId, DigitalControlId, MAX_PADS, StandardButton};
+use nerust_input_traits::{AttachmentId, DigitalControlId, StandardButton};
 
 pub const IMPLICIT_PROFILE_ID: &str = "default";
 
