@@ -151,12 +151,14 @@ fn apply(
         apply_command_to(
             snapshot,
             &command_json,
-            capture,
-            keyboards,
-            &mut None,
-            &mut Vec::new(),
-            &mut None,
-            &[],
+            CommandVault {
+                capture,
+                keyboards,
+                touch_capable: &mut None,
+                gamepads: &mut Vec::new(),
+                system_locale: &mut None,
+                pad_order: &[],
+            },
         )
         .unwrap_or_else(|error| panic!("command failed: {error}"))
     })
@@ -345,12 +347,14 @@ fn explicit_japanese_under_ja_system_persists_as_japanese() {
                 payload: serde_json::Value::Null,
             })
             .unwrap(),
-            &mut None,
-            &mut keyboards,
-            &mut None,
-            &mut Vec::new(),
-            &mut locale,
-            &[],
+            CommandVault {
+                capture: &mut None,
+                keyboards: &mut keyboards,
+                touch_capable: &mut None,
+                gamepads: &mut Vec::new(),
+                system_locale: &mut locale,
+                pad_order: &[],
+            },
         )
         .expect("language set applies")
     });
@@ -387,12 +391,14 @@ fn display_resolution_never_concretes_the_draft() {
                 payload: serde_json::Value::Null,
             })
             .unwrap(),
-            &mut None,
-            &mut keyboards,
-            &mut None,
-            &mut Vec::new(),
-            &mut locale,
-            &[],
+            CommandVault {
+                capture: &mut None,
+                keyboards: &mut keyboards,
+                touch_capable: &mut None,
+                gamepads: &mut Vec::new(),
+                system_locale: &mut locale,
+                pad_order: &[],
+            },
         )
         .expect("volume set applies")
     });
@@ -445,12 +451,14 @@ fn display_resolution_never_concretes_the_draft() {
                 payload: serde_json::Value::Null,
             })
             .unwrap(),
-            &mut None,
-            &mut keyboards,
-            &mut None,
-            &mut Vec::new(),
-            &mut locale,
-            &[],
+            CommandVault {
+                capture: &mut None,
+                keyboards: &mut keyboards,
+                touch_capable: &mut None,
+                gamepads: &mut Vec::new(),
+                system_locale: &mut locale,
+                pad_order: &[],
+            },
         )
         .expect("language set applies")
     });
@@ -481,12 +489,14 @@ fn locale_op_upserts_without_mutating_draft() {
         apply_command_to(
             &mut snapshot,
             &command_json,
-            &mut None,
-            &mut keyboards,
-            &mut None,
-            &mut Vec::new(),
-            &mut locale,
-            &[],
+            CommandVault {
+                capture: &mut None,
+                keyboards: &mut keyboards,
+                touch_capable: &mut None,
+                gamepads: &mut Vec::new(),
+                system_locale: &mut locale,
+                pad_order: &[],
+            },
         )
         .expect("locale op applies")
     });
@@ -527,12 +537,14 @@ fn locale_op_upserts_without_mutating_draft() {
                 apply_command_to(
                     &mut snapshot,
                     &bad_json,
-                    &mut None,
-                    &mut keyboards,
-                    &mut None,
-                    &mut Vec::new(),
-                    &mut locale,
-                    &[],
+                    CommandVault {
+                        capture: &mut None,
+                        keyboards: &mut keyboards,
+                        touch_capable: &mut None,
+                        gamepads: &mut Vec::new(),
+                        system_locale: &mut locale,
+                        pad_order: &[]
+                    },
                 )
                 .is_err(),
                 "bad locale never persists"
@@ -806,12 +818,14 @@ fn start_capture_rejected_without_input_device() {
         apply_command_to(
             &mut snapshot,
             &command_json,
-            &mut capture,
-            &mut Vec::new(),
-            &mut None,
-            &mut Vec::new(),
-            &mut None,
-            &[],
+            CommandVault {
+                capture: &mut capture,
+                keyboards: &mut Vec::new(),
+                touch_capable: &mut None,
+                gamepads: &mut Vec::new(),
+                system_locale: &mut None,
+                pad_order: &[],
+            },
         )
         .expect_err("start with no input device must fail")
     });
@@ -1033,12 +1047,14 @@ fn phantom_builtin_never_surfaces_without_hardware() {
         apply_command_to(
             &mut snapshot,
             &command_json,
-            &mut None,
-            &mut keyboards,
-            &mut None,
-            &mut Vec::new(),
-            &mut None,
-            &[],
+            CommandVault {
+                capture: &mut None,
+                keyboards: &mut keyboards,
+                touch_capable: &mut None,
+                gamepads: &mut Vec::new(),
+                system_locale: &mut None,
+                pad_order: &[],
+            },
         )
         .expect("keyboards op applies")
     });
@@ -1069,12 +1085,14 @@ fn phantom_builtin_never_surfaces_without_hardware() {
                 payload: serde_json::json!({ "keyboards": [], "capable": true, "gamepads": [] }),
             })
             .unwrap(),
-            &mut None,
-            &mut Vec::new(),
-            &mut None,
-            &mut Vec::new(),
-            &mut None,
-            &[],
+            CommandVault {
+                capture: &mut None,
+                keyboards: &mut Vec::new(),
+                touch_capable: &mut None,
+                gamepads: &mut Vec::new(),
+                system_locale: &mut None,
+                pad_order: &[],
+            },
         )
         .expect("empty enumeration applies")
     });
@@ -1115,12 +1133,14 @@ fn keyboards_op_upserts_enumeration_without_mutating_draft() {
         apply_command_to(
             &mut snapshot,
             &command_json,
-            &mut None,
-            &mut keyboards,
-            &mut None,
-            &mut Vec::new(),
-            &mut None,
-            &[],
+            CommandVault {
+                capture: &mut None,
+                keyboards: &mut keyboards,
+                touch_capable: &mut None,
+                gamepads: &mut Vec::new(),
+                system_locale: &mut None,
+                pad_order: &[],
+            },
         )
         .expect("keyboards op applies")
     });
@@ -1165,12 +1185,14 @@ fn gamepads_op_upserts_without_mutating_draft() {
         apply_command_to(
             &mut snapshot,
             &command_json,
-            &mut None,
-            &mut test_keyboards(),
-            &mut None,
-            &mut gamepads,
-            &mut None,
-            &[],
+            CommandVault {
+                capture: &mut None,
+                keyboards: &mut test_keyboards(),
+                touch_capable: &mut None,
+                gamepads: &mut gamepads,
+                system_locale: &mut None,
+                pad_order: &[],
+            },
         )
         .expect("gamepads op applies")
     });
@@ -1210,12 +1232,14 @@ fn gamepads_op_upserts_without_mutating_draft() {
                 apply_command_to(
                     &mut snapshot,
                     &bad,
-                    &mut None,
-                    &mut test_keyboards(),
-                    &mut None,
-                    &mut gamepads,
-                    &mut None,
-                    &[],
+                    CommandVault {
+                        capture: &mut None,
+                        keyboards: &mut test_keyboards(),
+                        touch_capable: &mut None,
+                        gamepads: &mut gamepads,
+                        system_locale: &mut None,
+                        pad_order: &[]
+                    },
                 )
                 .is_err(),
                 "{why}"
@@ -1255,12 +1279,14 @@ fn touch_payload(capable: Option<bool>) -> ViewPayload {
             apply_command_to(
                 &mut snapshot,
                 &command_json,
-                &mut None,
-                &mut test_keyboards(),
-                &mut touch,
-                &mut Vec::new(),
-                &mut None,
-                &[],
+                CommandVault {
+                    capture: &mut None,
+                    keyboards: &mut test_keyboards(),
+                    touch_capable: &mut touch,
+                    gamepads: &mut Vec::new(),
+                    system_locale: &mut None,
+                    pad_order: &[],
+                },
             )
             .expect("touch op applies")
         });
@@ -1328,12 +1354,14 @@ fn reset_section_restores_screen_defaults() {
         apply_command_to(
             &mut snapshot,
             &reset,
-            &mut None,
-            &mut keyboards,
-            &mut None,
-            &mut Vec::new(),
-            &mut None,
-            &[],
+            CommandVault {
+                capture: &mut None,
+                keyboards: &mut keyboards,
+                touch_capable: &mut None,
+                gamepads: &mut Vec::new(),
+                system_locale: &mut None,
+                pad_order: &[],
+            },
         )
         .expect("reset applies")
     });
@@ -1376,12 +1404,14 @@ fn every_emitted_reset_key_executes() {
             apply_command_to(
                 &mut snapshot,
                 &reset,
-                &mut None,
-                &mut keyboards,
-                &mut None,
-                &mut Vec::new(),
-                &mut None,
-                &[],
+                CommandVault {
+                    capture: &mut None,
+                    keyboards: &mut keyboards,
+                    touch_capable: &mut None,
+                    gamepads: &mut Vec::new(),
+                    system_locale: &mut None,
+                    pad_order: &[],
+                },
             )
         })
         .unwrap_or_else(|_| panic!("reset executes: {key}"));
@@ -2085,12 +2115,14 @@ fn pad_screen_sets_deadzone_triggers_and_resets() {
                 payload: serde_json::Value::Null,
             })
             .unwrap(),
-            &mut capture,
-            &mut test_keyboards(),
-            &mut None,
-            &mut gamepads,
-            &mut None,
-            &[],
+            CommandVault {
+                capture: &mut capture,
+                keyboards: &mut test_keyboards(),
+                touch_capable: &mut None,
+                gamepads: &mut gamepads,
+                system_locale: &mut None,
+                pad_order: &[],
+            },
         )
         .expect("reset applies")
     });
@@ -2144,12 +2176,14 @@ fn ingest_truth(pads: &[GamepadInfo], pad_order: &[String]) -> Vec<GamepadInfo> 
         apply_command_to(
             &mut snapshot,
             &command_json,
-            &mut None,
-            &mut test_keyboards(),
-            &mut None,
-            &mut gamepads,
-            &mut None,
-            pad_order,
+            CommandVault {
+                capture: &mut None,
+                keyboards: &mut test_keyboards(),
+                touch_capable: &mut None,
+                gamepads: &mut gamepads,
+                system_locale: &mut None,
+                pad_order,
+            },
         )
         .expect("device truth applies")
     });
@@ -2203,7 +2237,7 @@ fn over_table_pads_have_no_screens_or_links() {
     let ids: Vec<&str> = payload.sections.iter().map(|s| s.id.as_str()).collect();
     assert!(ids.contains(&"pad.4"), "fourth pad keeps its screen");
     assert!(
-        !ids.iter().any(|id| *id == "pad.5"),
+        !ids.contains(&"pad.5"),
         "past the table a pad parks with no screen"
     );
     assert!(
@@ -2268,12 +2302,14 @@ fn gamepad_radio_rejects_unknown_pads() {
             apply_command_to(
                 &mut snapshot,
                 &bad,
-                &mut None,
-                &mut keyboards,
-                &mut None,
-                &mut gamepads,
-                &mut None,
-                &[],
+                CommandVault {
+                    capture: &mut None,
+                    keyboards: &mut keyboards,
+                    touch_capable: &mut None,
+                    gamepads: &mut gamepads,
+                    system_locale: &mut None,
+                    pad_order: &[]
+                },
             )
             .is_err(),
             "out-of-range pad choice fails loud"
@@ -2314,12 +2350,14 @@ fn shortcut_clear_is_per_column() {
             apply_command_to(
                 snapshot,
                 &command_json,
-                &mut None,
-                &mut keyboards,
-                &mut None,
-                &mut gamepads,
-                &mut None,
-                &[],
+                CommandVault {
+                    capture: &mut None,
+                    keyboards: &mut keyboards,
+                    touch_capable: &mut None,
+                    gamepads: &mut gamepads,
+                    system_locale: &mut None,
+                    pad_order: &[],
+                },
             )
             .unwrap_or_else(|error| panic!("command failed: {error}"))
         })
@@ -2353,12 +2391,14 @@ fn shortcut_clear_is_per_column() {
             apply_command_to(
                 snapshot,
                 &command_json,
-                &mut None,
-                &mut keyboards,
-                &mut None,
-                &mut gamepads,
-                &mut None,
-                &[],
+                CommandVault {
+                    capture: &mut None,
+                    keyboards: &mut keyboards,
+                    touch_capable: &mut None,
+                    gamepads: &mut gamepads,
+                    system_locale: &mut None,
+                    pad_order: &[],
+                },
             )
             .unwrap_or_else(|error| panic!("command failed: {error}"))
         })
@@ -2492,9 +2532,7 @@ fn first_pad_mapping_row(payload: &ViewPayload) -> (String, String) {
 
 fn pad_payload(snapshot: &SettingsSnapshot, pads: &[GamepadInfo]) -> ViewPayload {
     with_test_deps(|| {
-        let json = open_payload(snapshot, &test_keyboards(), None, pads, None)
-            .expect("open payload builds");
-        json
+        open_payload(snapshot, &test_keyboards(), None, pads, None).expect("open payload builds")
     })
 }
 
@@ -2590,12 +2628,14 @@ fn run_with_pads(
         apply_command_to(
             snapshot,
             &command_json,
-            capture,
-            &mut keyboards,
-            &mut None,
-            &mut gamepads,
-            &mut None,
-            &[],
+            CommandVault {
+                capture,
+                keyboards: &mut keyboards,
+                touch_capable: &mut None,
+                gamepads: &mut gamepads,
+                system_locale: &mut None,
+                pad_order: &[],
+            },
         )
         .unwrap_or_else(|error| panic!("command failed: {error}"))
     })
@@ -2802,12 +2842,14 @@ fn removed_gamepad_hub_keys_fail_as_unknown() {
         let error = apply_command_to(
             &mut snapshot,
             &command_json,
-            &mut None,
-            &mut test_keyboards(),
-            &mut None,
-            &mut Vec::new(),
-            &mut None,
-            &[],
+            CommandVault {
+                capture: &mut None,
+                keyboards: &mut test_keyboards(),
+                touch_capable: &mut None,
+                gamepads: &mut Vec::new(),
+                system_locale: &mut None,
+                pad_order: &[],
+            },
         )
         .expect_err("removed hub key fails loud instead of no-op");
         assert!(error.contains("unknown"), "fails as unknown: {error}");
@@ -2894,12 +2936,14 @@ fn unknown_keys_and_indices_fail_without_mutation() {
             apply_command_to(
                 &mut snapshot,
                 &bad_key,
-                &mut None,
-                &mut test_keyboards(),
-                &mut None,
-                &mut Vec::new(),
-                &mut None,
-                &[],
+                CommandVault {
+                    capture: &mut None,
+                    keyboards: &mut test_keyboards(),
+                    touch_capable: &mut None,
+                    gamepads: &mut Vec::new(),
+                    system_locale: &mut None,
+                    pad_order: &[]
+                },
             )
             .is_err()
         );
@@ -2916,12 +2960,14 @@ fn unknown_keys_and_indices_fail_without_mutation() {
             apply_command_to(
                 &mut snapshot,
                 &bad_index,
-                &mut None,
-                &mut test_keyboards(),
-                &mut None,
-                &mut Vec::new(),
-                &mut None,
-                &[],
+                CommandVault {
+                    capture: &mut None,
+                    keyboards: &mut test_keyboards(),
+                    touch_capable: &mut None,
+                    gamepads: &mut Vec::new(),
+                    system_locale: &mut None,
+                    pad_order: &[]
+                },
             )
             .is_err()
         );
@@ -2934,12 +2980,14 @@ fn unknown_keys_and_indices_fail_without_mutation() {
             apply_command_to(
                 &mut snapshot,
                 bad_op,
-                &mut None,
-                &mut test_keyboards(),
-                &mut None,
-                &mut Vec::new(),
-                &mut None,
-                &[],
+                CommandVault {
+                    capture: &mut None,
+                    keyboards: &mut test_keyboards(),
+                    touch_capable: &mut None,
+                    gamepads: &mut Vec::new(),
+                    system_locale: &mut None,
+                    pad_order: &[]
+                },
             )
             .is_err()
         );
@@ -2956,12 +3004,14 @@ fn unknown_keys_and_indices_fail_without_mutation() {
             apply_command_to(
                 &mut snapshot,
                 &bad_port,
-                &mut None,
-                &mut test_keyboards(),
-                &mut None,
-                &mut Vec::new(),
-                &mut None,
-                &[],
+                CommandVault {
+                    capture: &mut None,
+                    keyboards: &mut test_keyboards(),
+                    touch_capable: &mut None,
+                    gamepads: &mut Vec::new(),
+                    system_locale: &mut None,
+                    pad_order: &[]
+                },
             )
             .is_err(),
             "unknown ports never persist"
@@ -2979,12 +3029,14 @@ fn unknown_keys_and_indices_fail_without_mutation() {
             apply_command_to(
                 &mut snapshot,
                 &bad_scope,
-                &mut None,
-                &mut test_keyboards(),
-                &mut None,
-                &mut Vec::new(),
-                &mut None,
-                &[],
+                CommandVault {
+                    capture: &mut None,
+                    keyboards: &mut test_keyboards(),
+                    touch_capable: &mut None,
+                    gamepads: &mut Vec::new(),
+                    system_locale: &mut None,
+                    pad_order: &[]
+                },
             )
             .is_err(),
             "unknown reset scopes never no-op silently"

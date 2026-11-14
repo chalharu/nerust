@@ -425,12 +425,14 @@ fn settings_command(env: &mut jni::EnvUnowned<'_>, command: JString<'_>) -> jni:
                 settings_views::apply_command_to(
                     draft,
                     &command_json,
-                    &mut state.capture,
-                    &mut state.keyboards,
-                    &mut state.touch_capable,
-                    &mut state.gamepads,
-                    &mut state.system_locale,
-                    &state.pad_order,
+                    settings_views::CommandVault {
+                        capture: &mut state.capture,
+                        keyboards: &mut state.keyboards,
+                        touch_capable: &mut state.touch_capable,
+                        gamepads: &mut state.gamepads,
+                        system_locale: &mut state.system_locale,
+                        pad_order: &state.pad_order,
+                    },
                 )
             });
             let dirty = bridge::with_settings(|state| state.draft != state.pristine);

@@ -1308,10 +1308,10 @@ fn port_member_names(
     let port_index = PLAYER_PORTS.iter().position(|known| *known == port);
     if let Some(port_index) = port_index {
         for (pad_index, pad) in snapshot.shared.input.gamepad.pad_ports.iter().enumerate() {
-            if pad.slot == Some(port_index) {
-                if let Some(info) = gamepads.get(pad_index) {
-                    names.push(info.name.clone());
-                }
+            if pad.slot == Some(port_index)
+                && let Some(info) = gamepads.get(pad_index)
+            {
+                names.push(info.name.clone());
             }
         }
     }
