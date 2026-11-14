@@ -21,7 +21,6 @@ members = [
   "console/nes/factory",
   "console/nes/settings",
   "crash-guard",
-  "gamepad-db",
   "gui/application",
   "gui/emu-thread",
   "gui/frontends/android",
@@ -173,7 +172,6 @@ nerust_core_traits = { path = "traits/core" }
 nerust_crash_guard = { path = "crash-guard" }
 nerust_desktop = { path = "gui/frontends/desktop" }
 nerust_emu_thread = { path = "gui/emu-thread" }
-nerust_gamepad_db = { path = "gamepad-db" }
 nerust_gba_core = { path = "console/gba/core" }
 nerust_gba_device = { path = "console/gba/device" }
 nerust_gba_factory = { path = "console/gba/factory" }

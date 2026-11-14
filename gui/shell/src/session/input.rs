@@ -1,7 +1,7 @@
 use nerust_core_traits::touch::{TouchControl, TouchControlRole, TouchOverlayModel};
 use nerust_input_traits::{
     AbstractKey, AttachmentId, ControlId, DigitalControlId, DigitalInputEvent, GamepadAxis,
-    InputValue, Key, SourceButtonId, SourceId, StandardButton,
+    InputValue, Key, SourceButtonId, SourceId, StandardButton, apply_deadzone,
 };
 use nerust_settings_core::model::input::{
     DEADZONE_MAX_PERCENT, DEFAULT_DEADZONE_PERCENT, ShortcutAction,
@@ -458,7 +458,7 @@ impl SessionHandle {
             .unwrap_or(DEFAULT_DEADZONE_PERCENT)
             .clamp(0, DEADZONE_MAX_PERCENT);
         let value =
-            nerust_gamepad_db::apply_deadzone(value.clamp(-1.0, 1.0), f32::from(percent) / 100.0)
+            apply_deadzone(value.clamp(-1.0, 1.0), f32::from(percent) / 100.0)
                 .clamp(-1.0, 1.0);
         self.input.analogs.insert((source, axis), value);
         let alias = index.is_some_and(|i| {
@@ -1073,7 +1073,7 @@ mod tests {
             .expect("axis value stored");
         assert!(
             (stored
-                - nerust_gamepad_db::apply_deadzone(
+                - apply_deadzone(
                     0.5,
                     f32::from(nerust_settings_core::model::input::DEFAULT_DEADZONE_PERCENT) / 100.0
                 ))
