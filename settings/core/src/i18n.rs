@@ -66,6 +66,7 @@ pub enum UiText {
     Cancel,
     ConflictDetected,
     CapturePrompt,
+    CapturePromptPad,
     InvalidCustomStorageDirectory,
     Debugger,
     OpenDebugger,
@@ -152,6 +153,10 @@ pub enum UiText {
     PosTopRight,
     PosBottomLeft,
     PosBottomRight,
+    PosTop,
+    PosBottom,
+    PosLeft,
+    PosRight,
     AreaOverlay,
     AreaStrip,
     CrashTitle,
@@ -352,6 +357,26 @@ impl I18n {
         lookup(self.language, key).to_string()
     }
 
+    /// Display text for one pad button in mapping rows: cap print plus a
+    /// plain position for the four face buttons (`A (bottom)`), cap alone
+    /// elsewhere. Caps follow the dominant print and the Android `BUTTON_*`
+    /// names; the position word keeps Nintendo-layout pads interpretable
+    /// without per-vendor branches.
+    pub fn pad_button_label(self, button: nerust_input_traits::StandardButton) -> String {
+        use nerust_input_traits::StandardButton as Pad;
+        let position = match button {
+            Pad::South => Some(UiText::PosBottom),
+            Pad::East => Some(UiText::PosRight),
+            Pad::West => Some(UiText::PosLeft),
+            Pad::North => Some(UiText::PosTop),
+            _ => None,
+        };
+        match position {
+            Some(place) => format!("{} ({})", button.cap_label(), self.text(place)),
+            None => button.cap_label().to_string(),
+        }
+    }
+
     pub fn port_summary(self, names: &[String]) -> String {
         port_summary(self.language, names)
     }
@@ -460,6 +485,10 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
             "重複したキー割り当てを解消してください。",
         ),
         UiText::CapturePrompt => ("Press a key…", "キーを押してください…"),
+        UiText::CapturePromptPad => (
+            "Press a pad button: face, shoulders, stick clicks, Start, Back, Guide. No triggers.",
+            "パッドのボタンを押してください：フェイス、ショルダー、スティック押し込み、Start、Back、Guide。トリガー不可。",
+        ),
         UiText::InvalidCustomStorageDirectory => (
             "The custom storage directory must exist or be creatable.",
             "任意の保存先フォルダは存在するか作成可能である必要があります。",
@@ -561,6 +590,10 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::PosTopRight => ("Top right", "右上"),
         UiText::PosBottomLeft => ("Bottom left", "左下"),
         UiText::PosBottomRight => ("Bottom right", "右下"),
+        UiText::PosTop => ("top", "上"),
+        UiText::PosBottom => ("bottom", "下"),
+        UiText::PosLeft => ("left", "左"),
+        UiText::PosRight => ("right", "右"),
         UiText::AreaOverlay => ("Overlay", "重ねる"),
         UiText::AreaStrip => ("Strip", "専用帯"),
         UiText::CrashTitle => ("nerust", "nerust"),
@@ -1166,6 +1199,10 @@ mod tests {
             PosTopRight,
             PosBottomLeft,
             PosBottomRight,
+            PosTop,
+            PosBottom,
+            PosLeft,
+            PosRight,
             AreaOverlay,
             AreaStrip,
             CrashBody,
@@ -1250,6 +1287,7 @@ mod tests {
             Keyboard,
             AudioDetail,
             KeyMapping,
+            CapturePromptPad,
             Connection,
             Capabilities,
             NotificationPaused,
@@ -1282,6 +1320,18 @@ mod tests {
             assert!(!ja_text.text(key).is_empty());
             assert_ne!(en_text.text(key), ja_text.text(key));
         }
+    }
+
+    #[test]
+    fn pad_button_labels_pair_cap_with_plain_position() {
+        use nerust_input_traits::StandardButton as Pad;
+        let en_text = I18n::new(en());
+        let ja_text = I18n::new(ja());
+        assert_eq!(en_text.pad_button_label(Pad::South), "A (bottom)");
+        assert_eq!(ja_text.pad_button_label(Pad::South), "A (下)");
+        assert_eq!(en_text.pad_button_label(Pad::North), "Y (top)");
+        assert_eq!(en_text.pad_button_label(Pad::Guide), "Guide");
+        assert_eq!(ja_text.pad_button_label(Pad::LeftShoulder), "LB");
     }
 
     #[test]

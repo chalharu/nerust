@@ -257,7 +257,15 @@ fn apply_capture_command(
             vm.capture
                 .start_capture(target.clone())
                 .map_err(|error| error.to_string())?;
-            let prompt = vm.capture.view.get().prompt.clone();
+            // Pad rows name what a press can claim (face, shoulders,
+            // stick clicks, Start, Back, Guide): triggers and motion
+            // never decode, so the generic key prompt would strand the
+            // user on an eternal wait. Other rows keep the shared text.
+            let prompt = if matches!(target, CaptureTarget::PadBinding { .. }) {
+                truth.i18n.text(UiText::CapturePromptPad)
+            } else {
+                vm.capture.view.get().prompt.clone()
+            };
             *capture = Some((target, prompt));
             Ok(())
         }
