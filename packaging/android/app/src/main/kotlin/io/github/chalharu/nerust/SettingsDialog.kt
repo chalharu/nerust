@@ -26,6 +26,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
@@ -632,6 +634,11 @@ internal fun NerustSettingsDialogCard(
                     // the button stays disabled until they clear: no wasted
                     // save-reject round trip.
                     canSave = isDirty && issues.isEmpty(),
+                    // Blocked-by-issues cue lives on the save button itself:
+                    // the banner scrolls (small-screen tradeoff), so a long
+                    // screen would otherwise leave the disabled save
+                    // unexplained.
+                    saveBlocked = isDirty && issues.isNotEmpty(),
                     onNavigateUp = ::navigateUp,
                     onCancel = ::requestCancel,
                     onSave = onSave,
@@ -673,6 +680,7 @@ private fun SettingsTopBar(
     subtitle: String?,
     canNavigateUp: Boolean,
     canSave: Boolean,
+    saveBlocked: Boolean,
     onNavigateUp: () -> Unit,
     onCancel: () -> Unit,
     onSave: () -> Unit,
@@ -719,10 +727,25 @@ private fun SettingsTopBar(
                 }
             }
             IconButton(onClick = onSave, enabled = canSave) {
-                Icon(
-                    painter = painterResource(id = R.drawable.ic_settings_save),
-                    contentDescription = stringResource(R.string.settings_save),
-                )
+                BadgedBox(
+                    badge = {
+                        if (saveBlocked) {
+                            Badge(containerColor = MaterialTheme.colorScheme.error)
+                        }
+                    },
+                ) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_settings_save),
+                        contentDescription =
+                            stringResource(
+                                if (saveBlocked) {
+                                    R.string.settings_save_blocked
+                                } else {
+                                    R.string.settings_save
+                                },
+                            ),
+                    )
+                }
             }
         },
         colors =

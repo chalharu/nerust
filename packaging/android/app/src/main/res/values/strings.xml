@@ -6,6 +6,7 @@
     <string name="settings_clear">Clear</string>
     <string name="settings_close">Close settings</string>
     <string name="settings_save">Save</string>
+    <string name="settings_save_blocked">Save (resolve issues first)</string>
     <string name="settings_error_title">Error</string>
     <string name="settings_ok">OK</string>
     <string name="settings_on">On</string>
