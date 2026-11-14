@@ -1,7 +1,7 @@
 //! InputRouter: touch overlay plus physical controller routing.
 //! State lives in trackers; every JNI push routes through [`ChromePort`].
 
-use nerust_gui_shell::session::SessionHandle;
+use nerust_gui_shell::session::{KeyboardShortcut, SessionHandle};
 use nerust_input_traits::{GamepadAxis, SourceButtonId, StandardButton};
 use winit::{event::Touch, platform::android::activity::AndroidApp};
 
@@ -53,11 +53,13 @@ impl InputRouter {
         device_id: i32,
         button: StandardButton,
         pressed: bool,
-    ) {
+    ) -> Option<KeyboardShortcut> {
         // Single session entry: repeat suppression and the OR merge live
-        // in the session, so no adapter owns a private pressed set.
+        // in the session, so no adapter owns a private pressed set. The
+        // shortcut return drives session actions (pause, slots); dropping
+        // it would strand pad-mapped shortcuts while gameplay still fires.
         let source = session.pad_source_for(device_id);
-        session.handle_source_button(source, SourceButtonId::Pad(button), pressed);
+        session.handle_source_button(source, SourceButtonId::Pad(button), pressed)
     }
 
     pub(super) fn apply_physical_controller_axis(
