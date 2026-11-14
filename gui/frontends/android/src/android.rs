@@ -1077,9 +1077,15 @@ impl ApplicationHandler for AndroidFrontend {
                             self.dispatch_shortcut(shortcut);
                         }
                     } else if let Some(key) = settings_views::winit_key_to_key(&event.physical_key)
-                        && let Some(shortcut) = self.core.session.handle_keyboard_key(key, pressed)
                     {
-                        self.dispatch_shortcut(shortcut);
+                        // Breadcrumb for field verification (logcat): which
+                        // hardware key the native queue delivered, since the
+                        // Kotlin dispatch never sees this path.
+                        log::debug!("gameplay key: {} pressed={pressed}", key.label());
+                        if let Some(shortcut) = self.core.session.handle_keyboard_key(key, pressed)
+                        {
+                            self.dispatch_shortcut(shortcut);
+                        }
                     }
                 }
             }

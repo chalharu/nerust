@@ -626,7 +626,7 @@ fn controllers_quick_section(
         quick_rows.push(group_row(
             &format!("controls.pad{}.link", index + 1),
             info.name.clone(),
-            i18n.text(UiText::DescDeadzone),
+            i18n.text(UiText::DescGamepadGear),
             &format!("pad.{}", index + 1),
         ));
     }
@@ -898,9 +898,10 @@ fn build_pad_sections(
                         if shown.len() < 2 {
                             continue;
                         }
+                        let name = i18n.pad_button_label(button);
                         rows.push(info_row(
-                            &format!("{pad_id}.{system}.conflict.{}", button.cap_label()),
-                            button.cap_label().to_string(),
+                            &format!("{pad_id}.{system}.conflict.{name}"),
+                            name.clone(),
                             shown
                                 .iter()
                                 .map(|(attachment, control)| format!("{attachment}.{control}"))
@@ -989,19 +990,24 @@ fn shortcuts_section(
             ));
         }
     }
-    for (pad_index, info) in gamepads
-        .iter()
-        .take(nerust_input_traits::MAX_PADS)
-        .enumerate()
-    {
+    // One shared pad block: the pad column is global (one button per
+    // action across all pads), so per-pad blocks would show N copies of
+    // the same value. The block lists every connected pad by name; capture
+    // from any row accepts any pad's button.
+    if !gamepads.is_empty() {
+        let names: Vec<_> = gamepads
+            .iter()
+            .take(nerust_input_traits::MAX_PADS)
+            .map(|info| info.name.clone())
+            .collect();
         rows.push(header_row(format!(
             "{} ({})",
             i18n.text(UiText::GamepadDevice),
-            info.name
+            names.join(", ")
         )));
         for (label, target, capture) in &actions {
             rows.push(capture_row(
-                &format!("controls.{}.pad{}", binding_key(capture), pad_index + 1),
+                &format!("controls.{}.pad", binding_key(capture)),
                 label.clone(),
                 String::new(),
                 shortcut_binding_text(snapshot, capture, i18n, true),
@@ -1043,7 +1049,7 @@ fn shortcut_binding_text(
 ) -> String {
     let label = if pad {
         nerust_settings_core::editor::current_pad_binding(snapshot, target)
-            .map(|button| button.cap_label().to_string())
+            .map(|button| i18n.pad_button_label(button))
     } else {
         nerust_settings_core::editor::current_binding_key(snapshot, target)
             .map(|key| key.label().to_string())
@@ -1539,20 +1545,29 @@ fn build_devices_section(
             .take(nerust_input_traits::MAX_PADS)
             .enumerate()
         {
-            let assigned_here = snapshot
+            let entry_slot: Option<usize> = snapshot
                 .shared
                 .input
                 .gamepad
                 .pad_ports
                 .get(pad_index)
-                .is_some_and(|pad| pad.slot.is_none_or(|slot| Some(slot) == port_index));
+                .and_then(|pad| pad.slot);
+            let assigned_here = entry_slot.is_none_or(|slot| Some(slot) == port_index);
             if !assigned_here {
                 continue;
             }
+            // Unassigned pads stay reachable from both players: say so on
+            // the gear itself, so this screen never promises another
+            // player's pad.
+            let gear_description = if entry_slot.is_none() {
+                i18n.text(UiText::NotAssigned)
+            } else {
+                i18n.text(UiText::DescGamepadGear)
+            };
             rows.push(group_row(
                 &format!("{devices_id}.pad{}", pad_index + 1),
                 info.name.clone(),
-                i18n.text(UiText::DescGamepadGear),
+                gear_description,
                 &format!("pad.{}", pad_index + 1),
             ));
         }

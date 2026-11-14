@@ -2379,7 +2379,7 @@ fn shortcut_clear_is_per_column() {
     let clear_pad = |snapshot: &mut SettingsSnapshot| {
         with_test_deps(|| {
             let command_json = serde_json::to_string(&WireCommand {
-                key: "controls.shortcut.TogglePause.pad1".to_string(),
+                key: "controls.shortcut.TogglePause.pad".to_string(),
                 index: 0,
                 number: 0,
                 op: WireOp::ClearBinding,
@@ -2457,12 +2457,17 @@ fn shortcuts_group_per_device_with_split_columns() {
     let pad = shortcuts
         .rows
         .iter()
-        .find(|row| row.key == "controls.shortcut.TogglePause.pad1")
+        .find(|row| row.key == "controls.shortcut.TogglePause.pad")
         .expect("pad pause row exists");
     assert_eq!(pad.text, "Guide");
-    assert!(
-        shortcuts.rows.iter().any(|row| row.label.contains("Pad B")),
-        "every connected pad gets its own block"
+    assert_eq!(
+        shortcuts
+            .rows
+            .iter()
+            .filter(|row| row.kind == RowKind::Capture)
+            .count(),
+        12,
+        "one shared pad block: six keyboard rows plus six pad rows"
     );
 }
 
@@ -2597,7 +2602,7 @@ fn pad_mapping_capture_lands_override_from_own_pad() {
         .flat_map(|section| &section.rows)
         .find(|row| row.key == key)
         .expect("mapping row persists");
-    assert_eq!(row.text, "A", "face buttons show their cap print");
+    assert_eq!(row.text, "A (bottom)", "face buttons show cap and position");
     let _ = out;
 }
 
@@ -2820,8 +2825,78 @@ fn pad_mapping_conflict_surfaces_on_screen() {
         section
             .rows
             .iter()
-            .any(|row| row.key.contains(".conflict.") && row.label == "A"),
+            .any(|row| row.key.contains(".conflict.") && row.label == "A (bottom)"),
         "one button driving two controls surfaces on the pad screen"
+    );
+}
+
+#[test]
+fn double_mapping_surfaces_issue_in_the_capture_payload() {
+    // Conflicts block submit, so the waiter must see them at capture
+    // time, not only at save: the capture payload already carries issues.
+    let (mut snapshot, _) = test_payload();
+    let pads = two_pads();
+    let payload = pad_payload(&snapshot, &pads);
+    let keys: Vec<String> = payload
+        .sections
+        .iter()
+        .find(|section| section.id == "pad.1")
+        .expect("pad.1 screen exists")
+        .rows
+        .iter()
+        .filter(|row| row.kind == RowKind::Capture)
+        .take(2)
+        .map(|row| row.key.clone())
+        .collect();
+    assert_eq!(keys.len(), 2, "pad screen lists mapping rows");
+    let mut second_out = None;
+    for (n, key) in keys.iter().enumerate() {
+        let mut capture: CaptureSlot = None;
+        set_with_pads_capture(&mut snapshot, &pads, &mut capture, key);
+        let (out, _) = with_test_deps(|| {
+            apply_hardware_key(
+                96,
+                Some("a"),
+                true,
+                &mut snapshot,
+                &mut capture,
+                projection(
+                    &test_keyboards(),
+                    None,
+                    &pads,
+                    sys_display(AppLanguage::SystemDefault),
+                ),
+            )
+            .expect("pad capture applies")
+        });
+        if n == 1 {
+            second_out = out;
+        }
+    }
+    let out = second_out.expect("second capture projects");
+    assert!(
+        !out.issues.is_empty(),
+        "conflict surfaces immediately, not only at save"
+    );
+    assert!(
+        out.issues.iter().any(|issue| issue.contains('A')),
+        "issue names the double-mapped button: {:?}",
+        out.issues
+    );
+}
+
+#[test]
+fn pad_capture_prompt_names_capturable_buttons() {
+    let (mut snapshot, _) = test_payload();
+    let pads = two_pads();
+    let payload = pad_payload(&snapshot, &pads);
+    let (key, _) = first_pad_mapping_row(&payload);
+    let mut capture: CaptureSlot = None;
+    set_with_pads_capture(&mut snapshot, &pads, &mut capture, &key);
+    let (_, prompt) = capture.expect("capture pending");
+    assert!(
+        prompt.contains("trigger") || prompt.contains("トリガー"),
+        "pad rows warn that triggers can't map: {prompt}"
     );
 }
 
@@ -3185,8 +3260,14 @@ fn pad_rows_show_cap_prints_not_positions() {
     let (snapshot, _) = test_payload();
     let payload = pad_payload(&snapshot, &two_pads());
     for (key, want) in [
-        ("pad.1.nes.nes.attachment.player1.nes.control.a", "A"),
-        ("pad.1.nes.nes.attachment.player1.nes.control.b", "B"),
+        (
+            "pad.1.nes.nes.attachment.player1.nes.control.a",
+            "A (bottom)",
+        ),
+        (
+            "pad.1.nes.nes.attachment.player1.nes.control.b",
+            "B (right)",
+        ),
         (
             "pad.1.nes.nes.attachment.player1.nes.control.select",
             "Back",

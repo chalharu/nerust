@@ -221,10 +221,10 @@ pub(super) fn binding_value(
         let pad = current_pad_binding(&state.draft, target);
         match (current_binding_label(&state.draft, target), pad) {
             (Some(key), Some(pad)) => {
-                BindingValueView::Bound(format!("{key} / {}", pad.cap_label()))
+                BindingValueView::Bound(format!("{key} / {}", i18n.pad_button_label(pad)))
             }
             (Some(key), None) => BindingValueView::Bound(key.to_string()),
-            (None, Some(pad)) => BindingValueView::Bound(pad.cap_label().to_string()),
+            (None, Some(pad)) => BindingValueView::Bound(i18n.pad_button_label(pad)),
             (None, None) => BindingValueView::Unbound(i18n.text(UiText::Unbound)),
         }
     }
@@ -243,7 +243,7 @@ pub fn pad_binding_value(
         BindingValueView::Capturing(i18n.text(UiText::CapturePrompt))
     } else {
         match current_pad_game_binding(&state.draft, target).or(default) {
-            Some(button) => BindingValueView::Bound(button.cap_label().to_string()),
+            Some(button) => BindingValueView::Bound(i18n.pad_button_label(button)),
             None => BindingValueView::Unbound(i18n.text(UiText::Unbound)),
         }
     }

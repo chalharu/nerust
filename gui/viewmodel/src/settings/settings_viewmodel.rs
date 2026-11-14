@@ -311,6 +311,7 @@ fn validator(state: &super::EditorState) -> super::ValidationState {
     validate_audio_settings(state, &mut issues);
     validate_notification_settings(state, &mut issues);
     validate_pad_shortcuts(state, &mut issues);
+    validate_pad_game_bindings(state, &mut issues);
     validate_port_devices(state, &mut issues);
     for factory in state.catalog.all() {
         validate_factory_settings(state, factory, &mut issues);
@@ -342,6 +343,35 @@ fn validate_pad_shortcuts(state: &super::EditorState, issues: &mut Vec<super::Va
                 labels: names.join(", "),
             },
         });
+    }
+}
+
+/// Per-pad game-button conflicts: one button driving two or more controls
+/// on the same pad. The runtime keeps the first and drops the rest, so a
+/// silent second control would never fire: block submit like every other
+/// conflict, and the pad screen names the rows to disambiguate.
+fn validate_pad_game_bindings(
+    state: &super::EditorState,
+    issues: &mut Vec<super::ValidationIssue>,
+) {
+    for (system, settings) in state.draft.shared.input.systems.iter() {
+        for entries in settings.pad_bindings.iter() {
+            for (button, controls) in
+                nerust_settings_core::model::input::pad_game_binding_conflicts(entries)
+            {
+                let names: Vec<String> = controls
+                    .iter()
+                    .map(|(attachment, control)| format!("{attachment}.{control}"))
+                    .collect();
+                issues.push(super::ValidationIssue {
+                    scope: super::ValidationScope::Controllers,
+                    kind: super::ValidationIssueKind::PadConflict {
+                        button: button.cap_label().to_string(),
+                        labels: format!("{}: {}", system, names.join(", ")),
+                    },
+                });
+            }
+        }
     }
 }
 
