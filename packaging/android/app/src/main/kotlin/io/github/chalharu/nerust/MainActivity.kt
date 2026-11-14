@@ -460,7 +460,7 @@ class MainActivity :
      * the capture window calls this when it loses window focus so a focus
      * steal never strands a hold. */
     internal fun releaseAllControllers() {
-        controllerPressed.keys.toList().forEach(::releaseController)
+        (controllerPressed.keys + controllerAxes.keys).toList().forEach(::releaseController)
     }
 
     /** Boot sweep: pads connected before resume never fire

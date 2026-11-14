@@ -536,8 +536,7 @@ impl SessionHandle {
         // row, and the trigger alias all read this instead of re-scanning
         // `pad_order`.
         let index = self.input.pads.pad_index(source);
-        let slot = index.and_then(|i| self.slot_for_pad_index(i));
-        let Some(slot) = slot else {
+        if index.and_then(|i| self.slot_for_pad_index(i)).is_none() {
             return;
         };
         // Per-pad deadzone: sticks vary per unit, so the pad's own row
@@ -580,7 +579,7 @@ impl SessionHandle {
                     .map(|port| [port.left_stick_as_dpad, port.right_stick_as_dpad])
             })
             .unwrap_or([true, true]);
-        self.sync_axis_substitute(source, axis, value, Some(slot), alias, sticks);
+        self.sync_axis_substitute(source, axis, value, index, alias, sticks);
     }
 
     /// Stick axis pair for joint dpad resolution, if any axis belongs to
@@ -671,13 +670,11 @@ impl SessionHandle {
         source: SourceId,
         axis: GamepadAxis,
         value: f32,
-        slot: Option<usize>,
+        index: Option<usize>,
         triggers_as_shoulders: bool,
         sticks_as_dpad: [bool; 2],
     ) {
-        // One order-index lookup: the stale release and the fresh press
-        // below share it instead of re-scanning `pad_order`.
-        let index = self.input.pads.pad_index(source);
+        let slot = index.and_then(|i| self.slot_for_pad_index(i));
         if let Some((ax, ay)) = Self::stick_pair_axes(axis) {
             // The current value is already stored: re-resolve the pair so
             // both holders converge instead of stranding on stale state.

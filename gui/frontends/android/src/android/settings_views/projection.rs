@@ -750,7 +750,7 @@ fn shortcuts_section(
             binding
                 .target
                 .action()
-                .is_none_or(|action| action.is_android_visible())
+                .is_none_or(|action| !action.requires_window_chrome())
         })
         .map(|binding| {
             (

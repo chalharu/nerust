@@ -343,11 +343,10 @@ pub enum ShortcutAction {
 }
 
 impl ShortcutAction {
-    /// Fullscreen and debugger are desktop-only (window chrome the phone
-    /// has no equivalent for): their rows never reach Android, though the
-    /// shared bindings persist.
-    pub fn is_android_visible(self) -> bool {
-        !matches!(
+    /// Window chrome the phone has no equivalent for (fullscreen, debugger):
+    /// rows needing it never reach Android, though the shared bindings persist.
+    pub fn requires_window_chrome(self) -> bool {
+        matches!(
             self,
             ShortcutAction::ToggleFullscreen | ShortcutAction::OpenDebugger
         )
@@ -418,10 +417,10 @@ mod tests {
 
     #[test]
     fn desktop_only_shortcuts_stay_off_android() {
-        assert!(!ShortcutAction::ToggleFullscreen.is_android_visible());
-        assert!(!ShortcutAction::OpenDebugger.is_android_visible());
-        assert!(ShortcutAction::TogglePause.is_android_visible());
-        assert!(ShortcutAction::Reset.is_android_visible());
+        assert!(ShortcutAction::ToggleFullscreen.requires_window_chrome());
+        assert!(ShortcutAction::OpenDebugger.requires_window_chrome());
+        assert!(!ShortcutAction::TogglePause.requires_window_chrome());
+        assert!(!ShortcutAction::Reset.requires_window_chrome());
     }
 
     #[test]
