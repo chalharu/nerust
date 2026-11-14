@@ -801,19 +801,18 @@ fn build_pad_sections(
                 for section in &view.sections {
                     rows.push(header_row(section.label.clone()));
                     for binding in &section.rows {
-                        let CaptureTarget::Binding {
-                            attachment,
-                            control,
-                            ..
-                        } = &binding.target
+                        // Per-pad mapping mirrors the game rows: same
+                        // attachment/control, routed to this pad.
+                        let (Some(attachment), Some(control)) =
+                            (binding.target.attachment(), binding.target.control())
                         else {
                             continue;
                         };
                         let target = CaptureTarget::PadBinding {
                             system: view.system_id.clone_box(),
                             pad: index,
-                            attachment: attachment.clone(),
-                            control: control.clone(),
+                            attachment: attachment.to_string(),
+                            control: control.to_string(),
                         };
                         let value = input.pad_row_value(&target, binding.pad_default);
                         let text = match &value {
@@ -1615,19 +1614,19 @@ fn build_keys_sections(
 }
 
 fn binding_key(target: &CaptureTarget) -> String {
-    match target {
-        CaptureTarget::Binding {
-            attachment,
-            control,
-            ..
-        } => format!("{attachment}.{control}"),
-        CaptureTarget::PadBinding {
-            pad,
-            attachment,
-            control,
-            ..
-        } => format!("pad{}.{attachment}.{control}", pad + 1),
-        CaptureTarget::Shortcut(action) => format!("shortcut.{action:?}"),
+    if let Some(action) = target.action() {
+        return format!("shortcut.{action:?}");
+    }
+    // Bindings and overrides share the attachment/control identity;
+    // overrides prefix the 1-based pad. Shortcuts return above, so both
+    // accessors hold here.
+    let (attachment, control) = (
+        target.attachment().unwrap_or_default(),
+        target.control().unwrap_or_default(),
+    );
+    match target.pad() {
+        Some(pad) => format!("pad{}.{attachment}.{control}", pad + 1),
+        None => format!("{attachment}.{control}"),
     }
 }
 

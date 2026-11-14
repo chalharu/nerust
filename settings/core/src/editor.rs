@@ -40,6 +40,32 @@ impl CaptureTarget {
             _ => None,
         }
     }
+
+    /// Emulated attachment for binding rows; shortcuts have none.
+    pub fn attachment(&self) -> Option<&str> {
+        match self {
+            Self::Binding { attachment, .. } | Self::PadBinding { attachment, .. } => {
+                Some(attachment)
+            }
+            Self::Shortcut(_) => None,
+        }
+    }
+
+    /// Emulated control for binding rows; shortcuts have none.
+    pub fn control(&self) -> Option<&str> {
+        match self {
+            Self::Binding { control, .. } | Self::PadBinding { control, .. } => Some(control),
+            Self::Shortcut(_) => None,
+        }
+    }
+
+    /// Shortcut action for shortcut rows; bindings have none.
+    pub fn action(&self) -> Option<ShortcutAction> {
+        match self {
+            Self::Shortcut(action) => Some(*action),
+            _ => None,
+        }
+    }
 }
 
 /// One lookup for all capture columns: `(key, shortcut pad, pad override)`.
