@@ -325,6 +325,18 @@ pub enum ShortcutAction {
     OpenDebugger,
 }
 
+impl ShortcutAction {
+    /// Fullscreen and debugger are desktop-only (window chrome the phone
+    /// has no equivalent for): their rows never reach Android, though the
+    /// shared bindings persist.
+    pub fn is_android_visible(self) -> bool {
+        !matches!(
+            self,
+            ShortcutAction::ToggleFullscreen | ShortcutAction::OpenDebugger
+        )
+    }
+}
+
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
 )]
@@ -385,6 +397,14 @@ mod tests {
     fn pad_count_tracks_max_pads() {
         // `PAD_COUNT` is a re-export of `MAX_PADS`: no skew possible.
         assert_eq!(PAD_COUNT, 4);
+    }
+
+    #[test]
+    fn desktop_only_shortcuts_stay_off_android() {
+        assert!(!ShortcutAction::ToggleFullscreen.is_android_visible());
+        assert!(!ShortcutAction::OpenDebugger.is_android_visible());
+        assert!(ShortcutAction::TogglePause.is_android_visible());
+        assert!(ShortcutAction::Reset.is_android_visible());
     }
 
     #[test]

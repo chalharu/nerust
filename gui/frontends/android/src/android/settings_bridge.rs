@@ -284,9 +284,11 @@ fn err_json(error: impl std::fmt::Display) -> String {
     serde_json::json!({"ok": false, "error": error.to_string()}).to_string()
 }
 
-/// Success envelope: one serialization at this JNI edge, no re-parse or
-/// string concat of an already-built payload. `dirty` compares the draft
-/// against the pristine open copy, so reverts read clean.
+/// Single envelope for both command shapes: consumed presses carry the
+/// refreshed payload; ignored keys carry only the flag (Kotlin ignores
+/// the payload then). One serialization at this JNI edge, no re-parse
+/// or string concat of an already-built payload. `dirty` compares the
+/// draft against the pristine open copy, so reverts read clean.
 #[derive(serde::Serialize)]
 struct Envelope<'a> {
     ok: bool,
@@ -297,30 +299,15 @@ struct Envelope<'a> {
     payload: Option<&'a settings_views::ViewPayload>,
 }
 
-/// Success envelope: the payload serializes exactly once at this JNI edge.
-/// The envelope shape is unchanged (`{"ok":true,"payload":{...}}`); only the
-/// old re-parse/concat round-trip is gone.
-fn envelope_ok(payload: &settings_views::ViewPayload, dirty: bool) -> Result<String, String> {
-    serde_json::to_string(&Envelope {
-        ok: true,
-        dirty,
-        consumed: None,
-        payload: Some(payload),
-    })
-    .map_err(|error| error.to_string())
-}
-
-/// Hardware-key envelope: consumed presses carry the refreshed payload;
-/// ignored keys carry only the flag (Kotlin ignores the payload then).
-fn envelope_key(
+fn envelope(
     payload: Option<&settings_views::ViewPayload>,
-    consumed: bool,
+    consumed: Option<bool>,
     dirty: bool,
 ) -> Result<String, String> {
     serde_json::to_string(&Envelope {
         ok: true,
         dirty,
-        consumed: Some(consumed),
+        consumed,
         payload,
     })
     .map_err(|error| error.to_string())
@@ -363,22 +350,22 @@ fn hardware_key(
                     pressed,
                     draft,
                     &mut state.capture,
-                    settings_views::projection(
-                        &state.keyboards,
-                        state.touch_capable,
-                        &state.gamepads,
-                        settings_views::resolve_display(
+                    settings_views::Projection {
+                        keyboards: &state.keyboards,
+                        touch_capable: state.touch_capable,
+                        gamepads: &state.gamepads,
+                        i18n: settings_views::resolve_display(
                             draft.shared.general.language,
                             state.system_locale,
                         ),
-                    ),
+                    },
                 )
             });
             let dirty = bridge::with_settings(|state| state.draft != state.pristine);
             match applied {
                 Ok((payload, consumed)) => {
                     if payload.is_some() || consumed {
-                        envelope_key(payload.as_ref(), consumed, dirty).unwrap_or_else(err_json)
+                        envelope(payload.as_ref(), Some(consumed), dirty).unwrap_or_else(err_json)
                     } else {
                         serde_json::json!({"ok": true, "consumed": false, "dirty": dirty})
                             .to_string()
@@ -437,7 +424,7 @@ fn settings_command(env: &mut jni::EnvUnowned<'_>, command: JString<'_>) -> jni:
             });
             let dirty = bridge::with_settings(|state| state.draft != state.pristine);
             match applied {
-                Ok(payload) => envelope_ok(&payload, dirty).unwrap_or_else(err_json),
+                Ok(payload) => envelope(Some(&payload), None, dirty).unwrap_or_else(err_json),
                 Err(error) => err_json(error),
             }
         }

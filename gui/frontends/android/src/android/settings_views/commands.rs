@@ -21,14 +21,13 @@ use nerust_settings_core::{
 };
 use nerust_system_traits::factory::descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId};
 
-use super::projection::{
-    PLAYER_PORTS, build_sections, project_fresh, project_payload, prune_missing_builtin,
-};
+use super::devices::prune_missing_builtin;
+use super::projection::{PLAYER_PORTS, build_sections, project_fresh, project_payload};
 use super::wire::{
     CaptureSlot, GamepadInfo, I18n, KeyboardInfo, Projection, RowKind, RowWire, SectionWire,
     ViewPayload, VmDeps, WireCommand, WireOp, build_vm, choice, find_row, pin_draft_language,
-    projection, range_value, resolve_display, sort_gamepads_by_order, sync_snapshot_from_vm,
-    toggle_value, with_vm_deps,
+    range_value, resolve_display, sort_gamepads_by_order, sync_snapshot_from_vm, toggle_value,
+    with_vm_deps,
 };
 
 /// Apply one wire command to the draft snapshot in place, returning the
@@ -67,7 +66,12 @@ pub(crate) fn apply_command_to(
         serde_json::from_str(command_json).map_err(|error| error.to_string())?;
     with_vm_deps(|deps| {
         let i18n = resolve_display(snapshot.shared.general.language, *system_locale);
-        let truth = projection(keyboards, *touch_capable, gamepads, i18n);
+        let truth = Projection {
+            keyboards,
+            touch_capable: *touch_capable,
+            gamepads,
+            i18n,
+        };
         match command.op {
             WireOp::DeviceTruth => {
                 apply_device_truth_command(
@@ -157,7 +161,12 @@ fn project_after_snapshot_edit(
     system_locale: Option<AppLanguage>,
 ) -> Result<ViewPayload, String> {
     let i18n = resolve_display(snapshot.shared.general.language, system_locale);
-    let truth = projection(keyboards, touch_capable, gamepads, i18n);
+    let truth = Projection {
+        keyboards,
+        touch_capable,
+        gamepads,
+        i18n,
+    };
     project_fresh(snapshot, deps, capture, truth)
 }
 
@@ -257,23 +266,15 @@ fn apply_capture_command(
             vm.capture
                 .start_capture(target.clone())
                 .map_err(|error| error.to_string())?;
-            // Pad rows name what a press can claim (face, shoulders,
-            // stick clicks, Start, Back, Guide): triggers and motion
-            // never decode, so the generic key prompt would strand the
-            // user on an eternal wait. Game rows take keyboard keys only;
-            // with no keyboard connected only the dpad twin lands, so say
-            // so instead of inviting a press that stays pending. Shortcuts
-            // take either side and keep the shared text.
-            let prompt = if matches!(target, CaptureTarget::PadBinding { .. }) {
-                truth.i18n.text(UiText::CapturePromptPad)
-            } else if matches!(target, CaptureTarget::Binding { .. })
-                && truth.keyboards.is_empty()
-                && !truth.gamepads.is_empty()
-            {
-                truth.i18n.text(UiText::CapturePromptDpadOnly)
-            } else {
-                vm.capture.view.get().prompt.clone()
-            };
+            // Prompt policy lives in the view model (all frontends prompt
+            // alike); this edge only renders the text.
+            let prompt = truth.i18n.text(
+                nerust_gui_viewmodel::settings::CaptureViewModel::prompt_for(
+                    &target,
+                    !truth.keyboards.is_empty(),
+                    !truth.gamepads.is_empty(),
+                ),
+            );
             *capture = Some((target, prompt));
             Ok(())
         }
@@ -353,6 +354,9 @@ fn apply_device_truth_command(
     // Session order, not scan order: Pad N must name session pad N, or a
     // reconnect compacts the scan onto another pad's slot and settings.
     sort_gamepads_by_order(gamepads, pad_order);
+    // The locale stays optional on purpose: keyboards/capable/gamepads are
+    // always enumerable, but the terminal locale can be unknown (no push
+    // arrived yet). Absence keeps the previous push; empty is rejected.
     if let Some(raw) = command.payload.get("lang") {
         let tag = raw
             .as_str()

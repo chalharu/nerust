@@ -1535,12 +1535,12 @@ fn pad_capture_lands_on_shortcut_rows() {
         )
         .expect("vm builds");
         let keyboards = test_keyboards();
-        let truth = projection(
-            &keyboards,
-            None,
-            &[],
-            sys_display(AppLanguage::SystemDefault),
-        );
+        let truth = Projection {
+            keyboards: &keyboards,
+            touch_capable: None,
+            gamepads: &[],
+            i18n: sys_display(AppLanguage::SystemDefault),
+        };
         let sections = build_sections(&vm, &snapshot, truth);
         let shortcuts = sections
             .iter()
@@ -1571,12 +1571,12 @@ fn pad_capture_lands_on_shortcut_rows() {
             true,
             &mut snapshot,
             &mut capture,
-            projection(
-                &test_keyboards(),
-                None,
-                &[],
-                sys_display(AppLanguage::SystemDefault),
-            ),
+            Projection {
+                keyboards: &test_keyboards(),
+                touch_capable: None,
+                gamepads: &[],
+                i18n: sys_display(AppLanguage::SystemDefault),
+            },
         )
         .expect("pad capture applies")
     });
@@ -1608,12 +1608,12 @@ fn pad_press_on_game_row_leaves_capture_pending() {
         )
         .expect("vm builds");
         let keyboards = test_keyboards();
-        let truth = projection(
-            &keyboards,
-            None,
-            &[],
-            sys_display(AppLanguage::SystemDefault),
-        );
+        let truth = Projection {
+            keyboards: &keyboards,
+            touch_capable: None,
+            gamepads: &[],
+            i18n: sys_display(AppLanguage::SystemDefault),
+        };
         let sections = build_sections(&vm, &snapshot, truth);
         sections
             .iter()
@@ -1645,12 +1645,12 @@ fn pad_press_on_game_row_leaves_capture_pending() {
             true,
             &mut snapshot,
             &mut capture,
-            projection(
-                &test_keyboards(),
-                None,
-                &[],
-                sys_display(AppLanguage::SystemDefault),
-            ),
+            Projection {
+                keyboards: &test_keyboards(),
+                touch_capable: None,
+                gamepads: &[],
+                i18n: sys_display(AppLanguage::SystemDefault),
+            },
         )
         .expect("pad press probes a game row")
     });
@@ -1674,12 +1674,12 @@ fn capture_round_trips_through_hardware_keys() {
         )
         .expect("vm builds");
         let keyboards = test_keyboards();
-        let truth = projection(
-            &keyboards,
-            None,
-            &[],
-            sys_display(AppLanguage::SystemDefault),
-        );
+        let truth = Projection {
+            keyboards: &keyboards,
+            touch_capable: None,
+            gamepads: &[],
+            i18n: sys_display(AppLanguage::SystemDefault),
+        };
         let sections = build_sections(&vm, &snapshot, truth);
         sections
             .iter()
@@ -1709,12 +1709,12 @@ fn capture_round_trips_through_hardware_keys() {
             false,
             &mut snapshot,
             &mut capture,
-            projection(
-                &test_keyboards(),
-                None,
-                &[],
-                sys_display(AppLanguage::SystemDefault),
-            ),
+            Projection {
+                keyboards: &test_keyboards(),
+                touch_capable: None,
+                gamepads: &[],
+                i18n: sys_display(AppLanguage::SystemDefault),
+            },
         )
         .expect("hardware key release probes")
     });
@@ -1727,12 +1727,12 @@ fn capture_round_trips_through_hardware_keys() {
             true,
             &mut snapshot,
             &mut capture,
-            projection(
-                &test_keyboards(),
-                None,
-                &[],
-                sys_display(AppLanguage::SystemDefault),
-            ),
+            Projection {
+                keyboards: &test_keyboards(),
+                touch_capable: None,
+                gamepads: &[],
+                i18n: sys_display(AppLanguage::SystemDefault),
+            },
         )
         .expect("unknown keycode probes")
     });
@@ -1745,12 +1745,12 @@ fn capture_round_trips_through_hardware_keys() {
             true,
             &mut snapshot,
             &mut capture,
-            projection(
-                &test_keyboards(),
-                None,
-                &[],
-                sys_display(AppLanguage::SystemDefault),
-            ),
+            Projection {
+                keyboards: &test_keyboards(),
+                touch_capable: None,
+                gamepads: &[],
+                i18n: sys_display(AppLanguage::SystemDefault),
+            },
         )
         .expect("hardware key applies")
     });
@@ -1770,12 +1770,12 @@ fn clear_binding_unbinds_without_keyboard() {
         )
         .expect("vm builds");
         let keyboards = test_keyboards();
-        let truth = projection(
-            &keyboards,
-            None,
-            &[],
-            sys_display(AppLanguage::SystemDefault),
-        );
+        let truth = Projection {
+            keyboards: &keyboards,
+            touch_capable: None,
+            gamepads: &[],
+            i18n: sys_display(AppLanguage::SystemDefault),
+        };
         let sections = build_sections(&vm, &snapshot, truth);
         sections
             .iter()
@@ -1808,12 +1808,12 @@ fn number_rows_advertise_vm_accepted_bounds() {
         )
         .expect("vm builds");
         let keyboards = test_keyboards();
-        let truth = projection(
-            &keyboards,
-            None,
-            &[],
-            sys_display(AppLanguage::SystemDefault),
-        );
+        let truth = Projection {
+            keyboards: &keyboards,
+            touch_capable: None,
+            gamepads: &[],
+            i18n: sys_display(AppLanguage::SystemDefault),
+        };
         let sections = build_sections(&vm, &snapshot, truth);
         sections
             .iter()
@@ -2571,12 +2571,12 @@ fn pad_mapping_capture_lands_override_from_own_pad() {
             true,
             &mut snapshot,
             &mut capture,
-            projection(
-                &test_keyboards(),
-                None,
-                &pads,
-                sys_display(AppLanguage::SystemDefault),
-            ),
+            Projection {
+                keyboards: &test_keyboards(),
+                touch_capable: None,
+                gamepads: &pads,
+                i18n: sys_display(AppLanguage::SystemDefault),
+            },
         )
         .expect("pad capture applies")
     });
@@ -2702,12 +2702,12 @@ fn pad_mapping_capture_ignores_other_pads_and_keys() {
             true,
             &mut snapshot,
             &mut capture,
-            projection(
-                &test_keyboards(),
-                None,
-                &pads,
-                sys_display(AppLanguage::SystemDefault),
-            ),
+            Projection {
+                keyboards: &test_keyboards(),
+                touch_capable: None,
+                gamepads: &pads,
+                i18n: sys_display(AppLanguage::SystemDefault),
+            },
         )
         .expect("probe applies")
     });
@@ -2721,12 +2721,12 @@ fn pad_mapping_capture_ignores_other_pads_and_keys() {
             true,
             &mut snapshot,
             &mut capture,
-            projection(
-                &test_keyboards(),
-                None,
-                &pads,
-                sys_display(AppLanguage::SystemDefault),
-            ),
+            Projection {
+                keyboards: &test_keyboards(),
+                touch_capable: None,
+                gamepads: &pads,
+                i18n: sys_display(AppLanguage::SystemDefault),
+            },
         )
         .expect("probe applies")
     });
@@ -2760,12 +2760,12 @@ fn pad_mapping_clear_resets_override_to_default() {
             true,
             &mut snapshot,
             &mut capture,
-            projection(
-                &test_keyboards(),
-                None,
-                &pads,
-                sys_display(AppLanguage::SystemDefault),
-            ),
+            Projection {
+                keyboards: &test_keyboards(),
+                touch_capable: None,
+                gamepads: &pads,
+                i18n: sys_display(AppLanguage::SystemDefault),
+            },
         )
         .expect("pad capture applies")
     });
@@ -2835,12 +2835,12 @@ fn pad_mapping_conflict_surfaces_on_screen() {
                 true,
                 &mut snapshot,
                 &mut capture,
-                projection(
-                    &test_keyboards(),
-                    None,
-                    &pads,
-                    sys_display(AppLanguage::SystemDefault),
-                ),
+                Projection {
+                    keyboards: &test_keyboards(),
+                    touch_capable: None,
+                    gamepads: &pads,
+                    i18n: sys_display(AppLanguage::SystemDefault),
+                },
             )
             .expect("pad capture applies")
         });
@@ -2890,12 +2890,12 @@ fn double_mapping_surfaces_issue_in_the_capture_payload() {
                 true,
                 &mut snapshot,
                 &mut capture,
-                projection(
-                    &test_keyboards(),
-                    None,
-                    &pads,
-                    sys_display(AppLanguage::SystemDefault),
-                ),
+                Projection {
+                    keyboards: &test_keyboards(),
+                    touch_capable: None,
+                    gamepads: &pads,
+                    i18n: sys_display(AppLanguage::SystemDefault),
+                },
             )
             .expect("pad capture applies")
         });
@@ -3028,12 +3028,12 @@ fn keys_reset_keeps_pad_overrides() {
             true,
             &mut snapshot,
             &mut capture,
-            projection(
-                &keyboards,
-                None,
-                &[],
-                sys_display(AppLanguage::SystemDefault),
-            ),
+            Projection {
+                keyboards: &keyboards,
+                touch_capable: None,
+                gamepads: &[],
+                i18n: sys_display(AppLanguage::SystemDefault),
+            },
         )
         .expect("key capture applies")
     });
@@ -3061,12 +3061,12 @@ fn keys_reset_keeps_pad_overrides() {
             true,
             &mut snapshot,
             &mut pad_capture,
-            projection(
-                &keyboards,
-                None,
-                &pads,
-                sys_display(AppLanguage::SystemDefault),
-            ),
+            Projection {
+                keyboards: &keyboards,
+                touch_capable: None,
+                gamepads: &pads,
+                i18n: sys_display(AppLanguage::SystemDefault),
+            },
         )
         .expect("pad capture applies")
     });
@@ -3177,12 +3177,13 @@ fn controllers_hub_carries_no_reset_and_detail_covers_overlay() {
 }
 
 #[test]
-fn removed_gamepad_hub_keys_fail_as_unknown() {
-    // One representative hub-era key: all removed keys share the generic
-    // unknown fallthrough, so pinning one guards the loud-fail contract.
+fn unknown_command_keys_fail_loud() {
+    // The generic unknown fallthrough guards the fail-loud contract: a
+    // tampered client never no-ops silently. Any never-issued key covers
+    // it; no removed screen is pinned here.
     let (mut snapshot, _) = test_payload();
     let command_json = serde_json::to_string(&WireCommand {
-        key: "controls.gamepads.deadzone".to_string(),
+        key: "controls.never_issued".to_string(),
         index: 0,
         number: 0,
         op: WireOp::Set,
@@ -3202,9 +3203,27 @@ fn removed_gamepad_hub_keys_fail_as_unknown() {
                 pad_order: &[],
             },
         )
-        .expect_err("removed hub key fails loud instead of no-op");
+        .expect_err("unknown key fails loud instead of no-op");
         assert!(error.contains("unknown"), "fails as unknown: {error}");
     });
+}
+
+#[test]
+fn stateless_hub_reset_is_a_noop() {
+    // Navigation-only screens (controllers hub, player/type pickers) carry
+    // no editable state: resetting them succeeds while changing nothing,
+    // exactly like the old per-row replay that skipped their rows.
+    let (mut snapshot, _) = test_payload();
+    let pristine = snapshot.clone();
+    reset_screen(&mut snapshot, &[], "reset.controllers");
+    assert_eq!(
+        snapshot.local.touch_overlay, pristine.local.touch_overlay,
+        "hub reset touches no overlay state"
+    );
+    assert_eq!(
+        snapshot.app_state.port_devices, pristine.app_state.port_devices,
+        "hub reset touches no device state"
+    );
 }
 
 #[test]

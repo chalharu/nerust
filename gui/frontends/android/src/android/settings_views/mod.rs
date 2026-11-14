@@ -6,13 +6,16 @@
 //! returning: no resident editor crosses the JNI boundary, so the `!Send`
 //! editor never leaves its calling thread.
 //!
-//! Onion: transport lives in `wire`, projection in `projection`, edits in
-//! `commands`, capture in `capture`. Kotlin only renders sections/rows and
-//! echoes `(key, index, number)` commands back.
+//! Onion: transport lives in `wire`, projection in `projection`
+//! (+`pads`, `devices`), edits in `commands`, capture in `capture`.
+//! Kotlin only renders sections/rows and echoes `(key, index, number)`
+//! commands back.
 
 mod capture;
 mod commands;
+mod devices;
 mod keycode;
+mod pads;
 mod projection;
 mod wire;
 
@@ -36,8 +39,8 @@ pub(crate) use commands::{CommandVault, apply_command_to, finish_snapshot};
 pub(crate) use keycode::{android_keycode_to_button, winit_key_to_key};
 #[cfg(target_os = "android")]
 pub(crate) use wire::{
-    CaptureSlot, GamepadInfo, KeyboardInfo, ViewPayload, app_language_tag, install_vm_deps,
-    projection, resolve_display, sort_gamepads_by_order,
+    CaptureSlot, GamepadInfo, KeyboardInfo, Projection, ViewPayload, app_language_tag,
+    install_vm_deps, resolve_display, sort_gamepads_by_order,
 };
 
 #[cfg(test)]
@@ -59,7 +62,12 @@ pub(super) fn open_payload(
 ) -> Result<ViewPayload, String> {
     with_vm_deps(|deps| {
         let i18n = resolve_display(snapshot.shared.general.language, system_locale);
-        let truth = wire::projection(keyboards, touch_capable, gamepads, i18n);
+        let truth = wire::Projection {
+            keyboards,
+            touch_capable,
+            gamepads,
+            i18n,
+        };
         let capture: CaptureSlot = None;
         project_fresh(snapshot, deps, &capture, truth)
     })

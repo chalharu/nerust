@@ -341,21 +341,6 @@ pub(crate) struct Projection<'a> {
     pub i18n: I18n,
 }
 
-/// Single construction site: every command arm and test projects alike.
-pub(crate) fn projection<'a>(
-    keyboards: &'a [KeyboardInfo],
-    touch_capable: Option<bool>,
-    gamepads: &'a [GamepadInfo],
-    i18n: I18n,
-) -> Projection<'a> {
-    Projection {
-        keyboards,
-        touch_capable,
-        gamepads,
-        i18n,
-    }
-}
-
 /// Display copies concretize SystemDefault, so a resolved language readback
 /// is ambiguous: restore the draft choice when the value matches the
 /// resolved locale (untouched), keeping a genuine explicit change.

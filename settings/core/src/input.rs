@@ -17,6 +17,19 @@ pub fn member_is_gamepad(member: &str) -> bool {
     member.starts_with(GAMEPAD_MEMBER_PREFIX)
 }
 
+/// Player-port index for one slot id. Every factory names player slots
+/// `<system>.attachment.playerN` (player 2 exists on NES only); unparseable
+/// ids fail open (`None`) so a factory addition never silently drops rows.
+pub fn slot_port_index(slot_id: &str) -> Option<usize> {
+    if slot_id.ends_with("player2") {
+        Some(1)
+    } else if slot_id.ends_with("player1") {
+        Some(0)
+    } else {
+        None
+    }
+}
+
 /// Exclusive members (gamepads) appearing in more than one port.
 /// Returns one entry per offending member: (member, ports).
 pub fn exclusive_member_conflicts(ports: &PortDeviceSets) -> Vec<(String, Vec<String>)> {
@@ -69,7 +82,16 @@ mod tests {
 
     use nerust_input_traits::{AttachmentId, ControllerProfile, PortSet, ProfileId};
 
-    use super::clear_multi_port_conflicts;
+    use super::{clear_multi_port_conflicts, slot_port_index};
+
+    #[test]
+    fn slot_port_index_reads_player_suffix() {
+        assert_eq!(slot_port_index("nes.attachment.player1"), Some(0));
+        assert_eq!(slot_port_index("nes.attachment.player2"), Some(1));
+        assert_eq!(slot_port_index("nes.attachment.player3"), None);
+        assert_eq!(slot_port_index("player1"), Some(0));
+        assert_eq!(slot_port_index("unrelated"), None);
+    }
 
     #[derive(Debug)]
     struct SinglePortProfile;

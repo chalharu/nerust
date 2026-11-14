@@ -133,10 +133,10 @@ enum BridgeEventV1 {
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MenuEvent {
-    #[serde(deserialize_with = "de_integral_u32")]
+    #[serde(deserialize_with = "de_integral")]
     v: u32,
     action: String,
-    #[serde(default, deserialize_with = "de_opt_i32")]
+    #[serde(default, deserialize_with = "de_opt_integral")]
     device_id: Option<i32>,
     #[serde(default, deserialize_with = "de_opt_null_reject")]
     key: Option<String>,
@@ -156,7 +156,7 @@ struct MenuEvent {
     trigger_l: Option<f32>,
     #[serde(default, deserialize_with = "de_opt_null_reject")]
     trigger_r: Option<f32>,
-    #[serde(default, deserialize_with = "de_opt_i64")]
+    #[serde(default, deserialize_with = "de_opt_integral")]
     slot_id: Option<i64>,
 }
 
@@ -164,7 +164,7 @@ struct MenuEvent {
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ErrorDialogDismissedEvent {
-    #[serde(deserialize_with = "de_integral_u32")]
+    #[serde(deserialize_with = "de_integral")]
     v: u32,
     #[serde(deserialize_with = "de_request_id")]
     request_id: crate::error_dialog_controller::DialogRequestId,
@@ -173,32 +173,54 @@ struct ErrorDialogDismissedEvent {
 /// Flexible integral decoding: JSON Schema integers include integral
 /// floats (`1.0`), which plain `u32`/`i32` rejects. Accepts i64/u64/f64
 /// with zero fraction and range-checks into the target.
-fn de_integral_u32<'de, D>(deserializer: D) -> Result<u32, D::Error>
+/// Integral decoding with float tolerance: JSON numbers arrive as i64,
+/// u64, or f64; whole floats in range narrow into the target. One generic
+/// covers every integral field (required and optional share it below), so
+/// a new bound needs no new visitor. Whole-float rule is exactness
+/// through i64/u64 (f64 precision stops at 2^53): stricter than a
+/// saturating cast at the extremes, identical for every pinned probe.
+fn de_integral<'de, D, T>(deserializer: D) -> Result<T, D::Error>
 where
     D: serde::Deserializer<'de>,
+    T: TryFrom<i64> + TryFrom<u64>,
+    <T as TryFrom<i64>>::Error: std::fmt::Debug,
+    <T as TryFrom<u64>>::Error: std::fmt::Debug,
 {
     use serde::de::{Error, Unexpected, Visitor};
-    struct V;
-    impl Visitor<'_> for V {
-        type Value = u32;
+    struct V<T>(std::marker::PhantomData<T>);
+    impl<'de, T> Visitor<'de> for V<T>
+    where
+        T: TryFrom<i64> + TryFrom<u64>,
+        <T as TryFrom<i64>>::Error: std::fmt::Debug,
+        <T as TryFrom<u64>>::Error: std::fmt::Debug,
+    {
+        type Value = T;
         fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-            f.write_str("an integral u32")
+            f.write_str("an integral number")
         }
-        fn visit_i64<E: Error>(self, v: i64) -> Result<u32, E> {
-            u32::try_from(v).map_err(|_| Error::invalid_value(Unexpected::Signed(v), &self))
+        fn visit_i64<E: Error>(self, v: i64) -> Result<T, E> {
+            T::try_from(v).map_err(|_| Error::invalid_value(Unexpected::Signed(v), &self))
         }
-        fn visit_u64<E: Error>(self, v: u64) -> Result<u32, E> {
-            u32::try_from(v).map_err(|_| Error::invalid_value(Unexpected::Unsigned(v), &self))
+        fn visit_u64<E: Error>(self, v: u64) -> Result<T, E> {
+            T::try_from(v).map_err(|_| Error::invalid_value(Unexpected::Unsigned(v), &self))
         }
-        fn visit_f64<E: Error>(self, v: f64) -> Result<u32, E> {
-            if v.fract() == 0.0 && (0.0..=u32::MAX as f64).contains(&v) {
-                Ok(v as u32)
-            } else {
-                Err(Error::invalid_value(Unexpected::Float(v), &self))
+        fn visit_f64<E: Error>(self, v: f64) -> Result<T, E> {
+            if v.fract() == 0.0 && (i64::MIN as f64..=i64::MAX as f64).contains(&v) {
+                let as_i64 = v as i64;
+                if (as_i64 as f64) == v {
+                    return T::try_from(as_i64)
+                        .map_err(|_| Error::invalid_value(Unexpected::Float(v), &self));
+                }
+                let as_u64 = v as u64;
+                if (as_u64 as f64) == v {
+                    return T::try_from(as_u64)
+                        .map_err(|_| Error::invalid_value(Unexpected::Float(v), &self));
+                }
             }
+            Err(Error::invalid_value(Unexpected::Float(v), &self))
         }
     }
-    deserializer.deserialize_any(V)
+    deserializer.deserialize_any(V(std::marker::PhantomData))
 }
 
 /// Optional passthrough that rejects explicit JSON null: missing rides
@@ -217,138 +239,39 @@ where
 /// `default`/`None`; present numbers range-check into the target.
 /// Explicit JSON null never means missing (the schema has no nullable
 /// fields), so it fails instead of decoding as absent.
-fn de_opt_i32<'de, D>(deserializer: D) -> Result<Option<i32>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    use serde::de::{Error, Unexpected, Visitor};
-    struct V;
-    impl<'de> Visitor<'de> for V {
-        type Value = Option<i32>;
-        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-            f.write_str("an optional integral i32")
-        }
-        fn visit_none<E: Error>(self) -> Result<Option<i32>, E> {
-            Err(Error::invalid_type(Unexpected::Unit, &self))
-        }
-        fn visit_unit<E: Error>(self) -> Result<Option<i32>, E> {
-            Err(Error::invalid_type(Unexpected::Unit, &self))
-        }
-        fn visit_some<D2>(self, deserializer: D2) -> Result<Option<i32>, D2::Error>
-        where
-            D2: serde::Deserializer<'de>,
-        {
-            de_integral_inner(deserializer).map(Some)
-        }
-        fn visit_i64<E: Error>(self, v: i64) -> Result<Option<i32>, E> {
-            i32::try_from(v)
-                .map(Some)
-                .map_err(|_| Error::invalid_value(Unexpected::Signed(v), &self))
-        }
-        fn visit_u64<E: Error>(self, v: u64) -> Result<Option<i32>, E> {
-            i32::try_from(v)
-                .map(Some)
-                .map_err(|_| Error::invalid_value(Unexpected::Unsigned(v), &self))
-        }
-        fn visit_f64<E: Error>(self, v: f64) -> Result<Option<i32>, E> {
-            if v.fract() == 0.0 && (i32::MIN as f64..=(i32::MAX as f64)).contains(&v) {
-                Ok(Some(v as i32))
-            } else {
-                Err(Error::invalid_value(Unexpected::Float(v), &self))
-            }
-        }
-    }
-    deserializer.deserialize_option(V)
-}
-
-/// Optional integral i64 twin for slot ids: explicit null fails like
-/// every other present-but-typeless JSON value.
-fn de_opt_i64<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    use serde::de::{Error, Unexpected, Visitor};
-    struct V;
-    impl<'de> Visitor<'de> for V {
-        type Value = Option<i64>;
-        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-            f.write_str("an optional integral i64")
-        }
-        fn visit_none<E: Error>(self) -> Result<Option<i64>, E> {
-            Err(Error::invalid_type(Unexpected::Unit, &self))
-        }
-        fn visit_unit<E: Error>(self) -> Result<Option<i64>, E> {
-            Err(Error::invalid_type(Unexpected::Unit, &self))
-        }
-        fn visit_some<D2>(self, deserializer: D2) -> Result<Option<i64>, D2::Error>
-        where
-            D2: serde::Deserializer<'de>,
-        {
-            de_integral_inner(deserializer).map(Some)
-        }
-        fn visit_i64<E: Error>(self, v: i64) -> Result<Option<i64>, E> {
-            Ok(Some(v))
-        }
-        fn visit_u64<E: Error>(self, v: u64) -> Result<Option<i64>, E> {
-            i64::try_from(v)
-                .map(Some)
-                .map_err(|_| Error::invalid_value(Unexpected::Unsigned(v), &self))
-        }
-        fn visit_f64<E: Error>(self, v: f64) -> Result<Option<i64>, E> {
-            if v.fract() == 0.0 && (i64::MIN as f64..=i64::MAX as f64).contains(&v) {
-                Ok(Some(v as i64))
-            } else {
-                Err(Error::invalid_value(Unexpected::Float(v), &self))
-            }
-        }
-    }
-    deserializer.deserialize_option(V)
-}
-
-/// Shared inner for the `visit_some` path: present numbers only.
-fn de_integral_inner<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+fn de_opt_integral<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
 where
     D: serde::Deserializer<'de>,
     T: TryFrom<i64> + TryFrom<u64>,
     <T as TryFrom<i64>>::Error: std::fmt::Debug,
     <T as TryFrom<u64>>::Error: std::fmt::Debug,
 {
-    use serde::Deserialize as _;
-    use serde::de::{Error, Unexpected};
-    let value = serde_json::Value::deserialize(deserializer)?;
-    if let Some(v) = value.as_i64() {
-        return T::try_from(v)
-            .map_err(|_| Error::invalid_value(Unexpected::Signed(v), &"integral target range"));
+    use serde::de::{Error, Unexpected, Visitor};
+    struct V<T>(std::marker::PhantomData<T>);
+    impl<'de, T> Visitor<'de> for V<T>
+    where
+        T: TryFrom<i64> + TryFrom<u64>,
+        <T as TryFrom<i64>>::Error: std::fmt::Debug,
+        <T as TryFrom<u64>>::Error: std::fmt::Debug,
+    {
+        type Value = Option<T>;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("an optional integral number")
+        }
+        fn visit_none<E: Error>(self) -> Result<Option<T>, E> {
+            Err(Error::invalid_type(Unexpected::Unit, &self))
+        }
+        fn visit_unit<E: Error>(self) -> Result<Option<T>, E> {
+            Err(Error::invalid_type(Unexpected::Unit, &self))
+        }
+        fn visit_some<D2>(self, deserializer: D2) -> Result<Option<T>, D2::Error>
+        where
+            D2: serde::Deserializer<'de>,
+        {
+            de_integral(deserializer).map(Some)
+        }
     }
-    if let Some(v) = value.as_u64() {
-        return T::try_from(v)
-            .map_err(|_| Error::invalid_value(Unexpected::Unsigned(v), &"integral target range"));
-    }
-    let v = value.as_f64().ok_or_else(|| {
-        Error::invalid_value(Unexpected::Other("non-numeric"), &"integral number")
-    })?;
-    if v.fract() != 0.0 {
-        return Err(Error::invalid_value(
-            Unexpected::Float(v),
-            &"integral number",
-        ));
-    }
-    // Range-check through i64/u64 before narrowing: f64 precision stops
-    // at 2^53, so values past i64::MAX cannot round-trip exactly.
-    if !(i64::MIN as f64..=i64::MAX as f64).contains(&v) {
-        return Err(Error::invalid_value(
-            Unexpected::Float(v),
-            &"integral target range",
-        ));
-    }
-    let as_i64 = v as i64;
-    if (as_i64 as f64) == v {
-        return T::try_from(as_i64)
-            .map_err(|_| Error::invalid_value(Unexpected::Float(v), &"integral target range"));
-    }
-    let as_u64 = v as u64;
-    T::try_from(as_u64)
-        .map_err(|_| Error::invalid_value(Unexpected::Float(v), &"integral target range"))
+    deserializer.deserialize_option(V(std::marker::PhantomData))
 }
 
 /// Dialog request id with the same integral-float tolerance (syntax
@@ -359,39 +282,7 @@ fn de_request_id<'de, D>(
 where
     D: serde::Deserializer<'de>,
 {
-    use serde::de::{Error, Unexpected, Visitor};
-    struct V;
-    impl Visitor<'_> for V {
-        type Value = crate::error_dialog_controller::DialogRequestId;
-        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-            f.write_str("an integral request id")
-        }
-        fn visit_i64<E: Error>(
-            self,
-            v: i64,
-        ) -> Result<crate::error_dialog_controller::DialogRequestId, E> {
-            u64::try_from(v)
-                .map(crate::error_dialog_controller::DialogRequestId)
-                .map_err(|_| Error::invalid_value(Unexpected::Signed(v), &self))
-        }
-        fn visit_u64<E: Error>(
-            self,
-            v: u64,
-        ) -> Result<crate::error_dialog_controller::DialogRequestId, E> {
-            Ok(crate::error_dialog_controller::DialogRequestId(v))
-        }
-        fn visit_f64<E: Error>(
-            self,
-            v: f64,
-        ) -> Result<crate::error_dialog_controller::DialogRequestId, E> {
-            if v.fract() == 0.0 && (0.0..=u64::MAX as f64).contains(&v) {
-                Ok(crate::error_dialog_controller::DialogRequestId(v as u64))
-            } else {
-                Err(Error::invalid_value(Unexpected::Float(v), &self))
-            }
-        }
-    }
-    deserializer.deserialize_any(V)
+    de_integral(deserializer).map(crate::error_dialog_controller::DialogRequestId)
 }
 
 /// Schema-driven shape checks on one parsed menu event: required fields
