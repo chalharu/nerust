@@ -3500,7 +3500,7 @@ fn double_mapping_surfaces_issue_in_the_capture_payload() {
 }
 
 #[test]
-fn pad_capture_prompt_names_capturable_buttons() {
+fn pad_capture_prompt_stays_minimal() {
     let (mut snapshot, _) = test_payload();
     let pads = two_pads();
     let payload = pad_payload(&snapshot, &pads);
@@ -3509,8 +3509,11 @@ fn pad_capture_prompt_names_capturable_buttons() {
     set_with_pads_capture(&mut snapshot, &pads, &mut capture, &key);
     let (_, prompt) = capture.expect("capture pending");
     assert!(
-        prompt.contains("LT") || prompt.contains("トリガー") || prompt.contains("trigger"),
-        "pad rows name the capturable buttons: {prompt}"
+        !prompt.contains("LT")
+            && !prompt.contains("trigger")
+            && !prompt.contains("トリガー")
+            && !prompt.contains("半押し"),
+        "pad prompt stays minimal: {prompt}"
     );
 }
 

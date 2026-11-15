@@ -428,10 +428,7 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
             "重複したキー割り当てを解消してください。",
         ),
         UiText::CapturePrompt => ("Press a key…", "キーを押してください…"),
-        UiText::CapturePromptPad => (
-            "Press a pad button. Squeeze an analog trigger slowly: half-press captures, full-press plays.",
-            "パッドのボタンを押してください。アナログトリガーはゆっくり半押しで割当、全押しはプレイ用です",
-        ),
+        UiText::CapturePromptPad => ("Press a pad button…", "パッドのボタンを押してください…"),
         UiText::CapturePromptDpadOnly => (
             "No keyboard connected. Only the dpad binds here.",
             "キーボード未接続。十字キーのみ割り当て可能。",
