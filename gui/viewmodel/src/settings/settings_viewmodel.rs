@@ -16,7 +16,6 @@ use super::{
     gamepad::GamepadViewModel,
     general::GeneralSettingsViewModel,
     input::InputSettingsViewModel,
-    labels::pad_button_plain,
     notification::NotificationSettingsViewModel,
     property::ReadOnlyObservableProperty,
     shortcuts::ShortcutsViewModel,
@@ -342,7 +341,7 @@ fn validate_pad_shortcuts(state: &super::EditorState, issues: &mut Vec<super::Va
         issues.push(super::ValidationIssue {
             scope: super::ValidationScope::Controllers,
             kind: super::ValidationIssueKind::PadConflict {
-                button: pad_button_plain(button).to_string(),
+                button,
                 labels: names.join(", "),
             },
         });
@@ -369,7 +368,7 @@ fn validate_pad_game_bindings(
                 issues.push(super::ValidationIssue {
                     scope: super::ValidationScope::Controllers,
                     kind: super::ValidationIssueKind::PadConflict {
-                        button: pad_button_plain(button).to_string(),
+                        button,
                         labels: format!("{}: {}", system, names.join(", ")),
                     },
                 });
@@ -529,7 +528,7 @@ mod tests {
             err.issues.iter().any(|issue| matches!(
                 &issue.kind,
                 crate::settings::ValidationIssueKind::PadConflict { button, .. }
-                if button == "Guide"
+                if *button == nerust_input_traits::StandardButton::Guide
             )),
             "shared Guide binding must block with a pad conflict, got {:?}",
             err.issues

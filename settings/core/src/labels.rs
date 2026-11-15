@@ -1,18 +1,16 @@
 //! Display composition for ports, slots, and pad buttons.
 //!
 //! The settings core owns the locale string table; composition that names
-//! HID topology (ports, slots, pad caps) lives here, next to the DTOs it
-//! renders. Frontends call these instead of formatting core-side.
+//! HID topology (ports, slots, pad caps) lives here so viewmodels and
+//! frontends format through one home instead of each owning a copy.
 
 use nerust_input_traits::StandardButton;
-use nerust_settings_core::i18n::{I18n, UiText};
-use nerust_settings_core::model::language::AppLanguage;
 
-/// Display text for one pad button in mapping rows: cap print plus a
-/// plain position for the four face buttons (`A (bottom)`), cap alone
-/// elsewhere. Caps follow the dominant print and the Android `BUTTON_*`
-/// names; the position word keeps Nintendo-layout pads interpretable
-/// without per-vendor branches.
+use crate::{
+    i18n::{I18n, UiText},
+    model::language::AppLanguage,
+};
+
 /// Plain cap print for one pad button: the single home for the
 /// position-to-glyph table. Positions are the binding identity
 /// (vendors transpose caps); this table only names what is printed.
@@ -96,8 +94,6 @@ pub fn slot_in_use(i18n: I18n, owner: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nerust_settings_core::i18n::I18n;
-    use nerust_settings_core::model::language::AppLanguage;
 
     fn en() -> I18n {
         I18n::new(AppLanguage::English)

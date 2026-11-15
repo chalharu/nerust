@@ -806,7 +806,7 @@ fn shortcut_binding_text(
 ) -> String {
     let label = if pad {
         nerust_settings_core::editor::current_pad_binding(snapshot, target)
-            .map(|button| nerust_gui_viewmodel::settings::labels::pad_button_label(i18n, button))
+            .map(|button| nerust_settings_core::labels::pad_button_label(i18n, button))
     } else {
         nerust_settings_core::editor::current_binding_key(snapshot, target)
             .map(|key| key.label().to_string())
@@ -919,7 +919,7 @@ fn slot_rows(view: &nerust_gui_viewmodel::settings::dto::InputTabView, i18n: I18
             let mut row = choice_row(
                 &format!("system.{}.slot.{}", view.system_id, slot.slot_id.as_str()),
                 label,
-                nerust_gui_viewmodel::settings::labels::slot_description(i18n),
+                nerust_settings_core::labels::slot_description(i18n),
                 &slot
                     .choices
                     .iter()
@@ -954,9 +954,7 @@ fn slot_rows(view: &nerust_gui_viewmodel::settings::dto::InputTabView, i18n: I18
                 let covered = covering_owner.as_ref().filter(|_| choice.value.is_some());
                 wire.enabled = covered.is_none();
                 wire.reason = covered
-                    .map(|owner| {
-                        nerust_gui_viewmodel::settings::labels::slot_in_use(i18n, owner.as_str())
-                    })
+                    .map(|owner| nerust_settings_core::labels::slot_in_use(i18n, owner.as_str()))
                     .unwrap_or_default();
             }
             row

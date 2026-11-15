@@ -1,5 +1,5 @@
-use super::labels::pad_label;
 use nerust_settings_core::i18n::UiText;
+use nerust_settings_core::labels::pad_label;
 use nerust_settings_core::model::input::{DEADZONE_MAX_PERCENT, DEADZONE_STEPS};
 
 use super::{

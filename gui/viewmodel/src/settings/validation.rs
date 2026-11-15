@@ -66,11 +66,13 @@ pub enum ValidationIssueKind {
         key: String,
         labels: String,
     },
-    /// Duplicate physical pad button: button label plus the joined
+    /// Duplicate physical pad button: button plus the joined
     /// shortcut labels. Same shape as [`ValidationIssueKind::KeyConflict`],
-    /// but global (shortcuts are not per-system).
+    /// but global (shortcuts are not per-system). The button rides
+    /// structured so frontends format through the core label table
+    /// instead of the validator naming glyphs.
     PadConflict {
-        button: String,
+        button: nerust_input_traits::StandardButton,
         labels: String,
     },
     ExclusiveMember {
@@ -102,7 +104,12 @@ impl ValidationIssueKind {
             }
             Self::Placement { system, detail } => format!("{system}: {detail}"),
             Self::KeyConflict { key, labels } => format!("{key}: {labels}"),
-            Self::PadConflict { button, labels } => format!("{button}: {labels}"),
+            Self::PadConflict { button, labels } => {
+                format!(
+                    "{}: {labels}",
+                    nerust_settings_core::labels::pad_button_plain(*button)
+                )
+            }
             Self::ExclusiveMember { member, ports } => {
                 core_i18n::exclusive_member(lang, member, ports)
             }

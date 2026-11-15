@@ -19,7 +19,7 @@ use super::wire::{
     GamepadInfo, I18n, NumberParams, PLAYER_PORTS, RowWire, SectionWire, button_row, capture_row,
     encode_target, header_row, info_row, live_for_rank, number_row, player_label, toggle_row,
 };
-use nerust_gui_viewmodel::settings::labels::pad_label;
+use nerust_settings_core::labels::pad_label;
 
 /// Per-pad settings screens: one `pad.<n>` screen per stable settings
 /// rank, with its own deadzone, hat switch, and per-system button mapping.

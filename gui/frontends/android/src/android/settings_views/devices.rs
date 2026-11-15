@@ -46,7 +46,7 @@ pub(super) fn build_player_sections(
                         String::new(),
                         &devices_id,
                     );
-                    row.text = nerust_gui_viewmodel::settings::labels::port_summary(i18n, &names);
+                    row.text = nerust_settings_core::labels::port_summary(i18n, &names);
                     row
                 },
                 group_row(

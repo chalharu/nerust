@@ -220,11 +220,11 @@ pub(super) fn binding_value(
         match (current_binding_label(&state.draft, target), pad) {
             (Some(key), Some(pad)) => BindingValueView::Bound(format!(
                 "{key} / {}",
-                super::labels::pad_button_label(i18n, pad)
+                nerust_settings_core::labels::pad_button_label(i18n, pad)
             )),
             (Some(key), None) => BindingValueView::Bound(key.to_string()),
             (None, Some(pad)) => {
-                BindingValueView::Bound(super::labels::pad_button_label(i18n, pad))
+                BindingValueView::Bound(nerust_settings_core::labels::pad_button_label(i18n, pad))
             }
             (None, None) => BindingValueView::Unbound(i18n.text(UiText::Unbound)),
         }
@@ -244,7 +244,9 @@ pub fn pad_binding_value(
         BindingValueView::Capturing(i18n.text(UiText::CapturePrompt))
     } else {
         match current_pad_game_binding(&state.draft, target).or(default) {
-            Some(button) => BindingValueView::Bound(super::labels::pad_button_label(i18n, button)),
+            Some(button) => BindingValueView::Bound(
+                nerust_settings_core::labels::pad_button_label(i18n, button),
+            ),
             None => BindingValueView::Unbound(i18n.text(UiText::Unbound)),
         }
     }
