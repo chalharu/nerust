@@ -193,7 +193,7 @@ pub(super) fn port_member_names(
 }
 
 /// Reserved slot holding a disconnected pad: restores on reconnect, so
-/// the radio ("no pad for this player") never lies about it. Shared by
+/// the radio ("no pad assigned") never lies about it. Shared by
 /// the empty and connected branches below.
 fn stale_slot(port_index: Option<usize>, snapshot: &SettingsSnapshot) -> Option<usize> {
     port_index.and_then(|port_index| {
