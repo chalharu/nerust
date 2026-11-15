@@ -280,6 +280,20 @@ pub extern "system" fn Java_io_github_chalharu_nerust_SettingsActivity_nativeHar
     hardware_key(&mut env, keycode, pad, pressed)
 }
 
+/// Motion capture for analog-only triggers: Kotlin forwards
+/// `AXIS_LTRIGGER`/`AXIS_RTRIGGER` while a capture is pending (key-only
+/// pads never reach here). Same envelope as the key path.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_io_github_chalharu_nerust_SettingsActivity_nativeMotionCapture(
+    mut env: jni::EnvUnowned<'_>,
+    _activity: JObject<'_>,
+    pad: JString<'_>,
+    trigger_l: jni::sys::jfloat,
+    trigger_r: jni::sys::jfloat,
+) -> jni::sys::jstring {
+    motion_capture(&mut env, pad, trigger_l, trigger_r)
+}
+
 /// Fail envelope: every JNI error tail shares one shape.
 fn err_json(error: impl std::fmt::Display) -> String {
     serde_json::json!({"ok": false, "error": error.to_string()}).to_string()
@@ -385,6 +399,77 @@ fn hardware_key(
         _ => std::ptr::null_mut(),
     }
 }
+/// Single envelope for trigger-motion capture: same shape as the key
+/// path (consumed presses carry the refreshed payload), so Kotlin
+/// handles both entries through one response parser.
+fn motion_capture(
+    env: &mut jni::EnvUnowned<'_>,
+    pad: JString<'_>,
+    trigger_l: jni::sys::jfloat,
+    trigger_r: jni::sys::jfloat,
+) -> jni::sys::jstring {
+    let parsed = bridge::with_callback_env(
+        &mut *env,
+        |env| -> jni::errors::Result<(Option<String>, f32, f32)> {
+            let descriptor = if pad.is_null() {
+                None
+            } else {
+                let raw = pad.try_to_string(env)?;
+                if raw.is_empty() { None } else { Some(raw) }
+            };
+            Ok((descriptor, trigger_l, trigger_r))
+        },
+    );
+    let out = match parsed {
+        jni::Outcome::Ok((descriptor, trigger_l, trigger_r)) => {
+            let applied = bridge::with_settings(|state| {
+                let Some(draft) = state.draft.as_mut() else {
+                    return Err("no settings draft".to_string());
+                };
+                if state.capture.is_none() {
+                    return Ok((None, false));
+                }
+                settings_views::apply_motion_capture(
+                    trigger_l,
+                    trigger_r,
+                    descriptor.as_deref(),
+                    draft,
+                    &mut state.capture,
+                    settings_views::Projection {
+                        keyboards: &state.keyboards,
+                        touch_capable: state.touch_capable,
+                        gamepads: &state.gamepads,
+                        pad_order: &state.pad_order,
+                        i18n: settings_views::resolve_display(
+                            draft.shared.general.language,
+                            state.system_locale,
+                        ),
+                    },
+                )
+            });
+            let dirty = bridge::with_settings(|state| state.draft != state.pristine);
+            match applied {
+                Ok((payload, consumed)) => {
+                    if payload.is_some() || consumed {
+                        envelope(payload.as_ref(), Some(consumed), dirty).unwrap_or_else(err_json)
+                    } else {
+                        serde_json::json!({"ok": true, "consumed": false, "dirty": dirty})
+                            .to_string()
+                    }
+                }
+                Err(error) => err_json(error),
+            }
+        }
+        _ => err_json("jni decode failed"),
+    };
+    match bridge::with_callback_env(&mut *env, |env| -> jni::errors::Result<jni::sys::jstring> {
+        Ok(env.new_string(out)?.into_raw())
+    }) {
+        jni::Outcome::Ok(ptr) => ptr,
+        _ => std::ptr::null_mut(),
+    }
+}
+
 /// Synchronous settings command: one edit in, refreshed payload
 /// (or `{"ok":false,"error"}`) out. The draft lives in the bridge vault;
 /// the view model lives only for this call, so any calling thread is safe.

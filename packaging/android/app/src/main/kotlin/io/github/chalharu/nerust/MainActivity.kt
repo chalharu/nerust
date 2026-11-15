@@ -281,6 +281,10 @@ class MainActivity :
             KeyEvent.KEYCODE_BUTTON_MODE -> ControllerKey.GUIDE
             KeyEvent.KEYCODE_BUTTON_THUMBL -> ControllerKey.L3
             KeyEvent.KEYCODE_BUTTON_THUMBR -> ControllerKey.R3
+            // Capture/share/create (Switch capture, Xbox share, PS create):
+            // one position button like the rest, so capture, gameplay
+            // overrides, and shortcuts all resolve through the same path.
+            KeyEvent.KEYCODE_BUTTON_C -> ControllerKey.CAPTURE
             KeyEvent.KEYCODE_BUTTON_START -> ControllerKey.START
             KeyEvent.KEYCODE_BUTTON_SELECT -> ControllerKey.SELECT
             KeyEvent.KEYCODE_DPAD_UP -> ControllerKey.UP

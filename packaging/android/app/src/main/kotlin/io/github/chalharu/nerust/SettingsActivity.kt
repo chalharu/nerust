@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.util.Log
 import android.view.InputDevice
 import android.view.KeyEvent
+import android.view.MotionEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.compose.ui.platform.ComposeView
@@ -41,6 +42,12 @@ class SettingsActivity :
     /** Last pushed scan: identical hotplug/resume bursts skip the JNI push. */
     @Volatile
     private var lastDeviceTruth: DeviceTruth? = null
+
+    /** Last trigger values per device for capture edge detection: a held
+     * trigger must not capture the instant its row opens; only a
+     * below → at/above crossing forwards. Main thread only (dispatch),
+     * so no synchronization is needed. */
+    private val captureTriggerLast = mutableMapOf<Int, Pair<Float, Float>>()
 
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(AppLocale.wrap(newBase))
@@ -262,6 +269,30 @@ class SettingsActivity :
             super.dispatchKeyEvent(event)
     }
 
+    override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+        // Analog-only triggers (ZL/ZR on pads that send no key event)
+        // can only land through motion: forward the press edge while a
+        // capture is pending. Edge-detected per device (below → at/above
+        // the press level), so a held trigger does not capture the
+        // instant its row opens, and one squeeze captures exactly once.
+        if (navActions?.isCapturing == true &&
+            event.source and InputDevice.SOURCE_CLASS_JOYSTICK == InputDevice.SOURCE_CLASS_JOYSTICK
+        ) {
+            val triggerL = event.getAxisValue(MotionEvent.AXIS_LTRIGGER)
+            val triggerR = event.getAxisValue(MotionEvent.AXIS_RTRIGGER)
+            val last = captureTriggerLast[event.deviceId] ?: (0f to 0f)
+            captureTriggerLast[event.deviceId] = triggerL to triggerR
+            val crossed =
+                (triggerL >= TRIGGER_CAPTURE_PRESS && last.first < TRIGGER_CAPTURE_PRESS) ||
+                    (triggerR >= TRIGGER_CAPTURE_PRESS && last.second < TRIGGER_CAPTURE_PRESS)
+            if (crossed) {
+                val padDescriptor = InputDevice.getDevice(event.deviceId)?.descriptor
+                if (routeSettingsMotionEvent(padDescriptor, triggerL, triggerR)) return true
+            }
+        }
+        return super.onGenericMotionEvent(event)
+    }
+
     /** Back resolves capture → navigate up → discard confirm → dismiss. */
     internal fun handleSettingsBack(): Boolean {
         val nav = navActions
@@ -324,6 +355,38 @@ class SettingsActivity :
         return false
     }
 
+    /** Route a trigger-motion edge to Rust while a binding capture is
+     * pending. True only when Rust consumed the edge as a binding; stale
+     * or below-threshold motion falls through like unmapped keys. */
+    private fun routeSettingsMotionEvent(
+        padDescriptor: String?,
+        triggerL: Float,
+        triggerR: Float,
+    ): Boolean {
+        val nav = navActions ?: return false
+        if (!nav.isCapturing) return false
+        val raw =
+            try {
+                nativeMotionCapture(padDescriptor, triggerL, triggerR)
+            } catch (e: Exception) {
+                Log.e(TAG, "nativeMotionCapture failed", e)
+                null
+            }
+        val doc =
+            raw?.let {
+                try {
+                    JSONObject(it)
+                } catch (e: JSONException) {
+                    null
+                }
+            }
+        if (doc != null && doc.optBoolean("consumed", false)) {
+            nav.applyPayload(doc.toString())
+            return true
+        }
+        return false
+    }
+
     internal fun dismissWithResult(dismissed: Boolean) {
         sendResult(dismissed)
         finish()
@@ -361,8 +424,19 @@ class SettingsActivity :
         pressed: Boolean,
     ): String?
 
+    private external fun nativeMotionCapture(
+        padDescriptor: String?,
+        triggerL: Float,
+        triggerR: Float,
+    ): String?
+
     companion object {
         private const val TAG = "SettingsActivity"
+
+        /** Trigger press level for motion capture: a deliberate half-press.
+         * Mirrors the Rust `MOTION_CAPTURE_PRESS` (the gameplay fire level
+         * is higher at 0.9); the two agree by value, not by wire. */
+        private const val TRIGGER_CAPTURE_PRESS = 0.5f
 
         @Volatile
         private var activeActivityForTest: SettingsActivity? = null

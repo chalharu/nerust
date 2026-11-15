@@ -19,6 +19,12 @@ pub enum StandardButton {
     Back,
     Guide,
     Start,
+    /// Capture/share/create: the screenshot button vendors add beside
+    /// Start (Switch capture, Xbox share, PS create all arrive as
+    /// `KEYCODE_BUTTON_C`). No console counterpart (like stick clicks),
+    /// so it stays abstract-free and serves shortcuts plus per-pad
+    /// overrides only.
+    Capture,
     LeftStick,
     RightStick,
     LeftShoulder,
@@ -165,7 +171,7 @@ mod tests {
     #[test]
     fn every_button_has_a_label_and_count_matches() {
         let buttons: Vec<StandardButton> = StandardButton::iter().collect();
-        assert_eq!(buttons.len(), BUTTON_ABSTRACT.len() + 2);
+        assert_eq!(buttons.len(), BUTTON_ABSTRACT.len() + 3);
         let axes: Vec<GamepadAxis> = GamepadAxis::iter().collect();
         assert_eq!(axes.len(), AXIS_ABSTRACT.len() + 2);
     }
@@ -184,7 +190,11 @@ mod tests {
         ] {
             assert!(bound.contains(&button), "{button:?} must be bound");
         }
-        for button in [StandardButton::LeftStick, StandardButton::RightStick] {
+        for button in [
+            StandardButton::LeftStick,
+            StandardButton::RightStick,
+            StandardButton::Capture,
+        ] {
             assert!(!bound.contains(&button), "{button:?} must stay unbound");
         }
     }
@@ -236,7 +246,11 @@ mod tests {
             assert_eq!(button.abstract_key(), Some(key));
             assert_eq!(StandardButton::with_abstract(key), Some(button));
         }
-        for button in [StandardButton::LeftStick, StandardButton::RightStick] {
+        for button in [
+            StandardButton::LeftStick,
+            StandardButton::RightStick,
+            StandardButton::Capture,
+        ] {
             assert_eq!(button.abstract_key(), None);
         }
         assert_eq!(

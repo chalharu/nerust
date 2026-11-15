@@ -176,6 +176,12 @@ pub(super) fn register_main_activity_natives(
                 settings_bridge::Java_io_github_chalharu_nerust_SettingsActivity_nativeHardwareKey
                     as *mut c_void,
             ),
+            jni::NativeMethod::from_raw_parts(
+                jni_str!("nativeMotionCapture"),
+                jni_str!("(Ljava/lang/String;FF)Ljava/lang/String;"),
+                settings_bridge::Java_io_github_chalharu_nerust_SettingsActivity_nativeMotionCapture
+                    as *mut c_void,
+            ),
         ]
     };
     unsafe { env.register_native_methods(settings_class, &settings_methods) }

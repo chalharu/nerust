@@ -17,13 +17,16 @@ pub(crate) fn android_keycode_to_button(keycode: u32) -> Option<StandardButton> 
 }
 
 /// Single table for the fn above and its test: adding a row extends both.
-const TABLE: [(u32, StandardButton); 17] = [
+/// `BUTTON_C` (98) is the vendors' shared capture/share/create button
+/// (Switch capture, Xbox share, PS create all arrive here).
+const TABLE: [(u32, StandardButton); 18] = [
     (19, StandardButton::DpadUp),
     (20, StandardButton::DpadDown),
     (21, StandardButton::DpadLeft),
     (22, StandardButton::DpadRight),
     (96, StandardButton::South),
     (97, StandardButton::East),
+    (98, StandardButton::Capture),
     (99, StandardButton::West),
     (100, StandardButton::North),
     (102, StandardButton::LeftShoulder),
@@ -331,7 +334,7 @@ mod tests {
         for (keycode, button) in TABLE {
             assert_eq!(android_keycode_to_button(keycode), Some(button));
         }
-        for keycode in [0, 98, 255] {
+        for keycode in [0, 101, 255] {
             assert_eq!(android_keycode_to_button(keycode), None);
         }
     }

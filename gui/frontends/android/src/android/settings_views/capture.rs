@@ -14,7 +14,7 @@ use nerust_settings_core::{editor::CaptureTarget, i18n::UiText};
 
 use super::keycode::android_keycode_to_key;
 use super::projection::project_fresh;
-use super::vm::{build_vm, sync_snapshot_from_vm, with_vm_deps};
+use super::vm::{VmDeps, build_vm, sync_snapshot_from_vm, with_vm_deps};
 use super::wire::{CaptureSlot, Projection, ViewPayload, rank_for_member};
 
 fn android_keycode_to_pad(keycode: i32) -> Option<StandardButton> {
@@ -114,5 +114,83 @@ pub(crate) fn apply_hardware_key(
         // No-op: Kotlin only reads the payload when consumed is true,
         // so skip the full re-projection (releases arrive per key).
         Ok((None, false))
+    })
+}
+
+/// Press level turning an analog trigger into a captured button.
+/// Gameplay fires at 0.9 (see session `TRIGGER_PRESS`); capture takes a
+/// deliberate half-press so short-travel triggers still land without
+/// brushing the stick noise floor.
+const MOTION_CAPTURE_PRESS: f32 = 0.5;
+
+/// Shared commit tail for captured buttons: start, apply, write back,
+/// clear the pending slot, and re-project. Key and motion entries converge
+/// here so the two can never apply differently.
+fn commit_captured_button(
+    deps: &VmDeps,
+    snapshot: &mut SettingsSnapshot,
+    capture: &mut CaptureSlot,
+    truth: Projection,
+    target: CaptureTarget,
+    button: StandardButton,
+) -> Result<(Option<ViewPayload>, bool), String> {
+    let vm = build_vm(snapshot, deps, truth.i18n)?;
+    vm.capture
+        .start_capture(target)
+        .map_err(|error| error.to_string())?;
+    vm.capture.apply_captured_pad(button);
+    sync_snapshot_from_vm(snapshot, &vm, truth.i18n);
+    *capture = None;
+    Ok((Some(project_fresh(snapshot, deps, capture, truth)?), true))
+}
+
+/// Motion capture for analog-only triggers (ZL/ZR on pads that send no
+/// key event, only `AXIS_LTRIGGER`/`AXIS_RTRIGGER`): axis values to the
+/// trigger button through the same rank gate as hardware keys. Only
+/// shortcut and per-pad mapping rows accept it (game rows stay key-only,
+/// like the key path); below-threshold values leave the capture pending
+/// and report `false`.
+pub(crate) fn apply_motion_capture(
+    trigger_l: f32,
+    trigger_r: f32,
+    pad_descriptor: Option<&str>,
+    snapshot: &mut SettingsSnapshot,
+    capture: &mut CaptureSlot,
+    truth: Projection,
+) -> Result<(Option<ViewPayload>, bool), String> {
+    // Dominant axis wins; ties read left. Simultaneous full squeezes
+    // land one deterministic button instead of depending on event order.
+    let button = if trigger_l >= MOTION_CAPTURE_PRESS && trigger_l >= trigger_r {
+        Some(StandardButton::LeftTrigger)
+    } else if trigger_r >= MOTION_CAPTURE_PRESS {
+        Some(StandardButton::RightTrigger)
+    } else {
+        None
+    };
+    let Some(button) = button else {
+        return Ok((None, false));
+    };
+    with_vm_deps(|deps| {
+        let Some((target, _)) = capture.as_ref() else {
+            return Ok((None, false));
+        };
+        let target = target.clone();
+        // Rank, not live position: same gate as the key path, so a
+        // reconnect cycle cannot skew per-pad routing here either.
+        let pad =
+            pad_descriptor.and_then(|descriptor| rank_for_member(truth.pad_order, descriptor));
+        // Same gate as the key path: per-pad rows take only their own
+        // pad's press, shortcuts take any pad, game rows take none.
+        let granted = if let Some(want) = target.pad() {
+            (pad == Some(want)).then_some(button)
+        } else if target.action().is_some() {
+            Some(button)
+        } else {
+            None
+        };
+        let Some(button) = granted else {
+            return Ok((None, false));
+        };
+        commit_captured_button(deps, snapshot, capture, truth, target, button)
     })
 }

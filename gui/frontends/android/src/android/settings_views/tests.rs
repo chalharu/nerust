@@ -1705,6 +1705,305 @@ fn pad_press_on_game_row_leaves_capture_pending() {
     );
 }
 
+/// First shortcut-screen capture row: the shared scaffold for
+/// shortcut-column capture tests below.
+fn first_shortcut_capture_key(snapshot: &SettingsSnapshot) -> String {
+    with_test_deps(|| {
+        let vm = build_vm(
+            snapshot,
+            &test_deps(),
+            sys_display(AppLanguage::SystemDefault),
+        )
+        .expect("vm builds");
+        let keyboards = test_keyboards();
+        let truth = Projection {
+            keyboards: &keyboards,
+            touch_capable: true,
+            gamepads: &[],
+            pad_order: &[],
+            i18n: sys_display(AppLanguage::SystemDefault),
+        };
+        let sections = build_sections(&vm, snapshot, truth);
+        sections
+            .iter()
+            .find(|section| section.id == "controls.shortcuts")
+            .expect("shortcuts screen exists")
+            .rows
+            .iter()
+            .find(|row| row.kind == RowKind::Capture)
+            .map(|row| row.key.clone())
+            .expect("shortcut capture row exists")
+    })
+}
+
+fn shortcut_truth<'a>(keyboards: &'a [KeyboardInfo]) -> Projection<'a> {
+    Projection {
+        keyboards,
+        touch_capable: true,
+        gamepads: &[],
+        pad_order: &[],
+        i18n: sys_display(AppLanguage::SystemDefault),
+    }
+}
+
+#[test]
+fn capture_button_lands_on_shortcut_rows() {
+    use nerust_input_traits::StandardButton;
+    let (mut snapshot, _) = test_payload();
+    // Production seeds shortcut rows at load; the payload fixture skips
+    // that, so capture would find no entry to update.
+    nerust_settings_core::model::input::ensure_default_shortcuts(
+        &mut snapshot.shared.input.shortcuts,
+    );
+    let mut capture: CaptureSlot = None;
+    let target_key = first_shortcut_capture_key(&snapshot);
+    let started = apply(
+        &mut snapshot,
+        &mut capture,
+        &mut test_keyboards(),
+        &target_key,
+        WireOp::StartCapture,
+        0,
+        0,
+    );
+    assert!(started.capture.is_some(), "shortcut capture pending");
+    // KEYCODE_BUTTON_C (98): Switch capture, Xbox share, PS create.
+    let keyboards = test_keyboards();
+    let (_, consumed) = with_test_deps(|| {
+        apply_hardware_key(
+            98,
+            None,
+            true,
+            &mut snapshot,
+            &mut capture,
+            shortcut_truth(&keyboards),
+        )
+        .expect("capture button applies")
+    });
+    assert!(consumed, "capture button press is consumed");
+    assert!(capture.is_none(), "capture closes after one press");
+    assert!(
+        snapshot
+            .shared
+            .input
+            .shortcuts
+            .keyboard
+            .iter()
+            .any(|binding| binding.pad == Some(StandardButton::Capture)),
+        "Capture landed in a shortcut pad column"
+    );
+}
+
+#[test]
+fn analog_trigger_motion_lands_on_shortcut_rows() {
+    use nerust_input_traits::StandardButton;
+    let (mut snapshot, _) = test_payload();
+    nerust_settings_core::model::input::ensure_default_shortcuts(
+        &mut snapshot.shared.input.shortcuts,
+    );
+    let mut capture: CaptureSlot = None;
+    let target_key = first_shortcut_capture_key(&snapshot);
+    let started = apply(
+        &mut snapshot,
+        &mut capture,
+        &mut test_keyboards(),
+        &target_key,
+        WireOp::StartCapture,
+        0,
+        0,
+    );
+    assert!(started.capture.is_some(), "shortcut capture pending");
+    // No key event: the analog-only ZL rides `AXIS_LTRIGGER` alone.
+    let keyboards = test_keyboards();
+    let (_, consumed) = with_test_deps(|| {
+        apply_motion_capture(
+            0.8,
+            0.0,
+            None,
+            &mut snapshot,
+            &mut capture,
+            shortcut_truth(&keyboards),
+        )
+        .expect("motion capture applies")
+    });
+    assert!(consumed, "trigger motion is consumed");
+    assert!(capture.is_none(), "capture closes after one squeeze");
+    assert!(
+        snapshot
+            .shared
+            .input
+            .shortcuts
+            .keyboard
+            .iter()
+            .any(|binding| binding.pad == Some(StandardButton::LeftTrigger)),
+        "LeftTrigger landed in a shortcut pad column"
+    );
+}
+
+#[test]
+fn analog_trigger_motion_ignores_noise_and_game_rows() {
+    use nerust_input_traits::StandardButton;
+    let (mut snapshot, _) = test_payload();
+    nerust_settings_core::model::input::ensure_default_shortcuts(
+        &mut snapshot.shared.input.shortcuts,
+    );
+    let mut capture: CaptureSlot = None;
+    let target_key = first_shortcut_capture_key(&snapshot);
+    let started = apply(
+        &mut snapshot,
+        &mut capture,
+        &mut test_keyboards(),
+        &target_key,
+        WireOp::StartCapture,
+        0,
+        0,
+    );
+    assert!(started.capture.is_some(), "shortcut capture pending");
+    // Resting noise never captures: below the press level the capture
+    // stays pending and reports unconsumed.
+    let keyboards = test_keyboards();
+    let (_, consumed) = with_test_deps(|| {
+        apply_motion_capture(
+            0.2,
+            0.1,
+            None,
+            &mut snapshot,
+            &mut capture,
+            shortcut_truth(&keyboards),
+        )
+        .expect("noise probes")
+    });
+    assert!(!consumed, "resting noise is not consumed");
+    assert!(capture.is_some(), "capture stays pending on noise");
+    // Game rows stay key-only like the key path: a full trigger squeeze
+    // on a binding row leaves the capture pending.
+    let game_key = with_test_deps(|| {
+        let vm = build_vm(
+            &snapshot,
+            &test_deps(),
+            sys_display(AppLanguage::SystemDefault),
+        )
+        .expect("vm builds");
+        let keyboards = test_keyboards();
+        let truth = shortcut_truth(&keyboards);
+        build_sections(&vm, &snapshot, truth)
+            .iter()
+            .flat_map(|section| &section.rows)
+            .find(|row| {
+                row.kind == RowKind::Capture
+                    && serde_json::from_str::<serde_json::Value>(&row.target)
+                        .ok()
+                        .and_then(|target| target.get("kind")?.as_str().map(str::to_string))
+                        == Some("binding".to_string())
+            })
+            .map(|row| row.key.clone())
+            .expect("game capture row exists")
+    });
+    let started = apply(
+        &mut snapshot,
+        &mut capture,
+        &mut test_keyboards(),
+        &game_key,
+        WireOp::StartCapture,
+        0,
+        0,
+    );
+    assert!(started.capture.is_some(), "game capture pending");
+    let keyboards = test_keyboards();
+    let (_, consumed) = with_test_deps(|| {
+        apply_motion_capture(
+            0.9,
+            0.0,
+            None,
+            &mut snapshot,
+            &mut capture,
+            shortcut_truth(&keyboards),
+        )
+        .expect("game-row motion probes")
+    });
+    assert!(!consumed, "trigger motion on a game row is not consumed");
+    assert!(
+        snapshot
+            .shared
+            .input
+            .shortcuts
+            .keyboard
+            .iter()
+            .all(|binding| binding.pad != Some(StandardButton::LeftTrigger)),
+        "no trigger leaked into shortcuts from a game row"
+    );
+}
+
+#[test]
+fn per_pad_motion_capture_respects_rank_gate() {
+    use nerust_input_traits::StandardButton;
+    let (mut snapshot, _) = test_payload();
+    let pads = two_pads();
+    let payload = pad_payload(&snapshot, &pads);
+    let key = payload
+        .sections
+        .iter()
+        .find(|section| section.id == "pad.1")
+        .expect("pad.1 screen exists")
+        .rows
+        .iter()
+        .find(|row| row.kind == RowKind::Capture)
+        .map(|row| row.key.clone())
+        .expect("pad.1 lists mapping rows");
+    let mut capture: CaptureSlot = None;
+    set_with_pads_capture(&mut snapshot, &pads, &mut capture, &key);
+    // Another pad's squeeze never lands here: the rank gate holds for
+    // motion exactly like keys.
+    let (_, consumed) = with_test_deps(|| {
+        apply_motion_capture(
+            0.0,
+            0.9,
+            Some("b"),
+            &mut snapshot,
+            &mut capture,
+            Projection {
+                keyboards: &test_keyboards(),
+                touch_capable: true,
+                gamepads: &pads,
+                pad_order: &order_of(&pads),
+                i18n: sys_display(AppLanguage::SystemDefault),
+            },
+        )
+        .expect("foreign motion probes")
+    });
+    assert!(!consumed, "another pad's trigger never lands here");
+    assert!(capture.is_some(), "capture stays pending");
+    // The pad's own ZR lands its override on rank 0.
+    let (_, consumed) = with_test_deps(|| {
+        apply_motion_capture(
+            0.0,
+            0.9,
+            Some("a"),
+            &mut snapshot,
+            &mut capture,
+            Projection {
+                keyboards: &test_keyboards(),
+                touch_capable: true,
+                gamepads: &pads,
+                pad_order: &order_of(&pads),
+                i18n: sys_display(AppLanguage::SystemDefault),
+            },
+        )
+        .expect("own motion applies")
+    });
+    assert!(consumed, "own pad's trigger is consumed");
+    assert!(
+        snapshot
+            .shared
+            .input
+            .systems
+            .values()
+            .flat_map(|settings| settings.pad_bindings[0].iter())
+            .any(|binding| binding.button == StandardButton::RightTrigger),
+        "RightTrigger override lands on rank 0"
+    );
+}
+
 #[test]
 fn capture_round_trips_through_hardware_keys() {
     let (mut snapshot, _) = test_payload();

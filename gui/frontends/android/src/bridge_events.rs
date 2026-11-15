@@ -83,6 +83,7 @@ pub(crate) const CONTROLLER_KEY_TABLE: &[(&str, StandardButton)] = &[
     ("right", StandardButton::DpadRight),
     ("l3", StandardButton::LeftStick),
     ("r3", StandardButton::RightStick),
+    ("capture", StandardButton::Capture),
 ];
 
 /// One drawer-submenu row: slot id plus its save instant. Plain data so

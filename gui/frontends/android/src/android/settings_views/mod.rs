@@ -36,7 +36,7 @@ use wire::{CaptureSlot, GamepadInfo, KeyboardInfo, ViewPayload};
 // through `settings_views::`. Only the JNI build (the `android` module)
 // uses them; host tests import the submodules directly.
 #[cfg(target_os = "android")]
-pub(crate) use capture::apply_hardware_key;
+pub(crate) use capture::{apply_hardware_key, apply_motion_capture};
 #[cfg(target_os = "android")]
 pub(crate) use commands::{CommandVault, apply_command_to, finish_snapshot};
 #[cfg(target_os = "android")]

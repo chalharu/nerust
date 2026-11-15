@@ -44,6 +44,7 @@ internal object ControllerKey {
     const val RIGHT = "right"
     const val L3 = "l3"
     const val R3 = "r3"
+    const val CAPTURE = "capture"
 }
 
 internal object ControllerAxis {

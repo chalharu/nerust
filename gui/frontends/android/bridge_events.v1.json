@@ -59,7 +59,8 @@
             "left",
             "right",
             "l3",
-            "r3"
+            "r3",
+            "capture"
           ]
         },
         "pressed": { "type": "boolean" },

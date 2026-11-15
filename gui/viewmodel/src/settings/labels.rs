@@ -25,6 +25,7 @@ pub fn pad_button_plain(button: StandardButton) -> &'static str {
         StandardButton::Back => "Back",
         StandardButton::Guide => "Guide",
         StandardButton::Start => "Start",
+        StandardButton::Capture => "Capture",
         StandardButton::LeftStick => "L3",
         StandardButton::RightStick => "R3",
         StandardButton::LeftShoulder => "LB",
