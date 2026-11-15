@@ -13,11 +13,9 @@ use nerust_settings_core::{
     model::input::{DEADZONE_STEPS, pad_game_binding_conflicts},
 };
 
-use super::devices::player_label;
-use super::projection::PLAYER_PORTS;
 use super::wire::{
-    GamepadInfo, I18n, RowWire, SectionWire, button_row, capture_row, encode_target, group_row,
-    header_row, info_row, number_row, toggle_row,
+    GamepadInfo, I18n, PLAYER_PORTS, RowWire, SectionWire, button_row, capture_row, encode_target,
+    group_row, header_row, info_row, number_row, player_label, toggle_row,
 };
 
 /// Per-pad settings screens: one `pad.<n>` screen per connected pad
@@ -33,7 +31,6 @@ pub(super) fn build_pad_sections(
     i18n: I18n,
     gamepads: &[GamepadInfo],
 ) -> Vec<SectionWire> {
-    use nerust_gui_viewmodel::settings::dto::BindingValueView;
     let reason = i18n.text(UiText::InputDeviceRequired);
     let gamepad = &snapshot.shared.input.gamepad;
     gamepads
@@ -138,77 +135,9 @@ pub(super) fn build_pad_sections(
                 };
             };
             for input in vm.inputs() {
-                let view = input.view.get();
-                let system = view.system_id.to_string();
-                let mut system_chunks: Vec<(String, Vec<RowWire>)> = Vec::new();
-                for section in &view.sections {
-                    let mut section_rows = Vec::new();
-                    for binding in &section.rows {
-                        // Per-pad mapping mirrors the game rows: same
-                        // attachment/control, routed to this pad.
-                        let (Some(attachment), Some(control)) =
-                            (binding.target.attachment(), binding.target.control())
-                        else {
-                            continue;
-                        };
-                        // Attachments name their player port
-                        // (`<sys>.attachment.playerN`); unclassifiable
-                        // attachments fail open so a factory addition
-                        // never silently drops rows here.
-                        if slot_port_index(attachment).is_some_and(|port| port != slot) {
-                            continue;
-                        }
-                        let target = CaptureTarget::PadBinding {
-                            system: view.system_id.clone_box(),
-                            pad: index,
-                            attachment: attachment.to_string(),
-                            control: control.to_string(),
-                        };
-                        let value = input.pad_row_value(&target, binding.pad_default);
-                        let text = match &value {
-                            BindingValueView::Unbound(label)
-                            | BindingValueView::Bound(label)
-                            | BindingValueView::Capturing(label) => label.clone(),
-                        };
-                        section_rows.push(capture_row(
-                            &format!("{pad_id}.{system}.{attachment}.{control}",),
-                            binding.label.clone(),
-                            String::new(),
-                            text,
-                            &encode_target(&target, &system),
-                            true,
-                            &reason,
-                        ));
-                    }
-                    if section_rows.is_empty() {
-                        continue;
-                    }
-                    // One attachment per machine here (rows scope to this
-                    // pad's own slot), so its header names nothing new:
-                    // drop it and let the machine header carry the block.
-                    // Multi-attachment machines keep their headers.
-                    system_chunks.push((section.label.clone(), section_rows));
-                }
-                if system_chunks.is_empty() {
-                    continue;
-                }
-                rows.push(header_row(view.label.clone()));
-                let single = system_chunks.len() == 1;
-                for (label, mut chunk) in system_chunks {
-                    if !single {
-                        rows.push(header_row(label));
-                    }
-                    rows.append(&mut chunk);
-                }
-                // One button driving two controls never fires the second:
-                // surface it on the pad's own screen, next to the rows.
-                // Scoped like the rows above: hidden attachments have no
-                // rows to disambiguate against.
-                if let Some(settings) = snapshot.shared.input.systems.get(&view.system_id)
-                    && let Some(entries) = settings.pad_bindings.get(index)
-                {
-                    rows.extend(conflict_rows(&pad_id, &system, slot, entries, i18n));
-                }
+                rows.extend(pad_system_rows(
+                    input, snapshot, &pad_id, index, slot, &reason, i18n,
+                ));
             }
             rows.push(button_row(
                 &format!("reset.{pad_id}"),
@@ -224,6 +153,93 @@ pub(super) fn build_pad_sections(
             }
         })
         .collect()
+}
+
+/// One machine's mapping block for one pad screen: machine header plus
+/// the pad's own capture rows (attachment sub-headers drop when single),
+/// plus that machine's conflict rows. Empty when the pad owns nothing here.
+fn pad_system_rows(
+    input: &nerust_gui_viewmodel::settings::InputSettingsViewModel,
+    snapshot: &SettingsSnapshot,
+    pad_id: &str,
+    index: usize,
+    slot: usize,
+    reason: &str,
+    i18n: I18n,
+) -> Vec<RowWire> {
+    use nerust_gui_viewmodel::settings::dto::BindingValueView;
+    let view = input.view.get();
+    let system = view.system_id.to_string();
+    let mut system_chunks: Vec<(String, Vec<RowWire>)> = Vec::new();
+    for section in &view.sections {
+        let mut section_rows = Vec::new();
+        for binding in &section.rows {
+            // Per-pad mapping mirrors the game rows: same
+            // attachment/control, routed to this pad.
+            let (Some(attachment), Some(control)) =
+                (binding.target.attachment(), binding.target.control())
+            else {
+                continue;
+            };
+            // Attachments name their player port
+            // (`<sys>.attachment.playerN`); unclassifiable
+            // attachments fail open so a factory addition
+            // never silently drops rows here.
+            if slot_port_index(attachment).is_some_and(|port| port != slot) {
+                continue;
+            }
+            let target = CaptureTarget::PadBinding {
+                system: view.system_id.clone_box(),
+                pad: index,
+                attachment: attachment.to_string(),
+                control: control.to_string(),
+            };
+            let value = input.pad_row_value(&target, binding.pad_default);
+            let text = match &value {
+                BindingValueView::Unbound(label)
+                | BindingValueView::Bound(label)
+                | BindingValueView::Capturing(label) => label.clone(),
+            };
+            section_rows.push(capture_row(
+                &format!("{pad_id}.{system}.{attachment}.{control}",),
+                binding.label.clone(),
+                String::new(),
+                text,
+                &encode_target(&target, &system),
+                true,
+                reason,
+            ));
+        }
+        if section_rows.is_empty() {
+            continue;
+        }
+        // One attachment per machine here (rows scope to this pad's own
+        // slot), so its header names nothing new: drop it and let the
+        // machine header carry the block. Multi-attachment machines keep
+        // their headers.
+        system_chunks.push((section.label.clone(), section_rows));
+    }
+    if system_chunks.is_empty() {
+        return Vec::new();
+    }
+    let mut out = vec![header_row(view.label.clone())];
+    let single = system_chunks.len() == 1;
+    for (label, mut chunk) in system_chunks {
+        if !single {
+            out.push(header_row(label));
+        }
+        out.append(&mut chunk);
+    }
+    // One button driving two controls never fires the second:
+    // surface it on the pad's own screen, next to the rows.
+    // Scoped like the rows above: hidden attachments have no
+    // rows to disambiguate against.
+    if let Some(settings) = snapshot.shared.input.systems.get(&view.system_id)
+        && let Some(entries) = settings.pad_bindings.get(index)
+    {
+        out.extend(conflict_rows(pad_id, &system, slot, entries, i18n));
+    }
+    out
 }
 
 /// One button driving two in-scope controls: a warning row per button.

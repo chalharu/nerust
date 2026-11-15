@@ -8,23 +8,19 @@ use nerust_gui_viewmodel::settings::SettingsViewModel;
 use nerust_settings_core::{
     editor::CaptureTarget,
     i18n::UiText,
-    model::{
-        app_state::{PORT_PLAYER_1, PORT_PLAYER_2},
-        local::{
-            NotificationColor, NotificationPosition, RumbleTarget, ScreenOrientation,
-            TouchOverlayVisibility,
-        },
+    model::local::{
+        NotificationColor, NotificationPosition, RumbleTarget, ScreenOrientation,
+        TouchOverlayVisibility,
     },
 };
 
-use super::devices::{
-    build_keys_sections, build_player_sections, player_id, player_label, port_member_names,
-};
+use super::devices::{build_keys_sections, build_player_sections, port_member_names};
 use super::pads::build_pad_sections;
 use super::wire::{
-    CaptureSlot, CaptureWire, GamepadInfo, I18n, KeyboardInfo, Projection, RowWire, SectionWire,
-    ViewPayload, VmDeps, build_vm, button_row, capture_row, choice_row, draft_issues,
-    encode_target, group_row, header_row, info_row, number_row, target_system, toggle_row,
+    CaptureSlot, CaptureWire, GamepadInfo, I18n, KeyboardInfo, PLAYER_PORTS, Projection, RowWire,
+    SectionWire, ViewPayload, VmDeps, binding_key, build_vm, button_row, capture_row, choice_row,
+    draft_issues, encode_target, group_row, header_row, info_row, number_row, player_id,
+    player_label, target_system, toggle_row,
 };
 use crate::bridge_contract::SETTINGS_SCHEMA_VERSION;
 
@@ -60,11 +56,6 @@ pub(super) fn project_fresh(
     let vm = build_vm(snapshot, deps, truth.i18n)?;
     Ok(project_payload(&vm, snapshot, deps, capture, truth))
 }
-
-/// Global player ports (not per machine): every system's player-N slot
-/// fans out from the same port set. Screen ids derive from the port index,
-/// so the table holds port ids only.
-pub(super) const PLAYER_PORTS: [&str; 2] = [PORT_PLAYER_1, PORT_PLAYER_2];
 
 pub(super) fn build_sections(
     vm: &SettingsViewModel,
@@ -987,21 +978,4 @@ fn slot_rows(view: &nerust_gui_viewmodel::settings::dto::InputTabView, i18n: I18
             row
         })
         .collect()
-}
-
-pub(super) fn binding_key(target: &CaptureTarget) -> String {
-    if let Some(action) = target.action() {
-        return format!("shortcut.{action:?}");
-    }
-    // Bindings and overrides share the attachment/control identity;
-    // overrides prefix the 1-based pad. Shortcuts return above, so both
-    // accessors hold here.
-    let (attachment, control) = (
-        target.attachment().unwrap_or_default(),
-        target.control().unwrap_or_default(),
-    );
-    match target.pad() {
-        Some(pad) => format!("pad{}.{attachment}.{control}", pad + 1),
-        None => format!("{attachment}.{control}"),
-    }
 }

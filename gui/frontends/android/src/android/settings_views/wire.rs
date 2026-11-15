@@ -196,6 +196,52 @@ fn bare_member(member: &str) -> &str {
     member.strip_prefix("pad:").unwrap_or(member)
 }
 
+/// Global player ports (not per machine): every system's player-N slot
+/// fans out from the same port set. Screen ids derive from the port index,
+/// so the table holds port ids only. Lives in the leaf `wire` module so
+/// screen builders never import each other for navigation vocabulary.
+pub(super) const PLAYER_PORTS: [&str; 2] = [
+    nerust_settings_core::model::app_state::PORT_PLAYER_1,
+    nerust_settings_core::model::app_state::PORT_PLAYER_2,
+];
+
+pub(super) fn player_id(index: usize) -> String {
+    format!("player.{}", index + 1)
+}
+
+pub(super) fn devices_id(port: &str) -> String {
+    format!("devices.{port}")
+}
+
+pub(super) fn types_id(index: usize) -> String {
+    format!("types.{}", index + 1)
+}
+
+pub(super) fn player_label(index: usize, i18n: I18n) -> String {
+    i18n.text(if index == 0 {
+        UiText::PlayerOne
+    } else {
+        UiText::PlayerTwo
+    })
+}
+
+/// Stable row-key fragment for one capture target: shortcuts by action,
+/// bindings and overrides by attachment/control (overrides prefix the
+/// 1-based pad). Shortcuts return above, so both accessors hold here.
+pub(super) fn binding_key(target: &CaptureTarget) -> String {
+    if let Some(action) = target.action() {
+        return format!("shortcut.{action:?}");
+    }
+    let (attachment, control) = (
+        target.attachment().unwrap_or_default(),
+        target.control().unwrap_or_default(),
+    );
+    match target.pad() {
+        Some(pad) => format!("pad{}.{attachment}.{control}", pad + 1),
+        None => format!("{attachment}.{control}"),
+    }
+}
+
 /// Vault descriptor to connection-order pad index: the same vault list
 /// that built the rows, so a Kotlin scan-order descriptor can never skew
 /// against the Rust side. Accepts the raw descriptor or the `pad:`

@@ -22,12 +22,12 @@ use nerust_settings_core::{
 use nerust_system_traits::factory::descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId};
 
 use super::devices::prune_missing_builtin;
-use super::projection::{PLAYER_PORTS, build_sections, project_fresh, project_payload};
+use super::projection::{build_sections, project_fresh, project_payload};
 use super::wire::{
-    CaptureSlot, GamepadInfo, I18n, KeyboardInfo, Projection, RowKind, RowWire, SectionWire,
-    ViewPayload, VmDeps, WireCommand, WireOp, build_vm, choice, find_row, pin_draft_language,
-    range_value, resolve_display, sort_gamepads_by_order, sync_snapshot_from_vm, toggle_value,
-    with_vm_deps,
+    CaptureSlot, GamepadInfo, I18n, KeyboardInfo, PLAYER_PORTS, Projection, RowKind, RowWire,
+    SectionWire, ViewPayload, VmDeps, WireCommand, WireOp, build_vm, choice, find_row,
+    pin_draft_language, range_value, resolve_display, sort_gamepads_by_order,
+    sync_snapshot_from_vm, toggle_value, with_vm_deps,
 };
 
 /// Apply one wire command to the draft snapshot in place, returning the
@@ -644,28 +644,7 @@ fn apply_reset_dynamic_scope(
         return Ok(());
     }
     if let Some(system) = scope.strip_prefix("keys.") {
-        if !is_known_system(deps, system) {
-            return Err(format!("unknown reset scope: {scope}"));
-        }
-        // Keys screens list keyboard bindings only: clear those overrides
-        // back to the sparse default, but keep this system's per-pad
-        // overrides. Pad mappings belong to the pad screens (`reset.pad.N`);
-        // each reset covers exactly the rows on its own screen, so a keys
-        // reset never wipes pad work.
-        let stale: Vec<_> = snapshot
-            .shared
-            .input
-            .systems
-            .keys()
-            .filter(|key| key.to_string() == system)
-            .cloned()
-            .collect();
-        for key in stale {
-            if let Some(entry) = snapshot.shared.input.systems.get_mut(&key) {
-                entry.keyboard_profiles.clear();
-            }
-        }
-        return Ok(());
+        return reset_keys_scope(snapshot, deps, scope, system);
     }
     if let Some(member) = scope.strip_prefix("device.") {
         // Detail screens carry no editable state; the section exists only
@@ -676,34 +655,71 @@ fn apply_reset_dynamic_scope(
         return Err(format!("unknown reset scope: {scope}"));
     }
     if let Some(pad) = scope.strip_prefix("pad.") {
-        // One pad's own screen: deadzone, trigger doubling, stick
-        // substitutes, and that pad's per-system overrides return to
-        // defaults. The player-slot assignment stays: the devices radio
-        // owns it, not this screen.
-        let index: usize = pad
-            .parse()
-            .ok()
-            .filter(|index: &usize| (1..=nerust_input_traits::MAX_PADS).contains(index))
-            .ok_or_else(|| format!("unknown reset scope: {scope}"))?
-            - 1;
-        let Some(default_port) = default.shared.input.gamepad.pad_ports.get(index) else {
-            return Err(format!("unknown reset scope: {scope}"));
-        };
-        let Some(port) = snapshot.shared.input.gamepad.pad_ports.get_mut(index) else {
-            return Err(format!("unknown reset scope: {scope}"));
-        };
-        port.deadzone_percent = default_port.deadzone_percent;
-        port.triggers_as_shoulders = default_port.triggers_as_shoulders;
-        port.left_stick_as_dpad = default_port.left_stick_as_dpad;
-        port.right_stick_as_dpad = default_port.right_stick_as_dpad;
-        for settings in snapshot.shared.input.systems.values_mut() {
-            if let Some(entries) = settings.pad_bindings.get_mut(index) {
-                entries.clear();
-            }
-        }
-        return Ok(());
+        return reset_pad_scope(snapshot, default, scope, pad);
     }
     Err(format!("unknown reset scope: {scope}"))
+}
+
+/// Keys screens list keyboard bindings only: clear those overrides back
+/// to the sparse default, but keep this system's per-pad overrides. Pad
+/// mappings belong to the pad screens (`reset.pad.N`); each reset covers
+/// exactly the rows on its own screen, so a keys reset never wipes pad work.
+fn reset_keys_scope(
+    snapshot: &mut SettingsSnapshot,
+    deps: &VmDeps,
+    scope: &str,
+    system: &str,
+) -> Result<(), String> {
+    if !is_known_system(deps, system) {
+        return Err(format!("unknown reset scope: {scope}"));
+    }
+    let stale: Vec<_> = snapshot
+        .shared
+        .input
+        .systems
+        .keys()
+        .filter(|key| key.to_string() == system)
+        .cloned()
+        .collect();
+    for key in stale {
+        if let Some(entry) = snapshot.shared.input.systems.get_mut(&key) {
+            entry.keyboard_profiles.clear();
+        }
+    }
+    Ok(())
+}
+
+/// One pad's own screen: deadzone, trigger doubling, stick substitutes,
+/// and that pad's per-system overrides return to defaults. The player-slot
+/// assignment stays: the devices radio owns it, not this screen.
+fn reset_pad_scope(
+    snapshot: &mut SettingsSnapshot,
+    default: &SettingsSnapshot,
+    scope: &str,
+    pad: &str,
+) -> Result<(), String> {
+    let index: usize = pad
+        .parse()
+        .ok()
+        .filter(|index: &usize| (1..=nerust_input_traits::MAX_PADS).contains(index))
+        .ok_or_else(|| format!("unknown reset scope: {scope}"))?
+        - 1;
+    let Some(default_port) = default.shared.input.gamepad.pad_ports.get(index) else {
+        return Err(format!("unknown reset scope: {scope}"));
+    };
+    let Some(port) = snapshot.shared.input.gamepad.pad_ports.get_mut(index) else {
+        return Err(format!("unknown reset scope: {scope}"));
+    };
+    port.deadzone_percent = default_port.deadzone_percent;
+    port.triggers_as_shoulders = default_port.triggers_as_shoulders;
+    port.left_stick_as_dpad = default_port.left_stick_as_dpad;
+    port.right_stick_as_dpad = default_port.right_stick_as_dpad;
+    for settings in snapshot.shared.input.systems.values_mut() {
+        if let Some(entries) = settings.pad_bindings.get_mut(index) {
+            entries.clear();
+        }
+    }
+    Ok(())
 }
 
 /// A factory id from the installed registry backs the per-machine screens.

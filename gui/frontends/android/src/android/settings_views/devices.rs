@@ -11,31 +11,11 @@ use nerust_settings_core::{
     input::{BUILTIN_KEYBOARD_MEMBER, member_is_gamepad, member_is_shareable, slot_port_index},
 };
 
-use super::projection::{PLAYER_PORTS, binding_key};
 use super::wire::{
-    GamepadInfo, I18n, KeyboardInfo, RowWire, SectionWire, button_row, capture_open, capture_row,
-    choice_row, encode_target, group_row, header_row, info_row, toggle_row,
+    GamepadInfo, I18n, KeyboardInfo, PLAYER_PORTS, RowWire, SectionWire, binding_key, button_row,
+    capture_open, capture_row, choice_row, devices_id, encode_target, group_row, header_row,
+    info_row, player_id, player_label, toggle_row, types_id,
 };
-
-pub(super) fn player_id(index: usize) -> String {
-    format!("player.{}", index + 1)
-}
-
-pub(super) fn devices_id(port: &str) -> String {
-    format!("devices.{port}")
-}
-
-pub(super) fn types_id(index: usize) -> String {
-    format!("types.{}", index + 1)
-}
-
-pub(super) fn player_label(index: usize, i18n: I18n) -> String {
-    i18n.text(if index == 0 {
-        UiText::PlayerOne
-    } else {
-        UiText::PlayerTwo
-    })
-}
 
 /// Player screens (one per global port): the Devices row opens the device
 /// picker, the Controller-type row opens the per-machine type list.
