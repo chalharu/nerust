@@ -308,14 +308,18 @@ fn check_menu_shape(action: &str, event: &MenuEvent) -> Option<()> {
         log::warn!("ignoring {action} bridge event with unknown key: {key}");
         return None;
     }
-    for (axis, value) in event
-        .motion_axes()
-        .iter()
-        .filter_map(|(name, value)| value.map(|value| (*name, value)))
-    {
-        if !(ANALOG_VALUE_BOUNDS.0..=ANALOG_VALUE_BOUNDS.1).contains(&value) {
-            log::warn!("ignoring {action} bridge event with out-of-range {axis:?}={value}");
-            return None;
+    // Axis bounds only on the motion path: every other action would pay
+    // a six-pair walk that can never fail it.
+    if action == ACTION_MOTION {
+        for (axis, value) in event
+            .motion_axes()
+            .iter()
+            .filter_map(|(name, value)| value.map(|value| (*name, value)))
+        {
+            if !(ANALOG_VALUE_BOUNDS.0..=ANALOG_VALUE_BOUNDS.1).contains(&value) {
+                log::warn!("ignoring {action} bridge event with out-of-range {axis:?}={value}");
+                return None;
+            }
         }
     }
     Some(())
@@ -432,7 +436,7 @@ fn decode_json_menu_action(event: &MenuEvent) -> Option<FrontendEvent> {
         let device_id = event.device_id?;
         // One JNI crossing per motion callback: every carried axis
         // decodes through the shared table; an empty batch fails loud.
-        let mut batch = Vec::new();
+        let mut batch = Vec::with_capacity(6);
         for (axis, value) in event.motion_axes() {
             let Some(value) = value else {
                 continue;

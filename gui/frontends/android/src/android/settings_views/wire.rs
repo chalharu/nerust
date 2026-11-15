@@ -7,6 +7,8 @@ use nerust_gui_viewmodel::settings::SettingsViewModel;
 use nerust_settings_core::{editor::CaptureTarget, i18n::UiText};
 use serde::{Deserialize, Serialize};
 
+use super::vm::VmDeps;
+
 /// Shared resolved-language instance, re-exported so every builder names
 /// one type. Constructed once per projection from the draft choice and
 /// the vault system `Locale`, then threaded through every builder instead
@@ -529,7 +531,7 @@ pub(super) fn capture_open(keyboards: &[KeyboardInfo], gamepads: &[GamepadInfo])
 }
 
 /// Wire form of one capture target: one struct, one parse. Lives here next
-/// to [`encode_target`] so the pair cannot skew; `commands` decodes it
+/// to [`encode_target`] so the pair cannot skew; `commands` resolves it
 /// with the factory registry.
 #[derive(serde::Deserialize)]
 pub(super) struct WireTarget {
@@ -544,6 +546,51 @@ pub(super) struct WireTarget {
     pub control: Option<String>,
     #[serde(default)]
     pub pad: Option<usize>,
+}
+
+impl WireTarget {
+    /// Resolve to a domain target through the factory registry (unknown
+    /// systems stay loud). Lives next to `encode_target` so the pair
+    /// cannot skew; `commands` only calls this.
+    pub(super) fn resolve(self, deps: &VmDeps) -> Result<CaptureTarget, String> {
+        let system = |system: Option<String>| {
+            let system = system.ok_or_else(|| "capture target misses system".to_string())?;
+            deps.factories
+                .iter()
+                .find(|factory| factory.system_id().to_string() == system)
+                .map(|factory| factory.system_id())
+                .ok_or_else(|| format!("unknown system: {system}"))
+        };
+        match self.kind.as_str() {
+            "binding" => Ok(CaptureTarget::Binding {
+                system: system(self.system)?,
+                attachment: self
+                    .attachment
+                    .ok_or_else(|| "capture target misses attachment".to_string())?,
+                control: self
+                    .control
+                    .ok_or_else(|| "capture target misses control".to_string())?,
+            }),
+            "shortcut" => {
+                Ok(CaptureTarget::Shortcut(self.action.ok_or_else(|| {
+                    "capture target misses action".to_string()
+                })?))
+            }
+            "pad_binding" => Ok(CaptureTarget::PadBinding {
+                system: system(self.system)?,
+                pad: self
+                    .pad
+                    .ok_or_else(|| "capture target misses pad".to_string())?,
+                attachment: self
+                    .attachment
+                    .ok_or_else(|| "capture target misses attachment".to_string())?,
+                control: self
+                    .control
+                    .ok_or_else(|| "capture target misses control".to_string())?,
+            }),
+            _ => Err("unknown capture target".to_string()),
+        }
+    }
 }
 
 /// Opaque capture target: newline-free JSON the key must not parse.

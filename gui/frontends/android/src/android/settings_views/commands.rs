@@ -67,6 +67,26 @@ pub(crate) fn apply_command_to(
     let command: WireCommand =
         serde_json::from_str(command_json).map_err(|error| error.to_string())?;
     with_vm_deps(|deps| {
+        if matches!(command.op, WireOp::DeviceTruth) {
+            apply_device_truth_command(
+                keyboards,
+                touch_capable,
+                gamepads,
+                system_locale,
+                &command,
+                pad_order,
+            )?;
+            prune_missing_builtin(snapshot, keyboards);
+            let i18n = resolve_display(snapshot.shared.general.language, *system_locale);
+            let truth = Projection {
+                keyboards,
+                touch_capable: *touch_capable,
+                gamepads,
+                pad_order,
+                i18n,
+            };
+            return project_after_snapshot_edit(snapshot, deps, capture, truth, *system_locale);
+        }
         let i18n = resolve_display(snapshot.shared.general.language, *system_locale);
         let truth = Projection {
             keyboards,
@@ -77,51 +97,15 @@ pub(crate) fn apply_command_to(
         };
         match command.op {
             WireOp::DeviceTruth => {
-                apply_device_truth_command(
-                    keyboards,
-                    touch_capable,
-                    gamepads,
-                    system_locale,
-                    &command,
-                    pad_order,
-                )?;
-                prune_missing_builtin(snapshot, keyboards);
-                project_after_snapshot_edit(
-                    snapshot,
-                    deps,
-                    capture,
-                    keyboards,
-                    *touch_capable,
-                    gamepads,
-                    pad_order,
-                    *system_locale,
-                )
+                unreachable!("device truth handled above")
             }
             WireOp::ResetSection => {
                 apply_reset_section(snapshot, deps, &command, truth)?;
-                project_after_snapshot_edit(
-                    snapshot,
-                    deps,
-                    capture,
-                    keyboards,
-                    *touch_capable,
-                    gamepads,
-                    pad_order,
-                    *system_locale,
-                )
+                project_after_snapshot_edit(snapshot, deps, capture, truth, *system_locale)
             }
             WireOp::CancelCapture => {
                 *capture = None;
-                project_after_snapshot_edit(
-                    snapshot,
-                    deps,
-                    capture,
-                    keyboards,
-                    *touch_capable,
-                    gamepads,
-                    pad_order,
-                    *system_locale,
-                )
+                project_after_snapshot_edit(snapshot, deps, capture, truth, *system_locale)
             }
             WireOp::ClearBinding | WireOp::StartCapture => {
                 let vm = build_vm(snapshot, deps, i18n)?;
@@ -140,16 +124,7 @@ pub(crate) fn apply_command_to(
                 } else {
                     // Snapshot-direct mutation (language, Android-local,
                     // device membership): re-resolve and project fresh.
-                    project_after_snapshot_edit(
-                        snapshot,
-                        deps,
-                        capture,
-                        keyboards,
-                        *touch_capable,
-                        gamepads,
-                        pad_order,
-                        *system_locale,
-                    )
+                    project_after_snapshot_edit(snapshot, deps, capture, truth, *system_locale)
                 }
             }
         }
@@ -158,29 +133,15 @@ pub(crate) fn apply_command_to(
 
 /// Re-resolve the display language (the command may have changed it) and
 /// project exactly once. Snapshot-direct ops funnel here.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "Projection seam: truth (snapshot, deps, lists, order, locale) threads through"
-)]
 fn project_after_snapshot_edit(
     snapshot: &SettingsSnapshot,
     deps: &VmDeps,
     capture: &CaptureSlot,
-    keyboards: &[KeyboardInfo],
-    touch_capable: bool,
-    gamepads: &[GamepadInfo],
-    pad_order: &[String],
+    truth: Projection,
     system_locale: Option<AppLanguage>,
 ) -> Result<ViewPayload, String> {
     let i18n = resolve_display(snapshot.shared.general.language, system_locale);
-    let truth = Projection {
-        keyboards,
-        touch_capable,
-        gamepads,
-        pad_order,
-        i18n,
-    };
-    project_fresh(snapshot, deps, capture, truth)
+    project_fresh(snapshot, deps, capture, Projection { i18n, ..truth })
 }
 
 /// One `set` edit: route by key family (Android-local overlay/cartridge
@@ -1047,41 +1008,5 @@ fn apply_android_local(
 /// inner boundaries pass the `Value` through without re-serializing.
 fn decode_target(encoded: &str, deps: &VmDeps) -> Result<CaptureTarget, String> {
     let value: WireTarget = serde_json::from_str(encoded).map_err(|error| error.to_string())?;
-    let system = |system: Option<String>| {
-        let system = system.ok_or_else(|| "capture target misses system".to_string())?;
-        deps.factories
-            .iter()
-            .find(|factory| factory.system_id().to_string() == system)
-            .map(|factory| factory.system_id())
-            .ok_or_else(|| format!("unknown system: {system}"))
-    };
-    match value.kind.as_str() {
-        "binding" => Ok(CaptureTarget::Binding {
-            system: system(value.system)?,
-            attachment: value
-                .attachment
-                .ok_or_else(|| "capture target misses attachment".to_string())?,
-            control: value
-                .control
-                .ok_or_else(|| "capture target misses control".to_string())?,
-        }),
-        "shortcut" => {
-            Ok(CaptureTarget::Shortcut(value.action.ok_or_else(|| {
-                "capture target misses action".to_string()
-            })?))
-        }
-        "pad_binding" => Ok(CaptureTarget::PadBinding {
-            system: system(value.system)?,
-            pad: value
-                .pad
-                .ok_or_else(|| "capture target misses pad".to_string())?,
-            attachment: value
-                .attachment
-                .ok_or_else(|| "capture target misses attachment".to_string())?,
-            control: value
-                .control
-                .ok_or_else(|| "capture target misses control".to_string())?,
-        }),
-        _ => Err("unknown capture target".to_string()),
-    }
+    value.resolve(deps)
 }

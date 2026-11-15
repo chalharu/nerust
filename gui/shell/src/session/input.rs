@@ -125,15 +125,6 @@ impl SessionHandle {
         }
     }
 
-    /// Assigned player slot for one event source, registering first-seen
-    /// pads. `None` parks the source (Off, keyboards on the axis path,
-    /// or pads past the persisted table).
-    fn pad_slot_for(&mut self, source: SourceId) -> Option<usize> {
-        let index = self.input.pads.pad_index(source)?;
-        let ports = &self.settings.snapshot.shared.input.gamepad.pad_ports;
-        self.input.slot_for_index(index, ports)
-    }
-
     /// Stable source for one frontend device id: the connect-time
     /// descriptor when the connect event arrived, else a transient id key.
     /// The router builds every pad source here, never from raw ids, so a
@@ -169,12 +160,18 @@ impl SessionHandle {
     /// rank (see `pad_index`): a pre-connect key never steals pad 0.
     pub fn primary_pad_source(&self) -> Option<SourceId> {
         let ports = &self.settings.snapshot.shared.input.gamepad.pad_ports;
-        (0..self.input.pads.order.len()).find_map(|pos| {
-            let guid = self.input.pads.order[pos];
-            let source = SourceId::Pad(guid);
-            let index = self.input.pads.pad_index(source)?;
-            self.input.slot_for_index(index, ports).map(|_| source)
-        })
+        let mut rank = 0;
+        for guid in &self.input.pads.order {
+            if super::PadTopology::is_transient(guid) {
+                continue;
+            }
+            let source = SourceId::Pad(*guid);
+            if self.input.slot_for_index(rank, ports).is_some() {
+                return Some(source);
+            }
+            rank += 1;
+        }
+        None
     }
 
     /// Connect-time device registration: descriptor to order index.
@@ -216,10 +213,12 @@ impl SessionHandle {
                 self.input.pads.order[pos] = guid;
                 self.input.pads.upsert_descriptor(Some(rank), descriptor);
             }
+            self.input.pads.rebuild_index();
             self.migrate_pad_source(old, new);
         } else if !self.input.pads.order.contains(&guid) {
             self.input.pads.order.push(guid);
             self.input.pads.upsert_descriptor(None, descriptor);
+            self.input.pads.rebuild_index();
         }
     }
 
@@ -373,8 +372,12 @@ impl SessionHandle {
                 None
             }
             SourceButtonId::Pad(std_button) => {
+                // One order-index lookup per event: commit and the
+                // shortcut gate share it instead of scanning twice.
+                let index = self.input.pads.pad_index(source);
+                let slot = index.and_then(|i| self.slot_for_pad_index(i));
                 if changed {
-                    self.commit_pad_press(source, std_button, pressed);
+                    self.commit_pad_press(source, std_button, pressed, index, slot);
                 }
                 // The slot gates firing only: releases clear through the
                 // static map so unassigning mid-hold cannot strand an
@@ -384,7 +387,7 @@ impl SessionHandle {
                     // Parked pads never fire shortcuts: without an assigned
                     // slot there is no player for the action to address, so an
                     // Off-port pad must not drive the shared pause button.
-                    if first_press && self.pad_slot_for(source).is_some() {
+                    if first_press && slot.is_some() {
                         return action
                             .filter(|action| self.fire_shortcut(*action))
                             .map(Self::shortcut_kind);
@@ -406,11 +409,14 @@ impl SessionHandle {
 
     /// Pad press tail: position button to the pad's assigned console
     /// control. Off-port pads never reach here (the slot gate parks them).
-    fn commit_pad_press(&mut self, source: SourceId, button: StandardButton, pressed: bool) {
-        // One order-index lookup: the slot derives from it instead of
-        // re-scanning `pad_order` inside the commit.
-        let index = self.input.pads.pad_index(source);
-        let slot = index.and_then(|i| self.slot_for_pad_index(i));
+    fn commit_pad_press(
+        &mut self,
+        source: SourceId,
+        button: StandardButton,
+        pressed: bool,
+        index: Option<usize>,
+        slot: Option<usize>,
+    ) {
         self.commit_holder(
             FieldSource::Pad(source, button),
             button,
@@ -831,7 +837,9 @@ impl SessionHandle {
             self.input
                 .pressed
                 .remove(&(source, SourceButtonId::Pad(button)));
-            self.commit_pad_press(source, button, false);
+            let index = self.input.pads.pad_index(source);
+            let slot = index.and_then(|i| self.slot_for_pad_index(i));
+            self.commit_pad_press(source, button, false, index, slot);
         }
         // Full release like any other: a shortcut held across the loss
         // must fire again on the next press instead of staying suppressed.
@@ -854,7 +862,9 @@ impl SessionHandle {
     pub(super) fn reassert_pad_presses(&mut self) {
         let held = Self::pad_holds(&self.input.pressed);
         for (source, button) in held {
-            self.commit_pad_press(source, button, true);
+            let index = self.input.pads.pad_index(source);
+            let slot = index.and_then(|i| self.slot_for_pad_index(i));
+            self.commit_pad_press(source, button, true, index, slot);
         }
     }
 

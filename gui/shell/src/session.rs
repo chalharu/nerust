@@ -194,6 +194,9 @@ struct PadTopology {
     /// Pad connection order within this boot: `order[i]` is pad `i` for
     /// the persisted `pad_ports` table.
     order: Vec<PadGuid>,
+    /// Position index for `order`: hot button/axis paths read O(1)
+    /// instead of scanning. Rebuilt on connect mutations only (cold).
+    order_index: HashMap<PadGuid, usize>,
     /// Descriptor mirror of `order`, same positions, transients skipped:
     /// the settings vault (which never sees connect events) sorts its
     /// display list by this so a reconnect can never skew a pad onto
@@ -279,6 +282,7 @@ impl InputDept {
             },
             pads: PadTopology {
                 order: Vec::new(),
+                order_index: HashMap::new(),
                 descriptor_order: Vec::new(),
                 device_ids: HashMap::new(),
                 binding_map: Vec::new(),
@@ -607,7 +611,7 @@ impl PadTopology {
     /// Gameplay resolves through the descriptor rank below, so a stray
     /// pre-connect key can neither drive pad 0 nor shift a real pad onto
     /// another pad's overrides.
-    fn is_transient(guid: &PadGuid) -> bool {
+    pub(super) fn is_transient(guid: &PadGuid) -> bool {
         guid.0[0..4] == *b"TRNS"
     }
 
@@ -649,12 +653,21 @@ impl PadTopology {
     /// (see `binding_map`): newcomers always append, so no pad parks
     /// past a cap; missing settings rows read as defaults.
     fn pad_index_for_guid(&mut self, guid: PadGuid) -> usize {
-        if let Some(index) = self.order.iter().position(|known| *known == guid) {
+        if let Some(&index) = self.order_index.get(&guid) {
             return index;
         }
         let index = self.order.len();
         self.order.push(guid);
+        self.order_index.insert(guid, index);
         index
+    }
+
+    /// Rebuild the position index after order mutations (connect only).
+    pub(super) fn rebuild_index(&mut self) {
+        self.order_index.clear();
+        for (index, guid) in self.order.iter().enumerate() {
+            self.order_index.insert(*guid, index);
+        }
     }
 
     /// Setting-slot index of one pad: the descriptor rank, so the commit
@@ -667,7 +680,7 @@ impl PadTopology {
                 if Self::is_transient(&guid) {
                     return None;
                 }
-                let pos = self.order.iter().position(|known| *known == guid)?;
+                let pos = self.order_index.get(&guid).copied()?;
                 Some(self.setting_rank(pos))
             }
         }
