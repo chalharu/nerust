@@ -348,14 +348,14 @@ fn gamepad_rows(
         rows.push(info_row(
             &format!("{devices_id}.gamepad.none"),
             i18n.text(UiText::GamepadDevice),
-            i18n.text(UiText::DescPadParked),
+            i18n.text(UiText::DescNoGamepads),
             String::new(),
         ));
         if let Some(stale) = stale_slot(port_index, snapshot) {
             rows.push(info_row(
                 &format!("{devices_id}.gamepad.stale"),
                 i18n.text(UiText::GamepadDevice),
-                i18n.text(UiText::DescPadParked),
+                i18n.text(UiText::DescStalePad),
                 pad_label(i18n.language(), stale),
             ));
         }
@@ -396,7 +396,7 @@ fn gamepad_rows(
         rows.push(info_row(
             &format!("{devices_id}.gamepad.stale"),
             i18n.text(UiText::GamepadDevice),
-            i18n.text(UiText::DescPadParked),
+            i18n.text(UiText::DescStalePad),
             pad_label(i18n.language(), stale),
         ));
     }

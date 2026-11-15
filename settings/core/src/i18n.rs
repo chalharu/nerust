@@ -242,7 +242,8 @@ pub enum UiText {
     DescGamepadRadio,
     DescGamepadGear,
     DescPadReset,
-    DescPadParked,
+    DescNoGamepads,
+    DescStalePad,
     DescPadUnassigned,
     AlwaysAvailable,
     Connected,
@@ -674,9 +675,13 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
             "Clears deadzone, hat switch, buttons. Keeps the slot.",
             "遊び・ハットスイッチ・ボタンを消去。スロットは保持",
         ),
-        UiText::DescPadParked => (
-            "Disconnected or over the pad limit, so hidden.",
-            "切断中か接続上限を超えたため非表示",
+        UiText::DescNoGamepads => (
+            "Connect a USB or Bluetooth gamepad.",
+            "USB・Bluetoothゲームパッドを接続",
+        ),
+        UiText::DescStalePad => (
+            "Disconnected; restores on reconnect.",
+            "切断中。再接続で復帰",
         ),
         UiText::DescPadUnassigned => (
             "Assign a player in Devices to map buttons.",
@@ -1191,7 +1196,8 @@ mod tests {
             DescGamepadRadio,
             DescGamepadGear,
             DescPadReset,
-            DescPadParked,
+            DescNoGamepads,
+            DescStalePad,
             DescPadUnassigned,
             AlwaysAvailable,
             Connected,
