@@ -204,17 +204,26 @@ struct PadTopology {
     /// order entry stays so a reconnect reuses the index.
     device_ids: HashMap<i32, PadGuid>,
     /// Per-pad game-button overrides: pad order index → position button →
-    /// interned `(attachment, control)`. Sparse (only remapped pairs).
+    /// override plus the rebind-fused dpad context, so commits never
+    /// walk the topology per edge. Sparse (only remapped pairs).
     /// Absolute attachments (like keyboard bindings): an explicit entry
     /// wins over the pad's player-slot routing.
     /// Sized at every rebind to cover the live order and the settings
     /// tables; missing rows read as defaults (no overrides, deadzone 8,
     /// hat on), so a pad that outgrows the last rebind still plays.
-    binding_map: Vec<HashMap<StandardButton, (AttachmentId, DigitalControlId)>>,
+    binding_map: Vec<HashMap<StandardButton, PadOverride>>,
 
     /// Pad button → shortcut action (first binding wins). Parked pads
     /// never consult it (see the slot gate).
     shortcut_map: HashMap<StandardButton, ShortcutAction>,
+}
+
+/// One pad-button override with its dpad context fused at rebind.
+#[derive(Debug, Clone, Copy)]
+struct PadOverride {
+    attachment: AttachmentId,
+    control: DigitalControlId,
+    dpad: Option<(AttachmentId, DigitalControlId, AbstractKey)>,
 }
 
 struct InputDept {
@@ -401,7 +410,16 @@ impl InputDept {
                     );
                     continue;
                 }
-                map.insert(binding.button, (attachment, control));
+                let dpad =
+                    Self::dpad_for_assignment(&self.current_assignments, attachment, control);
+                map.insert(
+                    binding.button,
+                    PadOverride {
+                        attachment,
+                        control,
+                        dpad,
+                    },
+                );
             }
         }
     }
@@ -496,22 +514,26 @@ impl InputDept {
         self.trigger_alias = !analog;
     }
 
-    /// Abstract button of an emulated control on an attachment, resolved
-    /// through the live assignments (same traversal as the overlay builder).
-    /// Dpad context for the OR/neutral machine: resolved abstract plus the
-    /// Copy pair the machine keys on. `None` for non-dpad controls, so both
-    /// input paths share one gate instead of copy-pasting it. No
-    /// allocation: every id here is already Copy.
+    /// Dpad context for the OR/neutral machine: resolved abstract plus
+    /// the Copy pair the machine keys on. `None` for non-dpad controls.
+    /// No allocation: every id here is already Copy.
     fn dpad_for(
         &self,
         attachment: AttachmentId,
         control: DigitalControlId,
     ) -> Option<(AttachmentId, DigitalControlId, AbstractKey)> {
-        let abs = nerust_input_traits::abstract_for_attachment(
-            self.current_assignments.slots(),
-            attachment,
-            control,
-        )?;
+        Self::dpad_for_assignment(&self.current_assignments, attachment, control)
+    }
+
+    /// Assignment-parameterized twin for rebind-time fusion (no `&self`
+    /// borrow, so rebuilds can call it while filling the maps).
+    fn dpad_for_assignment(
+        assignments: &InputAssignments,
+        attachment: AttachmentId,
+        control: DigitalControlId,
+    ) -> Option<(AttachmentId, DigitalControlId, AbstractKey)> {
+        let abs =
+            nerust_input_traits::abstract_for_attachment(assignments.slots(), attachment, control)?;
         field_press::dpad_pair(abs)?;
         Some((attachment, control, abs))
     }

@@ -737,7 +737,8 @@ impl SessionHandle {
                 .get(index)
                 .and_then(|map| map.get(&button).copied())
         });
-        if let Some((attachment, control)) = resolved {
+        if let Some(override_) = resolved {
+            let (attachment, control) = (override_.attachment, override_.control);
             let Some(field) = self.resolve_field(attachment, control) else {
                 if pressed {
                     log::debug!(
@@ -751,8 +752,7 @@ impl SessionHandle {
                     "pad override drives field {field}: {attachment}.{control} from {button:?}"
                 );
             }
-            let dpad = self.input.dpad_for(attachment, control);
-            self.commit_press(field, holder, dpad, pressed);
+            self.commit_press(field, holder, override_.dpad, pressed);
             return;
         }
         let Some(abstract_key) = button.abstract_key() else {
@@ -1318,7 +1318,10 @@ mod tests {
         let map = &session.input.pads.binding_map[0];
         assert_eq!(map.len(), 1, "analog entries never reach the map");
         assert_eq!(
-            map[&StandardButton::East],
+            (
+                map[&StandardButton::East].attachment,
+                map[&StandardButton::East].control
+            ),
             (
                 AttachmentId::new("test.topology.slot"),
                 DigitalControlId::new("test.topology.a")
@@ -1365,7 +1368,7 @@ mod tests {
         let map = &session.input.pads.binding_map[0];
         assert_eq!(map.len(), 1);
         assert_eq!(
-            map[&StandardButton::East].1,
+            map[&StandardButton::East].control,
             DigitalControlId::new("test.topology.a"),
             "first entry wins, the duplicate only logs"
         );
