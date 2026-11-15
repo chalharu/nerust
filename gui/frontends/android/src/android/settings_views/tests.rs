@@ -722,39 +722,41 @@ fn desktop_only_shortcuts_stay_out_of_android() {
 }
 
 #[test]
-fn capture_rows_disable_without_input_device() {
+fn capture_rows_hide_without_input_device() {
+    // Hide-when-closed, one policy everywhere: with no input device no
+    // capture row renders at all; the shared empty state names the gap.
+    // Keyboard rows reappear with a keyboard present; disconnected pad
+    // screens hide their mapping rows (nothing to press) while settings
+    // persist for the reconnect.
     let (_snapshot, payload) = test_payload_with_keyboards(&[]);
-    let captures: Vec<_> = payload
-        .sections
-        .iter()
-        .flat_map(|section| &section.rows)
-        .filter(|row| row.kind == RowKind::Capture)
-        .collect();
-    assert!(!captures.is_empty(), "capture rows exist to disable");
-    for row in &captures {
-        assert!(!row.enabled, "{} disables without an input device", row.key);
-        assert!(!row.reason.is_empty(), "{} names the reason", row.key);
-    }
+    assert!(
+        payload
+            .sections
+            .iter()
+            .flat_map(|section| &section.rows)
+            .all(|row| row.kind != RowKind::Capture),
+        "no capture rows without an input device"
+    );
     let (_snapshot, payload) = test_payload();
-    // Keyboard rows re-enable with a keyboard present. Assigned-but-
-    // disconnected pad screens keep their mapping rows (settings restore
-    // on reconnect) with capture disabled: nothing to press.
-    let mut pad_disabled = 0;
+    // Keyboard rows render live with a keyboard present. Assigned-but-
+    // disconnected pad screens carry no mapping rows.
+    let mut pad_captures = 0;
     for row in payload
         .sections
         .iter()
         .flat_map(|section| &section.rows)
         .filter(|row| row.kind == RowKind::Capture)
     {
+        assert!(row.enabled, "{} renders live", row.key);
+        assert!(row.reason.is_empty(), "{} carries no reason", row.key);
         if row.key.starts_with("pad.") {
-            assert!(!row.enabled, "{} disables without its pad", row.key);
-            assert!(!row.reason.is_empty(), "{} names the reason", row.key);
-            pad_disabled += 1;
-        } else {
-            assert!(row.enabled, "{} re-enables with a keyboard", row.key);
+            pad_captures += 1;
         }
     }
-    assert_ne!(pad_disabled, 0, "assigned stale pads keep gated rows");
+    assert_eq!(
+        pad_captures, 0,
+        "stale pads hide mapping rows instead of disabling them"
+    );
 }
 
 #[test]
@@ -800,27 +802,12 @@ fn gamepad_alone_reopens_capture() {
 
 #[test]
 fn start_capture_rejected_without_input_device() {
-    let (mut snapshot, payload) = test_payload_with_keyboards(&[]);
-    // With no input device the shortcut screen holds no capture rows at
-    // all; the keyboard mapping rows exist but disabled with the reason.
-    assert!(
-        !payload
-            .sections
-            .iter()
-            .any(|section| section.id == "controls.shortcuts"
-                && section.rows.iter().any(|row| row.kind == RowKind::Capture)),
-        "shortcut screen lists no rows without a device"
-    );
-    let key = payload
-        .sections
-        .iter()
-        .flat_map(|section| &section.rows)
-        .find(|row| row.kind == RowKind::Capture)
-        .map(|row| row.key.clone())
-        .expect("key mapping rows exist to disable");
+    // With no input device no capture row exists to start from: a forged
+    // key for a hidden row fails at row lookup, and no prompt strands.
+    let (mut snapshot, _) = test_payload_with_keyboards(&[]);
     let mut capture: CaptureSlot = None;
     let command_json = serde_json::to_string(&WireCommand {
-        key: key.to_string(),
+        key: "keys.gba.binding.test.att.test.ctrl".to_string(),
         index: 0,
         number: 0,
         op: WireOp::StartCapture,
@@ -842,10 +829,7 @@ fn start_capture_rejected_without_input_device() {
         )
         .expect_err("start with no input device must fail")
     });
-    assert!(
-        error.contains("Input device"),
-        "fail loud with the reason: {error}"
-    );
+    assert!(!error.is_empty(), "fail loud: {error}");
     assert!(capture.is_none(), "no prompt strands");
 }
 

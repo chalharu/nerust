@@ -8,7 +8,7 @@ use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_viewmodel::settings::SettingsViewModel;
 use nerust_settings_core::{
     editor::CaptureTarget,
-    i18n::{UiText, language_from_locale_tag},
+    i18n::language_from_locale_tag,
     model::{
         app_state::DesktopAppState,
         input::ensure_default_shortcuts,
@@ -270,12 +270,8 @@ fn apply_capture_command(
             Ok(())
         }
         WireOp::StartCapture => {
-            // The disabled row carries the reason: reject only via the
-            // row's enabled state, never via a second truth check here,
-            // so rows and the command path cannot disagree.
-            if !row.enabled {
-                return Err(truth.i18n.text(UiText::InputDeviceRequired));
-            }
+            // Rows hide when closed, so a resolved capture row is always
+            // live: no second truth check here that could disagree.
             vm.capture
                 .start_capture(target.clone())
                 .map_err(|error| error.to_string())?;

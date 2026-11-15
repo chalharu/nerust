@@ -696,7 +696,6 @@ fn shortcuts_section(
     keyboards: &[KeyboardInfo],
     gamepads: &[GamepadInfo],
 ) -> SectionWire {
-    let reason = i18n.text(UiText::InputDeviceRequired);
     // Shortcut targets encode no system (the encoder drops it for the
     // `shortcut` kind and the decoder never reads it); bindings carry
     // their own. No invented hint.
@@ -735,8 +734,6 @@ fn shortcuts_section(
                 String::new(),
                 shortcut_binding_text(snapshot, capture, i18n, false),
                 target,
-                true,
-                &reason,
             ));
         }
     }
@@ -758,8 +755,6 @@ fn shortcuts_section(
                 String::new(),
                 shortcut_binding_text(snapshot, capture, i18n, true),
                 target,
-                true,
-                &reason,
             ));
         }
     }

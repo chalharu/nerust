@@ -38,7 +38,6 @@ pub(super) fn build_pad_sections(
     gamepads: &[GamepadInfo],
     pad_order: &[String],
 ) -> Vec<SectionWire> {
-    let reason = i18n.text(UiText::InputDeviceRequired);
     let gamepad = &snapshot.shared.input.gamepad;
     // Stable universe: every settings row plus every mirrored rank.
     // Unknown live members (scan raced ahead of the connect event) wait
@@ -51,10 +50,8 @@ pub(super) fn build_pad_sections(
             vm,
             snapshot,
             i18n,
-            &reason,
             rank,
             live.map(|info| info.name.clone()),
-            live.is_some(),
         ));
     }
     out
@@ -68,11 +65,12 @@ fn pad_rank_section(
     vm: &SettingsViewModel,
     snapshot: &SettingsSnapshot,
     i18n: I18n,
-    reason: &str,
     rank: usize,
     live_name: Option<String>,
-    live: bool,
 ) -> SectionWire {
+    // Disconnected ranks keep every row except mapping captures (nothing
+    // to press); their edits persist and restore on reconnect.
+    let live = live_name.is_some();
     let gamepad = &snapshot.shared.input.gamepad;
     let pad_id = format!("pad.{}", rank + 1);
     let port = gamepad.pad_ports.get(rank);
@@ -132,13 +130,13 @@ fn pad_rank_section(
     // only collect latent overrides: point at Devices instead.
     // Assigned pads list only their own player's controls (all
     // systems); other players' attachments never fire from here.
-    // Disconnected ranks keep their rows (settings restore on
-    // reconnect) but capture stays disabled: nothing to press.
-    if let Some(slot) = slot {
+    // Disconnected ranks hide their captures (nothing to press);
+    // the rows return with the pad.
+    if let Some(slot) = slot.filter(|_| live) {
         for input in vm.inputs() {
-            rows.extend(pad_system_rows(input, &pad_id, rank, slot, reason, live));
+            rows.extend(pad_system_rows(input, &pad_id, rank, slot));
         }
-    } else {
+    } else if slot.is_none() {
         rows.push(info_row(
             &format!("{pad_id}.unassigned"),
             i18n.text(UiText::KeyMapping),
@@ -168,8 +166,6 @@ fn pad_system_rows(
     pad_id: &str,
     rank: usize,
     slot: usize,
-    reason: &str,
-    live: bool,
 ) -> Vec<RowWire> {
     use nerust_gui_viewmodel::settings::dto::BindingValueView;
     let view = input.view.get();
@@ -244,8 +240,6 @@ fn pad_system_rows(
                 String::new(),
                 text,
                 &encode_target(&target),
-                live,
-                reason,
             ));
         }
         if section_rows.is_empty() {

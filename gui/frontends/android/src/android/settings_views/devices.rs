@@ -473,7 +473,8 @@ pub(super) fn build_device_sections(
 
 /// One key-mapping screen per machine. Reached from each keyboard device
 /// detail screen; the controller screens hold slots only. Capture takes
-/// any mapped hardware key; with no input device the rows disable.
+/// any mapped hardware key; with no input device the capture rows hide
+/// and one shared empty state names the missing input (shortcuts policy).
 pub(super) fn build_keys_sections(
     vm: &SettingsViewModel,
     i18n: I18n,
@@ -481,29 +482,41 @@ pub(super) fn build_keys_sections(
     gamepads: &[GamepadInfo],
 ) -> Vec<SectionWire> {
     let open = capture_open(keyboards, gamepads);
-    let reason = i18n.text(UiText::InputDeviceRequired);
     vm.inputs()
         .iter()
         .map(|input| {
             let view = input.view.get();
             let mut rows: Vec<RowWire> = Vec::new();
+            if !open {
+                rows.push(info_row(
+                    &format!("keys.{}.none", view.system_id),
+                    i18n.text(UiText::NoInputDevices),
+                    i18n.text(UiText::DescNoInputDevices),
+                    String::new(),
+                ));
+            }
             for section in &view.sections {
+                let mut section_rows: Vec<RowWire> = Vec::new();
+                if open {
+                    section_rows.extend(section.rows.iter().map(|binding| {
+                        capture_row(
+                            &format!(
+                                "keys.{}.binding.{}",
+                                view.system_id,
+                                binding_key(&binding.target)
+                            ),
+                            binding.label.clone(),
+                            String::new(),
+                            binding_value_text(binding),
+                            &encode_target(&binding.target),
+                        )
+                    }));
+                }
+                if section_rows.is_empty() {
+                    continue;
+                }
                 rows.push(header_row(section.label.clone()));
-                rows.extend(section.rows.iter().map(|binding| {
-                    capture_row(
-                        &format!(
-                            "keys.{}.binding.{}",
-                            view.system_id,
-                            binding_key(&binding.target)
-                        ),
-                        binding.label.clone(),
-                        String::new(),
-                        binding_value_text(binding),
-                        &encode_target(&binding.target),
-                        open,
-                        &reason,
-                    )
-                }));
+                rows.extend(section_rows);
             }
             rows.push(button_row(
                 &format!("reset.keys.{}", view.system_id),

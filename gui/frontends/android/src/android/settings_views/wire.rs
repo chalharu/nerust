@@ -496,16 +496,14 @@ pub(super) fn group_row(key: &str, label: String, description: String, target: &
 
 /// Key-capture row: tap starts capture, Clear unbinds, Cancel aborts.
 /// `description` stays empty: the value line already names the binding.
-/// Disabled rows (no input device connected) keep Clear: unbinding needs no
-/// input device. `reason` carries the localized why.
+/// Rows hide when closed (no input device / pad disconnected) instead of
+/// disabling in place, so every rendered capture row accepts input.
 pub(super) fn capture_row(
     key: &str,
     label: String,
     description: String,
     text: String,
     target: &str,
-    enabled: bool,
-    reason: &str,
 ) -> RowWire {
     RowWire {
         key: key.to_string(),
@@ -514,8 +512,6 @@ pub(super) fn capture_row(
         kind: RowKind::Capture,
         text,
         target: target.to_string(),
-        enabled,
-        reason: reason.to_string(),
         ..RowWire::new(RowKind::Capture)
     }
 }
