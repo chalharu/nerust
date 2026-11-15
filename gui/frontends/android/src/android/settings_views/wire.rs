@@ -231,11 +231,6 @@ pub(super) fn binding_key(target: &CaptureTarget) -> String {
     }
 }
 
-/// Vault descriptor to connection-order pad index: the same vault list
-/// that built the rows, so a Kotlin scan-order descriptor can never skew
-/// against the Rust side. Accepts the raw descriptor or the `pad:`
-/// member id; `None` when the device left (stale Kotlin push) or parks
-/// past the persisted table.
 /// Stable settings rank for one pad member: position in the vault
 /// order mirror (first-seen descriptor order), which the session uses as
 /// the settings index. Live-list positions skew after any disconnect
@@ -264,8 +259,7 @@ pub(crate) fn live_for_rank<'a>(
 /// Stable session order for the display list: vault order follows the
 /// session first-seen mirror (refreshed on every connect event), so Pad N
 /// names session pad N even after a disconnect/reconnect cycle compacts
-/// the scan. Unknown members (scan raced ahead of the connect event)
-/// keep scan order at the end; the next connect re-sorts.
+/// the scan.
 pub(crate) fn sort_gamepads_by_order(gamepads: &mut [GamepadInfo], pad_order: &[String]) {
     let rank: std::collections::HashMap<&str, usize> = pad_order
         .iter()

@@ -545,6 +545,9 @@ fn build_notifications_section(vm: &SettingsViewModel, i18n: I18n) -> SectionWir
 /// sliders; haptics stays here so there is exactly one place to toggle it.
 /// Cartridge pak settings live under Advanced (set-and-forget attic).
 /// Controllers quick screen: player port rows plus overlay/shortcut links.
+/// Pad screens hang off the devices gears only (single path): the hub
+/// names players, never pads, so one link set cannot skew against the
+/// other after a reconnect cycle.
 fn controllers_quick_section(
     snapshot: &SettingsSnapshot,
     i18n: I18n,
@@ -564,31 +567,6 @@ fn controllers_quick_section(
         ));
         let last = quick_rows.last_mut().expect("player row pushed");
         last.text = nerust_gui_viewmodel::settings::labels::port_summary(i18n, &names);
-    }
-    // Ranked pads link straight to their own screen (deadzone,
-    // hat switch, button mapping). Ranks, never live positions: the
-    // screens iterate stable ranks too, so the link and the screen
-    // cannot disagree after a reconnect cycle.
-    let ranked: Vec<(usize, &GamepadInfo)> = pad_order
-        .iter()
-        .enumerate()
-        .filter_map(|(rank, descriptor)| {
-            gamepads
-                .iter()
-                .find(|info| super::wire::bare_member(&info.member) == *descriptor)
-                .map(|info| (rank, info))
-        })
-        .collect();
-    if !ranked.is_empty() {
-        quick_rows.push(header_row(i18n.text(UiText::Gamepads)));
-    }
-    for (rank, info) in &ranked {
-        quick_rows.push(group_row(
-            &format!("controls.pad{}.link", rank + 1),
-            info.name.clone(),
-            i18n.text(UiText::DescGamepadGear),
-            &format!("pad.{}", rank + 1),
-        ));
     }
     // Pure navigation hub like player/about: every editable row lives on
     // a detail screen with its own reset, so this screen carries none.
@@ -620,11 +598,10 @@ fn controllers_quick_section(
 }
 
 /// Overlay detail screen: every overlay setting (visibility, haptics,
-/// opacity/scale/offset) plus the gamepad status readout. One screen per
-/// feature, so the screen reset below covers the whole screen.
+/// opacity/scale/offset). One screen per feature, so the screen reset
+/// below covers the whole screen.
 fn overlay_detail_section(
     overlay: &nerust_settings_core::model::local::TouchOverlaySettings,
-    gamepads: &[GamepadInfo],
     touch_capable: Option<bool>,
     i18n: I18n,
 ) -> SectionWire {
@@ -655,20 +632,6 @@ fn overlay_detail_section(
         label: i18n.text(UiText::TouchOverlay),
         sub: i18n.text(UiText::SectionControllers),
         rows: vec![
-            info_row(
-                "controls.auto_hide_status",
-                i18n.text(UiText::ConnectedGamepads),
-                String::new(),
-                if gamepads.is_empty() {
-                    i18n.text(UiText::NoValue)
-                } else {
-                    gamepads
-                        .iter()
-                        .map(|info| info.name.clone())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                },
-            ),
             visibility_row,
             toggle_row(
                 "controls.overlay_haptics",
@@ -852,7 +815,7 @@ fn build_controllers_sections(
 ) -> Vec<SectionWire> {
     let mut sections = vec![
         controllers_quick_section(snapshot, i18n, keyboards, gamepads, pad_order),
-        overlay_detail_section(&snapshot.local.touch_overlay, gamepads, touch_capable, i18n),
+        overlay_detail_section(&snapshot.local.touch_overlay, touch_capable, i18n),
         shortcuts_section(vm, snapshot, i18n, keyboards, gamepads),
     ];
     sections.extend(build_pad_sections(vm, snapshot, i18n, gamepads, pad_order));

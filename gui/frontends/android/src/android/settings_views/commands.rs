@@ -248,13 +248,13 @@ fn apply_capture_command(
             // shortcut rows clear only their own column so a keyboard
             // Clear never strands a pad twin (and vice versa). The column
             // rides the row key suffix (`.kbd` vs `.padN`).
-            match (&target, clear_column_for_key(&command.key)) {
-                (CaptureTarget::Shortcut(_), Some(Column::Key)) => {
+            match &target {
+                CaptureTarget::Shortcut(_) if command.key.ends_with(".kbd") => {
                     vm.capture
                         .clear_key(&target)
                         .map_err(|error| error.to_string())?;
                 }
-                (CaptureTarget::Shortcut(_), Some(Column::Pad)) => {
+                CaptureTarget::Shortcut(_) if command.key.contains(".pad") => {
                     vm.capture
                         .clear_pad(&target)
                         .map_err(|error| error.to_string())?;
@@ -290,27 +290,6 @@ fn apply_capture_command(
             Ok(())
         }
         op => Err(format!("unknown capture op: {op:?}")),
-    }
-}
-
-/// Which shortcut column a clear addresses: key or pad. `None` from
-/// [`clear_column_for_key`] clears whole.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Column {
-    Key,
-    Pad,
-}
-
-/// Which shortcut column a clear addresses, from the row key suffix
-/// (`.kbd` vs `.padN`). Game and per-pad mapping rows carry no suffix
-/// and clear whole (`None`).
-fn clear_column_for_key(key: &str) -> Option<Column> {
-    if key.ends_with(".kbd") {
-        Some(Column::Key)
-    } else if key.contains(".pad") {
-        Some(Column::Pad)
-    } else {
-        None
     }
 }
 
@@ -1076,72 +1055,64 @@ fn apply_android_local(
     Ok(true)
 }
 
-fn req_str<'a>(value: &'a serde_json::Value, field: &str) -> Result<&'a str, String> {
-    value
-        .get(field)
-        .and_then(|node| node.as_str())
-        .ok_or_else(|| format!("capture target misses {field}"))
-}
-
-fn req_system(
-    deps: &VmDeps,
-    value: &serde_json::Value,
-) -> Result<Box<dyn nerust_core_traits::identity::SystemId>, String> {
-    let system = req_str(value, "system")?;
-    deps.factories
-        .iter()
-        .find(|factory| factory.system_id().to_string() == system)
-        .map(|factory| factory.system_id())
-        .ok_or_else(|| format!("unknown system: {system}"))
-}
-
-fn req_pad(value: &serde_json::Value) -> Result<usize, String> {
-    let pad = value
-        .get("pad")
-        .and_then(|pad| pad.as_u64())
-        .ok_or_else(|| "capture target misses pad".to_string())?;
-    let pad: usize = pad
-        .try_into()
-        .map_err(|_| "capture target pad out of range".to_string())?;
-    Ok(pad)
-}
-
-fn decode_target_value(value: &serde_json::Value, deps: &VmDeps) -> Result<CaptureTarget, String> {
-    match value.get("kind").and_then(|kind| kind.as_str()) {
-        Some("binding") => {
-            let system = req_system(deps, value)?;
-            Ok(CaptureTarget::Binding {
-                system,
-                attachment: req_str(value, "attachment")?.to_string(),
-                control: req_str(value, "control")?.to_string(),
-            })
-        }
-        Some("shortcut") => {
-            let raw = value
-                .get("action")
-                .cloned()
-                .ok_or_else(|| "capture target misses action".to_string())?;
-            let action: nerust_settings_core::model::input::ShortcutAction =
-                serde_json::from_value(raw).map_err(|error| error.to_string())?;
-            Ok(CaptureTarget::Shortcut(action))
-        }
-        Some("pad_binding") => {
-            let system = req_system(deps, value)?;
-            Ok(CaptureTarget::PadBinding {
-                system,
-                pad: req_pad(value)?,
-                attachment: req_str(value, "attachment")?.to_string(),
-                control: req_str(value, "control")?.to_string(),
-            })
-        }
-        _ => Err("unknown capture target".to_string()),
-    }
+/// Wire form of one capture target: one struct, one parse. `system`
+/// resolves through the factory registry (unknown systems stay loud);
+/// missing fields fail through serde instead of per-field helpers.
+#[derive(serde::Deserialize)]
+struct WireTarget {
+    kind: String,
+    #[serde(default)]
+    action: Option<nerust_settings_core::model::input::ShortcutAction>,
+    #[serde(default)]
+    system: Option<String>,
+    #[serde(default)]
+    attachment: Option<String>,
+    #[serde(default)]
+    control: Option<String>,
+    #[serde(default)]
+    pad: Option<usize>,
 }
 
 /// Opaque capture target: the row string parses exactly once per command;
 /// inner boundaries pass the `Value` through without re-serializing.
 fn decode_target(encoded: &str, deps: &VmDeps) -> Result<CaptureTarget, String> {
-    let value: serde_json::Value =
+    let value: WireTarget =
         serde_json::from_str(encoded).map_err(|error| error.to_string())?;
-    decode_target_value(&value, deps)
+    let system = |system: Option<String>| {
+        let system = system.ok_or_else(|| "capture target misses system".to_string())?;
+        deps.factories
+            .iter()
+            .find(|factory| factory.system_id().to_string() == system)
+            .map(|factory| factory.system_id())
+            .ok_or_else(|| format!("unknown system: {system}"))
+    };
+    match value.kind.as_str() {
+        "binding" => Ok(CaptureTarget::Binding {
+            system: system(value.system)?,
+            attachment: value
+                .attachment
+                .ok_or_else(|| "capture target misses attachment".to_string())?,
+            control: value
+                .control
+                .ok_or_else(|| "capture target misses control".to_string())?,
+        }),
+        "shortcut" => Ok(CaptureTarget::Shortcut(
+            value
+                .action
+                .ok_or_else(|| "capture target misses action".to_string())?,
+        )),
+        "pad_binding" => Ok(CaptureTarget::PadBinding {
+            system: system(value.system)?,
+            pad: value
+                .pad
+                .ok_or_else(|| "capture target misses pad".to_string())?,
+            attachment: value
+                .attachment
+                .ok_or_else(|| "capture target misses attachment".to_string())?,
+            control: value
+                .control
+                .ok_or_else(|| "capture target misses control".to_string())?,
+        }),
+        _ => Err("unknown capture target".to_string()),
+    }
 }

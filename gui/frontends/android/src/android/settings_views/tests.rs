@@ -1212,11 +1212,13 @@ fn gamepads_op_upserts_without_mutating_draft() {
     assert_eq!(snapshot, before, "enumeration never touches the draft");
     assert_eq!(gamepads.len(), 1, "vault holds the counted gamepads");
     let payload: ViewPayload = out;
-    let status = row(&payload, "controls.auto_hide_status");
     assert!(
-        status.text.contains("Wireless Controller"),
-        "status names the counted gamepad: {}",
-        status.text
+        payload
+            .sections
+            .iter()
+            .flat_map(|section| &section.rows)
+            .all(|row| row.key != "controls.auto_hide_status"),
+        "device truth carries no status readout; screens own the pads"
     );
     for (gamepads_payload, why) in [
         (
@@ -1262,13 +1264,23 @@ fn gamepads_op_upserts_without_mutating_draft() {
 }
 
 #[test]
-fn auto_hide_status_row_shows_none_when_empty() {
+fn overlay_detail_carries_settings_not_status_readouts() {
+    // The gamepad status readout lived here as a duplicate of every
+    // devices screen: one surfacing (the screens that own the pads),
+    // not two. The detail screen keeps settings rows only.
     let (_, payload) = test_payload();
-    let status = row(&payload, "controls.auto_hide_status");
-    assert_eq!(
-        status.text,
-        I18n::new(AppLanguage::English).text(UiText::NoValue),
-        "empty gate says none, not unassigned"
+    let section = payload
+        .sections
+        .iter()
+        .find(|section| section.id == "controls.overlay_detail")
+        .expect("overlay detail screen exists");
+    assert!(
+        section.rows.iter().all(|row| row.key != "controls.auto_hide_status"),
+        "no status readout next to the overlay settings"
+    );
+    assert!(
+        !section.rows.is_empty(),
+        "settings rows remain after the readout leaves"
     );
 }
 
@@ -3796,13 +3808,24 @@ fn unassigned_pad_slot_row_names_category() {
 }
 
 #[test]
-fn disconnected_pad_stale_row_uses_pad_display_name() {
-    // The stale reservation names `Pad N` like the pad screens do, never
-    // the lowercase member id.
+fn disconnected_pad_restores_silently_without_a_second_row() {
+    // No `.stale` row next to the radio: the radio already reads None
+    // while the reservation persists, and reconnect restores it.
     let (snapshot, _) = test_payload();
     let payload = pad_payload(&snapshot, &[]);
-    let row = row(&payload, "devices.p1.gamepad.stale");
-    assert_eq!(row.text, "Pad 1", "stale reservation reads Pad N");
+    assert!(
+        payload
+            .sections
+            .iter()
+            .flat_map(|section| &section.rows)
+            .all(|row| !row.key.contains(".gamepad.stale")),
+        "no stale row repeats the radio"
+    );
+    assert_eq!(
+        snapshot.shared.input.gamepad.pad_ports[0].slot,
+        Some(0),
+        "the reservation itself persists for the reconnect"
+    );
 }
 
 #[test]

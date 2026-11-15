@@ -21,7 +21,7 @@ use nerust_settings_core::{
 
 use super::wire::{
     GamepadInfo, I18n, PLAYER_PORTS, RowWire, SectionWire, button_row, capture_row, encode_target,
-    header_row, info_row, live_for_rank, number_row, player_label, rank_for_member, toggle_row,
+    header_row, info_row, live_for_rank, number_row, player_label, toggle_row,
 };
 use nerust_gui_viewmodel::settings::labels::pad_label;
 
@@ -45,10 +45,10 @@ pub(super) fn build_pad_sections(
     let reason = i18n.text(UiText::InputDeviceRequired);
     let gamepad = &snapshot.shared.input.gamepad;
     // Stable universe: every settings row plus every mirrored rank.
-    // Live unknowns (scan raced ahead of the connect event) append as
-    // info-only provisional screens below.
+    // Unknown live members (scan raced ahead of the connect event) wait
+    // for the next connect instead of earning placeholder screens.
     let width = gamepad.pad_ports.len().max(pad_order.len());
-    let mut out = Vec::with_capacity(width + 1);
+    let mut out = Vec::with_capacity(width);
     for rank in 0..width {
         let live = live_for_rank(gamepads, pad_order, rank);
         out.push(pad_rank_section(
@@ -60,24 +60,6 @@ pub(super) fn build_pad_sections(
             live.map(|info| info.name.clone()),
             live.is_some(),
         ));
-    }
-    for info in gamepads
-        .iter()
-        .filter(|info| rank_for_member(pad_order, &info.member).is_none())
-    {
-        let pad_id = format!("pad.provisional.{}", out.len() + 1);
-        out.push(SectionWire {
-            id: pad_id.clone(),
-            label: info.name.clone(),
-            sub: i18n.text(UiText::Gamepads),
-            rows: vec![info_row(
-                &format!("{pad_id}.waiting"),
-                i18n.text(UiText::GamepadDevice),
-                String::new(),
-                i18n.text(UiText::DescPadUnassigned),
-            )],
-            visible: false,
-        });
     }
     out
 }
@@ -158,9 +140,7 @@ fn pad_rank_section(
     // reconnect) but capture stays disabled: nothing to press.
     if let Some(slot) = slot {
         for input in vm.inputs() {
-            rows.extend(pad_system_rows(
-                input, snapshot, &pad_id, rank, slot, reason, i18n, live,
-            ));
+            rows.extend(pad_system_rows(input, &pad_id, rank, slot, reason, live));
         }
     } else {
         rows.push(info_row(
@@ -185,20 +165,14 @@ fn pad_rank_section(
 }
 
 /// One machine's mapping block for one pad screen: machine header plus
-/// the pad's own capture rows (attachment sub-headers drop when single),
-/// plus that machine's conflict rows. Empty when the pad owns nothing here.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "Projection seam: identity (pad, system, slot) plus truth rides together"
-)]
+/// the pad's own capture rows (attachment sub-headers drop when single).
+/// Empty when the pad owns nothing here.
 fn pad_system_rows(
     input: &nerust_gui_viewmodel::settings::InputSettingsViewModel,
-    snapshot: &SettingsSnapshot,
     pad_id: &str,
     rank: usize,
     slot: usize,
     reason: &str,
-    i18n: I18n,
     live: bool,
 ) -> Vec<RowWire> {
     use nerust_gui_viewmodel::settings::dto::BindingValueView;

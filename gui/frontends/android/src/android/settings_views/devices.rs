@@ -75,10 +75,23 @@ pub(super) fn build_player_sections(
             })
             .map(|input| {
                 let view = input.view.get();
+                let summary = view
+                    .slots
+                    .iter()
+                    .find(|slot| slot.port == Some(index))
+                    .and_then(|slot| {
+                        slot.selected_profile_id.as_ref().and_then(|selected| {
+                            slot.choices.iter().find_map(|choice| {
+                                (choice.value.as_deref() == Some(selected.as_str()))
+                                    .then(|| choice.label.clone())
+                            })
+                        })
+                    })
+                    .unwrap_or_else(|| i18n.text(UiText::NotAssigned));
                 group_row(
                     &format!("{types_id}.{}", view.system_id),
                     view.label.clone(),
-                    type_profile_summary(&view, index, i18n),
+                    summary,
                     &format!("input.{}", view.system_id),
                 )
             })
@@ -103,27 +116,6 @@ pub(super) fn build_player_sections(
     }
     sections.extend(build_device_sections(vm, keyboards, i18n));
     sections
-}
-
-/// Current controller-type summary for one machine on one port: the
-/// selected profile label, or Not assigned when the slot is empty.
-pub(super) fn type_profile_summary(
-    view: &nerust_gui_viewmodel::settings::dto::InputTabView,
-    port_index: usize,
-    i18n: I18n,
-) -> String {
-    view.slots
-        .iter()
-        .find(|slot| slot.port == Some(port_index))
-        .and_then(|slot| {
-            slot.selected_profile_id.as_ref().and_then(|selected| {
-                slot.choices.iter().find_map(|choice| {
-                    (choice.value.as_deref() == Some(selected.as_str()))
-                        .then(|| choice.label.clone())
-                })
-            })
-        })
-        .unwrap_or_else(|| i18n.text(UiText::NotAssigned))
 }
 
 /// Display names for a port in set order: keyboards from the port device
@@ -351,14 +343,8 @@ fn gamepad_rows(
             i18n.text(UiText::DescNoGamepads),
             String::new(),
         ));
-        if let Some(stale) = stale_slot(port_index, snapshot) {
-            rows.push(info_row(
-                &format!("{devices_id}.gamepad.stale"),
-                i18n.text(UiText::GamepadDevice),
-                i18n.text(UiText::DescStalePad),
-                pad_label(i18n.language(), stale),
-            ));
-        }
+        // Stale reservations restore silently on reconnect; the none row
+        // above already says no pad drives this player right now.
         return rows;
     }
     rows.push(header_row(i18n.text(UiText::Gamepads)));
@@ -388,18 +374,8 @@ fn gamepad_rows(
         &pad_choices,
         &assigned,
     ));
-    // A disconnected pad keeps its slot: name it so "no pad" never
-    // lies about a reservation that restores on reconnect.
-    if assigned.is_none()
-        && let Some(stale) = stale_slot(port_index, snapshot)
-    {
-        rows.push(info_row(
-            &format!("{devices_id}.gamepad.stale"),
-            i18n.text(UiText::GamepadDevice),
-            i18n.text(UiText::DescStalePad),
-            pad_label(i18n.language(), stale),
-        ));
-    }
+    // The reservation restores silently on reconnect; the radio already
+    // reads None while its pad is away, so no second row repeats it.
     rows.extend(gear_rows(
         port_index, devices_id, snapshot, gamepads, pad_order, i18n,
     ));
