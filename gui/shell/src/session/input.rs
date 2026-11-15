@@ -9,34 +9,9 @@ use nerust_settings_core::model::input::{
 
 use crate::session::{KeyboardShortcut, SessionHandle, field_press::FieldSource};
 
-pub use nerust_settings_core::input::clear_multi_port_conflicts;
-
 impl SessionHandle {
-    /// Last served overlay, keyed by caller revision and the session topology epoch.
-    pub fn touch_overlay_model_cached(&mut self, revision: u64) -> &TouchOverlayModel {
-        if self.input.touch_cache.rev != Some(revision)
-            || self.input.touch_cache.topology_epoch != self.input.topology_epoch
-        {
-            let model = self.touch_overlay_model(revision);
-            self.input.touch_cache = super::TouchCache {
-                rev: Some(revision),
-                topology_epoch: self.input.topology_epoch,
-                model,
-            };
-        }
-        &self.input.touch_cache.model
-    }
-
     pub fn touch_overlay_model(&self, revision: u64) -> TouchOverlayModel {
-        let cache = &self.input.touch_cache;
-        let served_revision = if cache.rev.is_none() {
-            revision
-        } else if cache.rev == Some(revision) && cache.topology_epoch == self.input.topology_epoch {
-            cache.model.revision
-        } else {
-            cache.model.revision.wrapping_add(1)
-        };
-        build_touch_overlay(served_revision, &self.input.current_assignments)
+        build_touch_overlay(revision, &self.input.current_assignments)
     }
 }
 
@@ -183,17 +158,14 @@ impl SessionHandle {
     /// rank (see `pad_index`): a pre-connect key never steals pad 0.
     pub fn primary_pad_source(&self) -> Option<SourceId> {
         let ports = &self.settings.snapshot.shared.input.gamepad.pad_ports;
-        let mut rank = 0;
-        for guid in &self.input.pads.order {
-            if super::PadTopology::is_transient(guid) {
-                continue;
-            }
-            if self.input.slot_for_index(rank, ports).is_some() {
-                return Some(SourceId::Pad(*guid));
-            }
-            rank += 1;
-        }
-        None
+        (0..self.input.pads.order.len()).find_map(|pos| {
+            let guid = self.input.pads.order[pos];
+            let source = SourceId::Pad(guid);
+            let index = self.input.pads.pad_index(source)?;
+            self.input
+                .slot_for_index(index, ports)
+                .map(|_| source)
+        })
     }
 
     /// Connect-time device registration: descriptor to order index.
@@ -257,54 +229,35 @@ impl SessionHandle {
         if old == new {
             return;
         }
-        Self::migrate_set(&mut self.input.pressed, old, new);
-        Self::migrate_values(&mut self.input.analogs, old, new);
-        // `axis_dpad` keys are triples; the generic covers pairs only.
+        self.migrate_source_entries(old, new);
+    }
+
+    /// Move every entry keyed by `old` source to `new`: one drain per
+    /// table instead of collect-remove-insert triple loops.
+    fn migrate_source_entries(&mut self, old: SourceId, new: SourceId) {
+        let held: Vec<(SourceId, SourceButtonId)> = self
+            .input
+            .pressed
+            .extract_if(|(source, _)| *source == old)
+            .collect();
+        self.input.pressed.extend(held.into_iter().map(|(_, button)| (new, button)));
+        let stored: Vec<((SourceId, GamepadAxis), f32)> = self
+            .input
+            .analogs
+            .extract_if(|key, _| key.0 == old)
+            .map(|((_, axis), value)| ((new, axis), value))
+            .collect();
+        self.input.analogs.extend(stored);
+        // `axis_dpad` keys are triples; same drain, different shape.
         let derived: Vec<(GamepadAxis, StandardButton)> = self
             .input
             .axis_dpad
-            .iter()
-            .filter_map(|(source, axis, button)| (*source == old).then_some((*axis, *button)))
+            .extract_if(|(source, _, _)| *source == old)
+            .map(|(_, axis, button)| (axis, button))
             .collect();
-        for (axis, button) in derived {
-            if self.input.axis_dpad.remove(&(old, axis, button)) {
-                self.input.axis_dpad.insert((new, axis, button));
-            }
-        }
-    }
-
-    /// Move every `(old, key)` entry of a set to `(new, key)`.
-    fn migrate_set(
-        set: &mut std::collections::HashSet<(SourceId, SourceButtonId)>,
-        old: SourceId,
-        new: SourceId,
-    ) {
-        let held: Vec<SourceButtonId> = set
-            .iter()
-            .filter_map(|(source, button)| (*source == old).then_some(*button))
-            .collect();
-        for button in held {
-            if set.remove(&(old, button)) {
-                set.insert((new, button));
-            }
-        }
-    }
-
-    /// Move every `(old, key)` entry of a map to `(new, key)`, keeping values.
-    fn migrate_values<K: Eq + std::hash::Hash + Copy, V: Copy>(
-        map: &mut std::collections::HashMap<(SourceId, K), V>,
-        old: SourceId,
-        new: SourceId,
-    ) {
-        let stored: Vec<(K, V)> = map
-            .iter()
-            .filter_map(|((source, key), value)| (*source == old).then_some((*key, *value)))
-            .collect();
-        for (key, value) in stored {
-            if map.remove(&(old, key)).is_some() {
-                map.insert((new, key), value);
-            }
-        }
+        self.input
+            .axis_dpad
+            .extend(derived.into_iter().map(|(axis, button)| (new, axis, button)));
     }
 
     /// Disconnect-time cleanup: release the pad's holders event-fully
@@ -323,11 +276,10 @@ impl SessionHandle {
         let held: Vec<SourceButtonId> = self
             .input
             .pressed
-            .iter()
-            .filter_map(|(held_source, button)| (*held_source == source).then_some(*button))
+            .extract_if(|(held_source, _)| *held_source == source)
+            .map(|(_, button)| button)
             .collect();
         for button in held {
-            self.input.pressed.remove(&(source, button));
             if let SourceButtonId::Pad(std_button) = button {
                 let index = self.input.pads.pad_index(source);
                 // A disconnect releases like any other release: clear a
@@ -337,7 +289,7 @@ impl SessionHandle {
                 }
                 // Slot unknown by design (mapping already dropped):
                 // releases bypass the gate, so `None` still unstrands.
-                self.commit_holder_press(
+                self.commit_holder(
                     FieldSource::Pad(source, std_button),
                     std_button,
                     index,
@@ -352,15 +304,12 @@ impl SessionHandle {
         let derived: Vec<(GamepadAxis, StandardButton)> = self
             .input
             .axis_dpad
-            .iter()
-            .filter_map(|(held_source, axis, button)| {
-                (*held_source == source).then_some((*axis, *button))
-            })
+            .extract_if(|(held_source, _, _)| *held_source == source)
+            .map(|(_, axis, button)| (axis, button))
             .collect();
         for (axis, button) in derived {
-            self.input.axis_dpad.remove(&(source, axis, button));
             let index = self.input.pads.pad_index(source);
-            self.commit_holder_press(FieldSource::Axis(source, axis), button, index, None, false);
+            self.commit_holder(FieldSource::Axis(source, axis), button, index, None, false);
         }
     }
 
@@ -449,7 +398,7 @@ impl SessionHandle {
         // re-scanning `pad_order` inside the commit.
         let index = self.input.pads.pad_index(source);
         let slot = index.and_then(|i| self.slot_for_pad_index(i));
-        self.commit_holder_press(
+        self.commit_holder(
             FieldSource::Pad(source, button),
             button,
             index,
@@ -654,12 +603,12 @@ impl SessionHandle {
             .filter(|button| Some(*button) != want)
         {
             self.input.axis_dpad.remove(&(source, axis, stale));
-            self.commit_holder_press(FieldSource::Axis(source, axis), stale, index, slot, false);
+            self.commit_holder(FieldSource::Axis(source, axis), stale, index, slot, false);
         }
         if let Some(button) = want
             && self.input.axis_dpad.insert((source, axis, button))
         {
-            self.commit_holder_press(FieldSource::Axis(source, axis), button, index, slot, true);
+            self.commit_holder(FieldSource::Axis(source, axis), button, index, slot, true);
         }
     }
     /// Edge-sync axis substitutes: sticks resolve as a pair (dominant axis
@@ -723,11 +672,13 @@ impl SessionHandle {
     /// One digital commit through the pad's assigned slot: face buttons
     /// and axis substitutes share the resolve and differ only in the
     /// OR-machine holder, so hat and stick merge instead of aliasing.
-    /// Off-port (and over-table) pads park here: without an assigned
-    /// slot there is no control to drive, overrides or not.
+    /// Off-port pads park presses here: without an assigned slot there
+    /// is no control to drive, overrides or not. Releases always travel
+    /// through the OR machine (slot or none): a pad parked or unplugged
+    /// mid-hold must still release its fields instead of stranding them.
     /// Per-pad overrides win inside the slot: an explicit `(attachment,
     /// control)` for this pad's button bypasses the standard layout.
-    fn commit_holder_press(
+    fn commit_holder(
         &mut self,
         holder: FieldSource,
         button: StandardButton,
@@ -735,16 +686,14 @@ impl SessionHandle {
         slot: Option<usize>,
         pressed: bool,
     ) {
-        // Releases always travel through the OR machine: a pad parked
-        // (or unplugged) mid-hold must still release its fields instead
-        // of stranding them. Only fresh presses need an assigned slot.
+        // Only fresh presses need an assigned slot.
         let Some(slot) = slot else {
             if pressed {
                 return;
             }
-            // Slot unknown on release: resolve the field without a slot
-            // (overrides first, then the fixed layout slot-free).
-            return self.commit_holder_release(holder, button, pad_index);
+            // Slot unknown on release: resolve slot-free (overrides
+            // first, then the fixed layout scanned across every slot).
+            return self.commit_holder_resolved(holder, button, pad_index, None, false);
         };
         // A switched-off hat parks physical presses (sticks still drive
         // through their axis substitutes, which ride `Axis` holders).
@@ -763,6 +712,20 @@ impl SessionHandle {
         {
             return;
         }
+        self.commit_holder_resolved(holder, button, pad_index, Some(slot), pressed);
+    }
+
+    /// Shared resolve tail: overrides first (same map), then the fixed
+    /// layout through the rebind-fused route. `route_slot` is `None`
+    /// only for slot-unknown releases, which scan every slot.
+    fn commit_holder_resolved(
+        &mut self,
+        holder: FieldSource,
+        button: StandardButton,
+        pad_index: Option<usize>,
+        route_slot: Option<usize>,
+        pressed: bool,
+    ) {
         // Per-pad overrides win inside the slot: an explicit `(attachment,
         // control)` for this pad's button bypasses the standard layout.
         // The index arrives with the call so the map read never re-scans
@@ -776,14 +739,18 @@ impl SessionHandle {
         });
         if let Some((attachment, control)) = resolved {
             let Some(field) = self.resolve_field(attachment, control) else {
-                log::debug!(
-                    "pad override without a live field: {attachment}.{control} from {button:?}"
-                );
+                if pressed {
+                    log::debug!(
+                        "pad override without a live field: {attachment}.{control} from {button:?}"
+                    );
+                }
                 return;
             };
-            log::debug!(
-                "pad override drives field {field}: {attachment}.{control} from {button:?}"
-            );
+            if pressed {
+                log::debug!(
+                    "pad override drives field {field}: {attachment}.{control} from {button:?}"
+                );
+            }
             let dpad = self.input.dpad_for(attachment, control);
             self.commit_press(field, holder, dpad, pressed);
             return;
@@ -796,7 +763,7 @@ impl SessionHandle {
         let Some(((attachment, control), dpad)) = self
             .input
             .abstract_route
-            .get(&(abstract_key, Some(slot)))
+            .get(&(abstract_key, route_slot))
             .copied()
             .flatten()
         else {
@@ -806,48 +773,6 @@ impl SessionHandle {
             return;
         };
         self.commit_press(field, holder, dpad, pressed);
-    }
-
-    /// Release-only twin of the press tail: resolves without a slot so a
-    /// mid-hold park or unplug cannot strand the field. Overrides first
-    /// (same map), then the fixed layout scanned across every slot.
-    fn commit_holder_release(
-        &mut self,
-        holder: FieldSource,
-        button: StandardButton,
-        pad_index: Option<usize>,
-    ) {
-        let resolved = pad_index.and_then(|index| {
-            self.input
-                .pads
-                .binding_map
-                .get(index)
-                .and_then(|map| map.get(&button).copied())
-        });
-        if let Some((attachment, control)) = resolved {
-            let Some(field) = self.resolve_field(attachment, control) else {
-                return;
-            };
-            let dpad = self.input.dpad_for(attachment, control);
-            self.commit_press(field, holder, dpad, false);
-            return;
-        }
-        let Some(abstract_key) = button.abstract_key() else {
-            return;
-        };
-        let Some(((attachment, control), dpad)) = self
-            .input
-            .abstract_route
-            .get(&(abstract_key, None))
-            .copied()
-            .flatten()
-        else {
-            return;
-        };
-        let Some(field) = self.resolve_field(attachment, control) else {
-            return;
-        };
-        self.commit_press(field, holder, dpad, false);
     }
 
     /// Field index for one `(attachment, control)`, or `None` when the
@@ -887,12 +812,11 @@ impl SessionHandle {
         // must fire again on the next press instead of staying suppressed.
         self.input.shortcut_held.clear();
         let derived: Vec<(SourceId, GamepadAxis, StandardButton)> =
-            self.input.axis_dpad.iter().copied().collect();
+            self.input.axis_dpad.extract_if(|_| true).collect();
         for (source, axis, button) in derived {
-            self.input.axis_dpad.remove(&(source, axis, button));
             let index = self.input.pads.pad_index(source);
             let slot = index.and_then(|i| self.slot_for_pad_index(i));
-            self.commit_holder_press(FieldSource::Axis(source, axis), button, index, slot, false);
+            self.commit_holder(FieldSource::Axis(source, axis), button, index, slot, false);
         }
         self.input.analogs.clear();
     }
@@ -958,6 +882,7 @@ mod tests {
 
     use super::*;
     use crate::session::input_map::rebuild_input_map;
+    use nerust_settings_core::input::clear_multi_port_conflicts;
 
     /// Single-port mock: "test.standard" profile with one port.
     #[derive(Debug)]
@@ -2486,28 +2411,22 @@ mod tests {
             AttachmentId::new("test.topology.slot"),
             Some(Rc::new(MockTopologyProfile)),
         )]);
-        let before = session.touch_overlay_model_cached(42).clone();
+        let before = session.touch_overlay_model(42);
         assert_eq!(before.controls.len(), 1);
         let next = session.settings_snapshot().clone();
         session.apply_settings(next).unwrap();
         let expected = session.touch_overlay_model(42);
-        assert_ne!(expected, before);
-        assert_eq!(session.touch_overlay_model_cached(42), &expected);
-        assert_ne!(
-            expected.revision, before.revision,
-            "frontend must observe the topology change"
-        );
+        assert!(expected.controls.is_empty(), "apply rebuilds from the new snapshot");
+        assert_eq!(expected.revision, 42);
     }
 
     #[test]
-    fn topology_epoch_republishes_even_when_controls_are_equal() {
+    fn topology_epoch_bumps_on_invalidate() {
         let mut session = crate::session::test_util::test_session();
-        let before = session.touch_overlay_model_cached(42).clone();
+        let epoch = session.input.topology_epoch;
         session.input.invalidate_topology();
-        let after = session.touch_overlay_model_cached(42).clone();
-        assert_eq!(before.controls, after.controls);
-        assert_ne!(before.revision, after.revision);
-        assert_eq!(session.touch_overlay_model_cached(42), &after);
+        assert_eq!(session.input.topology_epoch, epoch.wrapping_add(1));
+        assert_eq!(session.touch_overlay_model(42).revision, 42);
     }
 
     #[test]
@@ -2626,11 +2545,9 @@ mod input_cov_tests {
     }
 
     #[test]
-    fn overlay_cache_serves_stored_model() {
-        let mut session = test_session();
-        let model = session.touch_overlay_model_cached(11).clone();
-        assert_eq!(model.revision, 11);
-        assert_eq!(session.touch_overlay_model_cached(11).revision, 11);
-        assert_eq!(session.touch_overlay_model_cached(12).revision, 12);
+    fn overlay_builds_on_demand() {
+        let session = test_session();
+        assert_eq!(session.touch_overlay_model(11).revision, 11);
+        assert_eq!(session.touch_overlay_model(12).revision, 12);
     }
 }

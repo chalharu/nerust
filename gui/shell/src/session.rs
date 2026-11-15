@@ -256,8 +256,6 @@ struct InputDept {
     /// here instead of walking the topology per edge.
     abstract_route: HashMap<(AbstractKey, Option<usize>), Option<ControlWithDpad>>,
     topology_epoch: u64,
-    /// Last served overlay, keyed by caller revision and topology epoch.
-    touch_cache: TouchCache,
 }
 
 impl InputDept {
@@ -289,7 +287,6 @@ impl InputDept {
             pad_hat: Vec::new(),
             abstract_route: HashMap::new(),
             topology_epoch: 0,
-            touch_cache: Default::default(),
         }
     }
 
@@ -688,15 +685,6 @@ impl InputDept {
             })
             .collect()
     }
-}
-
-/// Cached touch overlay: served model plus the revision it was built for.
-/// `None` before the first call; no empty-fallback pair.
-#[derive(Debug, Default)]
-pub(crate) struct TouchCache {
-    pub(crate) rev: Option<u64>,
-    pub(crate) topology_epoch: u64,
-    pub(crate) model: nerust_core_traits::touch::TouchOverlayModel,
 }
 
 /// Settings cluster: manager plus its snapshot. Single owner for the
