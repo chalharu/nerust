@@ -40,6 +40,7 @@ pub(crate) fn android_keycode_to_button(keycode: u32) -> Option<StandardButton> 
 }
 
 /// Single table for the test: adding a row extends both.
+#[cfg(test)]
 const TABLE: [(u32, StandardButton); 18] = [
     (19, StandardButton::DpadUp),
     (20, StandardButton::DpadDown),

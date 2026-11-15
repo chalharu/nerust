@@ -448,6 +448,17 @@ def _rust_table_keys(decoder, table):
     return re.findall(r'\("([^"]+)",', body.group(1))
 
 
+def _rust_motion_axis_fields(decoder):
+    """Bridge axis names from `motion_axes()` direct pairs.
+
+    The decoder resolves pairs without a name round-trip, so the table
+    no longer exists: `self.<field>` on the right side names the wire
+    vocabulary in one place."""
+    body = re.search(r'fn motion_axes\(.*?\{.*?\[(.*?)\]', decoder, re.DOTALL)
+    require(body, "unparsed Rust motion_axes")
+    return re.findall(r'self\.(\w+)', body.group(1))
+
+
 def validate_controller_vocabulary(decoder, kotlin, wire):
     """Kotlin button/axis names and the Rust decoder tables name one
     vocabulary: a Kotlin `when` arm added without a Rust row (or vice
@@ -461,7 +472,10 @@ def validate_controller_vocabulary(decoder, kotlin, wire):
     require(used_axes <= set(axes),
             f"Kotlin uses unknown ControllerAxis: {sorted(used_axes - set(axes))}")
     rust_keys = set(_rust_table_keys(decoder, "CONTROLLER_KEY_TABLE"))
-    rust_axes = set(_rust_table_keys(decoder, "CONTROLLER_AXIS_TABLE"))
+    try:
+        rust_axes = set(_rust_table_keys(decoder, "CONTROLLER_AXIS_TABLE"))
+    except ContractError:
+        rust_axes = set(_rust_motion_axis_fields(decoder))
     require(set(keys.values()) == rust_keys,
             "Kotlin/Rust button vocabulary differs")
     require(set(axes.values()) == rust_axes,
