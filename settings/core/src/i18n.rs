@@ -298,17 +298,6 @@ impl SystemLocaleSource for FixedLocale {
     }
 }
 
-/// OS-query source: `sys-locale` reads the platform locale (Win32/macOS
-/// APIs; process env on Unix, including `LANG`), so GUI launches
-/// without `LANG` still resolve correctly.
-struct OsLocale;
-
-impl SystemLocaleSource for OsLocale {
-    fn system_language(&self) -> Option<AppLanguage> {
-        sys_locale::get_locale().map(|locale| language_from_locale_tag(&locale))
-    }
-}
-
 /// Saved choice to display language: an explicit choice always wins, so
 /// the source is only queried for `SystemDefault` (concrete Android
 /// snapshots never touch it). Pure apart from the source call.
@@ -346,11 +335,6 @@ impl I18n {
         Self::new(AppLanguage::English)
     }
 
-    /// Edge constructor: saved choice plus an OS query.
-    pub fn resolve_os(choice: AppLanguage) -> Self {
-        Self::new(resolve_locale(choice, OsLocale))
-    }
-
     /// Edge constructor with an explicit source (tests, Android vault).
     pub fn resolve_with(choice: AppLanguage, source: impl SystemLocaleSource) -> Self {
         Self::new(resolve_locale(choice, source))
@@ -364,49 +348,8 @@ impl I18n {
         lookup(self.language, key).to_string()
     }
 
-    /// Display text for one pad button in mapping rows: cap print plus a
-    /// plain position for the four face buttons (`A (bottom)`), cap alone
-    /// elsewhere. Caps follow the dominant print and the Android `BUTTON_*`
-    /// names; the position word keeps Nintendo-layout pads interpretable
-    /// without per-vendor branches.
-    pub fn pad_button_label(self, button: nerust_input_traits::StandardButton) -> String {
-        use nerust_input_traits::StandardButton as Pad;
-        let position = match button {
-            Pad::South => Some(UiText::PosBottom),
-            Pad::East => Some(UiText::PosRight),
-            Pad::West => Some(UiText::PosLeft),
-            Pad::North => Some(UiText::PosTop),
-            _ => None,
-        };
-        match position {
-            Some(place) => format!("{} ({})", button.label(), self.text(place)),
-            None => button.label().to_string(),
-        }
-    }
-
-    pub fn port_summary(self, names: &[String]) -> String {
-        port_summary(self.language, names)
-    }
-
-    pub fn port_count_line(self, count: usize) -> String {
-        port_count_line(self.language, count)
-    }
-
-    pub fn slot_description(self) -> String {
-        slot_description(self.language)
-    }
-
     pub fn history_count(self, count: usize) -> String {
         history_count(self.language, count)
-    }
-
-    /// Full disabled-choice sentence, formatted here so word order
-    /// follows the locale.
-    pub fn slot_in_use(self, owner: &str) -> String {
-        match self.language {
-            AppLanguage::Japanese => format!("{owner}使用中"),
-            _ => format!("Used in {owner}"),
-        }
     }
 }
 
@@ -845,13 +788,6 @@ pub fn slot_failure(language: AppLanguage, slot: Option<u64>, what: &str) -> Str
     }
 }
 
-/// Connection-order pad label (`Pad 1` / `パッド 1`). The number is
-/// connection order, never the player slot, in both languages.
-pub fn pad_label(language: AppLanguage, index: usize) -> String {
-    let pad = index + 1;
-    localized!(language, format!("Pad {pad}"), format!("パッド {pad}"))
-}
-
 /// Bare command failure (`{id} failed[: detail]`). Origin prefixes ride on
 /// the `CommandOrigin*` keys; only the Command origin formats here.
 pub fn command_failed(language: AppLanguage, id: &str, detail: &str) -> String {
@@ -910,49 +846,6 @@ pub fn language_from_locale_tag(tag: &str) -> AppLanguage {
         AppLanguage::Japanese
     } else {
         AppLanguage::English
-    }
-}
-
-/// Description for a controller-slot choice row: which port the row drives
-/// is in the row label, so the description only states the action.
-fn slot_description(language: AppLanguage) -> String {
-    localized!(
-        language,
-        "Controller for this port.".to_string(),
-        "このポートで使うコントローラー".to_string()
-    )
-}
-
-/// Player/device-row summary: "Not assigned" when empty, otherwise
-/// "Name" or "Name +N" (short form is banned: the full first name reads).
-fn port_summary(language: AppLanguage, names: &[String]) -> String {
-    match names {
-        [] => lookup(language, UiText::NotAssigned).to_string(),
-        [first] => first.clone(),
-        // Count suffix is language-neutral, so no per-language branch.
-        [first, rest @ ..] => format!("{first} +{}", rest.len()),
-    }
-}
-
-/// Player/device-row count line: "No devices assigned" / "1 device
-/// assigned" / "N devices assigned" (singular/plural distinguished).
-fn port_count_line(language: AppLanguage, count: usize) -> String {
-    match count {
-        0 => localized!(
-            language,
-            "No devices assigned".to_string(),
-            "割り当てデバイスなし".to_string()
-        ),
-        1 => localized!(
-            language,
-            "1 device assigned".to_string(),
-            "1台のデバイスを割り当て".to_string()
-        ),
-        n => localized!(
-            language,
-            format!("{n} devices assigned"),
-            format!("{n}台のデバイスを割り当て")
-        ),
     }
 }
 
@@ -1110,9 +1003,15 @@ mod tests {
     }
 
     #[test]
-    fn explicit_choice_never_falls_back_to_os() {
-        assert_eq!(resolve_locale(AppLanguage::Japanese, OsLocale), ja());
-        assert_eq!(resolve_locale(AppLanguage::English, OsLocale), en());
+    fn explicit_choice_never_falls_back_to_source() {
+        assert_eq!(
+            resolve_locale(AppLanguage::Japanese, StubSource(Some(en()))),
+            ja()
+        );
+        assert_eq!(
+            resolve_locale(AppLanguage::English, StubSource(Some(ja()))),
+            en()
+        );
     }
 
     struct StubSource(Option<AppLanguage>);
@@ -1144,12 +1043,10 @@ mod tests {
         let ja_i18n = I18n::resolve_with(AppLanguage::SystemDefault, StubSource(Some(ja())));
         assert_eq!(ja_i18n.language(), ja());
         assert_eq!(ja_i18n.text(UiText::Open), "開く");
-        assert_eq!(ja_i18n.slot_in_use("P1"), "P1使用中");
 
-        let en_i18n = I18n::resolve_os(AppLanguage::English);
+        let en_i18n = I18n::new(AppLanguage::English);
         assert_eq!(en_i18n.language(), en());
         assert_eq!(en_i18n.text(UiText::Open), "Open");
-        assert_eq!(en_i18n.slot_in_use("P1"), "Used in P1");
     }
 
     #[test]
@@ -1336,18 +1233,6 @@ mod tests {
             assert!(!ja_text.text(key).is_empty());
             assert_ne!(en_text.text(key), ja_text.text(key));
         }
-    }
-
-    #[test]
-    fn pad_button_labels_pair_cap_with_plain_position() {
-        use nerust_input_traits::StandardButton as Pad;
-        let en_text = I18n::new(en());
-        let ja_text = I18n::new(ja());
-        assert_eq!(en_text.pad_button_label(Pad::South), "A (bottom)");
-        assert_eq!(ja_text.pad_button_label(Pad::South), "A (下)");
-        assert_eq!(en_text.pad_button_label(Pad::North), "Y (top)");
-        assert_eq!(en_text.pad_button_label(Pad::Guide), "Guide");
-        assert_eq!(ja_text.pad_button_label(Pad::LeftShoulder), "LB");
     }
 
     #[test]

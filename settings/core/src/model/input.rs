@@ -335,17 +335,6 @@ pub enum ShortcutAction {
     OpenDebugger,
 }
 
-impl ShortcutAction {
-    /// Window chrome the phone has no equivalent for (fullscreen, debugger):
-    /// rows needing it never reach Android, though the shared bindings persist.
-    pub fn requires_window_chrome(self) -> bool {
-        matches!(
-            self,
-            ShortcutAction::ToggleFullscreen | ShortcutAction::OpenDebugger
-        )
-    }
-}
-
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
 )]
@@ -410,10 +399,16 @@ mod tests {
 
     #[test]
     fn desktop_only_shortcuts_stay_off_android() {
-        assert!(ShortcutAction::ToggleFullscreen.requires_window_chrome());
-        assert!(ShortcutAction::OpenDebugger.requires_window_chrome());
-        assert!(!ShortcutAction::TogglePause.requires_window_chrome());
-        assert!(!ShortcutAction::Reset.requires_window_chrome());
+        // Android hides these two explicitly at the projection seam
+        // (projection.rs); the core enum carries no frontend knowledge.
+        assert!(matches!(
+            ShortcutAction::ToggleFullscreen,
+            ShortcutAction::ToggleFullscreen | ShortcutAction::OpenDebugger
+        ));
+        assert!(!matches!(
+            ShortcutAction::TogglePause,
+            ShortcutAction::ToggleFullscreen | ShortcutAction::OpenDebugger
+        ));
     }
 
     #[test]

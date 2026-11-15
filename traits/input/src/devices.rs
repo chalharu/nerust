@@ -157,6 +157,23 @@ impl ControllerHub for ControllerCollection {
     }
 }
 
+/// Member-id vocabulary for global port device sets. Keyboards (`kbd:`,
+/// shareable across ports) vs gamepads (`pad:`, exclusive to one port).
+/// The built-in keyboard row is a capability flag, not a known device.
+pub const KEYBOARD_MEMBER_PREFIX: &str = "kbd:";
+pub const GAMEPAD_MEMBER_PREFIX: &str = "pad:";
+pub const BUILTIN_KEYBOARD_MEMBER: &str = "kbd:builtin";
+
+/// Shareable members (keyboards) may sit in several ports at once.
+pub fn member_is_shareable(member: &str) -> bool {
+    member.starts_with(KEYBOARD_MEMBER_PREFIX)
+}
+
+/// Gamepad members: exclusive, one port at a time.
+pub fn member_is_gamepad(member: &str) -> bool {
+    member.starts_with(GAMEPAD_MEMBER_PREFIX)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

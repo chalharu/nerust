@@ -268,20 +268,32 @@ def _decoder_names_ids(definitions, decoder):
                 f"decoder must name every motion axis: {member}")
 
 
-def validate_decoder(definitions, decoder):
+def validate_decoder_tables(definitions, decoder, generated):
+    """Typed decoder and generated tables repeat the schema rules in one pass.
+
+    Field shapes, bounds, per-action required fields, and the analog range
+    feed dispatch; a schema bump the decoder ignores fails here instead of
+    silently widening. Compares the checked-in contract against the schema,
+    so a stale regeneration fails even when the decoder is untouched.
+    """
     decoder = uncomment(decoder)
     require(re.search(r'#\[serde\(tag = "type", rename_all = "snake_case"\)\]\s*enum BridgeEventV1', decoder),
             "unsupported decoder enum representation")
     require(re.search(r'enum BridgeEventV1\s*\{\s*Menu\(MenuEvent\),\s*'
                       r'ErrorDialogDismissed\(ErrorDialogDismissedEvent\),\s*\}', decoder),
             "unsupported decoder enum variants")
+    actual, bounds = {}, {}
+    for event, definition in definitions.items():
+        fields = {}
+        for name, prop in definition["properties"].items():
+            fields[name] = (GEN.field_type(prop), name in definition["required"])
+            if GEN.field_type(prop) == "integer" and "minimum" in prop:
+                bounds[name] = (prop["minimum"], prop["maximum"])
+        actual[event] = fields
     expected = {
         event: _struct_props(decoder, struct)
         for struct, event in (("MenuEvent", "menu"), ("ErrorDialogDismissedEvent", "error_dialog_dismissed"))
     }
-    actual = {event: {name: (GEN.field_type(prop), name in definition["required"])
-                      for name, prop in definition["properties"].items()}
-              for event, definition in definitions.items()}
     require(expected == actual, f"schema/typed decoder fields differ: {actual} != {expected}")
     require(re.search(r'if\s+version\s*!=\s*BRIDGE_EVENT_VERSION\s*\{.*?return None;', decoder, re.DOTALL),
             "decoder must reject unsupported versions")
@@ -290,21 +302,6 @@ def validate_decoder(definitions, decoder):
     require('serde_json::from_value(value)' not in decoder,
             "decoder must not double-parse through a Value")
     _decoder_names_ids(definitions, decoder)
-
-
-def validate_generated_tables(definitions, generated):
-    """Generated tables must repeat the schema rules the decoder enforces.
-
-    Bounds, per-action required fields, and the analog range feed dispatch;
-    a schema bump the decoder ignores fails here instead of silently
-    widening. Compares the checked-in contract against the schema, so a
-    stale regeneration fails even when the decoder is untouched.
-    """
-    bounds = {}
-    for definition in definitions.values():
-        for name, prop in definition["properties"].items():
-            if GEN.field_type(prop) == "integer" and "minimum" in prop:
-                bounds[name] = (prop["minimum"], prop["maximum"])
     table = {
         name: (int(minimum), int(maximum))
         for name, minimum, maximum in re.findall(
@@ -361,27 +358,17 @@ def _balanced(text, start, brackets):
     raise ContractError("unbalanced block")
 
 
-def _balanced_call(text, start):
-    """Call text from the opening paren at `start` through its match."""
-    return _balanced(text, start, "()")
-
-
-def _balanced_braces(text, start):
-    """Brace block from the opening brace at `start` through its match."""
-    return _balanced(text, start, "{}")
-
-
 def _menu_event_calls(kotlin):
     """Every `menuEvent(...)` call text across the Kotlin sources, trailing
     extras lambdas included."""
     calls = []
     for match in re.finditer(r'menuEvent\s*\(', kotlin):
         paren = match.end() - 1
-        call = _balanced_call(kotlin, paren)
+        call = _balanced(kotlin, paren, "()")
         rest = kotlin[paren + len(call):]
         gap = re.match(r'\s*', rest).group(0)
         if kotlin[paren + len(call) + len(gap):paren + len(call) + len(gap) + 1] == "{":
-            call += gap + _balanced_braces(kotlin, paren + len(call) + len(gap))
+            call += gap + _balanced(kotlin, paren + len(call) + len(gap), "{}")
         calls.append(call)
     require(calls, "no menuEvent producers found")
     return calls
@@ -391,7 +378,7 @@ def validate_producer(definitions, producer, kotlin):
     producer = uncomment(producer)
     match = re.search(r'internal fun menuEvent\s*\(', producer)
     require(match, "unparsed event producers")
-    call = _balanced_call(producer, match.end() - 1)
+    call = _balanced(producer, match.end() - 1, "()")
     args = call[1:-1]
     after = producer[match.end() - 1 + len(call):]
     body_match = re.match(r'\s*:\s*String\s*=\s*JSONObject\(\)(.*?)\.toString\(\)', after, re.DOTALL)
@@ -467,14 +454,10 @@ def validate_controller_vocabulary(decoder, kotlin, wire):
             f"Kotlin uses unknown ControllerAxis: {sorted(used_axes - set(axes))}")
     rust_keys = set(_rust_table_keys(decoder, "CONTROLLER_KEY_TABLE"))
     rust_axes = set(_rust_table_keys(decoder, "CONTROLLER_AXIS_TABLE"))
-    require(set(keys.values()) <= rust_keys,
-            "Kotlin button string missing from the Rust decoder table")
-    require(set(axes.values()) <= rust_axes,
-            "Kotlin axis string missing from the Rust decoder table")
-    require(rust_keys <= set(keys.values()),
-            "Rust decoder button never produced by Kotlin")
-    require(rust_axes <= set(axes.values()),
-            "Rust decoder axis never produced by Kotlin")
+    require(set(keys.values()) == rust_keys,
+            "Kotlin/Rust button vocabulary differs")
+    require(set(axes.values()) == rust_axes,
+            "Kotlin/Rust axis vocabulary differs")
 
 
 def verify(schema, source):
@@ -482,8 +465,7 @@ def verify(schema, source):
         definitions = GEN.event_definitions(schema)
         generated = GEN.outputs(schema)[GEN.RUST / "src/bridge_contract.rs"]
         require(source["generated"] == generated, "generated structural validation is stale or modified")
-        validate_decoder(definitions, source["decoder"])
-        validate_generated_tables(definitions, source["generated"])
+        validate_decoder_tables(definitions, source["decoder"], source["generated"])
         validate_producer(definitions, source["producer"], source["callsites"])
         validate_controller_vocabulary(source["decoder"], source["callsites"], source["wire"])
         require("register_native_methods(class, &methods)" in source["registration"],

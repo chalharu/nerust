@@ -1,8 +1,5 @@
 use nerust_input_traits::Key;
-use nerust_settings_core::{
-    editor::CaptureTarget,
-    i18n::{I18n, UiText},
-};
+use nerust_settings_core::{editor::CaptureTarget, i18n::UiText};
 
 use super::{
     dto::CaptureStateView,
@@ -143,7 +140,7 @@ impl CaptureViewModel {
 }
 
 fn project_view(state: &super::EditorState) -> CaptureStateView {
-    let i18n = I18n::resolve_os(state.draft.shared.general.language);
+    let i18n = super::state::display_i18n(state);
     CaptureStateView {
         target: state.capture_target.clone(),
         prompt: state

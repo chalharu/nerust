@@ -6,10 +6,9 @@
 
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_viewmodel::settings::SettingsViewModel;
-use nerust_settings_core::{
-    i18n::{UiText, pad_label},
-    input::{BUILTIN_KEYBOARD_MEMBER, member_is_gamepad, member_is_shareable, slot_port_index},
-};
+use nerust_gui_viewmodel::settings::labels::pad_label;
+use nerust_input_traits::{BUILTIN_KEYBOARD_MEMBER, member_is_gamepad, member_is_shareable};
+use nerust_settings_core::i18n::UiText;
 
 use super::wire::{
     GamepadInfo, I18n, KeyboardInfo, PLAYER_PORTS, RowWire, SectionWire, binding_key, button_row,
@@ -47,7 +46,7 @@ pub(super) fn build_player_sections(
                         String::new(),
                         &devices_id,
                     );
-                    row.text = i18n.port_summary(&names);
+                    row.text = nerust_gui_viewmodel::settings::labels::port_summary(i18n, &names);
                     row
                 },
                 group_row(
@@ -60,21 +59,8 @@ pub(super) fn build_player_sections(
             visible: false,
         });
         // Controller-type list: one group row per machine that actually
-        // has a slot on this port (NES-only for player 2). Slot ids must
-        // end in player1/player2; fail loudly in tests when a factory
-        // diverges instead of silently dropping its slots.
-        debug_assert!(
-            {
-                let mut ok = true;
-                for input in vm.inputs() {
-                    for slot in &input.view.get().slots {
-                        ok &= slot_port_index(slot.slot_id.as_str()).is_some();
-                    }
-                }
-                ok
-            },
-            "slot ids must end with player1/player2"
-        );
+        // has a slot on this port (NES-only for player 2). Ports arrive
+        // resolved in the viewmodel DTO; the frontend never parses ids.
         let type_rows: Vec<RowWire> = vm
             .inputs()
             .iter()
@@ -84,7 +70,7 @@ pub(super) fn build_player_sections(
                     .get()
                     .slots
                     .iter()
-                    .any(|slot| slot_port_index(slot.slot_id.as_str()) == Some(index))
+                    .any(|slot| slot.port == Some(index))
             })
             .map(|input| {
                 let view = input.view.get();
@@ -126,7 +112,7 @@ pub(super) fn type_profile_summary(
 ) -> String {
     view.slots
         .iter()
-        .find(|slot| slot_port_index(slot.slot_id.as_str()) == Some(port_index))
+        .find(|slot| slot.port == Some(port_index))
         .and_then(|slot| {
             slot.selected_profile_id.as_ref().and_then(|selected| {
                 slot.choices.iter().find_map(|choice| {

@@ -171,6 +171,21 @@ pub trait InputPorts: std::fmt::Debug {
 /// One placed controller: the assigned profile plus its port-group index.
 pub type Placement = Option<(Rc<dyn ControllerProfile>, usize)>;
 
+/// Player-port index for one slot id. Every factory names player slots
+/// `<system>.attachment.playerN` (player 2 exists on NES only); unparseable
+/// ids fail open (`None`) so a factory addition never silently drops rows.
+/// Canonical home for the rule: frontends carry the resolved port in their
+/// DTOs and never parse slot strings.
+pub fn port_index_for_slot(slot_id: &str) -> Option<usize> {
+    if slot_id.ends_with("player2") {
+        Some(1)
+    } else if slot_id.ends_with("player1") {
+        Some(0)
+    } else {
+        None
+    }
+}
+
 /// Console-agnostic button of one emulated control, through live
 /// assignments. Single home for the port traversal: the session resolver
 /// and the viewmodel draft projector both call here so swapped controller
@@ -414,6 +429,7 @@ mod tests {
     use super::{
         AbstractKey, ControlInfo, ControlKind, ControllerProfile, CreateSplitError,
         InputAssignments, InputPorts, InputResources, InputSystemFactory, PortSet, SlotInfo,
+        port_index_for_slot,
     };
     use crate::{
         AttachmentId, ControlId, DigitalControlId, InputValue, ProfileId,
@@ -639,6 +655,15 @@ mod tests {
         let _ = (&port as &dyn Port).port_id();
         let mut target = ProbePadTarget;
         StrobeTarget::strobe(&mut target, 1);
+    }
+
+    #[test]
+    fn slot_suffix_resolves_player_port() {
+        assert_eq!(port_index_for_slot("nes.attachment.player1"), Some(0));
+        assert_eq!(port_index_for_slot("nes.attachment.player2"), Some(1));
+        assert_eq!(port_index_for_slot("nes.attachment.player3"), None);
+        assert_eq!(port_index_for_slot("player1"), Some(0));
+        assert_eq!(port_index_for_slot("unrelated"), None);
     }
 
     #[test]

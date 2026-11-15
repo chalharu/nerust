@@ -83,6 +83,7 @@ impl Editor {
             adapter.factories().to_vec(),
             adapter.supported_sample_rates(),
             Rc::new(FilesystemValidator),
+            crate::terminal_language(),
         )
         .map_err(|error| error.to_string())?;
         Ok(Rc::new(Self {
@@ -134,7 +135,7 @@ impl Editor {
         self.close_prompt.close();
     }
     fn validation_status(&self) {
-        let language = self.vm.general.view.get().language;
+        let language = crate::display_language(self.vm.general.view.get().language);
         let message = self
             .vm
             .finish()
@@ -196,7 +197,7 @@ impl Editor {
         let general = self.vm.general.clone();
         self.binding(
             general.view.clone(),
-            move |value| I18n::resolve_os(value.language).text(key),
+            move |value| I18n::new(crate::display_language(value.language)).text(key),
             None,
         )
     }
@@ -428,14 +429,14 @@ impl Editor {
             volume_label: language.clone().zip(&volume).map(|(lang, value)| {
                 format!(
                     "{}: {value:.0}%",
-                    I18n::resolve_os(lang).text(UiText::MasterVolume)
+                    I18n::new(crate::display_language(lang)).text(UiText::MasterVolume)
                 )
             }),
             volume,
             latency_label: language.clone().zip(&latency).map(|(lang, value)| {
                 format!(
                     "{}: {value:.0} ms",
-                    I18n::resolve_os(lang).text(UiText::Latency)
+                    I18n::new(crate::display_language(lang)).text(UiText::Latency)
                 )
             }),
             latency,
@@ -498,7 +499,8 @@ impl Editor {
                     |value| {
                         format!(
                             "nerust {}",
-                            I18n::resolve_os(value.language).text(UiText::Settings)
+                            I18n::new(crate::display_language(value.language))
+                                .text(UiText::Settings)
                         )
                     },
                     None,

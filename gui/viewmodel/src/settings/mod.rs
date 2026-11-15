@@ -6,6 +6,7 @@ mod editor;
 mod gamepad;
 mod general;
 mod input;
+pub mod labels;
 mod notification;
 mod projection;
 #[cfg(test)]

@@ -25,6 +25,7 @@ fn test_editor() -> SettingsEditor {
         Arc::new([]),
         Rc::new(NoopStoragePathValidator) as Rc<dyn StoragePathValidator>,
         |_| ValidationState { issues: vec![] },
+        nerust_settings_core::model::language::AppLanguage::English,
     )
 }
 

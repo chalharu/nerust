@@ -1,13 +1,6 @@
-//! Android keycode to pad position: the single frontend table.
-//!
-//! Both the JNI key path and the winit fallback share this. Keycodes
-//! 104/105 (L2/R2 key events) stay unmapped: triggers are analog-only and
-//! arrive as motion axes.
-//!
-//! The winit side (`winit_key_to_key`) covers hardware keyboards in
-//! gameplay: named USB codes map directly, Android-specific codes reuse
-//! the settings capture table below, and anything else (system keys,
-//! media remotes) stays `None` so the platform keeps it.
+//! Android keycode tables shared by JNI and winit paths.
+//! Keycodes 104/105 (L2/R2) stay unmapped: triggers are analog-only motion axes.
+//! Unmapped codes stay `None` so the platform keeps them.
 
 use nerust_input_traits::{Key, StandardButton};
 use winit::keyboard::{KeyCode, NativeKeyCode, PhysicalKey};

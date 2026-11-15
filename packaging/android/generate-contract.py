@@ -148,23 +148,6 @@ def format_rust(content):
     ).stdout
 
 
-def rust_predicate(prop):
-    kind = field_type(prop)
-    if "const" in prop:
-        accessor = {"integer": "as_i64", "string": "as_str", "boolean": "as_bool"}[kind]
-        return f'value.{accessor}() == Some({json.dumps(prop["const"])})'
-    if "enum" in prop:
-        choices = "\n            | ".join(json.dumps(value) for value in prop["enum"])
-        return f'matches!(\n    value.as_str(),\n    Some(\n        {choices}\n    )\n)'
-    if kind == "integer":
-        return (f'value\n    .as_i64()\n    .is_some_and(|number| '
-                f'({prop["minimum"]}..={prop["maximum"]}).contains(&number))')
-    if kind == "number":
-        return (f'value\n    .as_f64()\n    .is_some_and(|number| '
-                f'({prop["minimum"]}..={prop["maximum"]}).contains(&number))')
-    return f'value.is_{ {"string": "string", "boolean": "boolean"}[kind]}()'
-
-
 def _require_wire_ids(menu, actions, keys, axes):
     """Wire ids are ASCII, unique, and case-fold distinct; motion axes
     share one range so a single batch carries them all."""
@@ -172,10 +155,14 @@ def _require_wire_ids(menu, actions, keys, axes):
         require(len(names) == len(set(names)))
         require(all(name.isascii() and name.replace("_", "").isalnum() for name in names))
         require(len({name.upper() for name in names}) == len(names))
-    # No float equality: canonical JSON must match across all six axes.
-    canonical = {json.dumps(menu[name], sort_keys=True) for name in axes}
-    require(len(canonical) == 1, "motion axes must share one number range")
-    require(json.loads(next(iter(canonical)))["type"] == "number")
+    # One range for every axis: dispatch enforces a single analog bound,
+    # so a divergent axis fails here instead of silently using another
+    # axis's range. Direct dict equality (no canonical-JSON round-trip):
+    # both sides come from one parsed schema, so equal text parses equal.
+    require(axes, "motion axes are missing from the schema")
+    require(all(menu[name] == menu[axes[0]] for name in axes),
+            "motion axes must share one number range")
+    require(field_type(menu[axes[0]]) == "number")
 
 
 def _rust_header(version, settings, chunk, summary):
@@ -185,13 +172,12 @@ def _rust_header(version, settings, chunk, summary):
                               ("SETTINGS_SCHEMA_VERSION", "u32", settings),
                               ("SAF_CHUNK_BYTES", "usize", chunk),
                               ("SAF_SUMMARY_BYTES", "usize", summary)]:
-        # SAF_SUMMARY_BYTES is live on the Android target (saf.rs sidecar
-        # reads) but host test builds have no live caller, so the pin would
-        # trip deny-warnings host clippy. The other pins are read on the host
-        # too (bridge_events validation/tests), so they stay bare: an unused
-        # pin must warn.
+        # SAF_SUMMARY_BYTES is live only on the Android target (the saf.rs
+        # sidecar reads it); host test builds have no caller, so the pin
+        # stays target-gated instead of allow(dead_code): an unused pin
+        # must warn.
         if name == "SAF_SUMMARY_BYTES":
-            rs.append(f"#[allow(dead_code)]\npub(crate) const {name}: {kind} = {value};")
+            rs.append(f'#[cfg(target_os = "android")]\npub(crate) const {name}: {kind} = {value};')
         else:
             rs.append(f"pub(crate) const {name}: {kind} = {value};")
     return rs
@@ -258,7 +244,7 @@ def outputs(schema):
     actions, keys = menu["action"]["enum"], menu["key"]["enum"]
     # Motion axes ride as optional per-axis number properties (one batched
     # event per motion callback); the property names are the wire ids.
-    axes = ["left_x", "left_y", "right_x", "right_y", "trigger_l", "trigger_r", "gas", "brake"]
+    axes = [name for name, prop in menu.items() if field_type(prop) == "number"]
     _require_wire_ids(menu, actions, keys, axes)
     rs = _rust_header(version, settings, chunk, summary)
     rs.extend(f'pub(crate) const ACTION_{action.upper()}: &str = "{action}";' for action in actions)

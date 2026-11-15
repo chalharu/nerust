@@ -169,6 +169,7 @@ pub fn test_vm_with_default_shortcuts() -> SettingsViewModel {
         Arc::new([]),
         Rc::new(super::editor::NoopStoragePathValidator)
             as Rc<dyn super::editor::StoragePathValidator>,
+        nerust_settings_core::model::language::AppLanguage::English,
     )
     .unwrap()
 }
@@ -191,6 +192,7 @@ pub fn test_vm() -> SettingsViewModel {
         Arc::new([]),
         Rc::new(super::editor::NoopStoragePathValidator)
             as Rc<dyn super::editor::StoragePathValidator>,
+        nerust_settings_core::model::language::AppLanguage::English,
     )
     .unwrap()
 }

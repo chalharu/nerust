@@ -118,7 +118,7 @@ impl InputSettingsViewModel {
         default: Option<StandardButton>,
     ) -> BindingValueView {
         let current = self.editor.current();
-        let i18n = I18n::resolve_os(current.draft.shared.general.language);
+        let i18n = super::state::display_i18n(&current);
         let value = pad_binding_value(&current, target, default, i18n);
         drop(current);
         value
@@ -219,11 +219,14 @@ pub(super) fn binding_value(
         // for them by construction).
         let pad = current_pad_binding(&state.draft, target);
         match (current_binding_label(&state.draft, target), pad) {
-            (Some(key), Some(pad)) => {
-                BindingValueView::Bound(format!("{key} / {}", i18n.pad_button_label(pad)))
-            }
+            (Some(key), Some(pad)) => BindingValueView::Bound(format!(
+                "{key} / {}",
+                super::labels::pad_button_label(i18n, pad)
+            )),
             (Some(key), None) => BindingValueView::Bound(key.to_string()),
-            (None, Some(pad)) => BindingValueView::Bound(i18n.pad_button_label(pad)),
+            (None, Some(pad)) => {
+                BindingValueView::Bound(super::labels::pad_button_label(i18n, pad))
+            }
             (None, None) => BindingValueView::Unbound(i18n.text(UiText::Unbound)),
         }
     }
@@ -242,7 +245,7 @@ pub fn pad_binding_value(
         BindingValueView::Capturing(i18n.text(UiText::CapturePrompt))
     } else {
         match current_pad_game_binding(&state.draft, target).or(default) {
-            Some(button) => BindingValueView::Bound(i18n.pad_button_label(button)),
+            Some(button) => BindingValueView::Bound(super::labels::pad_button_label(i18n, button)),
             None => BindingValueView::Unbound(i18n.text(UiText::Unbound)),
         }
     }
@@ -286,6 +289,7 @@ fn project_slot_view(
 
     ControllerSlotView {
         slot_id: slot_desc.id,
+        port: nerust_input_traits::port_index_for_slot(slot_desc.id.as_str()),
         label: slot_desc.label.to_string(),
         selected_profile_id: profile_id,
         choices,
@@ -336,7 +340,7 @@ fn project_binding_sections(
     topology: &nerust_input_traits::InputTopologyDescriptor,
     assignments: &[(AttachmentId, Option<Rc<dyn ControllerProfile>>)],
 ) -> Vec<BindingSectionView> {
-    let i18n = I18n::resolve_os(state.draft.shared.general.language);
+    let i18n = super::state::display_i18n(state);
     keyboard_binding_sections(topology, system_id)
         .into_iter()
         .map(|section| {
@@ -364,7 +368,7 @@ fn project_view(state: &EditorState, factory: &dyn CoreFactory) -> InputTabView 
     // Build set of occupied slots (from multi-port controllers)
     let occupied = occupied_slots(&assignments);
 
-    let i18n = I18n::resolve_os(state.draft.shared.general.language);
+    let i18n = super::state::display_i18n(state);
     let slots: Vec<ControllerSlotView> = slots_descs
         .iter()
         .map(|slot_desc| project_slot_view(slot_desc, &assignments, &controllers, &occupied, i18n))
@@ -477,6 +481,7 @@ mod tests {
             Arc::new([]),
             std::rc::Rc::new(crate::settings::NoopStoragePathValidator)
                 as std::rc::Rc<dyn crate::settings::StoragePathValidator>,
+            nerust_settings_core::model::language::AppLanguage::English,
         )
         .unwrap();
         let input_vm = &vm.inputs()[0];
@@ -561,6 +566,7 @@ mod tests {
             Arc::new([]),
             std::rc::Rc::new(crate::settings::NoopStoragePathValidator)
                 as std::rc::Rc<dyn crate::settings::StoragePathValidator>,
+            nerust_settings_core::model::language::AppLanguage::English,
         )
         .unwrap();
         let input_vm = &vm.inputs()[0];

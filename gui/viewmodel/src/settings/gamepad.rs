@@ -1,5 +1,6 @@
+use super::labels::pad_label;
 use nerust_input_traits::MAX_PADS;
-use nerust_settings_core::i18n::{I18n, UiText, pad_label};
+use nerust_settings_core::i18n::UiText;
 use nerust_settings_core::model::input::{DEADZONE_MAX_PERCENT, DEADZONE_STEPS};
 
 use super::{
@@ -87,7 +88,7 @@ impl GamepadViewModel {
 }
 
 fn project_view(state: &super::EditorState) -> GamepadTabView {
-    let i18n = I18n::resolve_os(state.draft.shared.general.language);
+    let i18n = super::state::display_i18n(state);
     let gamepad = &state.draft.shared.input.gamepad;
     // Port options are identical for every pad: build once, clone per row.
     let port_choices: Vec<ChoiceView<Option<usize>>> = [

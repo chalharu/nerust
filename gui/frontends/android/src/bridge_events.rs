@@ -170,19 +170,20 @@ struct MenuEvent {
 struct ErrorDialogDismissedEvent {
     #[serde(deserialize_with = "de_integral")]
     v: u32,
-    #[serde(deserialize_with = "de_request_id")]
-    request_id: crate::error_dialog_controller::DialogRequestId,
+    #[serde(deserialize_with = "de_integral")]
+    request_id: u64,
 }
 
 /// Flexible integral decoding: JSON Schema integers include integral
 /// floats (`1.0`), which plain `u32`/`i32` rejects. Accepts i64/u64/f64
-/// with zero fraction and range-checks into the target.
-/// Integral decoding with float tolerance: JSON numbers arrive as i64,
-/// u64, or f64; whole floats in range narrow into the target. One generic
-/// covers every integral field (required and optional share it below), so
-/// a new bound needs no new visitor. Whole-float rule is exactness
-/// through i64/u64 (f64 precision stops at 2^53): stricter than a
-/// saturating cast at the extremes, identical for every pinned probe.
+/// with zero fraction and range-checks into the target. One generic
+/// covers every integral field (required `v` and the optional ids share
+/// it), so a new bound needs no new visitor. Whole-float rule is
+/// exactness through i64/u64 (f64 precision stops at 2^53): stricter than
+/// a saturating cast at the extremes, identical for every pinned probe.
+/// Explicit JSON null never means missing (the schema has no nullable
+/// fields), so the optional adapter below rejects it instead of decoding
+/// as absent.
 fn de_integral<'de, D, T>(deserializer: D) -> Result<T, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -239,10 +240,9 @@ where
     T::deserialize(deserializer).map(Some)
 }
 
-/// Optional variant of the integral decoding above: missing rides
+/// Optional adapter over the generic decoding above: missing rides
 /// `default`/`None`; present numbers range-check into the target.
-/// Explicit JSON null never means missing (the schema has no nullable
-/// fields), so it fails instead of decoding as absent.
+/// Null rejects through the default `visit_unit` arm (never `None`).
 fn de_opt_integral<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -250,9 +250,9 @@ where
     <T as TryFrom<i64>>::Error: std::fmt::Debug,
     <T as TryFrom<u64>>::Error: std::fmt::Debug,
 {
-    use serde::de::{Error, Unexpected, Visitor};
-    struct V<T>(std::marker::PhantomData<T>);
-    impl<'de, T> Visitor<'de> for V<T>
+    use serde::de::Visitor;
+    struct Opt<T>(std::marker::PhantomData<T>);
+    impl<'de, T> Visitor<'de> for Opt<T>
     where
         T: TryFrom<i64> + TryFrom<u64>,
         <T as TryFrom<i64>>::Error: std::fmt::Debug,
@@ -262,12 +262,6 @@ where
         fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
             f.write_str("an optional integral number")
         }
-        fn visit_none<E: Error>(self) -> Result<Option<T>, E> {
-            Err(Error::invalid_type(Unexpected::Unit, &self))
-        }
-        fn visit_unit<E: Error>(self) -> Result<Option<T>, E> {
-            Err(Error::invalid_type(Unexpected::Unit, &self))
-        }
         fn visit_some<D2>(self, deserializer: D2) -> Result<Option<T>, D2::Error>
         where
             D2: serde::Deserializer<'de>,
@@ -275,18 +269,7 @@ where
             de_integral(deserializer).map(Some)
         }
     }
-    deserializer.deserialize_option(V(std::marker::PhantomData))
-}
-
-/// Dialog request id with the same integral-float tolerance (syntax
-/// only: the `>= 1` schema bound checks at dispatch through the table).
-fn de_request_id<'de, D>(
-    deserializer: D,
-) -> Result<crate::error_dialog_controller::DialogRequestId, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    de_integral(deserializer).map(crate::error_dialog_controller::DialogRequestId)
+    deserializer.deserialize_option(Opt(std::marker::PhantomData))
 }
 
 /// Schema-driven shape checks on one parsed menu event: required fields
@@ -321,7 +304,7 @@ fn check_menu_shape(action: &str, event: &MenuEvent) -> Option<()> {
     // so an unknown key id or an out-of-range axis fails here instead of
     // riding along silently on an unrelated action.
     if let Some(key) = event.key.as_deref()
-        && controller_button(key).is_none()
+        && lookup(CONTROLLER_KEY_TABLE, key).is_none()
     {
         log::warn!("ignoring {action} bridge event with unknown key: {key}");
         return None;
@@ -354,21 +337,25 @@ impl MenuEvent {
         }
     }
 
-    /// Batched motion axes in SDL-canonical order: `(name, value)` for
-    /// every axis slot. Dispatch resolves each present axis through the
-    /// shared axis table; absent slots stay local, unknown names fail
-    /// loud per axis. No allocation: names are static, values are `Copy`.
+    /// Batched motion axes in `CONTROLLER_AXIS_TABLE` order: `(name, value)`
+    /// for every axis slot. Dispatch resolves each present axis through the
+    /// shared axis table; absent slots stay local. No allocation: names are
+    /// static, values are `Copy`.
     fn motion_axes(&self) -> [(&'static str, Option<f32>); 8] {
-        [
-            ("left_x", self.left_x),
-            ("left_y", self.left_y),
-            ("right_x", self.right_x),
-            ("right_y", self.right_y),
-            ("trigger_l", self.trigger_l),
-            ("trigger_r", self.trigger_r),
-            ("gas", self.gas),
-            ("brake", self.brake),
-        ]
+        // Names ride the shared table so envelope order stays
+        // SDL-canonical in one place; the value row couples positionally.
+        debug_assert_eq!(CONTROLLER_AXIS_TABLE.len(), 8);
+        let values = [
+            self.left_x,
+            self.left_y,
+            self.right_x,
+            self.right_y,
+            self.trigger_l,
+            self.trigger_r,
+            self.gas,
+            self.brake,
+        ];
+        std::array::from_fn(|index| (CONTROLLER_AXIS_TABLE[index].0, values[index]))
     }
 
     /// Integral value of one schema field, for the bounds table.
@@ -403,9 +390,11 @@ fn decode_json_event(raw: &str) -> Option<FrontendEvent> {
                 .find(|(name, _, _)| *name == "request_id")
                 .copied()
                 .unwrap_or(("request_id", 1, i64::MAX));
-            let id = event.request_id.0;
+            let id = event.request_id;
             if id >= minimum as u64 && (id as u128) <= maximum as u128 {
-                Some(FrontendEvent::ErrorDialogDismissed(event.request_id))
+                Some(FrontendEvent::ErrorDialogDismissed(
+                    crate::error_dialog_controller::DialogRequestId(id),
+                ))
             } else {
                 log::warn!("ignoring dialog dismiss with out-of-range request id");
                 None
@@ -436,7 +425,15 @@ fn decode_json_menu_action(event: &MenuEvent) -> Option<FrontendEvent> {
         else {
             return None;
         };
-        return decode_controller_parts(device_id, key, pressed).map(FrontendEvent::Menu);
+        let Some(button) = lookup(CONTROLLER_KEY_TABLE, key) else {
+            log::warn!("ignoring unknown Android controller key: {key}");
+            return None;
+        };
+        return Some(FrontendEvent::Menu(MenuAction::ControllerInput {
+            device_id,
+            button,
+            pressed,
+        }));
     }
     if action == ACTION_MOTION {
         let device_id = event.device_id?;
@@ -447,8 +444,19 @@ fn decode_json_menu_action(event: &MenuEvent) -> Option<FrontendEvent> {
             let Some(value) = value else {
                 continue;
             };
-            let input = decode_analog_parts(device_id, axis, value)?;
-            batch.push(input);
+            let Some(axis) = lookup(CONTROLLER_AXIS_TABLE, axis) else {
+                log::warn!("ignoring unknown Android controller axis: {axis}");
+                return None;
+            };
+            if !(ANALOG_VALUE_BOUNDS.0..=ANALOG_VALUE_BOUNDS.1).contains(&value) {
+                log::warn!("ignoring out-of-range Android axis value: {value}");
+                return None;
+            }
+            batch.push(MenuAction::AnalogInput {
+                device_id,
+                axis,
+                value,
+            });
         }
         if batch.is_empty() {
             log::warn!("ignoring motion bridge event with no axes");
@@ -499,32 +507,13 @@ fn decode_json_menu_action(event: &MenuEvent) -> Option<FrontendEvent> {
     }
 }
 
-fn decode_controller_parts(device_id: i32, key: &str, pressed: bool) -> Option<MenuAction> {
-    let Some(button) = controller_button(key) else {
-        log::warn!("ignoring unknown Android controller key: {key}");
-        return None;
-    };
-    Some(MenuAction::ControllerInput {
-        device_id,
-        button,
-        pressed,
-    })
-}
-
-fn decode_analog_parts(device_id: i32, axis: &str, value: f32) -> Option<MenuAction> {
-    let Some(axis) = controller_axis(axis) else {
-        log::warn!("ignoring unknown Android controller axis: {axis}");
-        return None;
-    };
-    if !(ANALOG_VALUE_BOUNDS.0..=ANALOG_VALUE_BOUNDS.1).contains(&value) {
-        log::warn!("ignoring out-of-range Android axis value: {value}");
-        return None;
-    };
-    Some(MenuAction::AnalogInput {
-        device_id,
-        axis,
-        value,
-    })
+/// Single-table lookup shared by shape validation and dispatch; the schema
+/// test iterates the tables above.
+fn lookup<V: Copy>(table: &[(&str, V)], key: &str) -> Option<V> {
+    table
+        .iter()
+        .find(|(name, _)| *name == key)
+        .map(|(_, value)| *value)
 }
 
 /// Typed controller-axis mapping: SDL-style names to normalized axes.
@@ -540,21 +529,6 @@ pub(crate) const CONTROLLER_AXIS_TABLE: &[(&str, GamepadAxis)] = &[
     ("gas", GamepadAxis::LeftTrigger),
     ("brake", GamepadAxis::RightTrigger),
 ];
-
-/// Single-table lookups; the schema test iterates the tables above.
-fn controller_button(key: &str) -> Option<StandardButton> {
-    CONTROLLER_KEY_TABLE
-        .iter()
-        .find(|(name, _)| *name == key)
-        .map(|(_, button)| *button)
-}
-
-fn controller_axis(axis: &str) -> Option<GamepadAxis> {
-    CONTROLLER_AXIS_TABLE
-        .iter()
-        .find(|(name, _)| *name == axis)
-        .map(|(_, value)| *value)
-}
 
 /// Decode one raw bridge string: only v1 JSON decodes, never a silent drop.
 pub(crate) fn decode_frontend_event(raw: &str) -> Option<FrontendEvent> {

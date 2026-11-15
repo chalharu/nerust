@@ -29,6 +29,7 @@ nerust_system_traits.workspace = true
 panechord.workspace = true
 raw-window-handle.workspace = true
 serde.workspace = true
+sys-locale.workspace = true
 
 [dev-dependencies]
 nerust_nes_factory.workspace = true

@@ -508,10 +508,16 @@ internal fun NerustSettingsDialogCard(
     // drop vanished ids so the screen falls back to the nearest live
     // ancestor instead of stranding the stack on a missing section.
     // Stale row keys clear with the same push.
-    LaunchedEffect(sections) {
-        val live = backStack.filter { id -> sections.any { it.id == id } }
+    // Identity sets hoisted from the per-payload scans: ids stay stable
+    // across value-only payloads, so the effect and the callbacks below
+    // key on these instead of `sections` and skip rebuilds when only
+    // values change.
+    val sectionIds = remember(sections) { sections.map { it.id }.toSet() }
+    val rowKeys = remember(sections) { sections.flatMap { section -> section.rows.map { it.key } }.toSet() }
+    LaunchedEffect(sectionIds, rowKeys) {
+        val live = backStack.filter { it in sectionIds }
         if (live.size != backStack.size) backStack = live
-        if (activeRowKey != null && sections.none { section -> section.rows.any { it.key == activeRowKey } }) {
+        if (activeRowKey != null && activeRowKey !in rowKeys) {
             activeRowKey = null
         }
     }
@@ -555,7 +561,7 @@ internal fun NerustSettingsDialogCard(
     val dirtyVisibleSections =
         remember(sections, dirtyKeys) { ancestorDirtySections(sections, dirtyKeys, parents) }
     val actions =
-        remember(sections) {
+        remember(sectionIds) {
         SettingsRowActions(
             onCancelCapture = { sendCommand("", 0, 0L, "cancel_capture", mutating = false) },
             onSelectChoice = { row, choiceIndex ->
@@ -571,7 +577,7 @@ internal fun NerustSettingsDialogCard(
             onRowClick = { row ->
                 when (row.kind) {
                     "group" -> {
-                        if (sections.any { it.id == row.target }) {
+                        if (row.target in sectionIds) {
                             pushSection(row.target)
                         }
                     }
@@ -591,7 +597,7 @@ internal fun NerustSettingsDialogCard(
             },
             onDetailClick = { row ->
                 if (row.detailTarget.isNotBlank() &&
-                    sections.any { it.id == row.detailTarget }
+                    row.detailTarget in sectionIds
                 ) {
                     pushSection(row.detailTarget)
                 }
@@ -1178,17 +1184,21 @@ private fun searchHits(
     offLabel: String,
 ): List<Pair<SettingsSection, SettingsRow>> {
     if (query.isBlank()) return emptyList()
+    // Fold the query once; every field below matches against the same
+    // folded query instead of re-folding per comparison.
+    val q = query.lowercase()
     return sections.flatMap { section ->
+        val sectionLabel = section.label.lowercase()
         section.rows
             .filter { row ->
                 row.kind != "header" &&
                     (
-                        row.label.contains(query, ignoreCase = true) ||
-                            row.description.contains(query, ignoreCase = true) ||
-                            section.label.contains(query, ignoreCase = true) ||
-                            row.text.contains(query, ignoreCase = true) ||
+                        row.label.lowercase().contains(q) ||
+                            row.description.lowercase().contains(q) ||
+                            sectionLabel.contains(q) ||
+                            row.text.lowercase().contains(q) ||
                             settingsRowDisplayValue(row, onLabel, offLabel)
-                                .contains(query, ignoreCase = true)
+                                .lowercase().contains(q)
                     )
             }.map { row -> section to row }
     }
@@ -1252,6 +1262,12 @@ private fun SettingsCategoryList(
     val hits = remember(state.sections, query, onLabel, offLabel) {
         searchHits(state.sections, query, onLabel, offLabel)
     }
+    // Trails depend only on the parent links: one associate per link
+    // change, then each hit is a map get at composition. Ancestor labels
+    // all ride inside `parents`, so a parents-equal payload yields equal
+    // trails; ids without parents fall back to "" exactly like
+    // breadcrumbTrail does for an unknown id.
+    val crumbs = remember(state.parents) { state.sections.associate { it.id to breadcrumbTrail(state.parents, it.id) } }
     val emptyText =
         if (query.isBlank()) "" else stringResource(R.string.settings_search_empty, query)
     LazyColumn(
@@ -1280,7 +1296,7 @@ private fun SettingsCategoryList(
             settingsSearchResults(
                 hits = hits,
                 emptyText = emptyText,
-                breadcrumbOf = { sectionId -> breadcrumbTrail(state.parents, sectionId) },
+                breadcrumbOf = { sectionId -> crumbs[sectionId].orEmpty() },
                 onNavigate = actions.onSearchNavigate,
             )
             return@LazyColumn

@@ -106,6 +106,12 @@ class MainActivity :
      * here never skews against routing. */
     private var connectedDeviceIds = mutableSetOf<Int>()
 
+    /** Devices known to lack analog trigger axes: `device.getMotionRange`
+     * crosses Binder on the L2/R2 key path, so a null result is cached per
+     * device id and evicted on removal/change below. Main thread only
+     * (dispatch plus listener callbacks), like the connect set above. */
+    private var devicesWithoutTriggerAxes = mutableSetOf<Int>()
+
     /** Presence-scan epoch: a scan in flight across onPause must not apply
      * after it (overlay/capture gate flipping while paused). The resume
      * scan below re-converges, so dropping is safe. */
@@ -238,10 +244,18 @@ class MainActivity :
             } else {
                 ControllerAxis.TRIGGER_R
             }
-        if (event.device?.getMotionRange(axisMotion) == null &&
-            (event.action == KeyEvent.ACTION_DOWN || event.action == KeyEvent.ACTION_UP)
-        ) {
-            updateControllerTrigger(event.deviceId, axisKey, event.action == KeyEvent.ACTION_DOWN)
+        if (event.action != KeyEvent.ACTION_DOWN && event.action != KeyEvent.ACTION_UP) return false
+        // The range probe crosses Binder on the key path: a cached null
+        // skips it, a present axis re-probes (only nulls are cached, so a
+        // device that gains axes is never pinned to the mirror). A null
+        // device mirrors like before but is never cached to an id.
+        val deviceId = event.deviceId
+        val missingAxis =
+            devicesWithoutTriggerAxes.contains(deviceId) ||
+                event.device?.getMotionRange(axisMotion) == null
+        if (missingAxis && event.device != null) devicesWithoutTriggerAxes.add(deviceId)
+        if (missingAxis) {
+            updateControllerTrigger(deviceId, axisKey, event.action == KeyEvent.ACTION_DOWN)
             return true
         }
         return false
@@ -484,11 +498,13 @@ class MainActivity :
     }
 
     override fun onInputDeviceChanged(deviceId: Int) {
+        devicesWithoutTriggerAxes.remove(deviceId)
         refreshControllerPresence()
     }
 
     override fun onInputDeviceRemoved(deviceId: Int) {
         connectedDeviceIds.remove(deviceId)
+        devicesWithoutTriggerAxes.remove(deviceId)
         releaseController(deviceId)
         sendDeviceRemoved(deviceId)
         sensorController.noteControllerRemoved(deviceId)

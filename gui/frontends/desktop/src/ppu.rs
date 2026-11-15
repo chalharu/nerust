@@ -71,7 +71,7 @@ pub(crate) struct Pane {
 
 impl Pane {
     pub(crate) fn new(language: AppLanguage, executor: Rc<dyn Executor>) -> Rc<Self> {
-        let i18n = I18n::resolve_os(language);
+        let i18n = I18n::new(crate::display_language(language));
         Rc::new(Self {
             model: Store::new(
                 Model {
@@ -125,7 +125,7 @@ impl Pane {
             return;
         }
         if self.language.replace(language) != language {
-            let i18n = I18n::resolve_os(language);
+            let i18n = I18n::new(crate::display_language(language));
             let _ = self.model.update(move |model| {
                 model.title = i18n.text(UiText::PpuViewer);
                 model.empty = i18n.text(UiText::NoImages);
@@ -305,7 +305,7 @@ impl Pane {
                     let (width, height) = dimensions.unwrap_or((width, height));
                     let caption = point.map(|point| {
                         tile_hover_text(
-                            I18n::resolve_os(language.get()),
+                            I18n::new(crate::display_language(language.get())),
                             &label,
                             width,
                             height,

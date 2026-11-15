@@ -80,9 +80,11 @@ pub enum ValidationIssueKind {
 }
 
 impl ValidationIssueKind {
+    /// `language` is the already-resolved display language (edges resolve
+    /// `SystemDefault` against the terminal before constructing the editor).
     pub fn message(&self, language: AppLanguage) -> String {
         use nerust_settings_core::i18n::{self as core_i18n, I18n, UiText};
-        let i18n = I18n::resolve_os(language);
+        let i18n = I18n::new(language);
         let lang = i18n.language();
         match self {
             Self::Storage(detail) => detail.clone(),

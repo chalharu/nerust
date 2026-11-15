@@ -1,34 +1,11 @@
 use std::rc::Rc;
 
-use nerust_input_traits::{AttachmentId, ControllerProfile};
+use nerust_input_traits::{AttachmentId, ControllerProfile, member_is_shareable};
 
 use super::model::app_state::PortDeviceSets;
 pub use super::model::app_state::{
     BUILTIN_KEYBOARD_MEMBER, GAMEPAD_MEMBER_PREFIX, KEYBOARD_MEMBER_PREFIX,
 };
-
-/// Shareable members (keyboards) may sit in several ports at once.
-pub fn member_is_shareable(member: &str) -> bool {
-    member.starts_with(KEYBOARD_MEMBER_PREFIX)
-}
-
-/// Gamepad members: exclusive, one port at a time.
-pub fn member_is_gamepad(member: &str) -> bool {
-    member.starts_with(GAMEPAD_MEMBER_PREFIX)
-}
-
-/// Player-port index for one slot id. Every factory names player slots
-/// `<system>.attachment.playerN` (player 2 exists on NES only); unparseable
-/// ids fail open (`None`) so a factory addition never silently drops rows.
-pub fn slot_port_index(slot_id: &str) -> Option<usize> {
-    if slot_id.ends_with("player2") {
-        Some(1)
-    } else if slot_id.ends_with("player1") {
-        Some(0)
-    } else {
-        None
-    }
-}
 
 /// Exclusive members (gamepads) appearing in more than one port.
 /// Returns one entry per offending member: (member, ports).
@@ -82,16 +59,7 @@ mod tests {
 
     use nerust_input_traits::{AttachmentId, ControllerProfile, PortSet, ProfileId};
 
-    use super::{clear_multi_port_conflicts, slot_port_index};
-
-    #[test]
-    fn slot_port_index_reads_player_suffix() {
-        assert_eq!(slot_port_index("nes.attachment.player1"), Some(0));
-        assert_eq!(slot_port_index("nes.attachment.player2"), Some(1));
-        assert_eq!(slot_port_index("nes.attachment.player3"), None);
-        assert_eq!(slot_port_index("player1"), Some(0));
-        assert_eq!(slot_port_index("unrelated"), None);
-    }
+    use super::clear_multi_port_conflicts;
 
     #[derive(Debug)]
     struct SinglePortProfile;
@@ -173,8 +141,9 @@ mod tests {
 
     #[test]
     fn keyboards_share_ports_gamepads_do_not() {
-        use super::{exclusive_member_conflicts, member_is_shareable};
+        use super::exclusive_member_conflicts;
         use crate::model::app_state::PortDeviceSets;
+        use nerust_input_traits::member_is_shareable;
         assert!(member_is_shareable("kbd:builtin"));
         assert!(member_is_shareable("kbd:05ac:024f"));
         assert!(!member_is_shareable("pad:deadbeef"));

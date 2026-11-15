@@ -556,11 +556,11 @@ fn controllers_quick_section(
         quick_rows.push(group_row(
             &format!("controllers.{player_id}"),
             player_label(index, i18n),
-            i18n.port_count_line(names.len()),
+            nerust_gui_viewmodel::settings::labels::port_count_line(i18n, names.len()),
             &player_id,
         ));
         let last = quick_rows.last_mut().expect("player row pushed");
-        last.text = i18n.port_summary(&names);
+        last.text = nerust_gui_viewmodel::settings::labels::port_summary(i18n, &names);
     }
     // Connected pads link straight to their own screen (deadzone,
     // hat switch, button mapping).
@@ -740,10 +740,15 @@ fn shortcuts_section(
         .rows
         .iter()
         .filter(|binding| {
-            binding
-                .target
-                .action()
-                .is_none_or(|action| !action.requires_window_chrome())
+            // The phone has no window chrome (fullscreen, debugger): rows
+            // needing it never reach Android, though shared bindings persist.
+            binding.target.action().is_none_or(|action| {
+                !matches!(
+                    action,
+                    nerust_settings_core::model::input::ShortcutAction::ToggleFullscreen
+                        | nerust_settings_core::model::input::ShortcutAction::OpenDebugger
+                )
+            })
         })
         .map(|binding| {
             (
@@ -827,7 +832,7 @@ fn shortcut_binding_text(
 ) -> String {
     let label = if pad {
         nerust_settings_core::editor::current_pad_binding(snapshot, target)
-            .map(|button| i18n.pad_button_label(button))
+            .map(|button| nerust_gui_viewmodel::settings::labels::pad_button_label(i18n, button))
     } else {
         nerust_settings_core::editor::current_binding_key(snapshot, target)
             .map(|key| key.label().to_string())
@@ -939,7 +944,7 @@ fn slot_rows(view: &nerust_gui_viewmodel::settings::dto::InputTabView, i18n: I18
             let mut row = choice_row(
                 &format!("system.{}.slot.{}", view.system_id, slot.slot_id.as_str()),
                 label,
-                i18n.slot_description(),
+                nerust_gui_viewmodel::settings::labels::slot_description(i18n),
                 &slot
                     .choices
                     .iter()
@@ -974,7 +979,9 @@ fn slot_rows(view: &nerust_gui_viewmodel::settings::dto::InputTabView, i18n: I18
                 let covered = covering_owner.as_ref().filter(|_| choice.value.is_some());
                 wire.enabled = covered.is_none();
                 wire.reason = covered
-                    .map(|owner| i18n.slot_in_use(owner.as_str()))
+                    .map(|owner| {
+                        nerust_gui_viewmodel::settings::labels::slot_in_use(i18n, owner.as_str())
+                    })
                     .unwrap_or_default();
             }
             row

@@ -6,10 +6,10 @@
 
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_viewmodel::settings::SettingsViewModel;
+use nerust_input_traits::port_index_for_slot;
 use nerust_settings_core::{
     editor::CaptureTarget,
     i18n::UiText,
-    input::slot_port_index,
     model::input::{DEADZONE_STEPS, pad_game_binding_conflicts},
 };
 
@@ -180,7 +180,7 @@ fn pad_system_rows(
             // (`<sys>.attachment.playerN`); unclassifiable
             // attachments fail open so a factory addition
             // never silently drops rows here.
-            if slot_port_index(attachment).is_some_and(|port| port != slot) {
+            if port_index_for_slot(attachment).is_some_and(|port| port != slot) {
                 continue;
             }
             let target = CaptureTarget::PadBinding {
@@ -252,13 +252,13 @@ fn conflict_rows(
         let shown: Vec<_> = controls
             .iter()
             .filter(|(attachment, _)| {
-                !slot_port_index(attachment.as_str()).is_some_and(|port| port != slot)
+                !port_index_for_slot(attachment.as_str()).is_some_and(|port| port != slot)
             })
             .collect();
         if shown.len() < 2 {
             continue;
         }
-        let name = i18n.pad_button_label(button);
+        let name = nerust_gui_viewmodel::settings::labels::pad_button_label(i18n, button);
         rows.push(info_row(
             &format!("{pad_id}.{system}.conflict.{name}"),
             name.clone(),

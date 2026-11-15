@@ -364,6 +364,7 @@ pub(super) fn build_vm(
         deps.factories.clone(),
         Arc::clone(&deps.rates),
         Rc::new(SafStorageValidator),
+        nerust_settings_core::model::language::AppLanguage::English,
     )
     .map_err(|error| error.to_string())
 }

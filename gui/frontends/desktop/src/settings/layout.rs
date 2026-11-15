@@ -1162,7 +1162,10 @@ mod tests {
                 .clear_binding(&CaptureTarget::Shortcut(action))
                 .expect("clear applies");
         }
-        let unbound = I18n::resolve_os(editor.vm.general.view.get().language).text(UiText::Unbound);
+        let unbound = I18n::new(crate::display_language(
+            editor.vm.general.view.get().language,
+        ))
+        .text(UiText::Unbound);
         let values: Vec<String> = rows
             .iter()
             .map(|row| row.model.snapshot().value.get())

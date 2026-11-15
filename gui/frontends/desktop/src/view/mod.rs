@@ -85,7 +85,7 @@ impl MenuModel {
         let (slots, active_slot) = app.session().menu_slots();
         let available = !state.closed;
         let loaded = available && state.loaded;
-        let i18n = I18n::resolve_os(language);
+        let i18n = I18n::new(crate::display_language(language));
         let label = move |key| i18n.text(key);
         let hinted = |key, action| {
             nerust_gui_runtime::menu_labels::shortcut_hint(&label(key), &shortcuts, action)
@@ -325,7 +325,7 @@ mod tests {
         let (adapter, _dir) = loaded_adapter();
         let app = nerust_gui_application::Application::new(adapter);
         let model = MenuModel::new(&app);
-        let i18n = I18n::resolve_os(model.language);
+        let i18n = I18n::new(crate::display_language(model.language));
         assert_eq!(model.file_title, i18n.text(UiText::File));
         assert_eq!(model.emulation_title, i18n.text(UiText::Emulation));
         // Loaded fixture with slots: creation and per-slot traffic enabled.

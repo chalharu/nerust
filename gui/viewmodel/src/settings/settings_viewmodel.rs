@@ -45,6 +45,7 @@ impl SettingsViewModel {
         factories: Vec<Arc<dyn nerust_system_traits::factory::CoreFactory>>,
         supported_sample_rates: Arc<[u32]>,
         storage_validator: Rc<dyn StoragePathValidator>,
+        system_fallback: nerust_settings_core::model::language::AppLanguage,
     ) -> Result<Self, super::catalog::CatalogError> {
         let catalog = FactoryCatalog::new(factories.clone())?;
 
@@ -54,6 +55,7 @@ impl SettingsViewModel {
             supported_sample_rates,
             storage_validator,
             validator,
+            system_fallback,
         );
 
         let revision = editor.revision_prop();
@@ -415,6 +417,7 @@ mod tests {
                 vec![],
                 Arc::new([]),
                 Rc::new(crate::settings::NoopStoragePathValidator),
+                nerust_settings_core::model::language::AppLanguage::English,
             )
             .unwrap()
         };
@@ -477,6 +480,7 @@ mod tests {
             Rc::new(crate::settings::NoopStoragePathValidator)
                 as Rc<dyn crate::settings::StoragePathValidator>,
             validator,
+            nerust_settings_core::model::language::AppLanguage::English,
         );
 
         // finish() should reject because of the unknown profile

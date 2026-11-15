@@ -2,7 +2,7 @@
 pub(crate) const BRIDGE_EVENT_VERSION: u32 = 1;
 pub(crate) const SETTINGS_SCHEMA_VERSION: u32 = 2;
 pub(crate) const SAF_CHUNK_BYTES: usize = 65536;
-#[allow(dead_code)]
+#[cfg(target_os = "android")]
 pub(crate) const SAF_SUMMARY_BYTES: usize = 65536;
 pub(crate) const ACTION_EXIT: &str = "exit";
 pub(crate) const ACTION_LOAD_STATE: &str = "load_state";

@@ -113,7 +113,7 @@ fn history_table(headers: [String; 4], empty_text: String, rows: Vec<HistoryRowV
 
 impl Pane {
     pub(crate) fn new(language: AppLanguage, executor: Rc<dyn Executor>) -> Rc<Self> {
-        let i18n = I18n::resolve_os(language);
+        let i18n = I18n::new(crate::display_language(language));
         let label = move |key| i18n.text(key);
         let headers = [
             UiText::HistoryDatetime,
@@ -192,7 +192,7 @@ impl Pane {
             return;
         }
         let selection = self.filter.snapshot();
-        let i18n = I18n::resolve_os(language);
+        let i18n = I18n::new(crate::display_language(language));
         let rows = project(lines, i18n, HistoryFilter::from_id(Some(&selection)));
         let count = i18n.history_count(rows.len());
         let _ = self.model.update(move |model| {

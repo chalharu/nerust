@@ -85,11 +85,26 @@ pub struct EditorState {
     pub(crate) catalog: FactoryCatalog,
     pub(crate) supported_sample_rates: Arc<[u32]>,
     pub(crate) storage_validator: Rc<dyn StoragePathValidator>,
+    /// Terminal language for `SystemDefault` choices, resolved once by the
+    /// hosting edge (desktop OS query, Android vault push, tests). The
+    /// viewmodel never queries the environment; projections resolve the
+    /// draft choice against this fallback via [`display_i18n`].
+    pub(crate) system_fallback: nerust_settings_core::model::language::AppLanguage,
     /// Cache of [`conflicting_keys`] results, populated by the validator
     /// and reused by input projections to avoid double computation.
     pub(crate) conflicts_cache: ConflictsCache,
     pub(crate) topology_cache:
         RefCell<HashMap<Box<dyn SystemId>, Rc<nerust_input_traits::InputTopologyDescriptor>>>,
+}
+
+/// Display strings for one projection: the draft choice wins, `SystemDefault`
+/// follows the edge-provided terminal fallback. No environment access.
+pub(crate) fn display_i18n(state: &EditorState) -> nerust_settings_core::i18n::I18n {
+    use nerust_settings_core::model::language::AppLanguage;
+    match state.draft.shared.general.language {
+        AppLanguage::SystemDefault => nerust_settings_core::i18n::I18n::new(state.system_fallback),
+        explicit => nerust_settings_core::i18n::I18n::new(explicit),
+    }
 }
 
 // Manual Clone: conflicts_cache is reset to None to avoid RefCell::clone panic.
@@ -103,6 +118,7 @@ impl Clone for EditorState {
             catalog: self.catalog.clone(),
             supported_sample_rates: Arc::clone(&self.supported_sample_rates),
             storage_validator: Rc::clone(&self.storage_validator),
+            system_fallback: self.system_fallback,
             conflicts_cache: RefCell::new(None),
             topology_cache: RefCell::new(HashMap::new()),
         }

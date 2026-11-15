@@ -174,6 +174,9 @@ pub struct InputTabView {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ControllerSlotView {
     pub slot_id: AttachmentId,
+    /// Resolved player port (None for non-player attachments). Frontends
+    /// never parse slot strings; the viewmodel resolves once here.
+    pub port: Option<usize>,
     pub label: String,
     pub selected_profile_id: Option<String>,
     pub choices: Vec<ChoiceView<Option<String>>>,

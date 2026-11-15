@@ -3,7 +3,7 @@ use super::{
     editor::{SettingsEditor, ViewModelError},
     property::ReadOnlyObservableProperty,
 };
-use nerust_settings_core::i18n::{I18n, UiText};
+use nerust_settings_core::i18n::UiText;
 use nerust_settings_core::model::local::{
     NotificationAreaMode, NotificationColor, NotificationPosition,
 };
@@ -129,7 +129,7 @@ impl NotificationSettingsViewModel {
 
 fn project_view(state: &super::EditorState) -> NotificationView {
     let n = &state.draft.local.notifications;
-    let i18n = I18n::resolve_os(state.draft.shared.general.language);
+    let i18n = super::state::display_i18n(state);
     NotificationView {
         info_enabled: n.info_enabled,
         info_duration_ms: n.info_duration_ms,

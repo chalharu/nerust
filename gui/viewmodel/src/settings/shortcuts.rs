@@ -33,7 +33,7 @@ impl ShortcutsViewModel {
 }
 
 fn project_view(state: &EditorState) -> BindingSectionView {
-    let i18n = I18n::resolve_os(state.draft.shared.general.language);
+    let i18n = super::state::display_i18n(state);
     let shortcut_rows: Vec<BindingRowView> = shortcut_descriptors()
         .iter()
         .map(|desc| project_shortcut_row(state, desc, i18n))

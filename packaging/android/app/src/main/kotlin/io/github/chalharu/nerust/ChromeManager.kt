@@ -638,16 +638,24 @@ class ChromeManager(private val activity: MainActivity) {
         if (controlsVisibility != "auto") {
             return
         }
-        controllerOverlayHiddenUntil = SystemClock.elapsedRealtime() + CONTROLLER_OVERLAY_HIDE_MS
-        controlsOverlayPopup?.dismiss()
-        controlsOverlayPopup = null
-        controlsOverlayView = null
-        pushTouchGate()
+        val now = SystemClock.elapsedRealtime()
+        // While the quiet window is already active only the deadline moves:
+        // re-dismissing an already-dismissed popup and re-pushing an
+        // already-pushed gate per key/motion batch churns chrome for no
+        // visible change (pushTouchGate dedupes anyway). The timer re-post
+        // below still extends the hide through continued play.
+        val alreadyHidden = now < controllerOverlayHiddenUntil
+        controllerOverlayHiddenUntil = now + CONTROLLER_OVERLAY_HIDE_MS
         activity.window.decorView.removeCallbacks(restoreControllerOverlayRunnable)
         activity.window.decorView.postDelayed(
             restoreControllerOverlayRunnable,
             CONTROLLER_OVERLAY_HIDE_MS,
         )
+        if (alreadyHidden) return
+        controlsOverlayPopup?.dismiss()
+        controlsOverlayPopup = null
+        controlsOverlayView = null
+        pushTouchGate()
     }
 
     fun noteControllerInput() {
