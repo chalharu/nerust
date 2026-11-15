@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use nerust_core_traits::identity::SystemId;
 use nerust_input_traits::Key;
+use nerust_input_traits::MAX_PADS;
 use nerust_input_traits::{AttachmentId, DigitalControlId, StandardButton};
 
 pub const IMPLICIT_PROFILE_ID: &str = "default";
@@ -18,10 +19,6 @@ pub const DEADZONE_MAX_PERCENT: u8 = 90;
 /// ceiling above stays wider for worn sticks and file-loaded values).
 pub const DEADZONE_STEPS: [u8; 7] = [0, 5, 10, 15, 20, 25, 30];
 
-/// Connection-order pads tracked by settings; `MAX_PADS` is the single
-/// constant (imported, never redefined).
-pub use nerust_input_traits::MAX_PADS as PAD_COUNT;
-
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct InputSettings {
@@ -34,7 +31,7 @@ pub struct InputSettings {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct GamepadSettings {
-    pub pad_ports: [PadPort; PAD_COUNT],
+    pub pad_ports: [PadPort; MAX_PADS],
 }
 
 /// One connection-order pad: its player slot, hat switch, and stick
@@ -102,7 +99,7 @@ pub struct SystemInputSettings {
     /// empty table behaves exactly like the old build. Absolute
     /// attachments (like keyboard bindings): an explicit entry wins over
     /// the pad's player-slot routing.
-    pub pad_bindings: [Vec<PadBinding>; PAD_COUNT],
+    pub pad_bindings: [Vec<PadBinding>; MAX_PADS],
 }
 
 impl SystemInputSettings {
@@ -392,9 +389,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pad_count_tracks_max_pads() {
-        // `PAD_COUNT` is a re-export of `MAX_PADS`: no skew possible.
-        assert_eq!(PAD_COUNT, 4);
+    fn pad_table_size_is_the_schema_bound() {
+        // Fixed tables are the persisted schema: changing this breaks
+        // existing settings files, so the bound moves only with a
+        // migration. The admission gate (`pad_index_for_guid`) and every
+        // `.take()` read the same constant.
+        assert_eq!(MAX_PADS, 4);
     }
 
     #[test]

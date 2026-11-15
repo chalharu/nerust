@@ -268,8 +268,8 @@ mod tests {
     use crate::model::{
         app_state::DesktopAppState,
         input::{
-            InputSettings, KeyboardBinding, PAD_COUNT, PersistedControlId, ShortcutAction,
-            ShortcutBinding, ShortcutSettings, SystemInputSettings,
+            InputSettings, KeyboardBinding, PersistedControlId, ShortcutAction, ShortcutBinding,
+            ShortcutSettings, SystemInputSettings,
         },
         local::HostBackendLocalSettings,
         shared::DesktopSharedSettings,
@@ -524,7 +524,7 @@ mod tests {
         let mut snapshot = snapshot_with_binding("test.att", "test.ctrl", Key::KeyZ);
         assert!(!apply_capture_pad_target(
             &mut snapshot,
-            &pad_target(PAD_COUNT),
+            &pad_target(nerust_input_traits::MAX_PADS),
             Some(StandardButton::South)
         ));
     }
