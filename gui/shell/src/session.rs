@@ -38,8 +38,8 @@ use nerust_gui_runtime::settings::{
     manager::SettingsManager,
 };
 use nerust_input_traits::{
-    AbstractKey, AttachmentId, DigitalControlId, GamepadAxis, InputAssignments, Key, PadGuid,
-    SourceButtonId, SourceId, StandardButton, UnifiedFieldMap,
+    AbstractKey, AttachmentId, AXIS_ABSTRACT, BUTTON_ABSTRACT, DigitalControlId, GamepadAxis,
+    InputAssignments, Key, PadGuid, SourceButtonId, SourceId, StandardButton, UnifiedFieldMap,
 };
 use nerust_persistence::error::PersistenceError;
 use nerust_render_traits::{FrameBuffer, VideoRenderProfile};
@@ -435,27 +435,20 @@ impl InputDept {
             self.pad_deadzone[index] = port.deadzone_percent;
             self.pad_hat[index] = port.dpad_enabled;
         }
-        const ABSTRACTS: [AbstractKey; 19] = [
-            AbstractKey::Button1,
-            AbstractKey::Button2,
-            AbstractKey::Button3,
-            AbstractKey::Button4,
-            AbstractKey::Button5,
-            AbstractKey::Button6,
-            AbstractKey::Button7,
-            AbstractKey::Button8,
-            AbstractKey::Select,
-            AbstractKey::Start,
-            AbstractKey::Guide,
-            AbstractKey::DpadUp,
-            AbstractKey::DpadDown,
-            AbstractKey::DpadLeft,
-            AbstractKey::DpadRight,
-            AbstractKey::Axis1X,
-            AbstractKey::Axis1Y,
-            AbstractKey::Axis2X,
-            AbstractKey::Axis2Y,
-        ];
+        const ABSTRACTS: [AbstractKey; 19] = {
+            let mut all = [AbstractKey::Button1; 19];
+            let mut i = 0;
+            while i < BUTTON_ABSTRACT.len() {
+                all[i] = BUTTON_ABSTRACT[i].1;
+                i += 1;
+            }
+            let mut j = 0;
+            while j < AXIS_ABSTRACT.len() {
+                all[i + j] = AXIS_ABSTRACT[j].1;
+                j += 1;
+            }
+            all
+        };
         self.abstract_route.clear();
         let slots = self.current_assignments.slots().len();
         // `None` (layout-wide scan) plus every pinned slot the commit
@@ -636,13 +629,13 @@ impl PadTopology {
     /// collapse/migration without consuming a persisted slot. Open tables
     /// (see `binding_map`): newcomers always append, so no pad parks
     /// past a cap; missing settings rows read as defaults.
-    fn pad_index_for_guid(&mut self, guid: PadGuid) -> Option<usize> {
+    fn pad_index_for_guid(&mut self, guid: PadGuid) -> usize {
         if let Some(index) = self.order.iter().position(|known| *known == guid) {
-            return Some(index);
+            return index;
         }
         let index = self.order.len();
         self.order.push(guid);
-        Some(index)
+        index
     }
 
     /// Setting-slot index of one pad: the descriptor rank, so the commit
@@ -679,15 +672,6 @@ impl InputDept {
     /// Assigned player slot for one source: pad order into the persisted
     /// table, clamped to the live slots. `None` parks the source (Off,
     /// keyboards, or pads past the table).
-    fn pad_slot(
-        &self,
-        source: SourceId,
-        ports: &[nerust_settings_core::model::input::PadPort],
-    ) -> Option<usize> {
-        let index = self.pads.pad_index(source)?;
-        self.slot_for_index(index, ports)
-    }
-
     /// Persistable projection of the live assignments: only slot and controller ids survive.
     /// An explicitly named projection, not a `From` conversion.
     fn persistable_pairs(&self) -> Vec<(String, Option<String>)> {

@@ -13,6 +13,31 @@ use nerust_settings_core::model::language::AppLanguage;
 /// elsewhere. Caps follow the dominant print and the Android `BUTTON_*`
 /// names; the position word keeps Nintendo-layout pads interpretable
 /// without per-vendor branches.
+/// Plain cap print for one pad button: the single home for the
+/// position-to-glyph table. Positions are the binding identity
+/// (vendors transpose caps); this table only names what is printed.
+pub fn pad_button_plain(button: StandardButton) -> &'static str {
+    match button {
+        StandardButton::South => "A",
+        StandardButton::East => "B",
+        StandardButton::West => "X",
+        StandardButton::North => "Y",
+        StandardButton::Back => "Back",
+        StandardButton::Guide => "Guide",
+        StandardButton::Start => "Start",
+        StandardButton::LeftStick => "L3",
+        StandardButton::RightStick => "R3",
+        StandardButton::LeftShoulder => "LB",
+        StandardButton::RightShoulder => "RB",
+        StandardButton::LeftTrigger => "LT",
+        StandardButton::RightTrigger => "RT",
+        StandardButton::DpadUp => "D-Up",
+        StandardButton::DpadDown => "D-Down",
+        StandardButton::DpadLeft => "D-Left",
+        StandardButton::DpadRight => "D-Right",
+    }
+}
+
 pub fn pad_button_label(i18n: I18n, button: StandardButton) -> String {
     use StandardButton as Pad;
     let position = match button {
@@ -23,8 +48,8 @@ pub fn pad_button_label(i18n: I18n, button: StandardButton) -> String {
         _ => None,
     };
     match position {
-        Some(place) => format!("{} ({})", button.label(), i18n.text(place)),
-        None => button.label().to_string(),
+        Some(place) => format!("{} ({})", pad_button_plain(button), i18n.text(place)),
+        None => pad_button_plain(button).to_string(),
     }
 }
 

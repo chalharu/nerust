@@ -132,12 +132,10 @@ impl SessionHandle {
     /// Map one shortcut action to the frontend command. Shared by keyboard
     /// and pad lookups so the two columns never diverge in meaning.
     fn shortcut_kind(action: ShortcutAction) -> KeyboardShortcut {
-        if matches!(action, ShortcutAction::ToggleFullscreen) {
-            KeyboardShortcut::ToggleFullscreen
-        } else if matches!(action, ShortcutAction::OpenDebugger) {
-            KeyboardShortcut::OpenDebugger
-        } else {
-            KeyboardShortcut::Session(action)
+        match action {
+            ShortcutAction::ToggleFullscreen => KeyboardShortcut::ToggleFullscreen,
+            ShortcutAction::OpenDebugger => KeyboardShortcut::OpenDebugger,
+            action => KeyboardShortcut::Session(action),
         }
     }
 
@@ -145,8 +143,9 @@ impl SessionHandle {
     /// pads. `None` parks the source (Off, keyboards on the axis path,
     /// or pads past the persisted table).
     fn pad_slot_for(&mut self, source: SourceId) -> Option<usize> {
+        let index = self.input.pads.pad_index(source)?;
         let ports = &self.settings.snapshot.shared.input.gamepad.pad_ports;
-        self.input.pad_slot(source, ports)
+        self.input.slot_for_index(index, ports)
     }
 
     /// Stable source for one frontend device id: the connect-time
@@ -589,18 +588,14 @@ impl SessionHandle {
         self.handle_source_button(source, SourceButtonId::Pad(button), want)
     }
 
-    /// Stick axis pair for joint dpad resolution, if any axis belongs to
-    /// one. Sticks resolve as a pair (see `stick_pair_substitutes`):
-    /// single-axis events only carry triggers.
+    /// Stick axis pair for joint dpad resolution: both axes of the
+    /// stick this axis belongs to. Single-axis events only carry triggers.
     fn stick_pair_axes(axis: GamepadAxis) -> Option<(GamepadAxis, GamepadAxis)> {
+        use GamepadAxis as A;
         match axis {
-            GamepadAxis::LeftStickX | GamepadAxis::LeftStickY => {
-                Some((GamepadAxis::LeftStickX, GamepadAxis::LeftStickY))
-            }
-            GamepadAxis::RightStickX | GamepadAxis::RightStickY => {
-                Some((GamepadAxis::RightStickX, GamepadAxis::RightStickY))
-            }
-            _ => None,
+            A::LeftStickX | A::LeftStickY => Some((A::LeftStickX, A::LeftStickY)),
+            A::RightStickX | A::RightStickY => Some((A::RightStickX, A::RightStickY)),
+            A::LeftTrigger | A::RightTrigger => None,
         }
     }
 
@@ -688,18 +683,8 @@ impl SessionHandle {
             // both holders converge instead of stranding on stale state.
             // A stick the console drives stays raw (the analog still
             // stores above).
-            let x = self
-                .input
-                .analogs
-                .get(&(source, ax))
-                .copied()
-                .unwrap_or(0.0);
-            let y = self
-                .input
-                .analogs
-                .get(&(source, ay))
-                .copied()
-                .unwrap_or(0.0);
+            let x = self.input.analogs.get(&(source, ax)).copied().unwrap_or(0.0);
+            let y = self.input.analogs.get(&(source, ay)).copied().unwrap_or(0.0);
             let (mut wx, mut wy) = Self::stick_pair_substitutes(x, y);
             let left = ax == GamepadAxis::LeftStickX;
             if !(if left {

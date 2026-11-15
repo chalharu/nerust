@@ -16,6 +16,7 @@ use super::{
     gamepad::GamepadViewModel,
     general::GeneralSettingsViewModel,
     input::InputSettingsViewModel,
+    labels::pad_button_plain,
     notification::NotificationSettingsViewModel,
     property::ReadOnlyObservableProperty,
     shortcuts::ShortcutsViewModel,
@@ -341,7 +342,7 @@ fn validate_pad_shortcuts(state: &super::EditorState, issues: &mut Vec<super::Va
         issues.push(super::ValidationIssue {
             scope: super::ValidationScope::Controllers,
             kind: super::ValidationIssueKind::PadConflict {
-                button: button.label().to_string(),
+                button: pad_button_plain(button).to_string(),
                 labels: names.join(", "),
             },
         });
@@ -368,7 +369,7 @@ fn validate_pad_game_bindings(
                 issues.push(super::ValidationIssue {
                     scope: super::ValidationScope::Controllers,
                     kind: super::ValidationIssueKind::PadConflict {
-                        button: button.label().to_string(),
+                        button: pad_button_plain(button).to_string(),
                         labels: format!("{}: {}", system, names.join(", ")),
                     },
                 });
