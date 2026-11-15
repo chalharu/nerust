@@ -14,7 +14,7 @@ use nerust_settings_core::{
     },
 };
 
-use super::devices::{build_keys_sections, build_player_sections, port_member_names};
+use super::devices::{build_keys_sections, build_player_sections};
 use super::pads::build_pad_sections;
 use super::vm::{VmDeps, build_vm};
 use super::wire::{
@@ -549,24 +549,23 @@ fn build_notifications_section(vm: &SettingsViewModel, i18n: I18n) -> SectionWir
 /// names players, never pads, so one link set cannot skew against the
 /// other after a reconnect cycle.
 fn controllers_quick_section(
-    snapshot: &SettingsSnapshot,
+    _snapshot: &SettingsSnapshot,
     i18n: I18n,
-    keyboards: &[KeyboardInfo],
-    gamepads: &[GamepadInfo],
-    pad_order: &[String],
+    _keyboards: &[KeyboardInfo],
+    _gamepads: &[GamepadInfo],
+    _pad_order: &[String],
 ) -> SectionWire {
     let mut quick_rows = Vec::new();
-    for (index, port) in PLAYER_PORTS.iter().enumerate() {
+    for (index, _) in PLAYER_PORTS.iter().enumerate() {
         let player_id = player_id(index);
-        let names = port_member_names(port, snapshot, keyboards, gamepads, pad_order, i18n);
+        // Bare chevron: the player screen owns the assignment summary,
+        // so the hub never repeats it one tap apart.
         quick_rows.push(group_row(
             &format!("controllers.{player_id}"),
             player_label(index, i18n),
-            nerust_gui_viewmodel::settings::labels::port_count_line(i18n, names.len()),
+            String::new(),
             &player_id,
         ));
-        let last = quick_rows.last_mut().expect("player row pushed");
-        last.text = nerust_gui_viewmodel::settings::labels::port_summary(i18n, &names);
     }
     // Pure navigation hub like player/about: every editable row lives on
     // a detail screen with its own reset, so this screen carries none.

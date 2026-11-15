@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::bridge_contract::SETTINGS_SCHEMA_VERSION;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_settings_core::{
-    i18n::{I18n, UiText, language_from_locale_tag},
+    i18n::{I18n, language_from_locale_tag},
     model::language::AppLanguage,
 };
 use nerust_system_traits::factory::CoreFactory;
@@ -880,25 +880,20 @@ fn player_screens_wire_devices_types_and_summaries() {
             .find(|row| row.target == *types_id)
             .expect("controller type row exists");
         assert_eq!(types_row.text, "", "type row is a bare chevron");
-        // Player rows on the controllers screen carry the same summary.
+        // Player rows on the controllers screen are bare chevrons:
+        // the player screen owns the summary, never the hub.
         let parent_row = payload
             .sections
             .iter()
             .flat_map(|section| &section.rows)
             .find(|row| row.target == *player_id)
             .expect("controllers links to the player screen");
-        assert_eq!(
-            parent_row.text, devices_row.text,
-            "player summary matches the devices value"
-        );
+        assert_eq!(parent_row.text, "", "hub row carries no summary");
     }
-    // Player 1 shows its built-in keyboard; player 2 is unassigned.
+    // Player rows stay bare regardless of assignment.
     let p1 = row(&payload, "controllers.player.1");
-    assert!(
-        p1.text.contains("Built-in Keyboard"),
-        "p1 summary names the device"
-    );
-    assert_eq!(row(&payload, "controllers.player.2").text, "Not assigned");
+    assert_eq!(p1.text, "", "hub p1 is a bare chevron");
+    assert_eq!(row(&payload, "controllers.player.2").text, "", "hub p2 is a bare chevron");
     // Types screens fan out per machine with a player-1 row everywhere
     // and a player-2 row on NES only.
     assert_eq!(
@@ -1010,10 +1005,8 @@ fn device_toggle_flips_port_membership() {
         "membership persists in the draft"
     );
     assert!(
-        row(&on, "controllers.player.2")
-            .text
-            .contains("USB Keyboard"),
-        "player summary follows membership"
+        row(&on, "player.2.devices").text.contains("USB Keyboard"),
+        "devices summary follows membership"
     );
     // And leaves again: switch off prunes the member id.
     let off = apply(
@@ -1027,8 +1020,8 @@ fn device_toggle_flips_port_membership() {
     );
     assert_eq!(
         row(&off, "controllers.player.2").text,
-        "Not assigned",
-        "empty port reads Not assigned"
+        "",
+        "hub stays bare on an empty port"
     );
 }
 
@@ -1040,8 +1033,8 @@ fn phantom_builtin_never_surfaces_without_hardware() {
     let (mut snapshot, _) = test_payload_with_keyboards(&[]);
     assert_eq!(
         row(&test_payload_with_keyboards(&[]).1, "controllers.player.1").text,
-        "Not assigned",
-        "no hardware, no phantom controller name"
+        "",
+        "hub stays bare with no hardware"
     );
     let mut keyboards = Vec::new();
     let command_json = serde_json::to_string(&WireCommand {
@@ -1119,7 +1112,7 @@ fn phantom_builtin_never_surfaces_without_hardware() {
         "USB assignment survives unplug"
     );
     assert_eq!(
-        row(&payload, "controllers.player.1").text,
+        row(&payload, "player.1.devices").text,
         "Not assigned",
         "unplugged USB reads empty like the device list, assignment kept"
     );
@@ -1962,6 +1955,8 @@ fn bare_rows_are_reviewed_allowlist() {
         "app.about",
         "audio.muted",
         "audio.volume",
+        "controllers.player.1",
+        "controllers.player.2",
         "general.language",
         "controls.cartridge_rumble_strength",
         "controls.cartridge_rumble_target",

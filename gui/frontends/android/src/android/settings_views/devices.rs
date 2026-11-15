@@ -6,7 +6,6 @@
 
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_viewmodel::settings::SettingsViewModel;
-use nerust_gui_viewmodel::settings::labels::pad_label;
 use nerust_input_traits::{BUILTIN_KEYBOARD_MEMBER, member_is_gamepad, member_is_shareable};
 use nerust_settings_core::i18n::UiText;
 
