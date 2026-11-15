@@ -529,19 +529,11 @@ impl SessionHandle {
         if index.and_then(|i| self.slot_for_pad_index(i)).is_none() {
             return;
         };
-        // Per-pad deadzone: sticks vary per unit, so the pad's own row
-        // tunes it. Unmapped sources fall back to the default.
+        // Per-pad deadzone from the rebind snapshot: sticks vary per
+        // unit, so the pad's own row tunes it. Unmapped sources fall
+        // back to the default.
         let percent = index
-            .and_then(|i| {
-                self.settings
-                    .snapshot
-                    .shared
-                    .input
-                    .gamepad
-                    .pad_ports
-                    .get(i)
-                    .map(|port| port.deadzone_percent)
-            })
+            .and_then(|i| self.input.pad_deadzone.get(i).copied())
             .unwrap_or(DEFAULT_DEADZONE_PERCENT)
             .clamp(0, DEADZONE_MAX_PERCENT);
         let value =
@@ -742,16 +734,7 @@ impl SessionHandle {
                     | StandardButton::DpadLeft
                     | StandardButton::DpadRight
             )
-            && pad_index.is_some_and(|index| {
-                self.settings
-                    .snapshot
-                    .shared
-                    .input
-                    .gamepad
-                    .pad_ports
-                    .get(index)
-                    .is_some_and(|port| !port.dpad_enabled)
-            })
+            && pad_index.is_some_and(|index| self.input.pad_hat.get(index) == Some(&false))
         {
             return;
         }
@@ -785,11 +768,14 @@ impl SessionHandle {
         let Some(abstract_key) = button.abstract_key() else {
             return;
         };
-        // One topology walk: resolve and dpad context fuse in
-        // `control_with_dpad_for_abstract`.
+        // Routes fuse at rebind: the edge resolves here instead of
+        // walking the topology per edge.
         let Some(((attachment, control), dpad)) = self
             .input
-            .control_with_dpad_for_abstract(abstract_key, Some(slot))
+            .abstract_route
+            .get(&(abstract_key, Some(slot)))
+            .copied()
+            .flatten()
         else {
             return;
         };
@@ -828,7 +814,10 @@ impl SessionHandle {
         };
         let Some(((attachment, control), dpad)) = self
             .input
-            .control_with_dpad_for_abstract(abstract_key, None)
+            .abstract_route
+            .get(&(abstract_key, None))
+            .copied()
+            .flatten()
         else {
             return;
         };
@@ -924,6 +913,8 @@ impl SessionHandle {
         );
         self.input.rebuild_pad_binding_map(pad_bindings);
         self.input.rebuild_input_policy();
+        self.input
+            .rebuild_pad_params(&self.settings.snapshot.shared.input.gamepad);
         self.input
             .rebuild_shortcut_maps(&self.settings.snapshot.shared.input.shortcuts.keyboard);
     }

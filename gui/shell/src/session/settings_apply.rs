@@ -303,6 +303,8 @@ impl SessionHandle {
             input.clear();
         }
         self.rebuild_key_field_map();
+        self.input
+            .rebuild_pad_params(&self.settings.snapshot.shared.input.gamepad);
         // One borrow of the live port for the whole re-assert loop.
         // Keyboards re-assert by key here; pads re-resolve just below
         // through the new assignments (ports may have moved), so both

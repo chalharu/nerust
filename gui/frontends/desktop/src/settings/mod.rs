@@ -26,8 +26,10 @@ type Setter<T> = Rc<dyn Fn(T) -> Result<(), ViewModelError>>;
 pub(crate) type Apply = Rc<dyn Fn(SettingsSnapshot) -> Result<(), String>>;
 
 /// Validation issues rendered in the draft language at the call site.
-/// The view model only carries structured kinds; text resolves here.
-fn issues_text(language: AppLanguage, issues: &[ValidationIssue]) -> String {
+/// The view model only carries structured kinds; text resolves here
+/// against the terminal (`SystemDefault` follows the OS locale).
+fn issues_text(choice: AppLanguage, issues: &[ValidationIssue]) -> String {
+    let language = crate::display_language(choice);
     issues
         .iter()
         .map(|issue| issue.message(language))
@@ -135,7 +137,7 @@ impl Editor {
         self.close_prompt.close();
     }
     fn validation_status(&self) {
-        let language = crate::display_language(self.vm.general.view.get().language);
+        let language = self.vm.general.view.get().language;
         let message = self
             .vm
             .finish()

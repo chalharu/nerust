@@ -242,6 +242,15 @@ struct InputDept {
     /// decides what an axis means.
     stick_substitute: [bool; 2],
     trigger_alias: bool,
+    /// Per-pad stick deadzone (percent) and hat enable, snapshotted from
+    /// the settings table at every rebind. The hot axis/button paths read
+    /// this instead of chasing the settings snapshot per event.
+    pad_deadzone: [u8; MAX_PADS],
+    pad_hat: [bool; MAX_PADS],
+    /// Abstract→(attachment, control, dpad) routes for the live
+    /// assignments, fused at every rebind. Press/release edges resolve
+    /// here instead of walking the topology per edge.
+    abstract_route: HashMap<(AbstractKey, Option<usize>), Option<ControlWithDpad>>,
     topology_epoch: u64,
     /// Last served overlay, keyed by caller revision and topology epoch.
     touch_cache: TouchCache,
@@ -272,6 +281,9 @@ impl InputDept {
             press_state: field_press::FieldPressState::default(),
             stick_substitute: [true; 2],
             trigger_alias: true,
+            pad_deadzone: [nerust_settings_core::model::input::DEFAULT_DEADZONE_PERCENT; MAX_PADS],
+            pad_hat: [true; MAX_PADS],
+            abstract_route: HashMap::new(),
             topology_epoch: 0,
             touch_cache: Default::default(),
         }
@@ -381,6 +393,58 @@ impl InputDept {
                     continue;
                 }
                 map.insert(binding.button, (attachment, control));
+            }
+        }
+    }
+
+    /// Refresh per-pad deadzones, hat switches, and abstract routes from
+    /// the live table and assignments. Runs on every rebind (settings
+    /// apply, system switch), never on the hot path: any table or
+    /// assignment edit rebuilds (see `rebind_input`), so the cache cannot
+    /// go stale between rebuilds.
+    pub(crate) fn rebuild_pad_params(
+        &mut self,
+        gamepad: &nerust_settings_core::model::input::GamepadSettings,
+    ) {
+        for (index, port) in gamepad.pad_ports.iter().enumerate() {
+            self.pad_deadzone[index] = port.deadzone_percent;
+            self.pad_hat[index] = port.dpad_enabled;
+        }
+        const ABSTRACTS: [AbstractKey; 19] = [
+            AbstractKey::Button1,
+            AbstractKey::Button2,
+            AbstractKey::Button3,
+            AbstractKey::Button4,
+            AbstractKey::Button5,
+            AbstractKey::Button6,
+            AbstractKey::Button7,
+            AbstractKey::Button8,
+            AbstractKey::Select,
+            AbstractKey::Start,
+            AbstractKey::Guide,
+            AbstractKey::DpadUp,
+            AbstractKey::DpadDown,
+            AbstractKey::DpadLeft,
+            AbstractKey::DpadRight,
+            AbstractKey::Axis1X,
+            AbstractKey::Axis1Y,
+            AbstractKey::Axis2X,
+            AbstractKey::Axis2Y,
+        ];
+        self.abstract_route.clear();
+        let slots = self.current_assignments.slots().len();
+        // `None` (layout-wide scan) plus every pinned slot the commit
+        // paths can pass, so edges never fall back to a walk.
+        for abstract_key in ABSTRACTS {
+            self.abstract_route.insert(
+                (abstract_key, None),
+                self.control_with_dpad_for_abstract(abstract_key, None),
+            );
+            for slot in 0..slots {
+                self.abstract_route.insert(
+                    (abstract_key, Some(slot)),
+                    self.control_with_dpad_for_abstract(abstract_key, Some(slot)),
+                );
             }
         }
     }
@@ -1035,6 +1099,9 @@ impl SessionHandle {
         };
         result.emu.restore(runtime);
         result.rebuild_key_field_map();
+        result
+            .input
+            .rebuild_pad_params(&result.settings.snapshot.shared.input.gamepad);
         Ok(result)
     }
 
