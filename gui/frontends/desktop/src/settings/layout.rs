@@ -437,6 +437,20 @@ pub(super) fn inputs(
                         .iter()
                         .flat_map(|section| &section.rows)
                         .filter_map(|binding| {
+                            // The physical hat stays fixed (its switch lives
+                            // with the pad settings): dpad rows would only
+                            // alias it, so they never render here either.
+                            if matches!(
+                                binding.pad_default,
+                                Some(
+                                    nerust_input_traits::StandardButton::DpadUp
+                                        | nerust_input_traits::StandardButton::DpadDown
+                                        | nerust_input_traits::StandardButton::DpadLeft
+                                        | nerust_input_traits::StandardButton::DpadRight
+                                )
+                            ) {
+                                return None;
+                            };
                             let (Some(attachment), Some(control)) =
                                 (binding.target.attachment(), binding.target.control())
                             else {
