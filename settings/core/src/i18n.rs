@@ -464,10 +464,10 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::PlayerOne => ("Player 1", "プレイヤー 1"),
         UiText::PlayerTwo => ("Player 2", "プレイヤー 2"),
         UiText::Shortcuts => ("Shortcuts", "ショートカット"),
-        UiText::CurrentBinding => ("Current binding", "現在の割当"),
+        UiText::CurrentBinding => ("Current binding", "現在の割り当て"),
         UiText::Change => ("Change", "変更"),
         UiText::Clear => ("Clear", "解除"),
-        UiText::Unbound => ("Unbound", "未割当"),
+        UiText::Unbound => ("Unbound", "未割り当て"),
         UiText::FullscreenDefault => ("Fullscreen", "フルスクリーン"),
         UiText::Scaling => ("Scaling", "拡大率"),
         UiText::Vsync => ("VSync", "VSync"),
@@ -647,7 +647,7 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::Controls => ("Controls", "操作"),
         UiText::Storage => ("Storage", "ストレージ"),
         UiText::Unknown => ("Unknown", "不明"),
-        UiText::NotAssigned => ("Not assigned", "未割当"),
+        UiText::NotAssigned => ("Not assigned", "未割り当て"),
         UiText::OverlayDetail => ("Overlay detail", "オーバーレイ詳細"),
         UiText::DescVsync => ("", ""),
         UiText::DescOrientation => (
@@ -737,7 +737,7 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         ),
         UiText::DescPadUnassigned => (
             "Assign a player in Devices to map buttons.",
-            "ボタンの割当には「機器」でプレイヤーを割当",
+            "ボタンの割当には「デバイス」でプレイヤーを割当",
         ),
         UiText::AlwaysAvailable => ("Always available", "常に利用可能"),
         UiText::Connected => ("Connected", "接続中"),
@@ -790,7 +790,7 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
             "Warning notification duration must be between 1000 and 30000 ms",
             "警告通知表示時間は1000～30000 msで指定してください",
         ),
-        UiText::ValidationNoController => ("No controller assigned", "コントローラー未割当"),
+        UiText::ValidationNoController => ("No controller assigned", "コントローラー未割り当て"),
     }
 }
 
@@ -895,7 +895,7 @@ pub fn exclusive_member(language: AppLanguage, member: &str, ports: &str) -> Str
     localized!(
         language,
         format!("{member} is on multiple ports ({ports})"),
-        format!("{member}は複数ポートに割当済み ({ports})")
+        format!("{member}は複数ポートに割り当て済み ({ports})")
     )
 }
 
@@ -1462,7 +1462,7 @@ mod tests {
         );
         assert_eq!(
             exclusive_member(ja(), "m", "p1"),
-            "mは複数ポートに割当済み (p1)"
+            "mは複数ポートに割り当て済み (p1)"
         );
     }
 }
