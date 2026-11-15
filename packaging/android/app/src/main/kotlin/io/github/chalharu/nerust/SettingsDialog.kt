@@ -1034,19 +1034,25 @@ internal fun closesParentCycle(
     return false
 }
 
+/** Parent-link target of one row: group drill-downs and device Details
+ * buttons both climb one level. Anything else never parents anyone. */
+internal fun parentLinkTarget(row: SettingsRow): String? =
+    when {
+        row.kind == "group" && row.target.isNotBlank() -> row.target
+        row.detailTarget.isNotBlank() -> row.detailTarget
+        else -> null
+    }
+
 /** Child section id -> (parent section id, parent label, via row label).
- * Group rows and device Details buttons both climb one level. Shared by
- * search breadcrumbs and unsaved-dot ancestor propagation. */
+ * Shared by search breadcrumbs and unsaved-dot ancestor propagation.
+ * Cross-links run both ways (pad screen <-> Devices radio), so the edge
+ * that would close a cycle is dropped: the first spanning link wins and
+ * breadcrumb walks always terminate. */
 internal fun parentMap(sections: List<SettingsSection>): Map<String, Triple<String, String, String>> =
     buildMap {
         for (section in sections) {
             for (row in section.rows) {
-                val child =
-                    when {
-                        row.kind == "group" && row.target.isNotBlank() -> row.target
-                        row.detailTarget.isNotBlank() -> row.detailTarget
-                        else -> continue
-                    }
+                val child = parentLinkTarget(row) ?: continue
                 if (sections.none { it.id == child }) continue
                 // Drop the edge that would loop pad <-> Devices and hang
                 // the breadcrumb walk on the UI thread.
