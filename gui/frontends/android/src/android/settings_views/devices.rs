@@ -434,9 +434,8 @@ fn gear_rows(
     rows
 }
 
-/// One device screen per enumerated keyboard: connection/capability
-/// readouts (labels are self-evident, so no descriptions) plus the
-/// per-system key-mapping tables (shared single table, not per device).
+/// One device screen per enumerated keyboard: the per-system
+/// key-mapping index (shared single table, not per device).
 pub(super) fn build_device_sections(
     vm: &SettingsViewModel,
     keyboards: &[KeyboardInfo],
@@ -445,25 +444,7 @@ pub(super) fn build_device_sections(
     keyboards
         .iter()
         .map(|info| {
-            let mut rows = vec![
-                info_row(
-                    &format!("device.{}.connection", info.member),
-                    i18n.text(UiText::Connection),
-                    String::new(),
-                    if info.builtin {
-                        i18n.text(UiText::AlwaysAvailable)
-                    } else {
-                        i18n.text(UiText::Connected)
-                    },
-                ),
-                info_row(
-                    &format!("device.{}.capabilities", info.member),
-                    i18n.text(UiText::Capabilities),
-                    String::new(),
-                    i18n.text(UiText::SharesAcrossPlayers),
-                ),
-                header_row(i18n.text(UiText::KeyMapping)),
-            ];
+            let mut rows = vec![header_row(i18n.text(UiText::KeyMapping))];
             for system in vm.systems() {
                 let sid = system.system_id().to_string();
                 rows.push(group_row(
