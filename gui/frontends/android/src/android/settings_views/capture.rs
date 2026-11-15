@@ -10,6 +10,7 @@
 
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_input_traits::StandardButton;
+use nerust_settings_core::{editor::CaptureTarget, i18n::UiText};
 
 use super::keycode::android_keycode_to_key;
 use super::projection::project_fresh;
@@ -22,6 +23,28 @@ fn android_keycode_to_pad(keycode: i32) -> Option<StandardButton> {
     u32::try_from(keycode)
         .ok()
         .and_then(super::keycode::android_keycode_to_button)
+}
+
+/// Prompt key for one capture target: pad rows name what a press can
+/// claim, game rows with no keyboard connected name the dpad twin,
+/// everything else keeps the shared prompt. The edge owns this branch
+/// (it holds the vault device truth); the viewmodel only tracks the
+/// pending target and renders the shared prompt for its own view.
+pub(crate) fn capture_prompt(
+    target: &CaptureTarget,
+    keyboards_present: bool,
+    gamepads_present: bool,
+) -> UiText {
+    if matches!(target, CaptureTarget::PadBinding { .. }) {
+        UiText::CapturePromptPad
+    } else if matches!(target, CaptureTarget::Binding { .. })
+        && !keyboards_present
+        && gamepads_present
+    {
+        UiText::CapturePromptDpadOnly
+    } else {
+        UiText::CapturePrompt
+    }
 }
 
 /// Hardware key routing for capture: Android keycodes to `Key`. Only

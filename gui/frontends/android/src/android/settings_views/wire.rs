@@ -646,14 +646,11 @@ pub(super) fn capture_open(keyboards: &[KeyboardInfo], gamepads: &[GamepadInfo])
     !keyboards.is_empty() || !gamepads.is_empty()
 }
 
-pub(super) fn target_system(target: &CaptureTarget, deps: &VmDeps) -> String {
-    if let Some(system) = target.system_id() {
-        return system.to_string();
-    }
-    deps.factories
-        .first()
-        .map(|factory| factory.system_id().to_string())
-        .unwrap_or_default()
+/// Owning system of one capture target, for re-encoding the pending
+/// capture row. Shortcuts carry none (the encoder drops it); bindings
+/// always do, so there is no fallback to invent.
+pub(super) fn target_system(target: &CaptureTarget) -> String {
+    target.system_id().map(|system| system.to_string()).unwrap_or_default()
 }
 
 /// Opaque capture target: newline-free JSON the key must not parse.

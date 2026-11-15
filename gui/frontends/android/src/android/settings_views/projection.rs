@@ -30,7 +30,6 @@ use crate::bridge_contract::SETTINGS_SCHEMA_VERSION;
 pub(super) fn project_payload(
     vm: &SettingsViewModel,
     snapshot: &SettingsSnapshot,
-    deps: &VmDeps,
     capture: &CaptureSlot,
     truth: Projection,
 ) -> ViewPayload {
@@ -39,7 +38,7 @@ pub(super) fn project_payload(
         sections: build_sections(vm, snapshot, truth),
         issues: draft_issues(vm, truth.i18n),
         capture: capture.as_ref().map(|(target, prompt)| CaptureWire {
-            target: encode_target(target, &target_system(target, deps)),
+            target: encode_target(target, &target_system(target)),
             prompt: prompt.clone(),
         }),
     }
@@ -54,7 +53,7 @@ pub(super) fn project_fresh(
     truth: Projection,
 ) -> Result<ViewPayload, String> {
     let vm = build_vm(snapshot, deps, truth.i18n)?;
-    Ok(project_payload(&vm, snapshot, deps, capture, truth))
+    Ok(project_payload(&vm, snapshot, capture, truth))
 }
 
 pub(super) fn build_sections(
@@ -726,13 +725,9 @@ fn shortcuts_section(
     gamepads: &[GamepadInfo],
 ) -> SectionWire {
     let reason = i18n.text(UiText::InputDeviceRequired);
-    // Shortcut targets encode a system only as a decoding hint; every
-    // global shortcut decodes identically, so the first system suffices.
-    let shortcut_system = vm
-        .systems()
-        .first()
-        .map(|system| system.system_id().to_string())
-        .unwrap_or_default();
+    // Shortcut targets encode no system (the encoder drops it for the
+    // `shortcut` kind and the decoder never reads it); bindings carry
+    // their own. No invented hint.
     let actions: Vec<_> = vm
         .shortcuts
         .view
@@ -753,7 +748,7 @@ fn shortcuts_section(
         .map(|binding| {
             (
                 binding.label.clone(),
-                encode_target(&binding.target, &shortcut_system),
+                encode_target(&binding.target, ""),
                 binding.target.clone(),
             )
         })

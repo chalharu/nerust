@@ -432,7 +432,7 @@ pub(super) fn inputs(
                         .find(|row| row.index == pad)
                         .map(|row| row.label.clone())
                         .unwrap_or_default();
-                    let rows = value
+                    let requests = value
                         .sections
                         .iter()
                         .flat_map(|section| &section.rows)
@@ -442,20 +442,34 @@ pub(super) fn inputs(
                             else {
                                 return None;
                             };
-                            let target = CaptureTarget::PadBinding {
-                                system: value.system_id.clone_box(),
-                                pad,
-                                attachment: attachment.to_string(),
-                                control: control.to_string(),
-                            };
-                            let row_value =
-                                mapping_input.pad_row_value(&target, binding.pad_default);
-                            Some(nerust_gui_viewmodel::settings::dto::BindingRowView {
+                            Some((
+                                CaptureTarget::PadBinding {
+                                    system: value.system_id.clone_box(),
+                                    pad,
+                                    attachment: attachment.to_string(),
+                                    control: control.to_string(),
+                                },
+                                binding.label.clone(),
+                                binding.pad_default,
+                            ))
+                        })
+                        .collect::<Vec<_>>();
+                    let values = mapping_input.pad_row_values(
+                        &requests
+                            .iter()
+                            .map(|(target, _, default)| (target.clone(), *default))
+                            .collect::<Vec<_>>(),
+                    );
+                    let rows = requests
+                        .into_iter()
+                        .zip(values)
+                        .map(|((target, label, pad_default), row_value)| {
+                            nerust_gui_viewmodel::settings::dto::BindingRowView {
                                 target,
-                                label: binding.label.clone(),
+                                label,
                                 value: row_value,
-                                pad_default: binding.pad_default,
-                            })
+                                pad_default,
+                            }
                         })
                         .collect::<Vec<_>>();
                     if rows.is_empty() {

@@ -153,7 +153,15 @@ fn pad_system_rows(
     let system = view.system_id.to_string();
     let mut system_chunks: Vec<(String, Vec<RowWire>)> = Vec::new();
     for section in &view.sections {
-        let mut section_rows = Vec::new();
+        // Collect the section's targets first so values resolve under one
+        // borrow; rows render from the zipped results below.
+        let mut pending: Vec<(
+            CaptureTarget,
+            Option<nerust_input_traits::StandardButton>,
+            String,
+            String,
+            String,
+        )> = Vec::new();
         for binding in &section.rows {
             // Per-pad mapping mirrors the game rows: same
             // attachment/control, routed to this pad. The physical
@@ -183,13 +191,27 @@ fn pad_system_rows(
             if port_index_for_slot(attachment).is_some_and(|port| port != slot) {
                 continue;
             }
-            let target = CaptureTarget::PadBinding {
-                system: view.system_id.clone_box(),
-                pad: index,
-                attachment: attachment.to_string(),
-                control: control.to_string(),
-            };
-            let value = input.pad_row_value(&target, binding.pad_default);
+            pending.push((
+                CaptureTarget::PadBinding {
+                    system: view.system_id.clone_box(),
+                    pad: index,
+                    attachment: attachment.to_string(),
+                    control: control.to_string(),
+                },
+                binding.pad_default,
+                attachment.to_string(),
+                control.to_string(),
+                binding.label.clone(),
+            ));
+        }
+        let values = input.pad_row_values(
+            &pending
+                .iter()
+                .map(|(target, default, _, _, _)| (target.clone(), *default))
+                .collect::<Vec<_>>(),
+        );
+        let mut section_rows = Vec::new();
+        for ((target, _, attachment, control, label), value) in pending.into_iter().zip(values) {
             let text = match &value {
                 BindingValueView::Unbound(label)
                 | BindingValueView::Bound(label)
@@ -197,7 +219,7 @@ fn pad_system_rows(
             };
             section_rows.push(capture_row(
                 &format!("{pad_id}.{system}.{attachment}.{control}",),
-                binding.label.clone(),
+                label,
                 String::new(),
                 text,
                 &encode_target(&target, &system),

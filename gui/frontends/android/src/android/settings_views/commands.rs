@@ -123,14 +123,14 @@ pub(crate) fn apply_command_to(
                 apply_capture_command(snapshot, deps, &vm, &sections, &command, capture, truth)?;
                 // Capture ops mutate through this same model (or not at
                 // all), so it is current: project from it, no rebuild.
-                Ok(project_payload(&vm, snapshot, deps, capture, truth))
+                Ok(project_payload(&vm, snapshot, capture, truth))
             }
             WireOp::Set => {
                 let vm = build_vm(snapshot, deps, i18n)?;
                 let sections = build_sections(&vm, snapshot, truth);
                 if apply_set_command(snapshot, deps, &vm, &sections, &command, i18n)? {
                     // The view model holds the mutation: project from it.
-                    Ok(project_payload(&vm, snapshot, deps, capture, truth))
+                    Ok(project_payload(&vm, snapshot, capture, truth))
                 } else {
                     // Snapshot-direct mutation (language, Android-local,
                     // device membership): re-resolve and project fresh.
@@ -266,15 +266,13 @@ fn apply_capture_command(
             vm.capture
                 .start_capture(target.clone())
                 .map_err(|error| error.to_string())?;
-            // Prompt policy lives in the view model (all frontends prompt
-            // alike); this edge only renders the text.
-            let prompt = truth.i18n.text(
-                nerust_gui_viewmodel::settings::CaptureViewModel::prompt_for(
-                    &target,
-                    !truth.keyboards.is_empty(),
-                    !truth.gamepads.is_empty(),
-                ),
-            );
+            // Prompt policy lives at this edge (it holds the vault device
+            // truth); the view model only tracks the pending target.
+            let prompt = truth.i18n.text(super::capture::capture_prompt(
+                &target,
+                !truth.keyboards.is_empty(),
+                !truth.gamepads.is_empty(),
+            ));
             *capture = Some((target, prompt));
             Ok(())
         }

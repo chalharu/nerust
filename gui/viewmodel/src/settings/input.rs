@@ -2,7 +2,7 @@ use std::{rc::Rc, sync::Arc};
 
 use nerust_core_traits::identity::SystemId;
 use nerust_input_traits::{
-    AbstractKey, AttachmentId, ControllerProfile, DigitalControlId, SlotInfo, StandardButton,
+    AttachmentId, ControllerProfile, SlotInfo, StandardButton,
 };
 use nerust_settings_core::{
     bindings::descriptors::KeyboardBindingDescriptor,
@@ -108,20 +108,21 @@ impl InputSettingsViewModel {
         self.display_name
     }
 
-    /// Display value for one per-pad mapping row, resolved against the
-    /// live draft (override else fixed-layout default). Per-pad mapping
-    /// screens call this per row instead of reading the shared keyboard
-    /// view, which never carries pad columns.
-    pub fn pad_row_value(
+    /// Display values for per-pad mapping rows, resolved against the
+    /// live draft (override else fixed-layout default) under a single
+    /// borrow. Per-pad mapping screens batch one section at a time
+    /// instead of reading the shared keyboard view, which never carries
+    /// pad columns.
+    pub fn pad_row_values(
         &self,
-        target: &CaptureTarget,
-        default: Option<StandardButton>,
-    ) -> BindingValueView {
+        requests: &[(CaptureTarget, Option<StandardButton>)],
+    ) -> Vec<BindingValueView> {
         let current = self.editor.current();
         let i18n = super::state::display_i18n(&current);
-        let value = pad_binding_value(&current, target, default, i18n);
-        drop(current);
-        value
+        requests
+            .iter()
+            .map(|(target, default)| pad_binding_value(&current, target, *default, i18n))
+            .collect()
     }
 
     pub fn set_controller_slot(
@@ -311,27 +312,17 @@ fn project_binding_row(
     let value = binding_value(state, &target, i18n);
     // Fixed-layout default for per-pad mapping screens: the position
     // button driving this control's abstract, if the console maps one.
-    // Same traversal as the session's `abstract_for`, over the draft
-    // assignments so swapped controller profiles track.
-    let pad_default = abstract_for(assignments, descriptor.attachment, descriptor.control)
-        .and_then(StandardButton::with_abstract);
+    // Single shared traversal over the draft assignments, so swapped
+    // controller profiles track here exactly as in gameplay.
+    let pad_default =
+        nerust_input_traits::abstract_for_attachment(assignments, descriptor.attachment, descriptor.control)
+            .and_then(StandardButton::with_abstract);
     BindingRowView {
         target,
         label: descriptor.control_label.to_string(),
         value,
         pad_default,
     }
-}
-
-/// Console-agnostic button of one emulated control, resolved through the
-/// draft assignments. Display twin of the session resolver: both call the
-/// shared traversal, so default assignments never diverge here.
-fn abstract_for(
-    assignments: &[(AttachmentId, Option<Rc<dyn ControllerProfile>>)],
-    attachment: AttachmentId,
-    control: DigitalControlId,
-) -> Option<AbstractKey> {
-    nerust_input_traits::abstract_for_attachment(assignments, attachment, control)
 }
 
 fn project_binding_sections(

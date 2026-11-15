@@ -110,27 +110,6 @@ impl CaptureViewModel {
         });
     }
 
-    /// Prompt key for one capture target: pad rows name what a press can
-    /// claim, game rows with no keyboard connected name the dpad twin,
-    /// everything else keeps the shared prompt. Policy lives here so all
-    /// frontends prompt alike; frontends only render the text.
-    pub fn prompt_for(
-        target: &CaptureTarget,
-        keyboards_present: bool,
-        gamepads_present: bool,
-    ) -> UiText {
-        if matches!(target, CaptureTarget::PadBinding { .. }) {
-            UiText::CapturePromptPad
-        } else if matches!(target, CaptureTarget::Binding { .. })
-            && !keyboards_present
-            && gamepads_present
-        {
-            UiText::CapturePromptDpadOnly
-        } else {
-            UiText::CapturePrompt
-        }
-    }
-
     pub fn cancel_capture(&self) {
         let _ = self.editor.transact(|state| {
             state.capture_target = None;
@@ -159,34 +138,6 @@ mod tests {
 
     use super::CaptureTarget;
     use crate::settings::test_support::test_vm;
-
-    #[test]
-    fn prompt_for_names_dpad_only_without_keyboard() {
-        use crate::settings::test_support::TestSystemId;
-        let game = CaptureTarget::Binding {
-            system: Box::new(TestSystemId),
-            attachment: "test.attachment.player1".to_string(),
-            control: "a".to_string(),
-        };
-        assert_eq!(
-            super::CaptureViewModel::prompt_for(&game, false, true),
-            UiText::CapturePromptDpadOnly
-        );
-        assert_eq!(
-            super::CaptureViewModel::prompt_for(&game, true, true),
-            UiText::CapturePrompt
-        );
-        let pad = CaptureTarget::PadBinding {
-            system: Box::new(TestSystemId),
-            pad: 0,
-            attachment: "test.attachment.player1".to_string(),
-            control: "a".to_string(),
-        };
-        assert_eq!(
-            super::CaptureViewModel::prompt_for(&pad, false, true),
-            UiText::CapturePromptPad
-        );
-    }
 
     #[test]
     fn start_capture_sets_target() {
