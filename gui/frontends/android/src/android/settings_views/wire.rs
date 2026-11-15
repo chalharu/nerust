@@ -261,12 +261,17 @@ pub(crate) fn pad_index_for_member(gamepads: &[GamepadInfo], descriptor: &str) -
 /// the scan. Unknown members (scan raced ahead of the connect event)
 /// keep scan order at the end; the next connect re-sorts.
 pub(crate) fn sort_gamepads_by_order(gamepads: &mut [GamepadInfo], pad_order: &[String]) {
+    let rank: std::collections::HashMap<&str, usize> = pad_order
+        .iter()
+        .enumerate()
+        .map(|(index, known)| {
+            let key: &str = known;
+            (key, index)
+        })
+        .collect();
     gamepads.sort_by_key(|info| {
         let bare = bare_member(&info.member);
-        pad_order
-            .iter()
-            .position(|known| known == bare)
-            .unwrap_or(usize::MAX)
+        rank.get(bare).copied().unwrap_or(usize::MAX)
     });
 }
 

@@ -71,7 +71,7 @@ pub(super) fn build_pad_sections(
             // the state, not the category, is what changed.
             None => info_row(
                 &format!("{pad_id}.slot"),
-                i18n.text(UiText::Player),
+                i18n.text(UiText::GamepadDevice),
                 String::new(),
                 i18n.text(UiText::NotAssigned),
             ),
@@ -106,30 +106,18 @@ pub(super) fn build_pad_sections(
         // only collect latent overrides: point at Devices instead.
         // Assigned pads list only their own player's controls (all
         // systems); other players' attachments never fire from here.
-        let Some(slot) = slot else {
+        if let Some(slot) = slot {
+            for input in vm.inputs() {
+                rows.extend(pad_system_rows(
+                    input, snapshot, &pad_id, index, slot, &reason, i18n,
+                ));
+            }
+        } else {
             rows.push(info_row(
                 &format!("{pad_id}.unassigned"),
                 i18n.text(UiText::KeyMapping),
                 i18n.text(UiText::DescPadUnassigned),
                 String::new(),
-            ));
-            rows.push(button_row(
-                &format!("reset.{pad_id}"),
-                i18n.text(UiText::ResetScreen),
-                i18n.text(UiText::DescPadReset),
-            ));
-            out.push(SectionWire {
-                id: pad_id.clone(),
-                label: info.name.clone(),
-                sub: i18n.text(UiText::Gamepads),
-                rows,
-                visible: false,
-            });
-            continue;
-        };
-        for input in vm.inputs() {
-            rows.extend(pad_system_rows(
-                input, snapshot, &pad_id, index, slot, &reason, i18n,
             ));
         }
         rows.push(button_row(

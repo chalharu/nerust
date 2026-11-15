@@ -7,7 +7,7 @@
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_viewmodel::settings::SettingsViewModel;
 use nerust_settings_core::{
-    i18n::UiText,
+    i18n::{UiText, pad_label},
     input::{BUILTIN_KEYBOARD_MEMBER, member_is_gamepad, member_is_shareable, slot_port_index},
 };
 
@@ -341,13 +341,22 @@ fn gamepad_rows(
     // No connected pads: no header, no dead row. The radio below names
     // pads, so with none connected there is nothing to pick or gear into;
     // only a stale slot reservation (restores on reconnect) still renders.
+    // Name pad support explicitly so the screen never reads as
+    // keyboard-only with no pads attached.
     if gamepads.is_empty() {
+        rows.push(header_row(i18n.text(UiText::Gamepads)));
+        rows.push(info_row(
+            &format!("{devices_id}.gamepad.none"),
+            i18n.text(UiText::GamepadDevice),
+            i18n.text(UiText::DescPadParked),
+            String::new(),
+        ));
         if let Some(stale) = stale_slot(port_index, snapshot) {
             rows.push(info_row(
                 &format!("{devices_id}.gamepad.stale"),
                 i18n.text(UiText::GamepadDevice),
                 i18n.text(UiText::DescPadParked),
-                format!("Pad {}", stale + 1),
+                pad_label(i18n.language(), stale),
             ));
         }
         return rows;
@@ -385,7 +394,7 @@ fn gamepad_rows(
             &format!("{devices_id}.gamepad.stale"),
             i18n.text(UiText::GamepadDevice),
             i18n.text(UiText::DescPadParked),
-            format!("pad {}", stale + 1),
+            pad_label(i18n.language(), stale),
         ));
     }
     rows.extend(gear_rows(port_index, devices_id, snapshot, gamepads, i18n));

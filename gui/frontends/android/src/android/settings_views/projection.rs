@@ -96,13 +96,15 @@ pub(super) fn build_sections(
         truth.gamepads,
     ));
     // Canonical order owned by Rust; dynamic device sections (device.*)
-    // keep build order after the known taxonomy.
-    sections.sort_by_key(|section| {
+    // keep build order after the known taxonomy. Rank map hoisted out of
+    // the comparator: position-in-sort per comparison is O(n^2).
+    let rank: std::collections::HashMap<&str, usize> =
         crate::settings_sections::SETTINGS_SECTION_IDS
             .iter()
-            .position(|id| *id == section.id)
-            .unwrap_or(usize::MAX)
-    });
+            .enumerate()
+            .map(|(index, id)| (*id, index))
+            .collect();
+    sections.sort_by_key(|section| rank.get(section.id.as_str()).copied().unwrap_or(usize::MAX));
     sections
 }
 

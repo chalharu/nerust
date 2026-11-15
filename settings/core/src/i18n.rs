@@ -379,8 +379,8 @@ impl I18n {
             _ => None,
         };
         match position {
-            Some(place) => format!("{} ({})", button.cap_label(), self.text(place)),
-            None => button.cap_label().to_string(),
+            Some(place) => format!("{} ({})", button.label(), self.text(place)),
+            None => button.label().to_string(),
         }
     }
 
@@ -494,11 +494,11 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::CapturePrompt => ("Press a key…", "キーを押してください…"),
         UiText::CapturePromptPad => (
             "Press a pad button: face, shoulders, stick clicks, Start, Back, Guide. No triggers.",
-            "パッドのボタンを押してください：フェイス、ショルダー、スティック押し込み、Start、Back、Guide。トリガー不可。",
+            "A/B/X/Y・LB/RB・スティック押し込み・Start・Back・Guideのいずれかを押してください（トリガーは割り当てできません）",
         ),
         UiText::CapturePromptDpadOnly => (
             "No keyboard connected. Only the dpad binds here.",
-            "キーボード未接続。十字キーのみ割当可。",
+            "キーボード未接続。十字キーのみ割り当て可能。",
         ),
         UiText::InvalidCustomStorageDirectory => (
             "The custom storage directory must exist or be creatable.",
@@ -714,26 +714,26 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
             "Stick drift guard. 0 disables.",
             "スティックの遊び。0で無効",
         ),
-        UiText::DpadSource => ("D-Pad", "十字キー"),
+        UiText::DpadSource => ("Hat switch", "ハットスイッチ"),
         UiText::DescDpadSource => (
             "Off parks the hat; sticks still drive.",
             "オフでハット無効。スティックは有効",
         ),
         UiText::DescGamepadRadio => (
-            "Which pad drives this player. Gears adjust that pad.",
-            "このプレイヤーを駆動するパッド。調整はギアから",
+            "Which pad is assigned to this player. Its settings open from the gear icon.",
+            "このプレイヤーに割り当てるパッド。詳細設定は歯車アイコンから",
         ),
         UiText::DescGamepadGear => (
-            "Deadzone, D-pad switch, buttons for this pad.",
-            "このパッドの遊び・十字キー・ボタン",
+            "Deadzone, hat switch, buttons for this pad.",
+            "このパッドの遊び・ハットスイッチ・ボタン",
         ),
         UiText::DescPadReset => (
-            "Clears deadzone, D-pad switch, buttons. Keeps the slot.",
-            "遊び・十字キー・ボタンを消去。スロットは保持",
+            "Clears deadzone, hat switch, buttons. Keeps the slot.",
+            "遊び・ハットスイッチ・ボタンを消去。スロットは保持",
         ),
         UiText::DescPadParked => (
-            "Parked: no screen past the table, or pad left.",
-            "待機中：テーブル外または切断中のため非表示",
+            "Disconnected or over the pad limit, so hidden.",
+            "切断中か接続上限を超えたため非表示",
         ),
         UiText::DescPadUnassigned => (
             "Assign a player in Devices to map buttons.",

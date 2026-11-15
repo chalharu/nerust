@@ -41,13 +41,17 @@ impl StandardButton {
         self as usize
     }
 
-    /// Short UI label, same role as [`Key::label`].
+    /// UI label: cap print for the four face buttons (Xbox-layout pads
+    /// and Android `BUTTON_A` names put A at the bottom, so rows show the
+    /// letter users can find), position label for the rest. Positions are
+    /// the binding identity (vendors transpose caps); only the hint
+    /// letter differs for Nintendo-layout users.
     pub fn label(self) -> &'static str {
         match self {
-            Self::South => "South",
-            Self::East => "East",
-            Self::West => "West",
-            Self::North => "North",
+            Self::South => "A",
+            Self::East => "B",
+            Self::West => "X",
+            Self::North => "Y",
             Self::Back => "Back",
             Self::Guide => "Guide",
             Self::Start => "Start",
@@ -59,22 +63,6 @@ impl StandardButton {
             Self::DpadDown => "D-Down",
             Self::DpadLeft => "D-Left",
             Self::DpadRight => "D-Right",
-        }
-    }
-
-    /// Cap-printed label for the four face buttons; every other button
-    /// keeps [`Self::label`]. Positions are the binding identity (vendors
-    /// transpose caps), but caps are what the plastic prints: Xbox-layout
-    /// pads (and the Android `BUTTON_A` key names) put A at the bottom,
-    /// so mapping rows show the cap users can find. Nintendo-layout users
-    /// still get the position-correct binding; only the hint letter differs.
-    pub fn cap_label(self) -> &'static str {
-        match self {
-            Self::South => "A",
-            Self::East => "B",
-            Self::West => "X",
-            Self::North => "Y",
-            other => other.label(),
         }
     }
 
@@ -102,30 +90,26 @@ impl StandardButton {
     }
 
     /// Reverse of [`Self::abstract_key`]: the position button driving one
-    /// console-agnostic button in the fixed standard layout. Single table:
-    /// linear search over [`Self::abstract_key`] so the two never skew.
+    /// console-agnostic button in the fixed standard layout. Direct match
+    /// so the two never skew without a linear scan.
     pub fn with_abstract(abstract_key: crate::AbstractKey) -> Option<Self> {
-        // Explicit list: `EnumIter` exists in test builds only, and the
-        // search keeps the forward table as the single source.
-        const ALL: [StandardButton; StandardButton::COUNT] = [
-            StandardButton::South,
-            StandardButton::East,
-            StandardButton::West,
-            StandardButton::North,
-            StandardButton::Back,
-            StandardButton::Guide,
-            StandardButton::Start,
-            StandardButton::LeftStick,
-            StandardButton::RightStick,
-            StandardButton::LeftShoulder,
-            StandardButton::RightShoulder,
-            StandardButton::DpadUp,
-            StandardButton::DpadDown,
-            StandardButton::DpadLeft,
-            StandardButton::DpadRight,
-        ];
-        ALL.into_iter()
-            .find(|button| button.abstract_key() == Some(abstract_key))
+        use crate::AbstractKey as A;
+        match abstract_key {
+            A::Button1 => Some(Self::South),
+            A::Button2 => Some(Self::East),
+            A::Button3 => Some(Self::West),
+            A::Button4 => Some(Self::North),
+            A::Button5 => Some(Self::LeftShoulder),
+            A::Button6 => Some(Self::RightShoulder),
+            A::Select => Some(Self::Back),
+            A::Guide => Some(Self::Guide),
+            A::Start => Some(Self::Start),
+            A::DpadUp => Some(Self::DpadUp),
+            A::DpadDown => Some(Self::DpadDown),
+            A::DpadLeft => Some(Self::DpadLeft),
+            A::DpadRight => Some(Self::DpadRight),
+            _ => None,
+        }
     }
 }
 
@@ -209,62 +193,6 @@ impl SourceId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct PadGuid(pub [u8; 16]);
 
-/// One normalized input event from any source. Absolute values: the session
-/// OR-machine owns press state, sources never track it.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum SourceEvent {
-    Button {
-        button: StandardButton,
-        pressed: bool,
-    },
-    Axis {
-        axis: GamepadAxis,
-        value: f32,
-    },
-}
-
-/// Normalized pad snapshot: the virtual-backend seam and headless test entry.
-/// Axes are post-deadzone (`-1.0..=1.0`, `0.0` neutral); the deadzone math
-/// lives here, never per backend.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct GamepadState {
-    pub buttons: [bool; StandardButton::COUNT],
-    pub axes: [f32; GamepadAxis::COUNT],
-}
-
-impl Default for GamepadState {
-    fn default() -> Self {
-        Self {
-            buttons: [false; StandardButton::COUNT],
-            axes: [0.0; GamepadAxis::COUNT],
-        }
-    }
-}
-
-impl GamepadState {
-    /// Fold one event into the snapshot.
-    pub fn apply_event(&mut self, event: SourceEvent) {
-        match event {
-            SourceEvent::Button { button, pressed } => {
-                self.buttons[button.index()] = pressed;
-            }
-            SourceEvent::Axis { axis, value } => {
-                self.axes[axis.index()] = value;
-            }
-        }
-    }
-
-    /// Whether the button is held in the snapshot.
-    pub fn is_pressed(self, button: StandardButton) -> bool {
-        self.buttons[button.index()]
-    }
-
-    /// Post-deadzone axis value.
-    pub fn axis(self, axis: GamepadAxis) -> f32 {
-        self.axes[axis.index()]
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use strum::IntoEnumIterator as _;
@@ -289,28 +217,16 @@ mod tests {
     }
 
     #[test]
-    fn face_buttons_show_cap_prints_other_labels_unchanged() {
+    fn face_buttons_show_cap_prints() {
         assert_eq!(
             [
-                StandardButton::South.cap_label(),
-                StandardButton::East.cap_label(),
-                StandardButton::West.cap_label(),
-                StandardButton::North.cap_label(),
+                StandardButton::South.label(),
+                StandardButton::East.label(),
+                StandardButton::West.label(),
+                StandardButton::North.label(),
             ],
             ["A", "B", "X", "Y"]
         );
-        for button in StandardButton::iter() {
-            assert!(!button.cap_label().is_empty());
-            if !matches!(
-                button,
-                StandardButton::South
-                    | StandardButton::East
-                    | StandardButton::West
-                    | StandardButton::North
-            ) {
-                assert_eq!(button.cap_label(), button.label());
-            }
-        }
     }
 
     #[test]
@@ -377,25 +293,5 @@ mod tests {
         assert!((apply_deadzone(0.6, 0.2) - 0.5).abs() < 1e-6);
         assert_eq!(apply_deadzone(0.9, 1.0), 0.0);
         assert_eq!(apply_deadzone(0.9, 2.0), 0.0);
-    }
-    #[test]
-    fn state_folds_events() {
-        let mut state = GamepadState::default();
-        assert!(!state.is_pressed(StandardButton::South));
-        state.apply_event(SourceEvent::Button {
-            button: StandardButton::South,
-            pressed: true,
-        });
-        assert!(state.is_pressed(StandardButton::South));
-        state.apply_event(SourceEvent::Axis {
-            axis: GamepadAxis::LeftTrigger,
-            value: 0.5,
-        });
-        assert_eq!(state.axis(GamepadAxis::LeftTrigger), 0.5);
-        state.apply_event(SourceEvent::Button {
-            button: StandardButton::South,
-            pressed: false,
-        });
-        assert!(!state.is_pressed(StandardButton::South));
     }
 }

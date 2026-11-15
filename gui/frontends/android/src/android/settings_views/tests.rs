@@ -3608,17 +3608,14 @@ fn pad_screen_drops_single_attachment_headers() {
 }
 
 #[test]
-fn unassigned_pad_slot_row_keeps_player_vocabulary() {
-    // Assigned rows read `Player 1` / pad name; unassigned rows read the
-    // same vocabulary instead of switching to `Gamepad`.
+fn unassigned_pad_slot_row_names_category() {
+    // Assigned rows read `Player 1` / pad name; unassigned rows name the
+    // category (`Gamepad`) since the state already reads `Not assigned`.
     let (mut snapshot, _) = test_payload();
     snapshot.shared.input.gamepad.pad_ports[0].slot = None;
     let payload = pad_payload(&snapshot, &two_pads());
     let row = row(&payload, "pad.1.slot");
-    assert_eq!(
-        row.label, "Player",
-        "unassigned slot keeps player vocabulary"
-    );
+    assert_eq!(row.label, "Gamepad", "unassigned slot names the category");
     assert_eq!(row.text, "Not assigned", "unassigned slot reads empty");
 }
 

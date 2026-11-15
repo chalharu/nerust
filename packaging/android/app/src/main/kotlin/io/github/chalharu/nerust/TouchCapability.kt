@@ -48,7 +48,8 @@ private fun isCountedGamepad(device: InputDevice): Boolean {
     if (!joystickClass || !(gamepadSource || nonAlphaKeyboard)) return false
     // Canonical gamepad buttons; any one proves a real controller.
     // All exist since API 1, so no version guard is needed.
-    if (GAMEPAD_BUTTON_CODES.none { device.hasKeys(it)[0] }) return false
+    // Single hasKeys call: one Binder IPC per device, not one per code.
+    if (!device.hasKeys(*GAMEPAD_BUTTON_CODES).any { it }) return false
     // Game axes a real controller drives; button clusters expose none.
     return GAME_AXES.any { device.getMotionRange(it) != null }
 }
