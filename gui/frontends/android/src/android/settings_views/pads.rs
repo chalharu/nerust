@@ -16,7 +16,7 @@ use nerust_gui_viewmodel::settings::SettingsViewModel;
 use nerust_settings_core::{
     editor::CaptureTarget,
     i18n::UiText,
-    model::input::{DEADZONE_STEPS, pad_game_binding_conflicts},
+    model::input::DEADZONE_STEPS,
 };
 
 use super::wire::{
@@ -24,7 +24,6 @@ use super::wire::{
     header_row, info_row, live_for_rank, number_row, player_label, rank_for_member, toggle_row,
 };
 use nerust_gui_viewmodel::settings::labels::pad_label;
-use nerust_input_traits::port_index_for_slot;
 
 /// Per-pad settings screens: one `pad.<n>` screen per stable settings
 /// rank, with its own deadzone, hat switch, and per-system button mapping.
@@ -300,53 +299,8 @@ fn pad_system_rows(
         }
         out.append(&mut chunk);
     }
-    // One button driving two controls never fires the second:
-    // surface it on the pad's own screen, next to the rows.
-    // Scoped like the rows above: hidden attachments have no
-    // rows to disambiguate against.
-    if let Some(settings) = snapshot.shared.input.systems.get(&view.system_id)
-        && let Some(entries) = settings.pad_bindings.get(rank)
-    {
-        out.extend(conflict_rows(pad_id, &system, slot, entries, i18n));
-    }
+    // Conflicts surface through the payload issues (save-blocking
+    // validation), never as duplicate rows: one surfacing, not two.
     out
 }
 
-/// One button driving two in-scope controls: a warning row per button.
-/// Out-of-scope controls never render, and a lone survivor is no conflict
-/// on this screen.
-fn conflict_rows(
-    pad_id: &str,
-    system: &str,
-    slot: usize,
-    entries: &[nerust_settings_core::model::input::PadBinding],
-    i18n: I18n,
-) -> Vec<RowWire> {
-    let mut rows = Vec::new();
-    for (button, controls) in pad_game_binding_conflicts(entries) {
-        // Raw persisted bindings carry string attachments (no DTO port
-        // here), so scope through the canonical traits rule: unknown
-        // attachments fail open and never silently drop rows.
-        let shown: Vec<_> = controls
-            .iter()
-            .filter(|(attachment, _)| {
-                !port_index_for_slot(attachment.as_str()).is_some_and(|port| port != slot)
-            })
-            .collect();
-        if shown.len() < 2 {
-            continue;
-        }
-        let name = nerust_gui_viewmodel::settings::labels::pad_button_label(i18n, button);
-        rows.push(info_row(
-            &format!("{pad_id}.{system}.conflict.{name}"),
-            name.clone(),
-            shown
-                .iter()
-                .map(|(attachment, control)| format!("{attachment}.{control}"))
-                .collect::<Vec<_>>()
-                .join(", "),
-            String::new(),
-        ));
-    }
-    rows
-}

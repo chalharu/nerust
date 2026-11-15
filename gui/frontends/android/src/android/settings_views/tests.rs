@@ -3033,7 +3033,10 @@ fn set_with_pads_clear(
 }
 
 #[test]
-fn pad_mapping_conflict_surfaces_on_screen() {
+fn pad_mapping_conflict_surfaces_once_through_issues() {
+    // One button driving two controls surfaces through the payload
+    // issues (save-blocking validation), never as duplicate rows:
+    // the capture payload already carries the conflict.
     let (mut snapshot, _) = test_payload();
     let pads = two_pads();
     let payload = pad_payload(&snapshot, &pads);
@@ -3050,10 +3053,11 @@ fn pad_mapping_conflict_surfaces_on_screen() {
         .map(|row| row.key.clone())
         .collect();
     assert_eq!(keys.len(), 2, "pad screen lists mapping rows");
-    for key in &keys {
+    let mut second_out = None;
+    for (n, key) in keys.iter().enumerate() {
         let mut capture: CaptureSlot = None;
         set_with_pads_capture(&mut snapshot, &pads, &mut capture, key);
-        with_test_deps(|| {
+        let (out, _) = with_test_deps(|| {
             apply_hardware_key(
                 96,
                 Some("a"),
@@ -3070,7 +3074,16 @@ fn pad_mapping_conflict_surfaces_on_screen() {
             )
             .expect("pad capture applies")
         });
+        if n == 1 {
+            second_out = out;
+        }
     }
+    let out = second_out.expect("second capture projects");
+    assert!(
+        out.issues.iter().any(|issue| issue.contains('A')),
+        "issue names the double-mapped button: {:?}",
+        out.issues
+    );
     let conflicted = pad_payload(&snapshot, &pads);
     let section = conflicted
         .sections
@@ -3078,11 +3091,8 @@ fn pad_mapping_conflict_surfaces_on_screen() {
         .find(|section| section.id == "pad.1")
         .expect("pad.1 screen exists");
     assert!(
-        section
-            .rows
-            .iter()
-            .any(|row| row.key.contains(".conflict.") && row.label == "A (bottom)"),
-        "one button driving two controls surfaces on the pad screen"
+        section.rows.iter().all(|row| !row.key.contains(".conflict.")),
+        "no duplicate conflict rows next to the capture rows"
     );
 }
 

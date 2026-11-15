@@ -234,10 +234,6 @@ pub fn shortcut_key_label(
         .map(|key| key.label())
 }
 
-/// Keep only buttons driving two or more targets; singletons never conflict.
-fn retain_conflicts<T>(by_button: &mut std::collections::BTreeMap<StandardButton, Vec<T>>) {
-    by_button.retain(|_, targets| targets.len() > 1);
-}
 /// Pad shortcut conflicts: one button driving two or more actions.
 /// Keyboard conflicts ride `conflicting_keys`; pads are global (no system
 /// topology), so they get their own map. First binding still wins at
@@ -251,7 +247,7 @@ pub fn pad_shortcut_conflicts(
             by_button.entry(button).or_default().push(binding.action);
         }
     }
-    retain_conflicts(&mut by_button);
+    by_button.retain(|_, targets| targets.len() > 1);
     by_button
 }
 
@@ -262,17 +258,17 @@ pub fn pad_shortcut_conflicts(
 /// (the field OR-merges), so only the button side is reported.
 pub fn pad_game_binding_conflicts(
     bindings: &[PadBinding],
-) -> std::collections::BTreeMap<StandardButton, Vec<(String, String)>> {
-    let mut by_button = std::collections::BTreeMap::<StandardButton, Vec<(String, String)>>::new();
+) -> std::collections::BTreeMap<StandardButton, Vec<(&str, &str)>> {
+    let mut by_button = std::collections::BTreeMap::<StandardButton, Vec<(&str, &str)>>::new();
     for binding in bindings {
         if matches!(binding.control, PersistedControlId::Digital(_)) {
             by_button.entry(binding.button).or_default().push((
-                binding.attachment.as_str().to_string(),
-                binding.control.as_str().to_string(),
+                binding.attachment.as_str(),
+                binding.control.as_str(),
             ));
         }
     }
-    retain_conflicts(&mut by_button);
+    by_button.retain(|_, targets| targets.len() > 1);
     by_button
 }
 
@@ -389,20 +385,6 @@ impl PartialEq<DigitalControlId> for PersistedControlId {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn desktop_only_shortcuts_stay_off_android() {
-        // Android hides these two explicitly at the projection seam
-        // (projection.rs); the core enum carries no frontend knowledge.
-        assert!(matches!(
-            ShortcutAction::ToggleFullscreen,
-            ShortcutAction::ToggleFullscreen | ShortcutAction::OpenDebugger
-        ));
-        assert!(!matches!(
-            ShortcutAction::TogglePause,
-            ShortcutAction::ToggleFullscreen | ShortcutAction::OpenDebugger
-        ));
-    }
 
     #[test]
     fn pad_shortcut_conflicts_groups_shared_buttons() {
