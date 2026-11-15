@@ -446,17 +446,7 @@ class MainActivity :
         // Explicit zeros: a missing axis reads as neutral only when never
         // sent, so the recenter names every axis.
         if (controllerAxes.remove(deviceId) == null) return
-        sendMotionInput(
-                deviceId,
-                mapOf(
-                    ControllerAxis.LEFT_X to 0f,
-                    ControllerAxis.LEFT_Y to 0f,
-                    ControllerAxis.RIGHT_X to 0f,
-                    ControllerAxis.RIGHT_Y to 0f,
-                    ControllerAxis.TRIGGER_L to 0f,
-                    ControllerAxis.TRIGGER_R to 0f,
-                ),
-            )
+        sendMotionInput(deviceId, RECENTER_AXES)
     }
 
     /** Mirror of the Rust tracker for edge-detect and device-removal synthesis;
@@ -1079,6 +1069,18 @@ class MainActivity :
                 MotionEvent.AXIS_RZ,
                 MotionEvent.AXIS_LTRIGGER,
                 MotionEvent.AXIS_RTRIGGER,
+            )
+        /** Analog recenter: every axis at neutral, sent as one batch when
+         * a device vanishes so Rust substitutes release. Hoisted so no
+         * map is built per disconnect. */
+        private val RECENTER_AXES =
+            mapOf(
+                ControllerAxis.LEFT_X to 0f,
+                ControllerAxis.LEFT_Y to 0f,
+                ControllerAxis.RIGHT_X to 0f,
+                ControllerAxis.RIGHT_Y to 0f,
+                ControllerAxis.TRIGGER_L to 0f,
+                ControllerAxis.TRIGGER_R to 0f,
             )
         private const val ROM_PICKER_REQUEST_CODE = 0x4E45
         private const val DIRECTORY_PICKER_REQUEST_CODE = 0x4E46

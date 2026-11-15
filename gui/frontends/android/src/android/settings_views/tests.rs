@@ -2323,11 +2323,10 @@ fn gamepad_radio_assigns_one_pad_per_player() {
     );
     assert_eq!(row(&moved, "devices.p2.gamepad").selected, 1);
     assert_eq!(row(&moved, "devices.p1.gamepad").selected, 0);
-    // The none choice names the assignment state (HID device assignment
-    // to this player), never a per-device state.
+    // The none choice shares the single unassigned vocabulary.
     assert_eq!(
         row(&moved, "devices.p1.gamepad").choices[0].label,
-        "No pad assigned",
+        "Not assigned",
         "radio none reads as an assignment state"
     );
     // Unassigned clears the port without touching the other one.

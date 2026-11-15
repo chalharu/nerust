@@ -229,7 +229,6 @@ pub enum UiText {
     ExternalKeyboard,
     GamepadDevice,
     Gamepads,
-    NoPadForPlayer,
     Player,
     NoInputDevices,
     DescNoInputDevices,
@@ -641,7 +640,6 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::ExternalKeyboard => ("External keyboard", "外付けキーボード"),
         UiText::GamepadDevice => ("Gamepad", "ゲームパッド"),
         UiText::Gamepads => ("Gamepads", "ゲームパッド"),
-        UiText::NoPadForPlayer => ("No pad assigned", "割り当てなし"),
         UiText::Player => ("Player", "プレイヤー"),
         UiText::NoInputDevices => ("No input devices", "入力デバイスなし"),
         UiText::DescNoInputDevices => (
@@ -1174,7 +1172,6 @@ mod tests {
             ExternalKeyboard,
             GamepadDevice,
             Gamepads,
-            NoPadForPlayer,
             Player,
             NoInputDevices,
             DescNoInputDevices,

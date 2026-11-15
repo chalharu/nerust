@@ -354,7 +354,7 @@ fn gamepad_rows(
     // does. Values are ranks (the session commit index), never live
     // positions, so a reconnect cycle cannot redirect the assignment.
     let mut pad_choices: Vec<(Option<usize>, String)> =
-        vec![(None, i18n.text(UiText::NoPadForPlayer))];
+        vec![(None, i18n.text(UiText::NotAssigned))];
     for (rank, descriptor) in pad_order.iter().enumerate() {
         if let Some(info) = gamepads
             .iter()
