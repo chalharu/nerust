@@ -284,9 +284,9 @@ class MainActivity :
             // Capture/share/create (Switch capture, Xbox share, PS create):
             // one position button like the rest, so capture, gameplay
             // overrides, and shortcuts all resolve through the same path.
-            // `BUTTON_Z` (101) is the adaptor fallback for the same press.
+            // `BUTTON_Z` is intentionally not mapped here: it is the
+            // Z-labeled / upper-row third button, not capture.
             KeyEvent.KEYCODE_BUTTON_C -> ControllerKey.CAPTURE
-            KeyEvent.KEYCODE_BUTTON_Z -> ControllerKey.CAPTURE
             KeyEvent.KEYCODE_BUTTON_START -> ControllerKey.START
             KeyEvent.KEYCODE_BUTTON_SELECT -> ControllerKey.SELECT
             KeyEvent.KEYCODE_DPAD_UP -> ControllerKey.UP

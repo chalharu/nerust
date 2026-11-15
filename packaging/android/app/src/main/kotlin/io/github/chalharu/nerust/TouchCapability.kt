@@ -61,6 +61,8 @@ private val GAMEPAD_BUTTON_CODES =
         KeyEvent.KEYCODE_BUTTON_C,
         KeyEvent.KEYCODE_BUTTON_X,
         KeyEvent.KEYCODE_BUTTON_Y,
+        // Counted as gamepad evidence only: Z has no standard slot, so
+        // presses are intentionally left to the platform (not Capture).
         KeyEvent.KEYCODE_BUTTON_Z,
         KeyEvent.KEYCODE_BUTTON_L1,
         KeyEvent.KEYCODE_BUTTON_R1,
