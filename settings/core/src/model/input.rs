@@ -390,7 +390,6 @@ impl PartialEq<DigitalControlId> for PersistedControlId {
 mod tests {
     use super::*;
 
-
     #[test]
     fn desktop_only_shortcuts_stay_off_android() {
         // Android hides these two explicitly at the projection seam
