@@ -28,10 +28,8 @@ pub struct InputSettings {
 
 /// Pad-level preferences shared by every system.
 ///
-/// Open tables, not fixed ports: one entry per connection-order pad.
-/// Old fixed-array files load straight into these vectors, so existing
-/// saves keep working; new pads grow the tables on demand instead of
-/// parking past a cap.
+/// Open tables, not fixed ports: one entry per connection-order pad,
+/// grown on demand as new pads appear.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct GamepadSettings {
@@ -72,10 +70,6 @@ impl Default for PadPort {
     }
 }
 
-/// Initial settings rows (P1/P2 assigned, two spares): first-run UX
-/// only, never a cap. New pads grow both tables on demand.
-pub const INITIAL_PAD_ROWS: usize = 4;
-
 impl Default for GamepadSettings {
     fn default() -> Self {
         Self {
@@ -106,8 +100,7 @@ pub struct SystemInputSettings {
     /// everything else falls back to the fixed standard layout, so an
     /// empty table behaves exactly like the old build. Absolute
     /// attachments (like keyboard bindings): an explicit entry wins over
-    /// the pad's player-slot routing. Grows with `pad_ports`; old
-    /// fixed-array files load straight in.
+    /// the pad's player-slot routing. Grows with `pad_ports`.
     pub pad_bindings: Vec<Vec<PadBinding>>,
 }
 
@@ -397,31 +390,6 @@ impl PartialEq<DigitalControlId> for PersistedControlId {
 mod tests {
     use super::*;
 
-    #[test]
-    fn old_fixed_array_files_load_into_open_tables() {
-        // Back-compat proof: a v1 fixed-array save must keep working.
-        // New pads then grow the tables instead of parking past a cap.
-        let old = serde_json::json!({
-            "pad_ports": [
-                {"slot": 0, "deadzone_percent": 8, "dpad_enabled": true},
-                {"slot": 1},
-                {},
-                {}
-            ]
-        });
-        let settings: GamepadSettings = serde_json::from_value(old).unwrap();
-        assert_eq!(settings.pad_ports.len(), 4);
-        assert_eq!(settings.pad_ports[0].slot, Some(0));
-        assert_eq!(settings.pad_ports[0].deadzone_percent, 8);
-        assert_eq!(
-            settings.pad_ports[2].deadzone_percent,
-            DEFAULT_DEADZONE_PERCENT
-        );
-        let mut grown = settings;
-        grown.pad_ports.resize_with(5, Default::default);
-        assert_eq!(grown.pad_ports.len(), 5);
-        assert_eq!(grown.pad_ports[4].slot, None);
-    }
 
     #[test]
     fn desktop_only_shortcuts_stay_off_android() {
