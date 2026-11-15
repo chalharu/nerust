@@ -68,10 +68,11 @@ impl InputRouter {
         device_id: i32,
         axis: GamepadAxis,
         value: f32,
-    ) {
+    ) -> Option<KeyboardShortcut> {
         // Same source identity as buttons: one pad, one order index.
+        // Trigger edges can fire shortcuts, like button presses.
         let source = session.pad_source_for(device_id);
-        session.handle_source_axis(source, axis, value);
+        session.handle_source_axis(source, axis, value)
     }
 
     /// Rebuild the hit-zone overlay for the current window size and push it to Kotlin.

@@ -23,6 +23,8 @@ pub enum StandardButton {
     RightStick,
     LeftShoulder,
     RightShoulder,
+    LeftTrigger,
+    RightTrigger,
     DpadUp,
     DpadDown,
     DpadLeft,
@@ -31,7 +33,7 @@ pub enum StandardButton {
 
 impl StandardButton {
     /// Button count; sizes the normalized state arrays.
-    pub const COUNT: usize = 15;
+    pub const COUNT: usize = 17;
 
     /// Array index for normalized state storage.
     pub const fn index(self) -> usize {
@@ -56,6 +58,8 @@ impl StandardButton {
             Self::RightStick => "R3",
             Self::LeftShoulder => "LB",
             Self::RightShoulder => "RB",
+            Self::LeftTrigger => "LT",
+            Self::RightTrigger => "RT",
             Self::DpadUp => "D-Up",
             Self::DpadDown => "D-Down",
             Self::DpadLeft => "D-Left",
@@ -75,6 +79,8 @@ impl StandardButton {
             Self::North => Some(A::Button4),
             Self::LeftShoulder => Some(A::Button5),
             Self::RightShoulder => Some(A::Button6),
+            Self::LeftTrigger => Some(A::Button7),
+            Self::RightTrigger => Some(A::Button8),
             Self::Back => Some(A::Select),
             Self::Guide => Some(A::Guide),
             Self::Start => Some(A::Start),
@@ -98,6 +104,8 @@ impl StandardButton {
             A::Button4 => Some(Self::North),
             A::Button5 => Some(Self::LeftShoulder),
             A::Button6 => Some(Self::RightShoulder),
+            A::Button7 => Some(Self::LeftTrigger),
+            A::Button8 => Some(Self::RightTrigger),
             A::Select => Some(Self::Back),
             A::Guide => Some(Self::Guide),
             A::Start => Some(Self::Start),
@@ -260,6 +268,8 @@ mod tests {
             (StandardButton::North, A::Button4),
             (StandardButton::LeftShoulder, A::Button5),
             (StandardButton::RightShoulder, A::Button6),
+            (StandardButton::LeftTrigger, A::Button7),
+            (StandardButton::RightTrigger, A::Button8),
             (StandardButton::Back, A::Select),
             (StandardButton::Guide, A::Guide),
             (StandardButton::Start, A::Start),

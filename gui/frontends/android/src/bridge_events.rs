@@ -72,6 +72,8 @@ pub(crate) const CONTROLLER_KEY_TABLE: &[(&str, StandardButton)] = &[
     ("button4", StandardButton::North),
     ("button5", StandardButton::LeftShoulder),
     ("button6", StandardButton::RightShoulder),
+    ("button7", StandardButton::LeftTrigger),
+    ("button8", StandardButton::RightTrigger),
     ("start", StandardButton::Start),
     ("select", StandardButton::Back),
     ("guide", StandardButton::Guide),

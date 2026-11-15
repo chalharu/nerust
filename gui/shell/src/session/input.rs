@@ -521,14 +521,22 @@ impl SessionHandle {
     /// axes where the console actually drives them). The routing follows
     /// the cached input policy; only the deadzone stays per-pad.
     /// Off-port pads park silently: no store, no substitute.
-    pub fn handle_source_axis(&mut self, source: SourceId, axis: GamepadAxis, value: f32) {
+    /// Analog axis entry: deadzone, store, substitutes, and the trigger
+    /// button edge. Returns a fired shortcut, if any, like the button
+    /// path: triggers double as shoulders (gameplay) and as bindable
+    /// buttons (overrides, shortcuts) at once; the pressed set dedups
+    /// dual key+axis delivery into one press.
+    pub fn handle_source_axis(
+        &mut self,
+        source: SourceId,
+        axis: GamepadAxis,
+        value: f32,
+    ) -> Option<KeyboardShortcut> {
         // One order-index lookup per event: the slot gate and the deadzone
         // row read this instead of re-scanning `pad_order`. Routing needs
         // no lookup: the policy cache already follows the assignments.
         let index = self.input.pads.pad_index(source);
-        if index.and_then(|i| self.slot_for_pad_index(i)).is_none() {
-            return;
-        };
+        index.and_then(|i| self.slot_for_pad_index(i))?;
         // Per-pad deadzone from the rebind snapshot: sticks vary per
         // unit, so the pad's own row tunes it. Unmapped sources fall
         // back to the default.
@@ -547,6 +555,38 @@ impl SessionHandle {
             self.input.trigger_alias,
             self.input.stick_substitute,
         );
+        self.sync_trigger_button(source, axis, value)
+    }
+
+    /// Trigger-axis edge for the trigger buttons: full presses drive
+    /// LeftTrigger/RightTrigger through the button path (overrides,
+    /// shortcuts, defaults) exactly like a digital key. Hysteresis rides
+    /// the pressed set, so epsilon jitter at the edge cannot flap; the
+    /// button path's repeat suppression absorbs dual key+axis delivery.
+    fn sync_trigger_button(
+        &mut self,
+        source: SourceId,
+        axis: GamepadAxis,
+        value: f32,
+    ) -> Option<KeyboardShortcut> {
+        let button = match axis {
+            GamepadAxis::LeftTrigger => StandardButton::LeftTrigger,
+            GamepadAxis::RightTrigger => StandardButton::RightTrigger,
+            _ => return None,
+        };
+        let held = self
+            .input
+            .pressed
+            .contains(&(source, SourceButtonId::Pad(button)));
+        let want = if held {
+            value >= Self::TRIGGER_RELEASE
+        } else {
+            value >= Self::TRIGGER_PRESS
+        };
+        if want == held {
+            return None;
+        }
+        self.handle_source_button(source, SourceButtonId::Pad(button), want)
     }
 
     /// Stick axis pair for joint dpad resolution, if any axis belongs to
@@ -1736,6 +1776,86 @@ mod tests {
         session.clear_input();
         assert!(session.input.analogs.is_empty());
         assert!(session.input.axis_dpad.is_empty());
+    }
+
+    #[test]
+    fn trigger_axis_drives_trigger_button_bindings() {
+        // L2/R2 are bindable buttons, not analog-only: a full trigger
+        // press drives LeftTrigger through the button path (overrides,
+        // shortcuts), while the axis keeps its analog store and, on
+        // digital consoles, the shoulder doubling.
+        use nerust_input_traits::{ControlId, GamepadAxis, StandardButton};
+        use nerust_settings_core::model::input::{
+            PadBinding, PersistedControlId, ShortcutAction, ShortcutBinding, SystemInputSettings,
+        };
+        let mut session = crate::session::test_util::test_session();
+        session.input.current_assignments = InputAssignments::new(vec![(
+            AttachmentId::new("test.topology.slot"),
+            Some(Rc::new(MockTopologyProfile)),
+        )]);
+        let mut next = session.settings_snapshot().clone();
+        next.shared.input.gamepad.pad_ports[0].deadzone_percent = 0;
+        let system = session.active_system_id_box().expect("test system active");
+        let mut system_settings = SystemInputSettings::default();
+        system_settings
+            .pad_bindings
+            .resize_with(1, Default::default);
+        system_settings.pad_bindings[0] = vec![PadBinding::new(
+            "test.topology.slot",
+            PersistedControlId::digital("test.topology.a"),
+            StandardButton::LeftTrigger,
+        )];
+        next.shared.input.systems.insert(system, system_settings);
+        next.shared.input.shortcuts.keyboard = vec![ShortcutBinding {
+            action: ShortcutAction::TogglePause,
+            key: None,
+            pad: Some(StandardButton::RightTrigger),
+        }];
+        session.apply_settings(next).unwrap();
+        let attachment = AttachmentId::new("test.topology.slot");
+        let mut parts = crate::test_helpers::build_test_core_parts();
+        let _ = parts.field_map.insert(
+            (
+                attachment,
+                ControlId::digital(DigitalControlId::new("test.topology.a")),
+            ),
+            1,
+        );
+        let (emu_core, gui_input, field_map, host_peripherals) =
+            crate::emu_core::EmuCore::from_parts(parts);
+        session.emu.runtime = Some(crate::session::ActiveRuntime {
+            core: Box::new(emu_core),
+            input: gui_input,
+            field_map,
+            host_peripherals,
+        });
+        session.note_pad_connected(11, "test-pad-11");
+        let pad = session.pad_source_for(11);
+        // Left trigger past the press band drives the override field.
+        let fired = session.handle_source_axis(pad, GamepadAxis::LeftTrigger, 1.0);
+        assert_eq!(
+            session.input.press_state.asserted_fields(),
+            vec![1],
+            "trigger axis drives the LeftTrigger override"
+        );
+        assert!(fired.is_none(), "no shortcut bound to the left trigger");
+        // Right trigger fires its shortcut while asserting nothing.
+        let fired = session.handle_source_axis(pad, GamepadAxis::RightTrigger, 1.0);
+        assert!(
+            matches!(
+                fired,
+                Some(KeyboardShortcut::Session(ShortcutAction::TogglePause))
+            ),
+            "trigger axis fires the RightTrigger shortcut"
+        );
+        // Release band drops both.
+        session.handle_source_axis(pad, GamepadAxis::LeftTrigger, 0.0);
+        session.handle_source_axis(pad, GamepadAxis::RightTrigger, 0.0);
+        assert!(
+            session.input.press_state.asserted_fields().is_empty(),
+            "trigger releases unassert"
+        );
+        session.clear_input();
     }
 
     #[test]

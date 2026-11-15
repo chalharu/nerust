@@ -653,12 +653,14 @@ impl AndroidFrontend {
                     axis,
                     value,
                 } => {
-                    self.chrome.input.apply_physical_controller_axis(
+                    if let Some(shortcut) = self.chrome.input.apply_physical_controller_axis(
                         &mut self.core.session,
                         device_id,
                         axis,
                         value,
-                    );
+                    ) {
+                        self.dispatch_shortcut(shortcut);
+                    }
                 }
                 MenuAction::DeviceAdded {
                     device_id,
@@ -779,12 +781,14 @@ impl AndroidFrontend {
                     else {
                         continue;
                     };
-                    self.chrome.input.apply_physical_controller_axis(
+                    if let Some(shortcut) = self.chrome.input.apply_physical_controller_axis(
                         &mut self.core.session,
                         device_id,
                         axis,
                         value,
-                    );
+                    ) {
+                        self.dispatch_shortcut(shortcut);
+                    }
                 }
             }
             FrontendEvent::ErrorDialogDismissed(id) => self.handle_error_dialog_dismissed(id, tick),

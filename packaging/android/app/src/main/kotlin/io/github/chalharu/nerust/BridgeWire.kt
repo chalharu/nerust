@@ -33,6 +33,8 @@ internal object ControllerKey {
     const val BUTTON4 = "button4"
     const val BUTTON5 = "button5"
     const val BUTTON6 = "button6"
+    const val BUTTON7 = "button7"
+    const val BUTTON8 = "button8"
     const val START = "start"
     const val SELECT = "select"
     const val GUIDE = "guide"

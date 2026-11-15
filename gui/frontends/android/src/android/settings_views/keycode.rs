@@ -1,12 +1,14 @@
 //! Android keycode tables shared by JNI and winit paths.
-//! Keycodes 104/105 (L2/R2) stay unmapped: triggers are analog-only motion axes.
-//! Unmapped codes stay `None` so the platform keeps them.
+//! Keycodes 104/105 (L2/R2) name the trigger buttons: digital presses
+//! drive bindings and shortcuts, while the motion axes keep driving the
+//! analog store plus shoulder doubling. Unmapped codes stay `None` so
+//! the platform keeps them.
 
 use nerust_input_traits::{Key, StandardButton};
 use winit::keyboard::{KeyCode, NativeKeyCode, PhysicalKey};
 
-/// Raw Android keycode to position button. `None` for keyboard keys,
-/// triggers (104/105), and unknown codes.
+/// Raw Android keycode to position button. `None` for keyboard keys
+/// and unknown codes.
 pub(crate) fn android_keycode_to_button(keycode: u32) -> Option<StandardButton> {
     TABLE
         .binary_search_by_key(&keycode, |(code, _)| *code)
@@ -15,7 +17,7 @@ pub(crate) fn android_keycode_to_button(keycode: u32) -> Option<StandardButton> 
 }
 
 /// Single table for the fn above and its test: adding a row extends both.
-const TABLE: [(u32, StandardButton); 15] = [
+const TABLE: [(u32, StandardButton); 17] = [
     (19, StandardButton::DpadUp),
     (20, StandardButton::DpadDown),
     (21, StandardButton::DpadLeft),
@@ -26,6 +28,8 @@ const TABLE: [(u32, StandardButton); 15] = [
     (100, StandardButton::North),
     (102, StandardButton::LeftShoulder),
     (103, StandardButton::RightShoulder),
+    (104, StandardButton::LeftTrigger),
+    (105, StandardButton::RightTrigger),
     (106, StandardButton::LeftStick),
     (107, StandardButton::RightStick),
     (108, StandardButton::Start),
@@ -327,7 +331,7 @@ mod tests {
         for (keycode, button) in TABLE {
             assert_eq!(android_keycode_to_button(keycode), Some(button));
         }
-        for keycode in [0, 98, 104, 105, 255] {
+        for keycode in [0, 98, 255] {
             assert_eq!(android_keycode_to_button(keycode), None);
         }
     }

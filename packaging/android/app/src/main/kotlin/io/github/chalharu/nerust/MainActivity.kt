@@ -270,10 +270,14 @@ class MainActivity :
             KeyEvent.KEYCODE_BUTTON_Y -> ControllerKey.BUTTON4
             KeyEvent.KEYCODE_BUTTON_L1 -> ControllerKey.BUTTON5
             KeyEvent.KEYCODE_BUTTON_R1 -> ControllerKey.BUTTON6
-            // L2/R2 stay unconsumed here: they are analog triggers (the
-            // stick/trigger motion follow-up), not digital buttons.
-            // Pads without trigger axes are mirrored into the motion
-            // batch above instead of reaching this arm.
+            KeyEvent.KEYCODE_BUTTON_L2 -> ControllerKey.BUTTON7
+            KeyEvent.KEYCODE_BUTTON_R2 -> ControllerKey.BUTTON8
+            // The digital mirror for axis-less pads never reaches here:
+            // mirrorDigitalTrigger consumes those keys into the motion
+            // batch above. Keys arriving here drive the trigger buttons
+            // (bindings, shortcuts) while the motion axes keep driving
+            // the analog store plus shoulder doubling; the session
+            // pressed set dedups the dual delivery into one press.
             KeyEvent.KEYCODE_BUTTON_MODE -> ControllerKey.GUIDE
             KeyEvent.KEYCODE_BUTTON_THUMBL -> ControllerKey.L3
             KeyEvent.KEYCODE_BUTTON_THUMBR -> ControllerKey.R3
