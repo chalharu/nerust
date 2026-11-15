@@ -28,7 +28,9 @@ use projection::project_fresh;
 use vm::with_vm_deps;
 
 #[cfg(not(target_os = "android"))]
+#[cfg(not(target_os = "android"))]
 use vm::resolve_display;
+#[cfg(not(target_os = "android"))]
 use wire::{CaptureSlot, GamepadInfo, KeyboardInfo, ViewPayload};
 // Android-facing surface: the bridge, vault, and save paths name these
 // through `settings_views::`. Only the JNI build (the `android` module)
