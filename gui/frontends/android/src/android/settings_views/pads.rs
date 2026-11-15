@@ -16,8 +16,8 @@ use nerust_gui_viewmodel::settings::SettingsViewModel;
 use nerust_settings_core::{editor::CaptureTarget, i18n::UiText, model::input::DEADZONE_STEPS};
 
 use super::wire::{
-    GamepadInfo, I18n, PLAYER_PORTS, RowWire, SectionWire, button_row, capture_row, encode_target,
-    header_row, info_row, live_for_rank, number_row, player_label, toggle_row,
+    GamepadInfo, I18n, NumberParams, PLAYER_PORTS, RowWire, SectionWire, button_row, capture_row,
+    encode_target, header_row, info_row, live_for_rank, number_row, player_label, toggle_row,
 };
 use nerust_gui_viewmodel::settings::labels::pad_label;
 
@@ -109,14 +109,16 @@ fn pad_rank_section(
             &format!("{pad_id}.deadzone"),
             i18n.text(UiText::Deadzone),
             i18n.text(UiText::DescDeadzone),
-            i64::from(port.map_or(
-                nerust_settings_core::model::input::DEFAULT_DEADZONE_PERCENT,
-                |pad| pad.deadzone_percent,
-            )),
-            i64::from(DEADZONE_STEPS[1] - DEADZONE_STEPS[0]),
-            i64::from(DEADZONE_STEPS[0]),
-            i64::from(DEADZONE_STEPS[DEADZONE_STEPS.len() - 1]),
-            "%",
+            NumberParams {
+                value: i64::from(port.map_or(
+                    nerust_settings_core::model::input::DEFAULT_DEADZONE_PERCENT,
+                    |pad| pad.deadzone_percent,
+                )),
+                step: i64::from(DEADZONE_STEPS[1] - DEADZONE_STEPS[0]),
+                min: i64::from(DEADZONE_STEPS[0]),
+                max: i64::from(DEADZONE_STEPS[DEADZONE_STEPS.len() - 1]),
+                unit: "%".to_string(),
+            },
         ),
         toggle_row(
             &format!("{pad_id}.dpad"),

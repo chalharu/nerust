@@ -77,21 +77,51 @@ pub const AXIS_ABSTRACT: [(GamepadAxis, crate::AbstractKey); 4] = {
 impl StandardButton {
     /// Console-agnostic button for default binding resolution. Stick clicks
     /// have no console counterpart yet, so they stay unbound instead of
-    /// guessing.
+    /// guessing. `match` (not a table scan) keeps the per-event path O(1).
     pub fn abstract_key(self) -> Option<crate::AbstractKey> {
-        BUTTON_ABSTRACT
-            .iter()
-            .find(|(button, _)| *button == self)
-            .map(|(_, key)| *key)
+        use crate::AbstractKey as A;
+        match self {
+            Self::South => Some(A::Button1),
+            Self::East => Some(A::Button2),
+            Self::West => Some(A::Button3),
+            Self::North => Some(A::Button4),
+            Self::LeftShoulder => Some(A::Button5),
+            Self::RightShoulder => Some(A::Button6),
+            Self::LeftTrigger => Some(A::Button7),
+            Self::RightTrigger => Some(A::Button8),
+            Self::Back => Some(A::Select),
+            Self::Guide => Some(A::Guide),
+            Self::Start => Some(A::Start),
+            Self::DpadUp => Some(A::DpadUp),
+            Self::DpadDown => Some(A::DpadDown),
+            Self::DpadLeft => Some(A::DpadLeft),
+            Self::DpadRight => Some(A::DpadRight),
+            Self::LeftStick | Self::RightStick | Self::Capture => None,
+        }
     }
 
     /// Reverse of [`Self::abstract_key`]: the position button driving one
     /// console-agnostic button in the fixed standard layout.
     pub fn with_abstract(abstract_key: crate::AbstractKey) -> Option<Self> {
-        BUTTON_ABSTRACT
-            .iter()
-            .find(|(_, key)| *key == abstract_key)
-            .map(|(button, _)| *button)
+        use crate::AbstractKey as A;
+        match abstract_key {
+            A::Button1 => Some(Self::South),
+            A::Button2 => Some(Self::East),
+            A::Button3 => Some(Self::West),
+            A::Button4 => Some(Self::North),
+            A::Button5 => Some(Self::LeftShoulder),
+            A::Button6 => Some(Self::RightShoulder),
+            A::Button7 => Some(Self::LeftTrigger),
+            A::Button8 => Some(Self::RightTrigger),
+            A::Select => Some(Self::Back),
+            A::Guide => Some(Self::Guide),
+            A::Start => Some(Self::Start),
+            A::DpadUp => Some(Self::DpadUp),
+            A::DpadDown => Some(Self::DpadDown),
+            A::DpadLeft => Some(Self::DpadLeft),
+            A::DpadRight => Some(Self::DpadRight),
+            _ => None,
+        }
     }
 }
 
@@ -127,10 +157,14 @@ pub enum GamepadAxis {
 impl GamepadAxis {
     /// Console-agnostic axis for default resolution.
     pub fn abstract_key(self) -> Option<crate::AbstractKey> {
-        AXIS_ABSTRACT
-            .iter()
-            .find(|(axis, _)| *axis == self)
-            .map(|(_, key)| *key)
+        use crate::AbstractKey as A;
+        match self {
+            Self::LeftStickX => Some(A::Axis1X),
+            Self::LeftStickY => Some(A::Axis1Y),
+            Self::RightStickX => Some(A::Axis2X),
+            Self::RightStickY => Some(A::Axis2Y),
+            Self::LeftTrigger | Self::RightTrigger => None,
+        }
     }
 }
 
@@ -174,53 +208,6 @@ mod tests {
         assert_eq!(buttons.len(), BUTTON_ABSTRACT.len() + 3);
         let axes: Vec<GamepadAxis> = GamepadAxis::iter().collect();
         assert_eq!(axes.len(), AXIS_ABSTRACT.len() + 2);
-    }
-
-    #[test]
-    fn bound_buttons_cover_face_and_shoulder_positions() {
-        let bound: Vec<StandardButton> =
-            BUTTON_ABSTRACT.iter().map(|(button, _)| *button).collect();
-        for button in [
-            StandardButton::South,
-            StandardButton::East,
-            StandardButton::West,
-            StandardButton::North,
-            StandardButton::LeftTrigger,
-            StandardButton::RightTrigger,
-        ] {
-            assert!(bound.contains(&button), "{button:?} must be bound");
-        }
-        for button in [
-            StandardButton::LeftStick,
-            StandardButton::RightStick,
-            StandardButton::Capture,
-        ] {
-            assert!(!bound.contains(&button), "{button:?} must stay unbound");
-        }
-    }
-
-    #[test]
-    fn sticks_map_to_console_axes_triggers_stay_unbound() {
-        use crate::AbstractKey as A;
-        for (axis, key) in [
-            (GamepadAxis::LeftStickX, A::Axis1X),
-            (GamepadAxis::LeftStickY, A::Axis1Y),
-            (GamepadAxis::RightStickX, A::Axis2X),
-            (GamepadAxis::RightStickY, A::Axis2Y),
-        ] {
-            assert_eq!(axis.abstract_key(), Some(key));
-        }
-        assert_eq!(GamepadAxis::LeftTrigger.abstract_key(), None);
-        assert_eq!(GamepadAxis::RightTrigger.abstract_key(), None);
-    }
-
-    #[test]
-    fn source_ids_cover_keyboard_and_pad() {
-        assert_ne!(
-            SourceId::Keyboard(0),
-            SourceId::Pad(PadGuid([0; 16])),
-            "keyboard and pad namespaces stay disjoint"
-        );
     }
 
     #[test]

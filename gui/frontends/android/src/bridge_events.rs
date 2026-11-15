@@ -505,20 +505,6 @@ fn lookup<V: Copy>(table: &[(&str, V)], key: &str) -> Option<V> {
         .map(|(_, value)| *value)
 }
 
-/// Typed controller-axis mapping: SDL-style names to normalized axes.
-/// Test-only parity anchor for the schema (see
-/// `controller_axis_table_matches_schema`): the motion dispatch resolves
-/// pairs directly, this table names the wire vocabulary in one place.
-#[cfg(test)]
-pub(crate) const CONTROLLER_AXIS_TABLE: &[(&str, GamepadAxis)] = &[
-    ("left_x", GamepadAxis::LeftStickX),
-    ("left_y", GamepadAxis::LeftStickY),
-    ("right_x", GamepadAxis::RightStickX),
-    ("right_y", GamepadAxis::RightStickY),
-    ("trigger_l", GamepadAxis::LeftTrigger),
-    ("trigger_r", GamepadAxis::RightTrigger),
-];
-
 /// Decode one raw bridge string: only v1 JSON decodes, never a silent drop.
 pub(crate) fn decode_frontend_event(raw: &str) -> Option<FrontendEvent> {
     if !raw.trim_start().starts_with('{') {
@@ -802,11 +788,11 @@ mod tests {
         }
     }
 
-    /// Axis parity: the decoder table and the schema motion properties
-    /// list exactly the same axes, and every one round-trips in a batch.
+    /// Axis parity: the schema motion properties list exactly the axes the
+    /// decoder resolves, and every one round-trips in a batch.
     #[test]
-    fn controller_axis_table_matches_schema() {
-        use super::{CONTROLLER_AXIS_TABLE, decode_frontend_event};
+    fn controller_axes_match_schema() {
+        use super::decode_frontend_event;
         use nerust_input_traits::GamepadAxis;
         let doc: serde_json::Value = serde_json::from_str(include_str!("../bridge_events.v1.json"))
             .expect("bridge schema must parse");
@@ -822,10 +808,18 @@ mod tests {
         .into_iter()
         .filter(|name| props[name].get("type").and_then(|kind| kind.as_str()) == Some("number"))
         .collect();
-        assert_eq!(schema_axes.len(), CONTROLLER_AXIS_TABLE.len());
-        for (name, axis) in CONTROLLER_AXIS_TABLE {
+        let expected: [(&str, GamepadAxis); 6] = [
+            ("left_x", GamepadAxis::LeftStickX),
+            ("left_y", GamepadAxis::LeftStickY),
+            ("right_x", GamepadAxis::RightStickX),
+            ("right_y", GamepadAxis::RightStickY),
+            ("trigger_l", GamepadAxis::LeftTrigger),
+            ("trigger_r", GamepadAxis::RightTrigger),
+        ];
+        assert_eq!(schema_axes.len(), expected.len());
+        for (name, axis) in expected {
             assert!(
-                schema_axes.contains(name),
+                schema_axes.contains(&name),
                 "schema is missing controller axis {name}"
             );
             let raw = format!(
@@ -835,7 +829,7 @@ mod tests {
                 decode_frontend_event(&raw),
                 Some(FrontendEvent::MenuBatch(vec![MenuAction::AnalogInput {
                     device_id: 3,
-                    axis: *axis,
+                    axis,
                     value: 0.5,
                 }])),
                 "axis {name} must round-trip"
@@ -859,21 +853,23 @@ mod tests {
                 },
             ])),
         );
-        for raw in [
-            format!(
-                r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"motion","device_id":3,"left_x":1.5}}"#
-            ),
-            format!(
-                r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"motion","device_id":3}}"#
-            ),
-            format!(r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"motion"}}"#),
-        ] {
-            assert_eq!(decode_frontend_event(&raw), None);
-        }
         assert_eq!(
-            GamepadAxis::LeftStickX,
-            CONTROLLER_AXIS_TABLE[0].1,
-            "axis order stays SDL-canonical"
+            decode_frontend_event(&format!(
+                r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"motion","device_id":3,"left_x":1.5}}"#
+            )),
+            None
+        );
+        assert_eq!(
+            decode_frontend_event(&format!(
+                r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"motion","device_id":3}}"#
+            )),
+            None
+        );
+        assert_eq!(
+            decode_frontend_event(&format!(
+                r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"motion"}}"#
+            )),
+            None
         );
     }
     /// Key parity: the decoder table and the schema key enum list

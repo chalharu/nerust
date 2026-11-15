@@ -429,8 +429,8 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         ),
         UiText::CapturePrompt => ("Press a key…", "キーを押してください…"),
         UiText::CapturePromptPad => (
-            "Press a pad button: face, shoulders, triggers, sticks, Start, Back, Guide, Capture.",
-            "A/B/X/Y・LB/RB/LT/RT・スティック押し込み・Start・Back・Guide・キャプチャーのいずれかを押してください",
+            "Press a pad button. Squeeze an analog trigger slowly: half-press captures, full-press plays.",
+            "パッドのボタンを押してください。アナログトリガーはゆっくり半押しで割当、全押しはプレイ用です",
         ),
         UiText::CapturePromptDpadOnly => (
             "No keyboard connected. Only the dpad binds here.",
@@ -646,22 +646,22 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
             "Stick drift guard. 0 disables.",
             "スティックの遊び。0で無効",
         ),
-        UiText::DpadSource => ("Hat switch", "ハットスイッチ"),
+        UiText::DpadSource => ("D-pad source", "十字キー入力"),
         UiText::DescDpadSource => (
-            "Off parks the hat; sticks still drive.",
+            "Off disables the hat; sticks still drive.",
             "オフでハット無効。スティックは有効",
         ),
         UiText::DescGamepadRadio => (
-            "Which pad is assigned to this player. Its settings open from the gear icon.",
-            "このプレイヤーに割り当てるパッド。詳細設定は歯車アイコンから",
+            "Which pad is assigned to this player. Its settings open from the Details button.",
+            "このプレイヤーに割り当てるパッド。詳細設定は詳細ボタンから",
         ),
         UiText::DescGamepadGear => (
-            "Deadzone, hat switch, buttons for this pad.",
-            "このパッドの遊び・ハットスイッチ・ボタン",
+            "Deadzone, d-pad source, buttons for this pad.",
+            "このパッドの遊び・十字キー入力・ボタン",
         ),
         UiText::DescPadReset => (
-            "Clears deadzone, hat switch, buttons. Keeps the slot.",
-            "遊び・ハットスイッチ・ボタンを消去。スロットは保持",
+            "Clears deadzone, d-pad source, buttons. Keeps the slot.",
+            "遊び・十字キー入力・ボタンを消去。スロットは保持",
         ),
         UiText::DescNoGamepads => (
             "Connect a USB or Bluetooth gamepad.",

@@ -9,6 +9,17 @@ use nerust_settings_core::model::input::{
 
 use crate::session::{KeyboardShortcut, SessionHandle, field_press::FieldSource};
 
+/// Routing context for one axis sample: order index, assigned slot, and the
+/// precomputed policy flags. Bundled so the per-event path stays under the
+/// argument cap without re-walking the order table.
+#[derive(Clone, Copy)]
+struct SubstituteCtx {
+    index: Option<usize>,
+    slot: Option<usize>,
+    trigger_alias: bool,
+    sticks_as_dpad: [bool; 2],
+}
+
 impl SessionHandle {
     pub fn touch_overlay_model(&self, revision: u64) -> TouchOverlayModel {
         build_touch_overlay(revision, &self.input.current_assignments)
@@ -486,7 +497,7 @@ impl SessionHandle {
         // row read this instead of re-scanning `pad_order`. Routing needs
         // no lookup: the policy cache already follows the assignments.
         let index = self.input.pads.pad_index(source);
-        index.and_then(|i| self.slot_for_pad_index(i))?;
+        let slot = index.and_then(|i| self.slot_for_pad_index(i))?;
         // Per-pad deadzone from the rebind snapshot: sticks vary per
         // unit, so the pad's own row tunes it. Unmapped sources fall
         // back to the default.
@@ -501,9 +512,12 @@ impl SessionHandle {
             source,
             axis,
             value,
-            index,
-            self.input.trigger_alias,
-            self.input.stick_substitute,
+            SubstituteCtx {
+                index,
+                slot: Some(slot),
+                trigger_alias: self.input.trigger_alias,
+                sticks_as_dpad: self.input.stick_substitute,
+            },
         );
         self.sync_trigger_button(source, axis, value)
     }
@@ -624,11 +638,8 @@ impl SessionHandle {
         source: SourceId,
         axis: GamepadAxis,
         value: f32,
-        index: Option<usize>,
-        trigger_alias: bool,
-        sticks_as_dpad: [bool; 2],
+        ctx: SubstituteCtx,
     ) {
-        let slot = index.and_then(|i| self.slot_for_pad_index(i));
         if let Some((ax, ay)) = Self::stick_pair_axes(axis) {
             // The current value is already stored: re-resolve the pair so
             // both holders converge instead of stranding on stale state.
@@ -649,24 +660,26 @@ impl SessionHandle {
             let (mut wx, mut wy) = Self::stick_pair_substitutes(x, y);
             let left = ax == GamepadAxis::LeftStickX;
             if !(if left {
-                sticks_as_dpad[0]
+                ctx.sticks_as_dpad[0]
             } else {
-                sticks_as_dpad[1]
+                ctx.sticks_as_dpad[1]
             }) {
                 wx = None;
                 wy = None;
             }
-            self.sync_substitute_holder(source, ax, wx, index, slot);
-            self.sync_substitute_holder(source, ay, wy, index, slot);
+            self.sync_substitute_holder(source, ax, wx, ctx.index, ctx.slot);
+            self.sync_substitute_holder(source, ay, wy, ctx.index, ctx.slot);
             return;
         }
         // A stick the console actually drives stays raw (the analog still
         // stores above); only substitutes park here.
-        let mut want = slot.and(Self::substitute_button(axis, value, trigger_alias));
+        let mut want = ctx
+            .slot
+            .and(Self::substitute_button(axis, value, ctx.trigger_alias));
         // Trigger hysteresis: a held shoulder survives down to the release
         // band so epsilon jitter at the press edge cannot flap.
         if want.is_none()
-            && trigger_alias
+            && ctx.trigger_alias
             && matches!(axis, GamepadAxis::LeftTrigger | GamepadAxis::RightTrigger)
             && value >= Self::TRIGGER_RELEASE
             && let Some(held) = self
@@ -678,7 +691,7 @@ impl SessionHandle {
         {
             want = Some(held);
         }
-        self.sync_substitute_holder(source, axis, want, index, slot);
+        self.sync_substitute_holder(source, axis, want, ctx.index, ctx.slot);
     }
 
     /// One digital commit through the pad's assigned slot: face buttons
@@ -752,14 +765,14 @@ impl SessionHandle {
         if let Some(override_) = resolved {
             let (attachment, control) = (override_.attachment, override_.control);
             let Some(field) = self.resolve_field(attachment, control) else {
-                if pressed {
+                if pressed && log::log_enabled!(log::Level::Debug) {
                     log::debug!(
                         "pad override without a live field: {attachment}.{control} from {button:?}"
                     );
                 }
                 return;
             };
-            if pressed {
+            if pressed && log::log_enabled!(log::Level::Debug) {
                 log::debug!(
                     "pad override drives field {field}: {attachment}.{control} from {button:?}"
                 );

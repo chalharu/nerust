@@ -259,19 +259,11 @@ pub(crate) fn live_for_rank<'a>(
 /// Stable session order for the display list: vault order follows the
 /// session first-seen mirror (refreshed on every connect event), so Pad N
 /// names session pad N even after a disconnect/reconnect cycle compacts
-/// the scan.
+/// the scan. Linear scan: at most a handful of pads, no map needed.
 pub(crate) fn sort_gamepads_by_order(gamepads: &mut [GamepadInfo], pad_order: &[String]) {
-    let rank: std::collections::HashMap<&str, usize> = pad_order
-        .iter()
-        .enumerate()
-        .map(|(index, known)| {
-            let key: &str = known;
-            (key, index)
-        })
-        .collect();
     gamepads.sort_by_key(|info| {
         let bare = bare_member(&info.member);
-        rank.get(bare).copied().unwrap_or(usize::MAX)
+        rank_for_member(pad_order, bare).unwrap_or(usize::MAX)
     });
 }
 
@@ -436,30 +428,31 @@ pub(super) fn toggle_row(
     row
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "Wire builder: slider bounds read as one tuple"
-)]
+/// Slider bounds for [`number_row`]: one tuple instead of six params.
+pub(crate) struct NumberParams {
+    pub value: i64,
+    pub step: i64,
+    pub min: i64,
+    pub max: i64,
+    pub unit: String,
+}
+
 pub(super) fn number_row(
     key: &str,
     label: String,
     description: String,
-    value: i64,
-    step: i64,
-    min: i64,
-    max: i64,
-    unit: &str,
+    params: NumberParams,
 ) -> RowWire {
     RowWire {
         key: key.to_string(),
         label,
         description,
         kind: RowKind::Number,
-        number: value,
-        step,
-        min,
-        max,
-        unit: unit.to_string(),
+        number: params.value,
+        step: params.step,
+        min: params.min,
+        max: params.max,
+        unit: params.unit,
         ..RowWire::new(RowKind::Number)
     }
 }
@@ -533,6 +526,24 @@ pub(super) fn button_row(key: &str, label: String, description: String) -> RowWi
 /// module so projection and capture share it without a module cycle.
 pub(super) fn capture_open(keyboards: &[KeyboardInfo], gamepads: &[GamepadInfo]) -> bool {
     !keyboards.is_empty() || !gamepads.is_empty()
+}
+
+/// Wire form of one capture target: one struct, one parse. Lives here next
+/// to [`encode_target`] so the pair cannot skew; `commands` decodes it
+/// with the factory registry.
+#[derive(serde::Deserialize)]
+pub(super) struct WireTarget {
+    pub kind: String,
+    #[serde(default)]
+    pub action: Option<nerust_settings_core::model::input::ShortcutAction>,
+    #[serde(default)]
+    pub system: Option<String>,
+    #[serde(default)]
+    pub attachment: Option<String>,
+    #[serde(default)]
+    pub control: Option<String>,
+    #[serde(default)]
+    pub pad: Option<usize>,
 }
 
 /// Opaque capture target: newline-free JSON the key must not parse.

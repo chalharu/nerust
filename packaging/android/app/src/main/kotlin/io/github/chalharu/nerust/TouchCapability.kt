@@ -61,6 +61,7 @@ private val GAMEPAD_BUTTON_CODES =
         KeyEvent.KEYCODE_BUTTON_C,
         KeyEvent.KEYCODE_BUTTON_X,
         KeyEvent.KEYCODE_BUTTON_Y,
+        KeyEvent.KEYCODE_BUTTON_Z,
         KeyEvent.KEYCODE_BUTTON_L1,
         KeyEvent.KEYCODE_BUTTON_R1,
         KeyEvent.KEYCODE_BUTTON_L2,

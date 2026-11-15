@@ -47,7 +47,7 @@ class SettingsActivity :
      * trigger must not capture the instant its row opens; only a
      * below → at/above crossing forwards. Main thread only (dispatch),
      * so no synchronization is needed. */
-    private val captureTriggerLast = mutableMapOf<Int, Pair<Float, Float>>()
+    private val captureTriggerLast = mutableMapOf<String, Pair<Float, Float>>()
 
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(AppLocale.wrap(newBase))
@@ -280,14 +280,22 @@ class SettingsActivity :
         ) {
             val triggerL = event.getAxisValue(MotionEvent.AXIS_LTRIGGER)
             val triggerR = event.getAxisValue(MotionEvent.AXIS_RTRIGGER)
-            val last = captureTriggerLast[event.deviceId] ?: (0f to 0f)
-            captureTriggerLast[event.deviceId] = triggerL to triggerR
+            // Descriptor identity: device ids recycle on reconnect, so the
+            // edge cache keys by descriptor (same key Rust rank-gates on).
+            val descriptorKey =
+                InputDevice.getDevice(event.deviceId)?.descriptor ?: "id:${event.deviceId}"
+            val last = captureTriggerLast[descriptorKey] ?: (0f to 0f)
+            captureTriggerLast[descriptorKey] = triggerL to triggerR
             val crossed =
                 (triggerL >= TRIGGER_CAPTURE_PRESS && last.first < TRIGGER_CAPTURE_PRESS) ||
                     (triggerR >= TRIGGER_CAPTURE_PRESS && last.second < TRIGGER_CAPTURE_PRESS)
             if (crossed) {
-                val padDescriptor = InputDevice.getDevice(event.deviceId)?.descriptor
-                if (routeSettingsMotionEvent(padDescriptor, triggerL, triggerR)) return true
+                if (routeSettingsMotionEvent(
+                        InputDevice.getDevice(event.deviceId)?.descriptor,
+                        triggerL,
+                        triggerR,
+                    )
+                ) return true
             }
         }
         return super.onGenericMotionEvent(event)

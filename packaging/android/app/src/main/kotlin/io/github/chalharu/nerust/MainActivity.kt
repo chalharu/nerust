@@ -284,7 +284,9 @@ class MainActivity :
             // Capture/share/create (Switch capture, Xbox share, PS create):
             // one position button like the rest, so capture, gameplay
             // overrides, and shortcuts all resolve through the same path.
+            // `BUTTON_Z` (101) is the adaptor fallback for the same press.
             KeyEvent.KEYCODE_BUTTON_C -> ControllerKey.CAPTURE
+            KeyEvent.KEYCODE_BUTTON_Z -> ControllerKey.CAPTURE
             KeyEvent.KEYCODE_BUTTON_START -> ControllerKey.START
             KeyEvent.KEYCODE_BUTTON_SELECT -> ControllerKey.SELECT
             KeyEvent.KEYCODE_DPAD_UP -> ControllerKey.UP
@@ -411,7 +413,14 @@ class MainActivity :
         var crossed: MutableMap<String, Float>? = null
         for (i in MOTION_AXIS_NAMES.indices) {
             val axis = MOTION_AXIS_NAMES[i]
-            val value = event.getAxisValue(MOTION_AXIS_IDS[i])
+            var value = event.getAxisValue(MOTION_AXIS_IDS[i])
+            // Right-stick alias: pads reporting RX/RY never ship Z/RZ, so
+            // fall back per sample. The capability gate already counts both.
+            if ((axis == ControllerAxis.RIGHT_X || axis == ControllerAxis.RIGHT_Y) && value == 0f) {
+                val alias =
+                    if (axis == ControllerAxis.RIGHT_X) MotionEvent.AXIS_RX else MotionEvent.AXIS_RY
+                value = event.getAxisValue(alias)
+            }
             val last = axes[axis]
             if (last != null && kotlin.math.abs(value - last) < CONTROLLER_AXIS_EPSILON) continue
             if (last == null && value == 0f) continue

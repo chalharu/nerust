@@ -28,7 +28,7 @@ use super::vm::{
 };
 use super::wire::{
     CaptureSlot, GamepadInfo, I18n, KeyboardInfo, PLAYER_PORTS, Projection, RowKind, RowWire,
-    SectionWire, ViewPayload, WireCommand, WireOp, choice, find_row, range_value,
+    SectionWire, ViewPayload, WireCommand, WireOp, WireTarget, choice, find_row, range_value,
     sort_gamepads_by_order, toggle_value,
 };
 
@@ -1041,24 +1041,6 @@ fn apply_android_local(
         _ => return Ok(false),
     }
     Ok(true)
-}
-
-/// Wire form of one capture target: one struct, one parse. `system`
-/// resolves through the factory registry (unknown systems stay loud);
-/// missing fields fail through serde instead of per-field helpers.
-#[derive(serde::Deserialize)]
-struct WireTarget {
-    kind: String,
-    #[serde(default)]
-    action: Option<nerust_settings_core::model::input::ShortcutAction>,
-    #[serde(default)]
-    system: Option<String>,
-    #[serde(default)]
-    attachment: Option<String>,
-    #[serde(default)]
-    control: Option<String>,
-    #[serde(default)]
-    pad: Option<usize>,
 }
 
 /// Opaque capture target: the row string parses exactly once per command;
