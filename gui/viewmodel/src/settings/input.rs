@@ -1,9 +1,7 @@
 use std::{rc::Rc, sync::Arc};
 
 use nerust_core_traits::identity::SystemId;
-use nerust_input_traits::{
-    AttachmentId, ControllerProfile, SlotInfo, StandardButton,
-};
+use nerust_input_traits::{AttachmentId, ControllerProfile, SlotInfo, StandardButton};
 use nerust_settings_core::{
     bindings::descriptors::KeyboardBindingDescriptor,
     bindings::{conflicting_keys, descriptors::keyboard_binding_sections},
@@ -314,9 +312,12 @@ fn project_binding_row(
     // button driving this control's abstract, if the console maps one.
     // Single shared traversal over the draft assignments, so swapped
     // controller profiles track here exactly as in gameplay.
-    let pad_default =
-        nerust_input_traits::abstract_for_attachment(assignments, descriptor.attachment, descriptor.control)
-            .and_then(StandardButton::with_abstract);
+    let pad_default = nerust_input_traits::abstract_for_attachment(
+        assignments,
+        descriptor.attachment,
+        descriptor.control,
+    )
+    .and_then(StandardButton::with_abstract);
     BindingRowView {
         target,
         label: descriptor.control_label.to_string(),

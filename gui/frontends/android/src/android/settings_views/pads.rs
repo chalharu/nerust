@@ -15,7 +15,7 @@ use nerust_settings_core::{
 
 use super::wire::{
     GamepadInfo, I18n, PLAYER_PORTS, RowWire, SectionWire, button_row, capture_row, encode_target,
-    group_row, header_row, info_row, number_row, player_label, toggle_row,
+    header_row, info_row, number_row, player_label, toggle_row,
 };
 
 /// Per-pad settings screens: one `pad.<n>` screen per connected pad
@@ -48,25 +48,17 @@ pub(super) fn build_pad_sections(
         // this pad can never drive, and edits there land overrides
         // that gameplay parks, so they only mislead.
         let slot = port.and_then(|pad| pad.slot);
-        // Tapping the slot jumps to the Devices screen that owns the
-        // assignment radio: the pad screen shows mapping, Devices
-        // shows belonging. Unassigned pads keep the guidance row below
-        // instead: no single Devices screen owns them.
+        // Assignment readout: the player this pad drives plus the pad's
+        // own name. No drill-down: the Devices gear is the single path
+        // into pad screens, so the graph stays a tree and the Kotlin
+        // breadcrumb walk needs no cycle defense. Back returns.
         let slot_row = match slot.filter(|slot| PLAYER_PORTS.get(*slot).is_some()) {
-            // Title names the player (the assignment this screen
-            // drives); the text confirms which pad this screen is.
-            // The old title said "Gamepad" while the value said the
-            // player, answering neither "which" nor "whose".
-            Some(slot) => {
-                let mut row = group_row(
-                    &format!("{pad_id}.slot"),
-                    player_label(slot, i18n),
-                    String::new(),
-                    &format!("devices.{}", PLAYER_PORTS[slot]),
-                );
-                row.text = info.name.clone();
-                row
-            }
+            Some(slot) => info_row(
+                &format!("{pad_id}.slot"),
+                player_label(slot, i18n),
+                String::new(),
+                info.name.clone(),
+            ),
             // Unassigned pads name the same vocabulary with no player:
             // the state, not the category, is what changed.
             None => info_row(

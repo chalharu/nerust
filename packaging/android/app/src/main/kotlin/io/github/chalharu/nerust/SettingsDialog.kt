@@ -1022,49 +1022,25 @@ private fun LazyListScope.settingsSearchResults(
     }
 }
 
-/** True when linking `child` under `sectionId` would close a parent
- * cycle (the child is already an ancestor of the section). Cross-links
- * run both ways (pad screen <-> Devices radio); the first spanning link
- * wins and later cycle-closing edges drop, so breadcrumb walks end. */
-internal fun closesParentCycle(
-    parents: Map<String, Triple<String, String, String>>,
-    sectionId: String,
-    child: String,
-): Boolean {
-    var probe: String? = sectionId
-    val seen = mutableSetOf<String>()
-    while (probe != null && seen.add(probe)) {
-        if (probe == child) return true
-        probe = parents[probe]?.first
-    }
-    return false
-}
-
-/** Parent-link target of one row: group drill-downs and device Details
- * buttons both climb one level. Anything else never parents anyone. */
-internal fun parentLinkTarget(row: SettingsRow): String? =
-    when {
-        row.kind == "group" && row.target.isNotBlank() -> row.target
-        row.detailTarget.isNotBlank() -> row.detailTarget
-        else -> null
-    }
-
 /** Child section id -> (parent section id, parent label, via row label).
- * Shared by search breadcrumbs and unsaved-dot ancestor propagation.
- * Cross-links run both ways (pad screen <-> Devices radio), so the edge
- * that would close a cycle is dropped: the first spanning link wins and
- * breadcrumb walks always terminate. */
+ * Group rows and device Details buttons both climb one level. Shared by
+ * search breadcrumbs and unsaved-dot ancestor propagation. The Rust
+ * projection emits a tree — the Devices gear is the single path into pad
+ * screens, pads never link back — so a plain walk always terminates and
+ * the first link wins. */
 internal fun parentMap(sections: List<SettingsSection>): Map<String, Triple<String, String, String>> =
     buildMap {
+        val ids = sections.map { it.id }.toSet()
         for (section in sections) {
             for (row in section.rows) {
-                val child = parentLinkTarget(row) ?: continue
-                if (sections.none { it.id == child }) continue
-                // Drop the edge that would loop pad <-> Devices and hang
-                // the breadcrumb walk on the UI thread.
-                if (!closesParentCycle(this, section.id, child)) {
-                    put(child, Triple(section.id, section.label, row.label))
-                }
+                val child =
+                    when {
+                        row.kind == "group" && row.target.isNotBlank() -> row.target
+                        row.detailTarget.isNotBlank() -> row.detailTarget
+                        else -> continue
+                    }
+                if (child !in ids || child in this) continue
+                put(child, Triple(section.id, section.label, row.label))
             }
         }
     }
@@ -1157,17 +1133,15 @@ private fun screenSubtitle(
     }
 
 /** Breadcrumb chain for a hidden section: parent labels up to the
- * visible category, shared by search hits. The visited set is defense
- * in depth next to the cycle-safe parent map: no map shape may hang
- * the UI thread here. */
+ * visible category, shared by search hits. The projection is a tree,
+ * so the climb ends at the top level. */
 internal fun breadcrumbTrail(
     parents: Map<String, Triple<String, String, String>>,
     sectionId: String,
 ): String {
     val chain = mutableListOf<String>()
-    val seen = mutableSetOf<String>()
     var current: String? = sectionId
-    while (current != null && seen.add(current)) {
+    while (current != null) {
         val parent = parents[current] ?: break
         chain.add(0, parent.second)
         current = parent.first

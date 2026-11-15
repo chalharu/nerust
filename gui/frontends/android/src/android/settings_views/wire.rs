@@ -650,7 +650,10 @@ pub(super) fn capture_open(keyboards: &[KeyboardInfo], gamepads: &[GamepadInfo])
 /// capture row. Shortcuts carry none (the encoder drops it); bindings
 /// always do, so there is no fallback to invent.
 pub(super) fn target_system(target: &CaptureTarget) -> String {
-    target.system_id().map(|system| system.to_string()).unwrap_or_default()
+    target
+        .system_id()
+        .map(|system| system.to_string())
+        .unwrap_or_default()
 }
 
 /// Opaque capture target: newline-free JSON the key must not parse.

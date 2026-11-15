@@ -3180,10 +3180,11 @@ fn keys_reset_keeps_pad_overrides() {
 }
 
 #[test]
-fn assigned_slot_row_links_to_its_devices_screen() {
-    // The slot row answers "whose pad" and jumps to the Devices screen
-    // that owns the assignment radio: mapping lives here, belonging
-    // there. Parked pads keep a plain readout plus the guidance row.
+fn assigned_slot_row_reads_its_assignment() {
+    // The slot row answers "whose pad" as a plain readout: the Devices
+    // gear is the single path into pad screens, so the graph stays a
+    // tree (Back returns). Parked pads keep the same shape with empty
+    // state.
     let (mut snapshot, _) = test_payload();
     let pads = two_pads();
     // Defaults park Pad A on player 1.
@@ -3194,11 +3195,10 @@ fn assigned_slot_row_links_to_its_devices_screen() {
         .find(|section| section.id == "pad.1")
         .and_then(|section| section.rows.iter().find(|row| row.key == "pad.1.slot"))
         .expect("pad.1 slot row exists");
-    assert_eq!(slot.kind, RowKind::Group, "assigned slot navigates");
-    assert_eq!(slot.target, "devices.p1", "slot jumps to its radio");
+    assert_eq!(slot.kind, RowKind::Info, "assigned slot stays put");
     assert_eq!(slot.label, "Player 1", "slot names its player");
     assert_eq!(slot.text, "Pad A", "slot confirms whose screen this is");
-    // Parking the pad degrades the row to a readout.
+    // Parking the pad keeps the row as a readout with empty state.
     set_with_pads(&mut snapshot, &pads, "devices.p1.gamepad", 0, 0);
     let parked = pad_payload(&snapshot, &pads);
     let slot = parked

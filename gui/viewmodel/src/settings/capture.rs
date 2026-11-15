@@ -133,7 +133,6 @@ fn project_view(state: &super::EditorState) -> CaptureStateView {
 #[cfg(test)]
 mod tests {
     use nerust_input_traits::Key;
-    use nerust_settings_core::i18n::UiText;
     use nerust_settings_core::model::input::ShortcutAction;
 
     use super::CaptureTarget;

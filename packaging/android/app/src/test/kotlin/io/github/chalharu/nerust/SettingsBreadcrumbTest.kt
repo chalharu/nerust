@@ -3,11 +3,9 @@ package io.github.chalharu.nerust
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/** Regression: the pad screen and its Devices radio link to each other,
- * so a naive parent map cycles pad <-> Devices and the search breadcrumb
- * walk never ends (UI-thread hang on any search hit while an assigned
- * pad is connected). The map must drop cycle-closing edges and the walk
- * itself must carry a visited set. */
+/** The projection is a tree: the Devices gear is the single path into
+ * pad screens, pads never link back, so the parent map has one parent
+ * per child and the breadcrumb walk ends at the top level. */
 class SettingsBreadcrumbTest {
     private fun groupRow(
         key: String,
@@ -27,7 +25,7 @@ class SettingsBreadcrumbTest {
             target = target,
         )
 
-    private fun cyclicPadFixture(): List<SettingsSection> =
+    private fun treePadFixture(): List<SettingsSection> =
         listOf(
             SettingsSection(
                 id = "controllers",
@@ -59,27 +57,22 @@ class SettingsBreadcrumbTest {
             SettingsSection(
                 id = "pad.1",
                 label = "Pad A",
-                rows =
-                    listOf(
-                        groupRow("pad.1.slot", "Player 1", "devices.p1"),
-                    ),
+                rows = emptyList(),
                 visible = false,
             ),
         )
 
     @Test(timeout = 5000)
-    fun parentMapDropsTheCycleClosingBackLink() {
-        val parents = parentMap(cyclicPadFixture())
-        // The gear (Devices -> pad) wins; the slot back-link closes a
-        // cycle and must be dropped, so Devices keeps its player parent.
+    fun parentMapFollowsTheGearDownToThePad() {
+        val parents = parentMap(treePadFixture())
         assertEquals("devices.p1", parents["pad.1"]?.first)
         assertEquals("player.1", parents["devices.p1"]?.first)
         assertEquals("controllers", parents["player.1"]?.first)
     }
 
     @Test(timeout = 5000)
-    fun breadcrumbTerminatesOnTheCyclicPair() {
-        val parents = parentMap(cyclicPadFixture())
+    fun breadcrumbClimbsToTheVisibleCategory() {
+        val parents = parentMap(treePadFixture())
         assertEquals(
             "Controllers › Player 1 › Devices",
             breadcrumbTrail(parents, "pad.1"),
@@ -91,14 +84,14 @@ class SettingsBreadcrumbTest {
     }
 
     @Test(timeout = 5000)
-    fun breadcrumbTerminatesOnAHandBuiltCycle() {
-        // Defense in depth: even a fully cyclic map must not hang.
-        val parents =
-            mapOf(
-                "a" to Triple("b", "B", ""),
-                "b" to Triple("a", "A", ""),
+    fun firstLinkWinsWhenTwoSectionsClaimOneChild() {
+        val sections = treePadFixture() +
+            SettingsSection(
+                id = "stray",
+                label = "Stray",
+                rows = listOf(groupRow("stray.pad1", "Pad A", "pad.1")),
+                visible = false,
             )
-        breadcrumbTrail(parents, "a")
-        breadcrumbTrail(parents, "b")
+        assertEquals("devices.p1", parentMap(sections)["pad.1"]?.first)
     }
 }
