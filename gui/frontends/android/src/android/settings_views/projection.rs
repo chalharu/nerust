@@ -601,7 +601,7 @@ fn controllers_quick_section(
 /// below covers the whole screen.
 fn overlay_detail_section(
     overlay: &nerust_settings_core::model::local::TouchOverlaySettings,
-    touch_capable: Option<bool>,
+    touch_capable: bool,
     i18n: I18n,
 ) -> SectionWire {
     let mut visibility_row = choice_row(
@@ -615,7 +615,7 @@ fn overlay_detail_section(
         ],
         &overlay.visibility,
     );
-    if touch_capable == Some(false) {
+    if !touch_capable {
         // Terminals without a touch screen can never show the overlay:
         // disable Always/Auto with the reason instead of pretending the
         // choice works and hiding at runtime. Order matches the literal
@@ -803,7 +803,7 @@ fn build_controllers_sections(
     snapshot: &SettingsSnapshot,
     i18n: I18n,
     keyboards: &[KeyboardInfo],
-    touch_capable: Option<bool>,
+    touch_capable: bool,
     gamepads: &[GamepadInfo],
     pad_order: &[String],
 ) -> Vec<SectionWire> {

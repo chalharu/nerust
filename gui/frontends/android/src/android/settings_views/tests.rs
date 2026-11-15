@@ -95,7 +95,7 @@ fn test_payload_with_keyboards(keyboards: &[KeyboardInfo]) -> (SettingsSnapshot,
     with_test_deps(|| {
         let snapshot = default_snapshot();
         let payload: ViewPayload =
-            open_payload(&snapshot, keyboards, None, &[], &[], None).expect("open payload builds");
+            open_payload(&snapshot, keyboards, true, &[], &[], None).expect("open payload builds");
         assert_eq!(payload.schema_version, SETTINGS_SCHEMA_VERSION);
         (snapshot, payload)
     })
@@ -140,6 +140,8 @@ fn apply(
     number: i64,
 ) -> ViewPayload {
     with_test_deps(|| {
+        let mut touch_capable = true;
+
         let command_json = serde_json::to_string(&WireCommand {
             key: key.to_string(),
             index,
@@ -154,7 +156,7 @@ fn apply(
             CommandVault {
                 capture,
                 keyboards,
-                touch_capable: &mut None,
+                touch_capable: &mut touch_capable,
                 gamepads: &mut Vec::new(),
                 system_locale: &mut None,
                 pad_order: &[],
@@ -252,7 +254,7 @@ fn system_locale_resolves_system_default_for_display() {
     ] {
         let snapshot = default_snapshot();
         let label = with_test_deps(|| {
-            let json = open_payload(&snapshot, &test_keyboards(), None, &[], &[], system)
+            let json = open_payload(&snapshot, &test_keyboards(), true, &[], &[], system)
                 .expect("open payload builds");
             let payload: ViewPayload = json;
             payload
@@ -303,7 +305,7 @@ fn language_row_selects_the_draft_choice_not_the_display_copy() {
         open_payload(
             &snapshot,
             &test_keyboards(),
-            None,
+            true,
             &[],
             &[],
             Some(AppLanguage::Japanese),
@@ -329,7 +331,7 @@ fn explicit_japanese_under_ja_system_persists_as_japanese() {
     let mut keyboards = test_keyboards();
     let mut locale = Some(AppLanguage::Japanese);
     let payload: ViewPayload = with_test_deps(|| {
-        open_payload(&snapshot, &keyboards, None, &[], &[], locale).expect("open payload builds")
+        open_payload(&snapshot, &keyboards, true, &[], &[], locale).expect("open payload builds")
     });
     let language = row(&payload, "general.language");
     let japanese = language
@@ -338,6 +340,8 @@ fn explicit_japanese_under_ja_system_persists_as_japanese() {
         .position(|choice| choice.value == serde_json::json!("japanese"))
         .expect("japanese choice exists");
     let next: ViewPayload = with_test_deps(|| {
+        let mut touch_capable = true;
+
         apply_command_to(
             &mut snapshot,
             &serde_json::to_string(&WireCommand {
@@ -351,7 +355,7 @@ fn explicit_japanese_under_ja_system_persists_as_japanese() {
             CommandVault {
                 capture: &mut None,
                 keyboards: &mut keyboards,
-                touch_capable: &mut None,
+                touch_capable: &mut touch_capable,
                 gamepads: &mut Vec::new(),
                 system_locale: &mut locale,
                 pad_order: &[],
@@ -382,6 +386,8 @@ fn display_resolution_never_concretes_the_draft() {
     let mut keyboards = test_keyboards();
     let mut locale = Some(AppLanguage::Japanese);
     let out = with_test_deps(|| {
+        let mut touch_capable = true;
+
         apply_command_to(
             &mut snapshot,
             &serde_json::to_string(&WireCommand {
@@ -395,7 +401,7 @@ fn display_resolution_never_concretes_the_draft() {
             CommandVault {
                 capture: &mut None,
                 keyboards: &mut keyboards,
-                touch_capable: &mut None,
+                touch_capable: &mut touch_capable,
                 gamepads: &mut Vec::new(),
                 system_locale: &mut locale,
                 pad_order: &[],
@@ -424,7 +430,7 @@ fn display_resolution_never_concretes_the_draft() {
         let json = open_payload(
             &snapshot,
             &test_keyboards(),
-            None,
+            true,
             &[],
             &[],
             Some(AppLanguage::Japanese),
@@ -443,6 +449,8 @@ fn display_resolution_never_concretes_the_draft() {
             .expect("english choice exists")
     });
     let out = with_test_deps(|| {
+        let mut touch_capable = true;
+
         apply_command_to(
             &mut snapshot,
             &serde_json::to_string(&WireCommand {
@@ -456,7 +464,7 @@ fn display_resolution_never_concretes_the_draft() {
             CommandVault {
                 capture: &mut None,
                 keyboards: &mut keyboards,
-                touch_capable: &mut None,
+                touch_capable: &mut touch_capable,
                 gamepads: &mut Vec::new(),
                 system_locale: &mut locale,
                 pad_order: &[],
@@ -487,6 +495,8 @@ fn locale_op_upserts_without_mutating_draft() {
     })
     .unwrap();
     let out = with_test_deps(|| {
+        let mut touch_capable = true;
+
         let mut keyboards = test_keyboards();
         apply_command_to(
             &mut snapshot,
@@ -494,7 +504,7 @@ fn locale_op_upserts_without_mutating_draft() {
             CommandVault {
                 capture: &mut None,
                 keyboards: &mut keyboards,
-                touch_capable: &mut None,
+                touch_capable: &mut touch_capable,
                 gamepads: &mut Vec::new(),
                 system_locale: &mut locale,
                 pad_order: &[],
@@ -534,6 +544,8 @@ fn locale_op_upserts_without_mutating_draft() {
         })
         .unwrap();
         with_test_deps(|| {
+            let mut touch_capable = true;
+
             let mut keyboards = test_keyboards();
             assert!(
                 apply_command_to(
@@ -542,7 +554,7 @@ fn locale_op_upserts_without_mutating_draft() {
                     CommandVault {
                         capture: &mut None,
                         keyboards: &mut keyboards,
-                        touch_capable: &mut None,
+                        touch_capable: &mut touch_capable,
                         gamepads: &mut Vec::new(),
                         system_locale: &mut locale,
                         pad_order: &[]
@@ -771,7 +783,7 @@ fn gamepad_alone_reopens_capture() {
     let (_snapshot, payload) = with_test_deps(|| {
         let snapshot = default_snapshot();
         let order = order_of(&gamepads);
-        let json = open_payload(&snapshot, &[], None, &gamepads, &order, None)
+        let json = open_payload(&snapshot, &[], true, &gamepads, &order, None)
             .expect("open payload builds");
         let payload: ViewPayload = json;
         (snapshot, payload)
@@ -815,13 +827,15 @@ fn start_capture_rejected_without_input_device() {
     })
     .unwrap();
     let error = with_test_deps(|| {
+        let mut touch_capable = true;
+
         apply_command_to(
             &mut snapshot,
             &command_json,
             CommandVault {
                 capture: &mut capture,
                 keyboards: &mut Vec::new(),
-                touch_capable: &mut None,
+                touch_capable: &mut touch_capable,
                 gamepads: &mut Vec::new(),
                 system_locale: &mut None,
                 pad_order: &[],
@@ -1038,13 +1052,15 @@ fn phantom_builtin_never_surfaces_without_hardware() {
     })
     .unwrap();
     with_test_deps(|| {
+        let mut touch_capable = true;
+
         apply_command_to(
             &mut snapshot,
             &command_json,
             CommandVault {
                 capture: &mut None,
                 keyboards: &mut keyboards,
-                touch_capable: &mut None,
+                touch_capable: &mut touch_capable,
                 gamepads: &mut Vec::new(),
                 system_locale: &mut None,
                 pad_order: &[],
@@ -1069,6 +1085,8 @@ fn phantom_builtin_never_surfaces_without_hardware() {
         .or_default()
         .push("kbd:usb-1".to_string());
     let off = with_test_deps(|| {
+        let mut touch_capable = true;
+
         apply_command_to(
             &mut snapshot,
             &serde_json::to_string(&WireCommand {
@@ -1082,7 +1100,7 @@ fn phantom_builtin_never_surfaces_without_hardware() {
             CommandVault {
                 capture: &mut None,
                 keyboards: &mut Vec::new(),
-                touch_capable: &mut None,
+                touch_capable: &mut touch_capable,
                 gamepads: &mut Vec::new(),
                 system_locale: &mut None,
                 pad_order: &[],
@@ -1124,13 +1142,15 @@ fn keyboards_op_upserts_enumeration_without_mutating_draft() {
     })
     .unwrap();
     let out = with_test_deps(|| {
+        let mut touch_capable = true;
+
         apply_command_to(
             &mut snapshot,
             &command_json,
             CommandVault {
                 capture: &mut None,
                 keyboards: &mut keyboards,
-                touch_capable: &mut None,
+                touch_capable: &mut touch_capable,
                 gamepads: &mut Vec::new(),
                 system_locale: &mut None,
                 pad_order: &[],
@@ -1176,13 +1196,15 @@ fn gamepads_op_upserts_without_mutating_draft() {
     })
     .unwrap();
     let out = with_test_deps(|| {
+        let mut touch_capable = true;
+
         apply_command_to(
             &mut snapshot,
             &command_json,
             CommandVault {
                 capture: &mut None,
                 keyboards: &mut test_keyboards(),
-                touch_capable: &mut None,
+                touch_capable: &mut touch_capable,
                 gamepads: &mut gamepads,
                 system_locale: &mut None,
                 pad_order: &[],
@@ -1224,6 +1246,8 @@ fn gamepads_op_upserts_without_mutating_draft() {
         })
         .unwrap();
         with_test_deps(|| {
+            let mut touch_capable = true;
+
             assert!(
                 apply_command_to(
                     &mut snapshot,
@@ -1231,7 +1255,7 @@ fn gamepads_op_upserts_without_mutating_draft() {
                     CommandVault {
                         capture: &mut None,
                         keyboards: &mut test_keyboards(),
-                        touch_capable: &mut None,
+                        touch_capable: &mut touch_capable,
                         gamepads: &mut gamepads,
                         system_locale: &mut None,
                         pad_order: &[]
@@ -1268,52 +1292,54 @@ fn overlay_detail_carries_settings_not_status_readouts() {
     );
 }
 
-fn touch_payload(capable: Option<bool>) -> ViewPayload {
+fn touch_payload(capable: bool) -> ViewPayload {
     let (mut snapshot, _) = test_payload();
-    if let Some(value) = capable {
-        let command_json = serde_json::to_string(&WireCommand {
-            key: "device_truth".to_string(),
-            index: 0,
-            number: 0,
-            op: WireOp::DeviceTruth,
-            payload: serde_json::json!({
-                "keyboards": serde_json::to_value(test_keyboards()).unwrap(),
-                "capable": value,
-                "gamepads": [],
-            }),
-        })
-        .unwrap();
-        let mut touch = None;
-        let out = with_test_deps(|| {
-            apply_command_to(
-                &mut snapshot,
-                &command_json,
-                CommandVault {
-                    capture: &mut None,
-                    keyboards: &mut test_keyboards(),
-                    touch_capable: &mut touch,
-                    gamepads: &mut Vec::new(),
-                    system_locale: &mut None,
-                    pad_order: &[],
-                },
-            )
-            .expect("touch op applies")
-        });
-        assert_eq!(touch, capable, "vault records touch capability");
-        return out;
-    }
-    // Unknown capability (old client, unit default): no push arrives,
-    // rows behave as before.
-    let touch = None;
-    with_test_deps(|| {
-        open_payload(&snapshot, &test_keyboards(), touch, &[], &[], None)
-            .expect("open payload builds")
+    let command_json = serde_json::to_string(&WireCommand {
+        key: "device_truth".to_string(),
+        index: 0,
+        number: 0,
+        op: WireOp::DeviceTruth,
+        payload: serde_json::json!({
+            "keyboards": serde_json::to_value(test_keyboards()).unwrap(),
+            "capable": capable,
+            "gamepads": [],
+        }),
     })
+    .unwrap();
+    let mut touch = true;
+    let out = with_test_deps(|| {
+        apply_command_to(
+            &mut snapshot,
+            &command_json,
+            CommandVault {
+                capture: &mut None,
+                keyboards: &mut test_keyboards(),
+                touch_capable: &mut touch,
+                gamepads: &mut Vec::new(),
+                system_locale: &mut None,
+                pad_order: &[],
+            },
+        )
+        .expect("touch op applies")
+    });
+    assert_eq!(touch, capable, "vault records touch capability");
+    out
+}
+
+#[test]
+fn touch_vault_defaults_capable_without_push() {
+    // No push arrives: the vault default (capable) stands in, so rows
+    // behave as before.
+    let (snapshot, _) = test_payload();
+    with_test_deps(|| {
+        open_payload(&snapshot, &test_keyboards(), true, &[], &[], None)
+            .expect("open payload builds")
+    });
 }
 
 #[test]
 fn touchless_terminal_disables_overlay_choices() {
-    let payload = touch_payload(Some(false));
+    let payload = touch_payload(false);
     let visibility = row(&payload, "controls.overlay_visibility");
     assert_eq!(
         visibility.choices.len(),
@@ -1335,8 +1361,8 @@ fn touchless_terminal_disables_overlay_choices() {
 
 #[test]
 fn touch_capable_terminal_keeps_overlay_choices() {
-    for capable in [None, Some(true)] {
-        let payload = touch_payload(capable);
+    {
+        let payload = touch_payload(true);
         let visibility = row(&payload, "controls.overlay_visibility");
         assert!(
             visibility.choices.iter().all(|choice| choice.enabled),
@@ -1361,13 +1387,15 @@ fn reset_section_restores_screen_defaults() {
     })
     .unwrap();
     let out = with_test_deps(|| {
+        let mut touch_capable = true;
+
         apply_command_to(
             &mut snapshot,
             &reset,
             CommandVault {
                 capture: &mut None,
                 keyboards: &mut keyboards,
-                touch_capable: &mut None,
+                touch_capable: &mut touch_capable,
                 gamepads: &mut Vec::new(),
                 system_locale: &mut None,
                 pad_order: &[],
@@ -1411,13 +1439,15 @@ fn every_emitted_reset_key_executes() {
         })
         .unwrap();
         with_test_deps(|| {
+            let mut touch_capable = true;
+
             apply_command_to(
                 &mut snapshot,
                 &reset,
                 CommandVault {
                     capture: &mut None,
                     keyboards: &mut keyboards,
-                    touch_capable: &mut None,
+                    touch_capable: &mut touch_capable,
                     gamepads: &mut Vec::new(),
                     system_locale: &mut None,
                     pad_order: &[],
@@ -1547,7 +1577,7 @@ fn pad_capture_lands_on_shortcut_rows() {
         let keyboards = test_keyboards();
         let truth = Projection {
             keyboards: &keyboards,
-            touch_capable: None,
+            touch_capable: true,
             gamepads: &[],
             pad_order: &[],
             i18n: sys_display(AppLanguage::SystemDefault),
@@ -1584,7 +1614,7 @@ fn pad_capture_lands_on_shortcut_rows() {
             &mut capture,
             Projection {
                 keyboards: &test_keyboards(),
-                touch_capable: None,
+                touch_capable: true,
                 gamepads: &[],
                 pad_order: &[],
                 i18n: sys_display(AppLanguage::SystemDefault),
@@ -1622,7 +1652,7 @@ fn pad_press_on_game_row_leaves_capture_pending() {
         let keyboards = test_keyboards();
         let truth = Projection {
             keyboards: &keyboards,
-            touch_capable: None,
+            touch_capable: true,
             gamepads: &[],
             pad_order: &[],
             i18n: sys_display(AppLanguage::SystemDefault),
@@ -1660,7 +1690,7 @@ fn pad_press_on_game_row_leaves_capture_pending() {
             &mut capture,
             Projection {
                 keyboards: &test_keyboards(),
-                touch_capable: None,
+                touch_capable: true,
                 gamepads: &[],
                 pad_order: &[],
                 i18n: sys_display(AppLanguage::SystemDefault),
@@ -1690,7 +1720,7 @@ fn capture_round_trips_through_hardware_keys() {
         let keyboards = test_keyboards();
         let truth = Projection {
             keyboards: &keyboards,
-            touch_capable: None,
+            touch_capable: true,
             gamepads: &[],
             pad_order: &[],
             i18n: sys_display(AppLanguage::SystemDefault),
@@ -1726,7 +1756,7 @@ fn capture_round_trips_through_hardware_keys() {
             &mut capture,
             Projection {
                 keyboards: &test_keyboards(),
-                touch_capable: None,
+                touch_capable: true,
                 gamepads: &[],
                 pad_order: &[],
                 i18n: sys_display(AppLanguage::SystemDefault),
@@ -1745,7 +1775,7 @@ fn capture_round_trips_through_hardware_keys() {
             &mut capture,
             Projection {
                 keyboards: &test_keyboards(),
-                touch_capable: None,
+                touch_capable: true,
                 gamepads: &[],
                 pad_order: &[],
                 i18n: sys_display(AppLanguage::SystemDefault),
@@ -1764,7 +1794,7 @@ fn capture_round_trips_through_hardware_keys() {
             &mut capture,
             Projection {
                 keyboards: &test_keyboards(),
-                touch_capable: None,
+                touch_capable: true,
                 gamepads: &[],
                 pad_order: &[],
                 i18n: sys_display(AppLanguage::SystemDefault),
@@ -1790,7 +1820,7 @@ fn clear_binding_unbinds_without_keyboard() {
         let keyboards = test_keyboards();
         let truth = Projection {
             keyboards: &keyboards,
-            touch_capable: None,
+            touch_capable: true,
             gamepads: &[],
             pad_order: &[],
             i18n: sys_display(AppLanguage::SystemDefault),
@@ -1829,7 +1859,7 @@ fn number_rows_advertise_vm_accepted_bounds() {
         let keyboards = test_keyboards();
         let truth = Projection {
             keyboards: &keyboards,
-            touch_capable: None,
+            touch_capable: true,
             gamepads: &[],
             pad_order: &[],
             i18n: sys_display(AppLanguage::SystemDefault),
@@ -2130,6 +2160,8 @@ fn pad_screen_sets_deadzone_triggers_and_resets() {
     assert_eq!(snapshot.shared.input.gamepad.pad_ports[0].slot, Some(0));
     let mut capture: CaptureSlot = None;
     let reset = with_test_deps(|| {
+        let mut touch_capable = true;
+
         let mut gamepads = pads.clone();
         let order = order_of(&gamepads);
         apply_command_to(
@@ -2145,7 +2177,7 @@ fn pad_screen_sets_deadzone_triggers_and_resets() {
             CommandVault {
                 capture: &mut capture,
                 keyboards: &mut test_keyboards(),
-                touch_capable: &mut None,
+                touch_capable: &mut touch_capable,
                 gamepads: &mut gamepads,
                 system_locale: &mut None,
                 pad_order: &order,
@@ -2216,13 +2248,15 @@ fn ingest_truth(pads: &[GamepadInfo], pad_order: &[String]) -> Vec<GamepadInfo> 
     })
     .unwrap();
     with_test_deps(|| {
+        let mut touch_capable = true;
+
         apply_command_to(
             &mut snapshot,
             &command_json,
             CommandVault {
                 capture: &mut None,
                 keyboards: &mut test_keyboards(),
-                touch_capable: &mut None,
+                touch_capable: &mut touch_capable,
                 gamepads: &mut gamepads,
                 system_locale: &mut None,
                 pad_order,
@@ -2336,6 +2370,8 @@ fn gamepad_radio_rejects_unknown_pads() {
     })
     .unwrap();
     with_test_deps(|| {
+        let mut touch_capable = true;
+
         let mut keyboards = test_keyboards();
         let mut gamepads = pads;
         let order = order_of(&gamepads);
@@ -2346,7 +2382,7 @@ fn gamepad_radio_rejects_unknown_pads() {
                 CommandVault {
                     capture: &mut None,
                     keyboards: &mut keyboards,
-                    touch_capable: &mut None,
+                    touch_capable: &mut touch_capable,
                     gamepads: &mut gamepads,
                     system_locale: &mut None,
                     pad_order: &order
@@ -2378,6 +2414,8 @@ fn shortcut_clear_is_per_column() {
     // Keyboard Clear keeps the pad twin.
     let clear_key = |snapshot: &mut SettingsSnapshot| {
         with_test_deps(|| {
+            let mut touch_capable = true;
+
             let command_json = serde_json::to_string(&WireCommand {
                 key: "controls.shortcut.TogglePause.kbd".to_string(),
                 index: 0,
@@ -2395,7 +2433,7 @@ fn shortcut_clear_is_per_column() {
                 CommandVault {
                     capture: &mut None,
                     keyboards: &mut keyboards,
-                    touch_capable: &mut None,
+                    touch_capable: &mut touch_capable,
                     gamepads: &mut gamepads,
                     system_locale: &mut None,
                     pad_order: &order,
@@ -2420,6 +2458,8 @@ fn shortcut_clear_is_per_column() {
     // Pad Clear keeps the keyboard twin.
     let clear_pad = |snapshot: &mut SettingsSnapshot| {
         with_test_deps(|| {
+            let mut touch_capable = true;
+
             let command_json = serde_json::to_string(&WireCommand {
                 key: "controls.shortcut.TogglePause.pad".to_string(),
                 index: 0,
@@ -2437,7 +2477,7 @@ fn shortcut_clear_is_per_column() {
                 CommandVault {
                     capture: &mut None,
                     keyboards: &mut keyboards,
-                    touch_capable: &mut None,
+                    touch_capable: &mut touch_capable,
                     gamepads: &mut gamepads,
                     system_locale: &mut None,
                     pad_order: &order,
@@ -2483,7 +2523,7 @@ fn shortcuts_group_per_device_with_split_columns() {
         let json = open_payload(
             &snapshot,
             &test_keyboards(),
-            None,
+            true,
             &pads,
             &order_of(&pads),
             None,
@@ -2550,7 +2590,7 @@ fn shortcuts_hide_keyboard_block_without_keyboard() {
         let json = open_payload(
             &default_snapshot(),
             &[],
-            None,
+            true,
             &pads,
             &order_of(&pads),
             None,
@@ -2628,6 +2668,8 @@ fn stale_disconnect_keeps_live_pad_on_its_rank() {
     let mut capture: CaptureSlot = None;
     let mut gamepads = live.clone();
     let started = with_test_deps(|| {
+        let mut touch_capable = true;
+
         apply_command_to(
             &mut snapshot,
             &serde_json::to_string(&WireCommand {
@@ -2641,7 +2683,7 @@ fn stale_disconnect_keeps_live_pad_on_its_rank() {
             CommandVault {
                 capture: &mut capture,
                 keyboards: &mut test_keyboards(),
-                touch_capable: &mut None,
+                touch_capable: &mut touch_capable,
                 gamepads: &mut gamepads,
                 system_locale: &mut None,
                 pad_order: &order,
@@ -2659,7 +2701,7 @@ fn stale_disconnect_keeps_live_pad_on_its_rank() {
             &mut capture,
             Projection {
                 keyboards: &test_keyboards(),
-                touch_capable: None,
+                touch_capable: true,
                 gamepads: &live,
                 pad_order: &order,
                 i18n: sys_display(AppLanguage::SystemDefault),
@@ -2721,7 +2763,7 @@ fn pad_payload_ordered(
     order: &[String],
 ) -> ViewPayload {
     with_test_deps(|| {
-        open_payload(snapshot, &test_keyboards(), None, pads, order, None)
+        open_payload(snapshot, &test_keyboards(), true, pads, order, None)
             .expect("open payload builds")
     })
 }
@@ -2757,7 +2799,7 @@ fn pad_mapping_capture_lands_override_from_own_pad() {
             &mut capture,
             Projection {
                 keyboards: &test_keyboards(),
-                touch_capable: None,
+                touch_capable: true,
                 gamepads: &pads,
                 pad_order: &order_of(&pads),
                 i18n: sys_display(AppLanguage::SystemDefault),
@@ -2806,6 +2848,8 @@ fn run_with_pads(
     number: i64,
 ) -> ViewPayload {
     with_test_deps(|| {
+        let mut touch_capable = true;
+
         let command_json = serde_json::to_string(&WireCommand {
             key: key.to_string(),
             index,
@@ -2823,7 +2867,7 @@ fn run_with_pads(
             CommandVault {
                 capture,
                 keyboards: &mut keyboards,
-                touch_capable: &mut None,
+                touch_capable: &mut touch_capable,
                 gamepads: &mut gamepads,
                 system_locale: &mut None,
                 pad_order: &order,
@@ -2853,6 +2897,8 @@ fn reset_screen(snapshot: &mut SettingsSnapshot, pads: &[GamepadInfo], key: &str
     })
     .unwrap();
     with_test_deps(|| {
+        let mut touch_capable = true;
+
         let mut keyboards = test_keyboards();
         let mut gamepads = pads.to_vec();
         let order = order_of(&gamepads);
@@ -2862,7 +2908,7 @@ fn reset_screen(snapshot: &mut SettingsSnapshot, pads: &[GamepadInfo], key: &str
             CommandVault {
                 capture: &mut None,
                 keyboards: &mut keyboards,
-                touch_capable: &mut None,
+                touch_capable: &mut touch_capable,
                 gamepads: &mut gamepads,
                 system_locale: &mut None,
                 pad_order: &order,
@@ -2884,6 +2930,8 @@ fn reset_screen_err(snapshot: &mut SettingsSnapshot, pads: &[GamepadInfo], key: 
     })
     .unwrap();
     with_test_deps(|| {
+        let mut touch_capable = true;
+
         let mut keyboards = test_keyboards();
         let mut gamepads = pads.to_vec();
         let order = order_of(&gamepads);
@@ -2893,7 +2941,7 @@ fn reset_screen_err(snapshot: &mut SettingsSnapshot, pads: &[GamepadInfo], key: 
             CommandVault {
                 capture: &mut None,
                 keyboards: &mut keyboards,
-                touch_capable: &mut None,
+                touch_capable: &mut touch_capable,
                 gamepads: &mut gamepads,
                 system_locale: &mut None,
                 pad_order: &order,
@@ -2923,7 +2971,7 @@ fn pad_mapping_capture_ignores_other_pads_and_keys() {
             &mut capture,
             Projection {
                 keyboards: &test_keyboards(),
-                touch_capable: None,
+                touch_capable: true,
                 gamepads: &pads,
                 pad_order: &order_of(&pads),
                 i18n: sys_display(AppLanguage::SystemDefault),
@@ -2943,7 +2991,7 @@ fn pad_mapping_capture_ignores_other_pads_and_keys() {
             &mut capture,
             Projection {
                 keyboards: &test_keyboards(),
-                touch_capable: None,
+                touch_capable: true,
                 gamepads: &pads,
                 pad_order: &order_of(&pads),
                 i18n: sys_display(AppLanguage::SystemDefault),
@@ -2983,7 +3031,7 @@ fn pad_mapping_clear_resets_override_to_default() {
             &mut capture,
             Projection {
                 keyboards: &test_keyboards(),
-                touch_capable: None,
+                touch_capable: true,
                 gamepads: &pads,
                 pad_order: &order_of(&pads),
                 i18n: sys_display(AppLanguage::SystemDefault),
@@ -3063,7 +3111,7 @@ fn pad_mapping_conflict_surfaces_once_through_issues() {
                 &mut capture,
                 Projection {
                     keyboards: &test_keyboards(),
-                    touch_capable: None,
+                    touch_capable: true,
                     gamepads: &pads,
                     pad_order: &order_of(&pads),
                     i18n: sys_display(AppLanguage::SystemDefault),
@@ -3128,7 +3176,7 @@ fn double_mapping_surfaces_issue_in_the_capture_payload() {
                 &mut capture,
                 Projection {
                     keyboards: &test_keyboards(),
-                    touch_capable: None,
+                    touch_capable: true,
                     gamepads: &pads,
                     pad_order: &order_of(&pads),
                     i18n: sys_display(AppLanguage::SystemDefault),
@@ -3175,7 +3223,7 @@ fn game_row_capture_without_keyboard_names_dpad_only() {
     let (mut snapshot, _) = test_payload();
     let pads = two_pads();
     let payload = with_test_deps(|| {
-        open_payload(&snapshot, &[], None, &pads, &order_of(&pads), None)
+        open_payload(&snapshot, &[], true, &pads, &order_of(&pads), None)
             .expect("open payload builds")
     });
     let key = payload
@@ -3202,13 +3250,15 @@ fn game_row_capture_without_keyboard_names_dpad_only() {
     let mut gamepads = pads;
     let order = order_of(&gamepads);
     with_test_deps(|| {
+        let mut touch_capable = true;
+
         apply_command_to(
             &mut snapshot,
             &command_json,
             CommandVault {
                 capture: &mut capture,
                 keyboards: &mut Vec::new(),
-                touch_capable: &mut None,
+                touch_capable: &mut touch_capable,
                 gamepads: &mut gamepads,
                 system_locale: &mut None,
                 pad_order: &order,
@@ -3269,7 +3319,7 @@ fn keys_reset_keeps_pad_overrides() {
             &mut capture,
             Projection {
                 keyboards: &keyboards,
-                touch_capable: None,
+                touch_capable: true,
                 gamepads: &[],
                 pad_order: &[],
                 i18n: sys_display(AppLanguage::SystemDefault),
@@ -3303,7 +3353,7 @@ fn keys_reset_keeps_pad_overrides() {
             &mut pad_capture,
             Projection {
                 keyboards: &keyboards,
-                touch_capable: None,
+                touch_capable: true,
                 gamepads: &pads,
                 pad_order: &order_of(&pads),
                 i18n: sys_display(AppLanguage::SystemDefault),
@@ -3468,13 +3518,15 @@ fn unknown_command_keys_fail_loud() {
     })
     .unwrap();
     with_test_deps(|| {
+        let mut touch_capable = true;
+
         let error = apply_command_to(
             &mut snapshot,
             &command_json,
             CommandVault {
                 capture: &mut None,
                 keyboards: &mut test_keyboards(),
-                touch_capable: &mut None,
+                touch_capable: &mut touch_capable,
                 gamepads: &mut Vec::new(),
                 system_locale: &mut None,
                 pad_order: &[],
@@ -3518,7 +3570,7 @@ fn devices_screen_gears_into_pad_screens() {
         let json = open_payload(
             &snapshot,
             &test_keyboards(),
-            None,
+            true,
             &pads,
             &order_of(&pads),
             None,
@@ -3585,6 +3637,8 @@ fn unknown_keys_and_indices_fail_without_mutation() {
     let (mut snapshot, _) = test_payload();
     let before = snapshot.clone();
     with_test_deps(|| {
+        let mut touch_capable = true;
+
         let bad_key = serde_json::to_string(&WireCommand {
             key: "nope.missing".to_string(),
             index: 0,
@@ -3600,7 +3654,7 @@ fn unknown_keys_and_indices_fail_without_mutation() {
                 CommandVault {
                     capture: &mut None,
                     keyboards: &mut test_keyboards(),
-                    touch_capable: &mut None,
+                    touch_capable: &mut touch_capable,
                     gamepads: &mut Vec::new(),
                     system_locale: &mut None,
                     pad_order: &[]
@@ -3624,7 +3678,7 @@ fn unknown_keys_and_indices_fail_without_mutation() {
                 CommandVault {
                     capture: &mut None,
                     keyboards: &mut test_keyboards(),
-                    touch_capable: &mut None,
+                    touch_capable: &mut touch_capable,
                     gamepads: &mut Vec::new(),
                     system_locale: &mut None,
                     pad_order: &[]
@@ -3644,7 +3698,7 @@ fn unknown_keys_and_indices_fail_without_mutation() {
                 CommandVault {
                     capture: &mut None,
                     keyboards: &mut test_keyboards(),
-                    touch_capable: &mut None,
+                    touch_capable: &mut touch_capable,
                     gamepads: &mut Vec::new(),
                     system_locale: &mut None,
                     pad_order: &[]
@@ -3668,7 +3722,7 @@ fn unknown_keys_and_indices_fail_without_mutation() {
                 CommandVault {
                     capture: &mut None,
                     keyboards: &mut test_keyboards(),
-                    touch_capable: &mut None,
+                    touch_capable: &mut touch_capable,
                     gamepads: &mut Vec::new(),
                     system_locale: &mut None,
                     pad_order: &[]
@@ -3693,7 +3747,7 @@ fn unknown_keys_and_indices_fail_without_mutation() {
                 CommandVault {
                     capture: &mut None,
                     keyboards: &mut test_keyboards(),
-                    touch_capable: &mut None,
+                    touch_capable: &mut touch_capable,
                     gamepads: &mut Vec::new(),
                     system_locale: &mut None,
                     pad_order: &[]

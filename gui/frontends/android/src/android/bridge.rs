@@ -94,7 +94,7 @@ pub(super) struct SettingsSlot {
     /// Whether the terminal has a touch screen (Kotlin
     /// `PackageManager`, re-pushed with the keyboard enumeration).
     /// `None` until the first push: rows behave as before.
-    pub(super) touch_capable: Option<bool>,
+    pub(super) touch_capable: bool,
     /// Devices the Auto overlay gate counts (Kotlin `InputDevice`, hotplug
     /// live). Display-only device truth, never persisted. Sorted into
     /// session order at ingest, so Pad N names session pad N.
@@ -127,7 +127,7 @@ impl SettingsSlot {
             pristine: None,
             capture: None,
             keyboards: Vec::new(),
-            touch_capable: None,
+            touch_capable: true,
             gamepads: Vec::new(),
             pad_order: Vec::new(),
             system_locale: None,

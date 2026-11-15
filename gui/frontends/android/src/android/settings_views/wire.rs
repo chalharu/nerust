@@ -312,7 +312,7 @@ pub(crate) struct WireCommand {
 #[derive(Clone, Copy)]
 pub(crate) struct Projection<'a> {
     pub keyboards: &'a [KeyboardInfo],
-    pub touch_capable: Option<bool>,
+    pub touch_capable: bool,
     pub gamepads: &'a [GamepadInfo],
     /// Vault first-seen order mirror: the stable rank universe shared
     /// with the session. Screens and radios iterate ranks, never the

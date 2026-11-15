@@ -45,7 +45,7 @@ use super::wire::{
 pub(crate) struct CommandVault<'a> {
     pub capture: &'a mut CaptureSlot,
     pub keyboards: &'a mut Vec<KeyboardInfo>,
-    pub touch_capable: &'a mut Option<bool>,
+    pub touch_capable: &'a mut bool,
     pub gamepads: &'a mut Vec<GamepadInfo>,
     pub system_locale: &'a mut Option<AppLanguage>,
     pub pad_order: &'a [String],
@@ -167,7 +167,7 @@ fn project_after_snapshot_edit(
     deps: &VmDeps,
     capture: &CaptureSlot,
     keyboards: &[KeyboardInfo],
-    touch_capable: Option<bool>,
+    touch_capable: bool,
     gamepads: &[GamepadInfo],
     pad_order: &[String],
     system_locale: Option<AppLanguage>,
@@ -308,7 +308,7 @@ where
 /// terminal locale keeps the previous push); the rest fail loud.
 fn apply_device_truth_command(
     keyboards: &mut Vec<KeyboardInfo>,
-    touch_capable: &mut Option<bool>,
+    touch_capable: &mut bool,
     gamepads: &mut Vec<GamepadInfo>,
     system_locale: &mut Option<AppLanguage>,
     command: &WireCommand,
@@ -326,7 +326,7 @@ fn apply_device_truth_command(
         .get("capable")
         .ok_or_else(|| "device_truth op misses capable".to_string())?;
     *touch_capable =
-        Some(serde_json::from_value(capable_raw.clone()).map_err(|error| error.to_string())?);
+        serde_json::from_value(capable_raw.clone()).map_err(|error| error.to_string())?;
     let names: Vec<GamepadInfo> = payload_vec(command, "gamepads")?;
     for info in &names {
         if info.member.is_empty() {

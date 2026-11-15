@@ -54,14 +54,14 @@ mod tests;
 /// Open payload for Kotlin: schema version, sections, live issues from a
 /// non-fatal `finish` probe, and the pending key-capture state.
 /// `keyboards` is the vault's enumerated physical-keyboard list;
-/// `touch_capable` is `None` until Kotlin reports touch capability;
+/// `touch_capable` starts capable (vault default); Kotlin always pushes it.
 /// `system_locale` is the vault-pushed system `Locale` (`None` until pushed).
 /// Returns the payload struct: the JNI edge serializes exactly once, so the
 /// wire bytes stay identical without a parse/concat round-trip.
 pub(super) fn open_payload(
     snapshot: &SettingsSnapshot,
     keyboards: &[KeyboardInfo],
-    touch_capable: Option<bool>,
+    touch_capable: bool,
     gamepads: &[GamepadInfo],
     pad_order: &[String],
     system_locale: Option<AppLanguage>,
