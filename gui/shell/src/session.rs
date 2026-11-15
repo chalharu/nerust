@@ -469,11 +469,30 @@ impl PadTopology {
         PadGuid(bytes)
     }
 
+    /// Transient test: `TRNS` namespace ids never name a setting slot.
+    /// Gameplay resolves through the descriptor rank below, so a stray
+    /// pre-connect key can neither drive pad 0 nor shift a real pad onto
+    /// another pad's overrides.
+    fn is_transient(guid: &PadGuid) -> bool {
+        guid.0[0..4] == *b"TRNS"
+    }
+
+    /// Rank of one order position among setting slots: transients park
+    /// outside the persisted table, so only descriptor entries count.
+    /// The vault mirror inserts at this rank (see `note_pad_connected`),
+    /// so the display list and the commit path name the same pad.
+    fn setting_rank(&self, pos: usize) -> usize {
+        self.order[..pos]
+            .iter()
+            .filter(|guid| !Self::is_transient(guid))
+            .count()
+    }
+
     /// Mirror upsert for a descriptor: `None` appends (fresh connect),
-    /// `Some(pos)` takes the collapsed transient's slot (`pos` clamps:
-    /// the mirror skips transients, so it can be shorter than `order`).
+    /// `Some(rank)` takes the collapsed transient's setting slot (the
+    /// mirror skips transients, so the rank counts descriptors only).
     /// Duplicates never insert.
-    fn upsert_descriptor(&mut self, pos: Option<usize>, descriptor: &str) {
+    fn upsert_descriptor(&mut self, rank: Option<usize>, descriptor: &str) {
         if self
             .descriptor_order
             .iter()
@@ -481,9 +500,9 @@ impl PadTopology {
         {
             return;
         }
-        match pos {
-            Some(pos) => {
-                let at = pos.min(self.descriptor_order.len());
+        match rank {
+            Some(rank) => {
+                let at = rank.min(self.descriptor_order.len());
                 self.descriptor_order.insert(at, descriptor.to_string());
             }
             None => self.descriptor_order.push(descriptor.to_string()),
@@ -491,13 +510,21 @@ impl PadTopology {
     }
 
     /// First-seen order index of one pad GUID, registering newcomers.
-    /// Pads past the table park: the persisted prefs cannot name them,
-    /// so they resolve to `None` instead of aliasing the last pad.
+    /// Setting slots count descriptors only: transients register for
+    /// collapse/migration without consuming a persisted slot, and pads
+    /// past the table park instead of aliasing the last pad.
     fn pad_index_for_guid(&mut self, guid: PadGuid) -> Option<usize> {
         if let Some(index) = self.order.iter().position(|known| *known == guid) {
             return Some(index);
         }
-        if self.order.len() >= nerust_input_traits::MAX_PADS {
+        if !Self::is_transient(&guid)
+            && self
+                .order
+                .iter()
+                .filter(|known| !Self::is_transient(known))
+                .count()
+                >= nerust_input_traits::MAX_PADS
+        {
             return None;
         }
         let index = self.order.len();
@@ -505,12 +532,19 @@ impl PadTopology {
         Some(index)
     }
 
-    /// First-seen index of one pad. Keyboards take no port; unknown pads
-    /// (past the table) resolve to `None` and park.
+    /// Setting-slot index of one pad: the descriptor rank, so the commit
+    /// path and the vault display list name the same pad. Keyboards take
+    /// no port; transients (pre-connect keys) and unknown pads park.
     fn pad_index(&self, source: SourceId) -> Option<usize> {
         match source {
             SourceId::Keyboard(_) => None,
-            SourceId::Pad(guid) => self.order.iter().position(|known| *known == guid),
+            SourceId::Pad(guid) => {
+                if Self::is_transient(&guid) {
+                    return None;
+                }
+                let pos = self.order.iter().position(|known| *known == guid)?;
+                Some(self.setting_rank(pos))
+            }
         }
     }
 }

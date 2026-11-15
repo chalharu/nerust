@@ -180,19 +180,21 @@ impl SessionHandle {
     /// resolves through `shortcut_held`, so one physical press fires its
     /// shortcut once no matter which path arrives first. Never mints
     /// a descriptor-less transient: that would pin winit keys to a
-    /// parked pad and let one player drive another.
+    /// parked pad and let one player drive another. Skips transients by
+    /// rank (see `pad_index`): a pre-connect key never steals pad 0.
     pub fn primary_pad_source(&self) -> Option<SourceId> {
         let ports = &self.settings.snapshot.shared.input.gamepad.pad_ports;
-        self.input
-            .pads
-            .order
-            .iter()
-            .enumerate()
-            .find_map(|(index, guid)| {
-                self.input
-                    .slot_for_index(index, ports)
-                    .map(|_| SourceId::Pad(*guid))
-            })
+        let mut rank = 0;
+        for guid in &self.input.pads.order {
+            if super::PadTopology::is_transient(guid) {
+                continue;
+            }
+            if self.input.slot_for_index(rank, ports).is_some() {
+                return Some(SourceId::Pad(*guid));
+            }
+            rank += 1;
+        }
+        None
     }
 
     /// Connect-time device registration: descriptor to order index.
@@ -228,8 +230,11 @@ impl SessionHandle {
                 // The mirror never stored transients, so nothing drops there.
                 self.input.pads.order.remove(pos);
             } else {
+                // Collapse in place, but mirror by setting rank: stray
+                // transients ahead of `pos` never shift the vault list.
+                let rank = self.input.pads.setting_rank(pos);
                 self.input.pads.order[pos] = guid;
-                self.input.pads.upsert_descriptor(Some(pos), descriptor);
+                self.input.pads.upsert_descriptor(Some(rank), descriptor);
             }
             self.migrate_pad_source(old, new);
         } else if !self.input.pads.order.contains(&guid) {
@@ -735,6 +740,32 @@ impl SessionHandle {
             // (overrides first, then the fixed layout slot-free).
             return self.commit_holder_release(holder, button, pad_index);
         };
+        // A switched-off hat parks physical presses (sticks still drive
+        // through their axis substitutes, which ride `Axis` holders).
+        // Releases always travel below, so a mid-hold switch-off cannot
+        // strand the field.
+        if pressed
+            && matches!(holder, FieldSource::Pad(_, _))
+            && matches!(
+                button,
+                StandardButton::DpadUp
+                    | StandardButton::DpadDown
+                    | StandardButton::DpadLeft
+                    | StandardButton::DpadRight
+            )
+            && pad_index.is_some_and(|index| {
+                self.settings
+                    .snapshot
+                    .shared
+                    .input
+                    .gamepad
+                    .pad_ports
+                    .get(index)
+                    .is_some_and(|port| !port.dpad_enabled)
+            })
+        {
+            return;
+        }
         // Per-pad overrides win inside the slot: an explicit `(attachment,
         // control)` for this pad's button bypasses the standard layout.
         // The index arrives with the call so the map read never re-scans
@@ -1187,6 +1218,7 @@ mod tests {
         use nerust_input_traits::{SourceButtonId, StandardButton};
         use nerust_settings_core::model::input::{ShortcutAction, ShortcutBinding};
         let mut session = crate::session::test_util::test_session();
+        session.note_pad_connected(11, "test-pad-11");
         let pad = session.pad_source_for(11);
         // Unbound pad buttons drive gameplay (None), never a shortcut.
         assert!(
@@ -1226,6 +1258,7 @@ mod tests {
             pad: Some(StandardButton::Guide),
         }];
         session.apply_settings(next).unwrap();
+        session.note_pad_connected(11, "test-pad-11");
         let pad = session.pad_source_for(11);
         assert!(
             session.handle_keyboard_key(Key::Space, true).is_some(),
@@ -1262,6 +1295,7 @@ mod tests {
             pad: Some(StandardButton::Guide),
         }];
         session.apply_settings(next).unwrap();
+        session.note_pad_connected(11, "test-pad-11");
         let pad = session.pad_source_for(11);
         assert!(
             session
@@ -1418,6 +1452,7 @@ mod tests {
             field_map,
             host_peripherals,
         });
+        session.note_pad_connected(11, "test-pad-11");
         let pad = session.pad_source_for(11);
         session.handle_source_button(pad, SourceButtonId::Pad(StandardButton::South), true);
         assert_eq!(
@@ -1441,9 +1476,96 @@ mod tests {
     }
 
     #[test]
+    fn stray_pre_connect_key_never_shifts_a_swap_onto_the_wrong_pad() {
+        // Third-report regression (GBA A/B swap showed in settings but not
+        // in game): a stray pre-connect key from another device id must
+        // neither drive pad 0 nor shift the real pad's overrides. The UI
+        // sorts by the descriptor mirror (pad 0 == the real pad), so the
+        // commit path must resolve the same rank.
+        use nerust_input_traits::{ControlId, SourceButtonId, StandardButton};
+        use nerust_settings_core::model::input::{
+            PadBinding, PersistedControlId, SystemInputSettings,
+        };
+        let mut session = crate::session::test_util::test_session();
+        session.input.current_assignments = InputAssignments::new(vec![(
+            AttachmentId::new("test.topology.slot"),
+            Some(Rc::new(MockTopologyProfile)),
+        )]);
+        // Stray key from a device that never connects: parks, reserves
+        // nothing, and never appears in the descriptor mirror.
+        let stray = session.pad_source_for(77);
+        session.handle_source_button(stray, SourceButtonId::Pad(StandardButton::South), true);
+        assert!(session.input.press_state.asserted_fields().is_empty());
+        assert!(session.pad_descriptors().is_empty());
+        // The real pad connects after the stray: UI pad 0, setting rank 0.
+        session.note_pad_connected(11, "test-pad-11");
+        let pad = session.pad_source_for(11);
+        assert_eq!(session.pad_descriptors(), &["test-pad-11"]);
+        // A/B swap stored at UI pad 0 (the vault index).
+        let mut next = session.settings_snapshot().clone();
+        let system = session.active_system_id_box().expect("test system active");
+        let mut system_settings = SystemInputSettings::default();
+        system_settings.pad_bindings[0] = vec![
+            PadBinding::new(
+                "test.topology.slot",
+                PersistedControlId::digital("test.topology.b"),
+                StandardButton::South,
+            ),
+            PadBinding::new(
+                "test.topology.slot",
+                PersistedControlId::digital("test.topology.a"),
+                StandardButton::East,
+            ),
+        ];
+        next.shared.input.systems.insert(system, system_settings);
+        session.apply_settings(next).unwrap();
+        let attachment = AttachmentId::new("test.topology.slot");
+        let mut parts = crate::test_helpers::build_test_core_parts();
+        let _ = parts.field_map.insert(
+            (
+                attachment,
+                ControlId::digital(DigitalControlId::new("test.topology.a")),
+            ),
+            1,
+        );
+        let _ = parts.field_map.insert(
+            (
+                attachment,
+                ControlId::digital(DigitalControlId::new("test.topology.b")),
+            ),
+            2,
+        );
+        let (emu_core, gui_input, field_map, host_peripherals) =
+            crate::emu_core::EmuCore::from_parts(parts);
+        session.emu.runtime = Some(crate::session::ActiveRuntime {
+            core: Box::new(emu_core),
+            input: gui_input,
+            field_map,
+            host_peripherals,
+        });
+        session.handle_source_button(pad, SourceButtonId::Pad(StandardButton::South), true);
+        assert_eq!(
+            session.input.press_state.asserted_fields(),
+            vec![2],
+            "stray key must not shift the swap: South still drives b"
+        );
+        session.handle_source_button(pad, SourceButtonId::Pad(StandardButton::South), false);
+        session.handle_source_button(pad, SourceButtonId::Pad(StandardButton::East), true);
+        assert_eq!(
+            session.input.press_state.asserted_fields(),
+            vec![1],
+            "stray key must not shift the swap: East still drives a"
+        );
+        session.handle_source_button(pad, SourceButtonId::Pad(StandardButton::East), false);
+        session.clear_input();
+    }
+
+    #[test]
     fn axis_deadzone_reads_per_pad_rows() {
         use nerust_input_traits::GamepadAxis;
         let mut session = crate::session::test_util::test_session();
+        session.note_pad_connected(11, "test-pad-11");
+        session.note_pad_connected(12, "test-pad-12");
         let pad0 = session.pad_source_for(11);
         let pad1 = session.pad_source_for(12);
         let mut next = session.settings_snapshot().clone();
@@ -1467,6 +1589,7 @@ mod tests {
             AttachmentId::new("test.topology.slot"),
             Some(Rc::new(MockTopologyProfile)),
         )]);
+        session.note_pad_connected(11, "test-pad-11");
         let pad = session.pad_source_for(11);
         session.handle_source_axis(pad, GamepadAxis::LeftStickX, 0.5);
         let stored = session
@@ -1526,6 +1649,7 @@ mod tests {
         let mut next = session.settings_snapshot().clone();
         next.shared.input.gamepad.pad_ports[0].deadzone_percent = 0;
         session.apply_settings(next).unwrap();
+        session.note_pad_connected(11, "test-pad-11");
         let pad = session.pad_source_for(11);
         let held = |session: &SessionHandle, axis: GamepadAxis| {
             session
@@ -1601,6 +1725,7 @@ mod tests {
             session.primary_pad_source().is_none(),
             "no pads seen yet: the caller must drop the keys"
         );
+        session.note_pad_connected(11, "test-pad-11");
         let pad = session.pad_source_for(11);
         assert_eq!(session.primary_pad_source(), Some(pad));
         session.clear_input();
@@ -1638,7 +1763,9 @@ mod tests {
             AttachmentId::new("test.topology.slot"),
             Some(Rc::new(MockTopologyProfile)),
         )]);
-        // Input before the connect event parks on a transient key.
+        // Input before the connect event parks on a transient key: the
+        // hold records (so the release below still unstrands) but drives
+        // no field and stores no analog until the descriptor arrives.
         let transient = session.pad_source_for(7);
         session.handle_source_button(transient, SourceButtonId::Pad(StandardButton::South), true);
         session.handle_source_axis(transient, GamepadAxis::LeftStickX, 0.8);
@@ -1647,6 +1774,13 @@ mod tests {
                 .input
                 .pressed
                 .contains(&(transient, SourceButtonId::Pad(StandardButton::South)))
+        );
+        assert!(
+            !session
+                .input
+                .analogs
+                .contains_key(&(transient, GamepadAxis::LeftStickX)),
+            "pre-connect axes park instead of driving pad 0"
         );
         // The connect collapses in place: holders migrate to the
         // descriptor source instead of stranding on the dead key.
@@ -1659,6 +1793,9 @@ mod tests {
                 .pressed
                 .contains(&(descriptor, SourceButtonId::Pad(StandardButton::South)))
         );
+        // The parked pre-connect axis stored nothing, so nothing migrates;
+        // post-connect input stores under the descriptor source.
+        session.handle_source_axis(descriptor, GamepadAxis::LeftStickX, 0.8);
         assert!(
             session
                 .input
@@ -1847,6 +1984,7 @@ mod tests {
             AttachmentId::new("test.topology.slot"),
             Some(Rc::new(MockTopologyProfile)),
         )]);
+        session.note_pad_connected(11, "test-pad-11");
         let pad = session.pad_source_for(11);
         // Default prefs: analog-only, full press stores but asserts nothing.
         session.handle_source_axis(pad, GamepadAxis::LeftTrigger, 1.0);
@@ -1875,6 +2013,7 @@ mod tests {
             AttachmentId::new("test.topology.slot"),
             Some(Rc::new(MockTopologyProfile)),
         )]);
+        session.note_pad_connected(11, "test-pad-11");
         let pad = session.pad_source_for(11);
         // Both sticks substitute by default.
         session.handle_source_axis(pad, GamepadAxis::LeftStickX, 0.8);
@@ -1910,6 +2049,75 @@ mod tests {
             GamepadAxis::RightStickX,
             StandardButton::DpadRight
         )));
+        session.clear_input();
+    }
+
+    #[test]
+    fn switched_off_hat_parks_physical_presses_but_not_stick_substitutes() {
+        use nerust_input_traits::{ControlId, GamepadAxis, SourceButtonId, StandardButton};
+        use nerust_settings_core::model::input::{
+            PadBinding, PersistedControlId, SystemInputSettings,
+        };
+        let mut session = crate::session::test_util::test_session();
+        session.input.current_assignments = InputAssignments::new(vec![(
+            AttachmentId::new("test.topology.slot"),
+            Some(Rc::new(MockTopologyProfile)),
+        )]);
+        session.note_pad_connected(11, "test-pad-11");
+        let pad = session.pad_source_for(11);
+        // Override parking the hat on a live field, so the gate (not a
+        // missing field) decides.
+        let mut next = session.settings_snapshot().clone();
+        let system = session.active_system_id_box().expect("test system active");
+        let mut system_settings = SystemInputSettings::default();
+        system_settings.pad_bindings[0] = vec![PadBinding::new(
+            "test.topology.slot",
+            PersistedControlId::digital("test.topology.a"),
+            StandardButton::DpadUp,
+        )];
+        next.shared.input.systems.insert(system, system_settings);
+        session.apply_settings(next).unwrap();
+        let attachment = AttachmentId::new("test.topology.slot");
+        let mut parts = crate::test_helpers::build_test_core_parts();
+        let _ = parts.field_map.insert(
+            (
+                attachment,
+                ControlId::digital(DigitalControlId::new("test.topology.a")),
+            ),
+            7,
+        );
+        let (emu_core, gui_input, field_map, host_peripherals) =
+            crate::emu_core::EmuCore::from_parts(parts);
+        session.emu.runtime = Some(crate::session::ActiveRuntime {
+            core: Box::new(emu_core),
+            input: gui_input,
+            field_map,
+            host_peripherals,
+        });
+        // Hat on: override drives the field.
+        session.handle_source_button(pad, SourceButtonId::Pad(StandardButton::DpadUp), true);
+        assert_eq!(session.input.press_state.asserted_fields(), vec![7]);
+        session.handle_source_button(pad, SourceButtonId::Pad(StandardButton::DpadUp), false);
+        // Hat off: the same press parks, the release unstrands cleanly,
+        // and the stick substitute still drives through its axis holder.
+        let mut next = session.settings_snapshot().clone();
+        next.shared.input.gamepad.pad_ports[0].dpad_enabled = false;
+        session.apply_settings(next).unwrap();
+        session.handle_source_button(pad, SourceButtonId::Pad(StandardButton::DpadUp), true);
+        assert!(
+            session.input.press_state.asserted_fields().is_empty(),
+            "switched-off hat asserts nothing"
+        );
+        session.handle_source_button(pad, SourceButtonId::Pad(StandardButton::DpadUp), false);
+        session.handle_source_axis(pad, GamepadAxis::LeftStickX, 0.8);
+        assert!(
+            session.input.axis_dpad.contains(&(
+                pad,
+                GamepadAxis::LeftStickX,
+                StandardButton::DpadRight
+            )),
+            "stick substitutes ignore the hat switch"
+        );
         session.clear_input();
     }
 
