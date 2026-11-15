@@ -505,9 +505,10 @@ fn lookup<V: Copy>(table: &[(&str, V)], key: &str) -> Option<V> {
 }
 
 /// Typed controller-axis mapping: SDL-style names to normalized axes.
-/// Parity anchor for the schema (see `controller_axis_table_matches_schema`):
-/// the motion dispatch resolves pairs directly, this table names the wire
-/// vocabulary in one place.
+/// Test-only parity anchor for the schema (see
+/// `controller_axis_table_matches_schema`): the motion dispatch resolves
+/// pairs directly, this table names the wire vocabulary in one place.
+#[cfg(test)]
 pub(crate) const CONTROLLER_AXIS_TABLE: &[(&str, GamepadAxis)] = &[
     ("left_x", GamepadAxis::LeftStickX),
     ("left_y", GamepadAxis::LeftStickY),
