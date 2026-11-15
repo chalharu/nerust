@@ -164,7 +164,6 @@ mod tests {
 
     #[test]
     fn every_button_has_a_label_and_count_matches() {
-        use strum::IntoEnumIterator as _;
         let buttons: Vec<StandardButton> = StandardButton::iter().collect();
         assert_eq!(buttons.len(), BUTTON_ABSTRACT.len() + 2);
         let axes: Vec<GamepadAxis> = GamepadAxis::iter().collect();

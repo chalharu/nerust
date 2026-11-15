@@ -666,16 +666,8 @@ fn reset_keys_scope(
     if !is_known_system(deps, system) {
         return Err(format!("unknown reset scope: {scope}"));
     }
-    let stale: Vec<_> = snapshot
-        .shared
-        .input
-        .systems
-        .keys()
-        .filter(|key| key.to_string() == system)
-        .cloned()
-        .collect();
-    for key in stale {
-        if let Some(entry) = snapshot.shared.input.systems.get_mut(&key) {
+    for (key, entry) in snapshot.shared.input.systems.iter_mut() {
+        if key.to_string() == system {
             entry.keyboard_profiles.clear();
         }
     }
