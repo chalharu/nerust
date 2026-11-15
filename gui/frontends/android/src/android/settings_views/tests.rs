@@ -2106,6 +2106,15 @@ fn pad_screen_sets_deadzone_triggers_and_resets() {
     assert!(snapshot.shared.input.gamepad.pad_ports[0].right_stick_as_dpad);
     assert_eq!(row(&sticks, "pad.1.stick_left").selected, 0);
     assert_eq!(row(&sticks, "pad.1.stick_right").selected, 1);
+    // D-Pad switch lives on the sources sub-screen and defaults on.
+    assert!(snapshot.shared.input.gamepad.pad_ports[0].dpad_enabled);
+    let dpad = set_with_pads(&mut snapshot, &pads, "pad.1.dpad", 0, 0);
+    assert!(!snapshot.shared.input.gamepad.pad_ports[0].dpad_enabled);
+    assert_eq!(row(&dpad, "pad.1.dpad").selected, 0);
+    // The sources sub-screen names all three inputs; the pad screen
+    // links to it instead of carrying the switches itself.
+    assert!(row(&dpad, "pad.1.sources").target.contains("pad.1.sources"));
+    assert_eq!(row(&dpad, "pad.1.stick_right").selected, 1);
     // Screen reset restores this pad's deadzone and trigger, keeps the
     // player slot (the devices radio owns assignment, not this screen).
     assert_eq!(snapshot.shared.input.gamepad.pad_ports[0].slot, Some(0));
@@ -2142,6 +2151,10 @@ fn pad_screen_sets_deadzone_triggers_and_resets() {
         snapshot.shared.input.gamepad.pad_ports[0].left_stick_as_dpad
             && snapshot.shared.input.gamepad.pad_ports[0].right_stick_as_dpad,
         "pad reset restores both stick substitutes"
+    );
+    assert!(
+        snapshot.shared.input.gamepad.pad_ports[0].dpad_enabled,
+        "pad reset restores the hat switch"
     );
     assert_eq!(
         snapshot.shared.input.gamepad.pad_ports[0].slot,
@@ -2287,11 +2300,12 @@ fn gamepad_radio_assigns_one_pad_per_player() {
     );
     assert_eq!(row(&moved, "devices.p2.gamepad").selected, 1);
     assert_eq!(row(&moved, "devices.p1.gamepad").selected, 0);
-    // The none choice names the player it parks, never "not assigned".
+    // The none choice names the assignment state (HID device assignment
+    // to this player), never a per-device state.
     assert_eq!(
         row(&moved, "devices.p1.gamepad").choices[0].label,
-        "No pad for this player",
-        "radio none reads as an action, not a state"
+        "No pad assigned",
+        "radio none reads as an assignment state"
     );
     // Unassigned clears the port without touching the other one.
     let cleared = set_with_pads(&mut snapshot, &pads, "devices.p2.gamepad", 0, 0);
@@ -2551,6 +2565,34 @@ fn first_pad_mapping_row(payload: &ViewPayload) -> (String, String) {
         .find(|row| row.kind == RowKind::Capture)
         .map(|row| (row.key.clone(), row.target.clone()))
         .expect("pad mapping rows exist")
+}
+
+#[test]
+fn pad_mapping_screens_hide_dpad_rows() {
+    // The hat stays fixed (its switch lives on the sources sub-screen),
+    // so per-pad mapping never offers dpad rows: face buttons keep
+    // capture rows, Up/Down/Left/Right do not.
+    let (snapshot, _) = test_payload();
+    let pads = two_pads();
+    let payload = pad_payload(&snapshot, &pads);
+    let section = payload
+        .sections
+        .iter()
+        .find(|section| section.id == "pad.1")
+        .expect("pad.1 screen exists while connected");
+    let labels: Vec<&str> = section
+        .rows
+        .iter()
+        .filter(|row| row.kind == RowKind::Capture)
+        .map(|row| row.label.as_str())
+        .collect();
+    assert!(!labels.is_empty(), "face buttons keep mapping rows");
+    for dpad in ["Up", "Down", "Left", "Right"] {
+        assert!(
+            !labels.contains(&dpad),
+            "no dpad remap row for {dpad} on pad screens"
+        );
+    }
 }
 
 fn pad_payload(snapshot: &SettingsSnapshot, pads: &[GamepadInfo]) -> ViewPayload {

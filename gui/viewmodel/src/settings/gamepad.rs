@@ -86,6 +86,19 @@ impl GamepadViewModel {
         })
     }
 
+    /// Physical dpad enable for one pad: `false` parks the hat (sticks
+    /// still drive through their substitutes), `true` restores it.
+    /// Same guard as the port setter.
+    pub fn set_dpad_enabled(
+        &self,
+        pad: usize,
+        enabled: bool,
+    ) -> Result<(), super::editor::ViewModelError> {
+        self.update_pad(pad, |port_state| {
+            port_state.dpad_enabled = enabled;
+        })
+    }
+
     /// One guarded write to a pad's port state; both setters share the
     /// range check so neither duplicates it.
     fn update_pad(

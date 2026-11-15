@@ -52,6 +52,10 @@ pub struct PadPort {
     pub left_stick_as_dpad: bool,
     #[serde(default = "default_stick_substitute")]
     pub right_stick_as_dpad: bool,
+    /// Physical dpad enable per pad. True by default (and for old saves
+    /// missing the field): the sources screen parks it when off.
+    #[serde(default = "default_stick_substitute")]
+    pub dpad_enabled: bool,
 }
 
 fn default_pad_deadzone() -> u8 {
@@ -70,6 +74,7 @@ impl Default for PadPort {
             deadzone_percent: DEFAULT_DEADZONE_PERCENT,
             left_stick_as_dpad: true,
             right_stick_as_dpad: true,
+            dpad_enabled: true,
         }
     }
 }
@@ -84,6 +89,7 @@ impl Default for GamepadSettings {
                     deadzone_percent: DEFAULT_DEADZONE_PERCENT,
                     left_stick_as_dpad: true,
                     right_stick_as_dpad: true,
+                    dpad_enabled: true,
                 },
                 PadPort {
                     slot: Some(1),
@@ -91,6 +97,7 @@ impl Default for GamepadSettings {
                     deadzone_percent: DEFAULT_DEADZONE_PERCENT,
                     left_stick_as_dpad: true,
                     right_stick_as_dpad: true,
+                    dpad_enabled: true,
                 },
                 PadPort::default(),
                 PadPort::default(),
