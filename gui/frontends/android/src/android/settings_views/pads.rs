@@ -186,8 +186,6 @@ fn pad_system_rows(
             CaptureTarget,
             Option<nerust_input_traits::StandardButton>,
             String,
-            String,
-            String,
         )> = Vec::new();
         for binding in &section.rows {
             // Per-pad mapping mirrors the game rows: same
@@ -225,23 +223,26 @@ fn pad_system_rows(
                     control: control.to_string(),
                 },
                 binding.pad_default,
-                attachment.to_string(),
-                control.to_string(),
                 binding.label.clone(),
             ));
         }
         let values = input.pad_row_values(
             &pending
                 .iter()
-                .map(|(target, default, _, _, _)| (target.clone(), *default))
+                .map(|(target, default, _)| (target.clone(), *default))
                 .collect::<Vec<_>>(),
         );
         let mut section_rows = Vec::new();
-        for ((target, _, attachment, control, label), value) in pending.into_iter().zip(values) {
+        for ((target, _, label), value) in pending.into_iter().zip(values) {
             let text = match &value {
                 BindingValueView::Unbound(label)
                 | BindingValueView::Bound(label)
                 | BindingValueView::Capturing(label) => label.clone(),
+            };
+            let (Some(attachment), Some(control)) =
+                (target.attachment(), target.control())
+            else {
+                continue;
             };
             section_rows.push(capture_row(
                 &format!("{pad_id}.{system}.{attachment}.{control}",),
