@@ -53,6 +53,4 @@ internal object ControllerAxis {
     const val RIGHT_Y = "right_y"
     const val TRIGGER_L = "trigger_l"
     const val TRIGGER_R = "trigger_r"
-    const val GAS = "gas"
-    const val BRAKE = "brake"
 }

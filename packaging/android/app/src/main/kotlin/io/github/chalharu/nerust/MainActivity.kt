@@ -403,18 +403,11 @@ class MainActivity :
      * when nothing crossed), so only changed values ride the envelope.
      * No pair array per callback: names come from the hoisted table. */
     private fun updateControllerAxes(deviceId: Int, event: MotionEvent): Map<String, Float>? {
-        // Pedal-style aliases (indexes 6-7) ride only while their primaries
-        // (indexes 4-5) read neutral, so pads mirroring both never
-        // double-drive the batch; absent axes read 0 and stay local below.
-        val primaryL = event.getAxisValue(MotionEvent.AXIS_LTRIGGER)
-        val primaryR = event.getAxisValue(MotionEvent.AXIS_RTRIGGER)
         val axes = controllerAxes.getOrPut(deviceId) { mutableMapOf() }
         var crossed: MutableMap<String, Float>? = null
         for (i in MOTION_AXIS_NAMES.indices) {
             val axis = MOTION_AXIS_NAMES[i]
-            var value = event.getAxisValue(MOTION_AXIS_IDS[i])
-            if (i == 6 && primaryL != 0f) value = 0f
-            if (i == 7 && primaryR != 0f) value = 0f
+            val value = event.getAxisValue(MOTION_AXIS_IDS[i])
             val last = axes[axis]
             if (last != null && kotlin.math.abs(value - last) < CONTROLLER_AXIS_EPSILON) continue
             if (last == null && value == 0f) continue
@@ -462,8 +455,6 @@ class MainActivity :
                     ControllerAxis.RIGHT_Y to 0f,
                     ControllerAxis.TRIGGER_L to 0f,
                     ControllerAxis.TRIGGER_R to 0f,
-                    ControllerAxis.GAS to 0f,
-                    ControllerAxis.BRAKE to 0f,
                 ),
             )
     }
@@ -1067,7 +1058,7 @@ class MainActivity :
         private const val CONTROLLER_AXIS_EPSILON = 0.01f
 
         /** Motion axis names in batch order: hoisted so no pair array is
-         * built per motion callback. GAS/BRAKE alias the triggers. */
+         * built per motion callback. */
         private val MOTION_AXIS_NAMES =
             arrayOf(
                 ControllerAxis.LEFT_X,
@@ -1076,8 +1067,6 @@ class MainActivity :
                 ControllerAxis.RIGHT_Y,
                 ControllerAxis.TRIGGER_L,
                 ControllerAxis.TRIGGER_R,
-                ControllerAxis.GAS,
-                ControllerAxis.BRAKE,
             )
 
         /** Android axis ids in the same order: the batch loop reads raw
@@ -1090,8 +1079,6 @@ class MainActivity :
                 MotionEvent.AXIS_RZ,
                 MotionEvent.AXIS_LTRIGGER,
                 MotionEvent.AXIS_RTRIGGER,
-                MotionEvent.AXIS_GAS,
-                MotionEvent.AXIS_BRAKE,
             )
         private const val ROM_PICKER_REQUEST_CODE = 0x4E45
         private const val DIRECTORY_PICKER_REQUEST_CODE = 0x4E46

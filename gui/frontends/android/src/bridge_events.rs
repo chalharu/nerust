@@ -158,10 +158,6 @@ struct MenuEvent {
     trigger_l: Option<f32>,
     #[serde(default, deserialize_with = "de_opt_null_reject")]
     trigger_r: Option<f32>,
-    #[serde(default, deserialize_with = "de_opt_null_reject")]
-    gas: Option<f32>,
-    #[serde(default, deserialize_with = "de_opt_null_reject")]
-    brake: Option<f32>,
     #[serde(default, deserialize_with = "de_opt_integral")]
     slot_id: Option<i64>,
 }
@@ -317,7 +313,7 @@ fn check_menu_shape(action: &str, event: &MenuEvent) -> Option<()> {
         .filter_map(|(name, value)| value.map(|value| (*name, value)))
     {
         if !(ANALOG_VALUE_BOUNDS.0..=ANALOG_VALUE_BOUNDS.1).contains(&value) {
-            log::warn!("ignoring {action} bridge event with out-of-range {axis}={value}");
+            log::warn!("ignoring {action} bridge event with out-of-range {axis:?}={value}");
             return None;
         }
     }
@@ -339,25 +335,19 @@ impl MenuEvent {
         }
     }
 
-    /// Batched motion axes in `CONTROLLER_AXIS_TABLE` order: `(name, value)`
-    /// for every axis slot. Dispatch resolves each present axis through the
-    /// shared axis table; absent slots stay local. No allocation: names are
-    /// static, values are `Copy`.
-    fn motion_axes(&self) -> [(&'static str, Option<f32>); 8] {
-        // Names ride the shared table so envelope order stays
-        // SDL-canonical in one place; the value row couples positionally.
-        debug_assert_eq!(CONTROLLER_AXIS_TABLE.len(), 8);
-        let values = [
-            self.left_x,
-            self.left_y,
-            self.right_x,
-            self.right_y,
-            self.trigger_l,
-            self.trigger_r,
-            self.gas,
-            self.brake,
-        ];
-        std::array::from_fn(|index| (CONTROLLER_AXIS_TABLE[index].0, values[index]))
+    /// Batched motion axes as resolved pairs: no name round-trip through
+    /// the shared table, so envelope order can never skew against it.
+    /// Absent slots stay local. No allocation: values are `Copy`.
+    fn motion_axes(&self) -> [(GamepadAxis, Option<f32>); 6] {
+        use GamepadAxis as A;
+        [
+            (A::LeftStickX, self.left_x),
+            (A::LeftStickY, self.left_y),
+            (A::RightStickX, self.right_x),
+            (A::RightStickY, self.right_y),
+            (A::LeftTrigger, self.trigger_l),
+            (A::RightTrigger, self.trigger_r),
+        ]
     }
 
     /// Integral value of one schema field, for the bounds table.
@@ -446,10 +436,6 @@ fn decode_json_menu_action(event: &MenuEvent) -> Option<FrontendEvent> {
             let Some(value) = value else {
                 continue;
             };
-            let Some(axis) = lookup(CONTROLLER_AXIS_TABLE, axis) else {
-                log::warn!("ignoring unknown Android controller axis: {axis}");
-                return None;
-            };
             if !(ANALOG_VALUE_BOUNDS.0..=ANALOG_VALUE_BOUNDS.1).contains(&value) {
                 log::warn!("ignoring out-of-range Android axis value: {value}");
                 return None;
@@ -519,7 +505,9 @@ fn lookup<V: Copy>(table: &[(&str, V)], key: &str) -> Option<V> {
 }
 
 /// Typed controller-axis mapping: SDL-style names to normalized axes.
-/// Single source: the decoder reads this table, no parallel match.
+/// Parity anchor for the schema (see `controller_axis_table_matches_schema`):
+/// the motion dispatch resolves pairs directly, this table names the wire
+/// vocabulary in one place.
 pub(crate) const CONTROLLER_AXIS_TABLE: &[(&str, GamepadAxis)] = &[
     ("left_x", GamepadAxis::LeftStickX),
     ("left_y", GamepadAxis::LeftStickY),
@@ -527,9 +515,6 @@ pub(crate) const CONTROLLER_AXIS_TABLE: &[(&str, GamepadAxis)] = &[
     ("right_y", GamepadAxis::RightStickY),
     ("trigger_l", GamepadAxis::LeftTrigger),
     ("trigger_r", GamepadAxis::RightTrigger),
-    // Pedal-style aliases: some pads report triggers as GAS/BRAKE.
-    ("gas", GamepadAxis::LeftTrigger),
-    ("brake", GamepadAxis::RightTrigger),
 ];
 
 /// Decode one raw bridge string: only v1 JSON decodes, never a silent drop.
@@ -831,8 +816,6 @@ mod tests {
             "right_y",
             "trigger_l",
             "trigger_r",
-            "gas",
-            "brake",
         ]
         .into_iter()
         .filter(|name| props[name].get("type").and_then(|kind| kind.as_str()) == Some("number"))
