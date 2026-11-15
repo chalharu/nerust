@@ -254,7 +254,7 @@ pub(super) fn keyboard_member_name(member: &str, keyboards: &[KeyboardInfo], i18
 /// membership; Details opens the device screen. Gamepads are radio
 /// assigned here: at most one connected pad drives a player, Unassigned
 /// parks them all. The choice edits the same pad-port table as Controls
-/// > Gamepads (deadzone and triggers stay there).
+/// > Gamepads (deadzone and hat switch stay there).
 pub(super) fn build_devices_section(
     port: &str,
     devices_id: &str,
@@ -328,7 +328,7 @@ fn keyboard_rows(
 /// Gamepad radio, stale reservation, and gears for one port. At most one
 /// connected pad drives a player; "no pad" parks them all. The choice
 /// edits the same pad-port table as Controls > Gamepads (deadzone and
-/// triggers stay there).
+/// hat switch stay there).
 fn gamepad_rows(
     port: &str,
     devices_id: &str,
@@ -402,7 +402,7 @@ fn gamepad_rows(
     rows
 }
 
-/// Gear into this port's own pad screen (deadzone, triggers, button
+/// Gear into this port's own pad screen (deadzone, hat switch, button
 /// mapping): the radio owns assignment, the gear owns the pad.
 /// Unassigned pads live under player 1 only, so the same pad never gears
 /// in from two players at once.

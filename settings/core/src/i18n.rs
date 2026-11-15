@@ -237,14 +237,8 @@ pub enum UiText {
     DescNoInputDevices,
     Deadzone,
     DescDeadzone,
-    LeftStickAsDpad,
-    RightStickAsDpad,
-    InputSources,
-    DescInputSources,
     DpadSource,
     DescDpadSource,
-    DescTriggers,
-    DescStickSource,
     DescGamepadRadio,
     DescGamepadGear,
     DescPadReset,
@@ -720,34 +714,22 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
             "Stick drift guard. 0 disables.",
             "スティックの遊び。0で無効",
         ),
-        UiText::LeftStickAsDpad => ("Left stick as D-pad", "左スティックを十字キーに"),
-        UiText::RightStickAsDpad => ("Right stick as D-pad", "右スティックを十字キーに"),
-        UiText::InputSources => ("Input sources", "入力ソース"),
-        UiText::DescInputSources => ("Which inputs drive this pad.", "このパッドを駆動する入力"),
         UiText::DpadSource => ("D-Pad", "十字キー"),
         UiText::DescDpadSource => (
             "Off parks the hat; sticks still drive.",
             "オフでハット無効。スティックは有効",
-        ),
-        UiText::DescTriggers => (
-            "LT/RT drive LB/RB; else analog-only.",
-            "LT/RTをLB/RBに。オフでアナログのみ",
-        ),
-        UiText::DescStickSource => (
-            "Sticks drive the D-pad; off parks them.",
-            "スティックで十字キー操作。オフで無効",
         ),
         UiText::DescGamepadRadio => (
             "Which pad drives this player. Gears adjust that pad.",
             "このプレイヤーを駆動するパッド。調整はギアから",
         ),
         UiText::DescGamepadGear => (
-            "Deadzone, triggers, sources, buttons for this pad.",
-            "このパッドの遊び・トリガー・ソース・ボタン",
+            "Deadzone, D-pad switch, buttons for this pad.",
+            "このパッドの遊び・十字キー・ボタン",
         ),
         UiText::DescPadReset => (
-            "Clears deadzone, triggers, sources, buttons. Keeps the slot.",
-            "遊び・トリガー・ソース・ボタンを消去。スロットは保持",
+            "Clears deadzone, D-pad switch, buttons. Keeps the slot.",
+            "遊び・十字キー・ボタンを消去。スロットは保持",
         ),
         UiText::DescPadParked => (
             "Parked: no screen past the table, or pad left.",
@@ -868,20 +850,6 @@ pub fn slot_failure(language: AppLanguage, slot: Option<u64>, what: &str) -> Str
 pub fn pad_label(language: AppLanguage, index: usize) -> String {
     let pad = index + 1;
     localized!(language, format!("Pad {pad}"), format!("パッド {pad}"))
-}
-
-/// Per-pad trigger row (`Pad 1 triggers as shoulders` / `パッド 1
-/// トリガーをショルダーに`): the shoulder-doubling opt-in shares the
-/// pad's number. Names the behavior (LT/RT drive LB/RB), not just the
-/// hardware, so the row reads the same on the per-pad screen and the
-/// desktop all-pads page.
-pub fn pad_triggers_label(language: AppLanguage, index: usize) -> String {
-    let pad = index + 1;
-    localized!(
-        language,
-        format!("Pad {pad} triggers as shoulders"),
-        format!("パッド {pad} トリガーをショルダーに")
-    )
 }
 
 /// Bare command failure (`{id} failed[: detail]`). Origin prefixes ride on
@@ -1321,14 +1289,8 @@ mod tests {
             DescNoInputDevices,
             Deadzone,
             DescDeadzone,
-            LeftStickAsDpad,
-            RightStickAsDpad,
-            InputSources,
-            DescInputSources,
             DpadSource,
             DescDpadSource,
-            DescTriggers,
-            DescStickSource,
             DescGamepadRadio,
             DescGamepadGear,
             DescPadReset,

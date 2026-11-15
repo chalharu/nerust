@@ -689,9 +689,11 @@ fn reset_keys_scope(
     Ok(())
 }
 
-/// One pad's own screens: deadzone, trigger doubling, source switches,
-/// and that pad's per-system overrides return to defaults. The player-slot
-/// assignment stays: the devices radio owns it, not this screen.
+/// One pad's own screens: deadzone, the hat switch, and that pad's
+/// per-system overrides return to defaults. Stick/trigger routing is
+/// automatic (the live console decides), so reset never touches it.
+/// The player-slot assignment stays: the devices radio owns it, not
+/// this screen.
 fn reset_pad_scope(
     snapshot: &mut SettingsSnapshot,
     default: &SettingsSnapshot,
@@ -711,9 +713,6 @@ fn reset_pad_scope(
         return Err(format!("unknown reset scope: {scope}"));
     };
     port.deadzone_percent = default_port.deadzone_percent;
-    port.triggers_as_shoulders = default_port.triggers_as_shoulders;
-    port.left_stick_as_dpad = default_port.left_stick_as_dpad;
-    port.right_stick_as_dpad = default_port.right_stick_as_dpad;
     port.dpad_enabled = default_port.dpad_enabled;
     for settings in snapshot.shared.input.systems.values_mut() {
         if let Some(entries) = settings.pad_bindings.get_mut(index) {
@@ -888,27 +887,6 @@ fn apply_view_model_command(
             let value: u8 = range_value(&command.key, command.number)?;
             vm.gamepads
                 .set_deadzone(pad, value)
-                .map_err(|error| error.to_string())
-        }
-        key if key.starts_with("pad.") && key.ends_with(".triggers") => {
-            let pad = pad_screen_index(key)?;
-            let value = toggle_value(row, command.index)?;
-            vm.gamepads
-                .set_trigger_alias(pad, value)
-                .map_err(|error| error.to_string())
-        }
-        key if key.starts_with("pad.") && key.ends_with(".stick_left") => {
-            let pad = pad_screen_index(key)?;
-            let value = toggle_value(row, command.index)?;
-            vm.gamepads
-                .set_stick_as_dpad(pad, true, value)
-                .map_err(|error| error.to_string())
-        }
-        key if key.starts_with("pad.") && key.ends_with(".stick_right") => {
-            let pad = pad_screen_index(key)?;
-            let value = toggle_value(row, command.index)?;
-            vm.gamepads
-                .set_stick_as_dpad(pad, false, value)
                 .map_err(|error| error.to_string())
         }
         key if key.starts_with("pad.") && key.ends_with(".dpad") => {

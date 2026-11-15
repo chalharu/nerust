@@ -221,17 +221,13 @@ pub struct GamepadTabView {
     pub pads: Vec<PadPortView>,
 }
 
-/// One connection-order pad: player port, trigger doubling, and its own
-/// stick deadzone.
+/// One connection-order pad: player port and its own stick deadzone.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PadPortView {
     pub index: usize,
     pub label: String,
     pub port: Option<usize>,
     pub choices: Vec<ChoiceView<Option<usize>>>,
-    pub trigger_label: String,
-    pub trigger_alias: bool,
-    pub trigger_choices: Vec<ChoiceView<bool>>,
     pub deadzone: u8,
 }
 

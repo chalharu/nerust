@@ -19,14 +19,14 @@ use super::wire::{
 };
 
 /// Per-pad settings screens: one `pad.<n>` screen per connected pad
-/// with its own deadzone, trigger doubling, and per-system button
-/// mapping, plus one `pad.<n>.sources` sub-screen naming which inputs
-/// drive the pad (D-Pad, sticks). The list is variable: each connected
-/// pad names its own screens, so Pad 1 is always the first-seen pad
-/// while it stays connected. Ports are player slots, not devices: the
-/// connection-order table (not device ids) is what persists.
-/// Unconnected pads hide; their assignment and overrides stay in the
-/// tables and reappear on reconnect.
+/// with its own deadzone, hat switch, and per-system button mapping.
+/// Stick/trigger routing is automatic (the live console declares analog
+/// controls or not), so no toggles: only the hat stays manual. The list
+/// is variable: each connected pad names its own screen, so Pad 1 is
+/// always the first-seen pad while it stays connected. Ports are player
+/// slots, not devices: the connection-order table (not device ids) is
+/// what persists. Unconnected pads hide; their assignment and overrides
+/// stay in the tables and reappear on reconnect.
 pub(super) fn build_pad_sections(
     vm: &SettingsViewModel,
     snapshot: &SettingsSnapshot,
@@ -76,8 +76,9 @@ pub(super) fn build_pad_sections(
                 i18n.text(UiText::NotAssigned),
             ),
         };
-        // Triggers double as shoulders on digital consoles (which expose
-        // no analog): without it LT/RT stay analog-only and do nothing.
+        // Only the hat stays manual (sticks and triggers follow the live
+        // console automatically): off parks the hat while stick driving
+        // continues through substitutes.
         let mut rows = vec![
             slot_row,
             number_row(
@@ -94,17 +95,11 @@ pub(super) fn build_pad_sections(
                 "%",
             ),
             toggle_row(
-                &format!("{pad_id}.triggers"),
-                nerust_settings_core::i18n::pad_triggers_label(i18n.language(), index),
-                i18n.text(UiText::DescTriggers),
+                &format!("{pad_id}.dpad"),
+                i18n.text(UiText::DpadSource),
+                i18n.text(UiText::DescDpadSource),
                 i18n,
-                port.is_some_and(|pad| pad.triggers_as_shoulders),
-            ),
-            group_row(
-                &format!("{pad_id}.sources"),
-                i18n.text(UiText::InputSources),
-                i18n.text(UiText::DescInputSources),
-                &format!("{pad_id}.sources"),
+                port.is_none_or(|pad| pad.dpad_enabled),
             ),
         ];
         // Unassigned pads park every press, so mapping rows would
@@ -130,7 +125,6 @@ pub(super) fn build_pad_sections(
                 rows,
                 visible: false,
             });
-            out.push(build_sources_section(index, info, port, i18n));
             continue;
         };
         for input in vm.inputs() {
@@ -150,51 +144,8 @@ pub(super) fn build_pad_sections(
             rows,
             visible: false,
         });
-        out.push(build_sources_section(index, info, port, i18n));
     }
     out
-}
-
-/// One pad's input-sources sub-screen: which physical inputs drive the
-/// pad. The hat has its own switch; each stick substitutes the D-pad
-/// on digital consoles (which expose no analog), so a switched-off
-/// stick parks instead of stranding on neutral.
-fn build_sources_section(
-    index: usize,
-    info: &GamepadInfo,
-    port: Option<&nerust_settings_core::model::input::PadPort>,
-    i18n: I18n,
-) -> SectionWire {
-    let pad_id = format!("pad.{}", index + 1);
-    SectionWire {
-        id: format!("{pad_id}.sources"),
-        label: i18n.text(UiText::InputSources),
-        sub: info.name.clone(),
-        rows: vec![
-            toggle_row(
-                &format!("{pad_id}.dpad"),
-                i18n.text(UiText::DpadSource),
-                i18n.text(UiText::DescDpadSource),
-                i18n,
-                port.is_none_or(|pad| pad.dpad_enabled),
-            ),
-            toggle_row(
-                &format!("{pad_id}.stick_left"),
-                i18n.text(UiText::LeftStickAsDpad),
-                i18n.text(UiText::DescStickSource),
-                i18n,
-                port.is_none_or(|pad| pad.left_stick_as_dpad),
-            ),
-            toggle_row(
-                &format!("{pad_id}.stick_right"),
-                i18n.text(UiText::RightStickAsDpad),
-                i18n.text(UiText::DescStickSource),
-                i18n,
-                port.is_none_or(|pad| pad.right_stick_as_dpad),
-            ),
-        ],
-        visible: false,
-    }
 }
 
 /// One machine's mapping block for one pad screen: machine header plus

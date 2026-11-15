@@ -235,6 +235,13 @@ struct InputDept {
     interner: IdInterner,
     /// OR merge + neutral resolution across keyboards and controls.
     press_state: field_press::FieldPressState,
+    /// Automatic stick/trigger routing, rebuilt with the assignments (see
+    /// `rebuild_input_policy`): sticks substitute the dpad and triggers
+    /// double as shoulders unless the live console actually drives that
+    /// analog axis. No per-pad setting: the console, not the user,
+    /// decides what an axis means.
+    stick_substitute: [bool; 2],
+    trigger_alias: bool,
     topology_epoch: u64,
     /// Last served overlay, keyed by caller revision and topology epoch.
     touch_cache: TouchCache,
@@ -263,6 +270,8 @@ impl InputDept {
             axis_dpad: HashSet::new(),
             interner: IdInterner::default(),
             press_state: field_press::FieldPressState::default(),
+            stick_substitute: [true; 2],
+            trigger_alias: true,
             topology_epoch: 0,
             touch_cache: Default::default(),
         }
@@ -374,6 +383,38 @@ impl InputDept {
                 map.insert(binding.button, (attachment, control));
             }
         }
+    }
+
+    /// Rebuild the automatic stick/trigger routing from the live
+    /// assignments: sticks substitute the dpad and triggers double as
+    /// shoulders unless the console actually drives that analog input.
+    /// No per-pad setting involved: the console declares analog controls
+    /// (or not), so routing follows the machine, never a toggle.
+    /// Runs on every rebind (settings apply, system switch), never on
+    /// the hot path.
+    pub(crate) fn rebuild_input_policy(&mut self) {
+        use nerust_input_traits::ControlKind;
+        let mut analog = false;
+        let mut axes = [false; 4];
+        for (_slot, profile) in self.current_assignments.slots() {
+            let Some(profile) = profile else {
+                continue;
+            };
+            for group in profile.port_groups().iter().copied().flatten() {
+                if !matches!(group.kind, ControlKind::Digital) {
+                    analog = true;
+                }
+                match group.abstract_key {
+                    Some(AbstractKey::Axis1X) => axes[0] = true,
+                    Some(AbstractKey::Axis1Y) => axes[1] = true,
+                    Some(AbstractKey::Axis2X) => axes[2] = true,
+                    Some(AbstractKey::Axis2Y) => axes[3] = true,
+                    _ => {}
+                }
+            }
+        }
+        self.stick_substitute = [!axes[0] && !axes[1], !axes[2] && !axes[3]];
+        self.trigger_alias = !analog;
     }
 
     /// Abstract button of an emulated control on an attachment, resolved

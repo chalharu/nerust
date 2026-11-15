@@ -1,5 +1,5 @@
 use nerust_input_traits::MAX_PADS;
-use nerust_settings_core::i18n::{I18n, UiText, pad_label, pad_triggers_label};
+use nerust_settings_core::i18n::{I18n, UiText, pad_label};
 use nerust_settings_core::model::input::{DEADZONE_MAX_PERCENT, DEADZONE_STEPS};
 
 use super::{
@@ -56,36 +56,6 @@ impl GamepadViewModel {
         self.update_pad(pad, |port_state| port_state.slot = port)
     }
 
-    /// Trigger doubling for one pad: shoulders when true, analog-only
-    /// when false. Same guard as the port setter.
-    pub fn set_trigger_alias(
-        &self,
-        pad: usize,
-        as_shoulders: bool,
-    ) -> Result<(), super::editor::ViewModelError> {
-        self.update_pad(pad, |port_state| {
-            port_state.triggers_as_shoulders = as_shoulders
-        })
-    }
-
-    /// Stick→dpad substitution for one pad and stick: `false` parks the
-    /// stick's substitute (analogs still store), `true` restores it.
-    /// Same guard as the port setter.
-    pub fn set_stick_as_dpad(
-        &self,
-        pad: usize,
-        left: bool,
-        enabled: bool,
-    ) -> Result<(), super::editor::ViewModelError> {
-        self.update_pad(pad, |port_state| {
-            if left {
-                port_state.left_stick_as_dpad = enabled;
-            } else {
-                port_state.right_stick_as_dpad = enabled;
-            }
-        })
-    }
-
     /// Physical dpad enable for one pad: `false` parks the hat (sticks
     /// still drive through their substitutes), `true` restores it.
     /// Same guard as the port setter.
@@ -119,8 +89,7 @@ impl GamepadViewModel {
 fn project_view(state: &super::EditorState) -> GamepadTabView {
     let i18n = I18n::resolve_os(state.draft.shared.general.language);
     let gamepad = &state.draft.shared.input.gamepad;
-    // Port and trigger options are identical for every pad: build once,
-    // clone per row.
+    // Port options are identical for every pad: build once, clone per row.
     let port_choices: Vec<ChoiceView<Option<usize>>> = [
         (None, i18n.text(UiText::NotAssigned)),
         (Some(0), i18n.text(UiText::PlayerOne)),
@@ -128,16 +97,6 @@ fn project_view(state: &super::EditorState) -> GamepadTabView {
     ]
     .into_iter()
     .map(|(port, label)| ChoiceView { value: port, label })
-    .collect();
-    let trigger_choices: Vec<ChoiceView<bool>> = [
-        (false, i18n.text(UiText::Off)),
-        (true, i18n.text(UiText::On)),
-    ]
-    .into_iter()
-    .map(|(alias, label)| ChoiceView {
-        value: alias,
-        label,
-    })
     .collect();
     GamepadTabView {
         label: i18n.text(UiText::Gamepads),
@@ -156,9 +115,6 @@ fn project_view(state: &super::EditorState) -> GamepadTabView {
                     label: pad_label(i18n.language(), index),
                     port: port.slot,
                     choices: port_choices.clone(),
-                    trigger_label: pad_triggers_label(i18n.language(), index),
-                    trigger_alias: port.triggers_as_shoulders,
-                    trigger_choices: trigger_choices.clone(),
                     deadzone: port.deadzone_percent,
                 }
             })

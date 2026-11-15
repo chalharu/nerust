@@ -481,12 +481,13 @@ impl SessionHandle {
     const DIAGONAL_MIN: f32 = 0.5;
 
     /// Substitute direction for one post-deadzone axis value. Sticks stand
-    /// in for dpad on digital-only consoles; triggers only when the pad
-    /// opts into shoulder doubling, else they stay analog-only.
+    /// in for dpad on digital-only consoles; triggers double as shoulders
+    /// there too, else they stay analog-only. Both follow the automatic
+    /// input policy (see `rebuild_input_policy`), never a per-pad toggle.
     fn substitute_button(
         axis: GamepadAxis,
         value: f32,
-        triggers_as_shoulders: bool,
+        trigger_alias: bool,
     ) -> Option<StandardButton> {
         use StandardButton::{DpadDown, DpadLeft, DpadRight, DpadUp};
         match axis {
@@ -508,22 +509,22 @@ impl SessionHandle {
                     None
                 }
             }
-            GamepadAxis::LeftTrigger => (triggers_as_shoulders && value >= Self::TRIGGER_PRESS)
+            GamepadAxis::LeftTrigger => (trigger_alias && value >= Self::TRIGGER_PRESS)
                 .then_some(StandardButton::LeftShoulder),
-            GamepadAxis::RightTrigger => (triggers_as_shoulders && value >= Self::TRIGGER_PRESS)
+            GamepadAxis::RightTrigger => (trigger_alias && value >= Self::TRIGGER_PRESS)
                 .then_some(StandardButton::RightShoulder),
         }
     }
 
     /// Analog axis entry: deadzone, store, and the digital substitute
-    /// (stick dpad on digital-only consoles, trigger shoulders when the
-    /// pad opts in). No console exposes analog controls, so the floats
-    /// are stored as the transport endpoint and never fan out to fields.
+    /// (stick dpad and trigger shoulders on digital-only consoles, raw
+    /// axes where the console actually drives them). The routing follows
+    /// the cached input policy; only the deadzone stays per-pad.
     /// Off-port pads park silently: no store, no substitute.
     pub fn handle_source_axis(&mut self, source: SourceId, axis: GamepadAxis, value: f32) {
-        // One order-index lookup per event: the slot gate, the deadzone
-        // row, and the trigger alias all read this instead of re-scanning
-        // `pad_order`.
+        // One order-index lookup per event: the slot gate and the deadzone
+        // row read this instead of re-scanning `pad_order`. Routing needs
+        // no lookup: the policy cache already follows the assignments.
         let index = self.input.pads.pad_index(source);
         if index.and_then(|i| self.slot_for_pad_index(i)).is_none() {
             return;
@@ -546,29 +547,14 @@ impl SessionHandle {
         let value =
             apply_deadzone(value.clamp(-1.0, 1.0), f32::from(percent) / 100.0).clamp(-1.0, 1.0);
         self.input.analogs.insert((source, axis), value);
-        let alias = index.is_some_and(|i| {
-            self.settings
-                .snapshot
-                .shared
-                .input
-                .gamepad
-                .pad_ports
-                .get(i)
-                .is_some_and(|port| port.triggers_as_shoulders)
-        });
-        let sticks = index
-            .and_then(|i| {
-                self.settings
-                    .snapshot
-                    .shared
-                    .input
-                    .gamepad
-                    .pad_ports
-                    .get(i)
-                    .map(|port| [port.left_stick_as_dpad, port.right_stick_as_dpad])
-            })
-            .unwrap_or([true, true]);
-        self.sync_axis_substitute(source, axis, value, index, alias, sticks);
+        self.sync_axis_substitute(
+            source,
+            axis,
+            value,
+            index,
+            self.input.trigger_alias,
+            self.input.stick_substitute,
+        );
     }
 
     /// Stick axis pair for joint dpad resolution, if any axis belongs to
@@ -653,21 +639,22 @@ impl SessionHandle {
     /// alone below the corner band, diagonal past it); triggers resolve
     /// alone with release-band hysteresis. Axis holders stay distinct from
     /// button holders, so hat and stick (or shoulder and trigger) merge
-    /// instead of aliasing.
+    /// instead of aliasing. Routing flags arrive precomputed from the
+    /// automatic input policy: no per-event settings lookup.
     fn sync_axis_substitute(
         &mut self,
         source: SourceId,
         axis: GamepadAxis,
         value: f32,
         index: Option<usize>,
-        triggers_as_shoulders: bool,
+        trigger_alias: bool,
         sticks_as_dpad: [bool; 2],
     ) {
         let slot = index.and_then(|i| self.slot_for_pad_index(i));
         if let Some((ax, ay)) = Self::stick_pair_axes(axis) {
             // The current value is already stored: re-resolve the pair so
             // both holders converge instead of stranding on stale state.
-            // A switched-off stick parks its substitute (the analog still
+            // A stick the console drives stays raw (the analog still
             // stores above).
             let x = self
                 .input
@@ -695,11 +682,13 @@ impl SessionHandle {
             self.sync_substitute_holder(source, ay, wy, index, slot);
             return;
         }
-        let mut want = slot.and(Self::substitute_button(axis, value, triggers_as_shoulders));
+        // A stick the console actually drives stays raw (the analog still
+        // stores above); only substitutes park here.
+        let mut want = slot.and(Self::substitute_button(axis, value, trigger_alias));
         // Trigger hysteresis: a held shoulder survives down to the release
         // band so epsilon jitter at the press edge cannot flap.
         if want.is_none()
-            && triggers_as_shoulders
+            && trigger_alias
             && matches!(axis, GamepadAxis::LeftTrigger | GamepadAxis::RightTrigger)
             && value >= Self::TRIGGER_RELEASE
             && let Some(held) = self
@@ -926,12 +915,15 @@ impl SessionHandle {
         let bindings = system.and_then(|s| s.implicit_keyboard_profile());
         let pad_bindings = system.map(|s| &s.pad_bindings);
         // The department owns the maps; the session only resolves which
-        // profile is active.
+        // profile is active. The stick/trigger policy rebuilds here too:
+        // it follows the assignments, so a system switch re-routes
+        // without any per-pad setting.
         self.input.rebuild_key_field_map(
             bindings.map(|p| p.bindings.as_slice()),
             self.emu.field_map(),
         );
         self.input.rebuild_pad_binding_map(pad_bindings);
+        self.input.rebuild_input_policy();
         self.input
             .rebuild_shortcut_maps(&self.settings.snapshot.shared.input.shortcuts.keyboard);
     }
@@ -1025,6 +1017,38 @@ mod tests {
 
         fn device_kind_for_group(&self, _group_index: usize) -> DeviceKindId {
             DeviceKindId::new("test.topology.pad")
+        }
+    }
+
+    /// Analog console mock: one stick axis, so the input policy parks
+    /// substitutes and trigger doubling instead of driving the dpad.
+    #[derive(Debug)]
+    struct MockAnalogProfile;
+
+    impl ControllerProfile for MockAnalogProfile {
+        fn profile_id(&self) -> ProfileId {
+            ProfileId::new("test.analog")
+        }
+
+        fn label(&self) -> &'static str {
+            "Analog Pad"
+        }
+
+        fn port_sets(&self) -> &[PortSet] {
+            static PORTS: &[AttachmentId] = &[AttachmentId::new("test.topology.slot")];
+            static SETS: &[PortSet] = &[PortSet { ports: PORTS }];
+            SETS
+        }
+
+        fn port_groups(&self) -> &[&[ControlInfo]] {
+            static CONTROLS: &[ControlInfo] = &[ControlInfo {
+                id: ControlId::digital(DigitalControlId::new("test.topology.stick")),
+                label: "Stick",
+                kind: ControlKind::Analog,
+                abstract_key: Some(AbstractKey::Axis1X),
+            }];
+            static GROUPS: &[&[ControlInfo]] = &[CONTROLS];
+            GROUPS
         }
     }
 
@@ -1944,7 +1968,6 @@ mod tests {
         let pad = session.pad_source_for(9);
         let mut next = session.settings_snapshot().clone();
         next.shared.input.gamepad.pad_ports[0].slot = Some(0);
-        next.shared.input.gamepad.pad_ports[0].triggers_as_shoulders = true;
         session.apply_settings(next).unwrap();
         session.handle_source_axis(pad, GamepadAxis::LeftTrigger, 0.95);
         assert!(
@@ -1977,7 +2000,9 @@ mod tests {
     }
 
     #[test]
-    fn trigger_alias_doubles_shoulders_only_when_opted_in() {
+    fn routing_follows_the_console_not_a_toggle() {
+        // Digital console: triggers double as shoulders and sticks
+        // substitute the dpad, with no opt-in anywhere.
         use nerust_input_traits::{GamepadAxis, StandardButton};
         let mut session = crate::session::test_util::test_session();
         session.input.current_assignments = InputAssignments::new(vec![(
@@ -1986,14 +2011,6 @@ mod tests {
         )]);
         session.note_pad_connected(11, "test-pad-11");
         let pad = session.pad_source_for(11);
-        // Default prefs: analog-only, full press stores but asserts nothing.
-        session.handle_source_axis(pad, GamepadAxis::LeftTrigger, 1.0);
-        assert!(session.input.axis_dpad.is_empty());
-        // Opt pad 0 into shoulder doubling: full press now holds the
-        // shoulder through a distinct axis holder.
-        let mut next = session.settings_snapshot().clone();
-        next.shared.input.gamepad.pad_ports[0].triggers_as_shoulders = true;
-        session.apply_settings(next).unwrap();
         session.handle_source_axis(pad, GamepadAxis::LeftTrigger, 1.0);
         assert!(session.input.axis_dpad.contains(&(
             pad,
@@ -2002,11 +2019,45 @@ mod tests {
         )));
         session.handle_source_axis(pad, GamepadAxis::LeftTrigger, 0.0);
         assert!(session.input.axis_dpad.is_empty());
+        session.handle_source_axis(pad, GamepadAxis::LeftStickX, 0.8);
+        assert!(session.input.axis_dpad.contains(&(
+            pad,
+            GamepadAxis::LeftStickX,
+            StandardButton::DpadRight
+        )));
+        session.clear_input();
+        // Analog console: the same inputs store raw and assert nothing.
+        session.input.current_assignments = InputAssignments::new(vec![(
+            AttachmentId::new("test.topology.slot"),
+            Some(Rc::new(MockAnalogProfile)),
+        )]);
+        session.rebuild_key_field_map();
+        session.handle_source_axis(pad, GamepadAxis::LeftTrigger, 1.0);
+        assert!(
+            session
+                .input
+                .analogs
+                .contains_key(&(pad, GamepadAxis::LeftTrigger)),
+            "analog consoles still record the pull"
+        );
+        assert!(
+            session.input.axis_dpad.is_empty(),
+            "no shoulder doubling where triggers stay analog"
+        );
+        session.handle_source_axis(pad, GamepadAxis::LeftStickX, 0.8);
+        assert!(
+            session
+                .input
+                .axis_dpad
+                .iter()
+                .all(|(source, axis, _)| { *source != pad || *axis != GamepadAxis::LeftStickX }),
+            "no dpad substitution where the console drives the stick"
+        );
         session.clear_input();
     }
 
     #[test]
-    fn switched_off_stick_parks_its_substitute_only() {
+    fn analog_console_parks_substitutes_but_still_stores_axes() {
         use nerust_input_traits::{GamepadAxis, StandardButton};
         let mut session = crate::session::test_util::test_session();
         session.input.current_assignments = InputAssignments::new(vec![(
@@ -2015,7 +2066,7 @@ mod tests {
         )]);
         session.note_pad_connected(11, "test-pad-11");
         let pad = session.pad_source_for(11);
-        // Both sticks substitute by default.
+        // Digital console: both sticks substitute.
         session.handle_source_axis(pad, GamepadAxis::LeftStickX, 0.8);
         assert!(session.input.axis_dpad.contains(&(
             pad,
@@ -2023,17 +2074,21 @@ mod tests {
             StandardButton::DpadRight
         )));
         session.clear_input();
-        // Switching the left stick off parks its substitute while the
-        // analog value still stores; the right stick is unaffected.
-        let mut next = session.settings_snapshot().clone();
-        next.shared.input.gamepad.pad_ports[0].deadzone_percent = 0;
-        next.shared.input.gamepad.pad_ports[0].left_stick_as_dpad = false;
-        session.apply_settings(next).unwrap();
+        // Analog console (drives the left stick): the substitute parks
+        // while the analog value still stores; the right stick keeps
+        // substituting.
+        session.input.current_assignments = InputAssignments::new(vec![(
+            AttachmentId::new("test.topology.slot"),
+            Some(Rc::new(MockAnalogProfile)),
+        )]);
+        session.rebuild_key_field_map();
         session.handle_source_axis(pad, GamepadAxis::LeftStickX, 0.8);
-        assert_eq!(
-            session.input.analogs.get(&(pad, GamepadAxis::LeftStickX)),
-            Some(&0.8),
-            "disabled stick still stores its analog"
+        assert!(
+            session
+                .input
+                .analogs
+                .contains_key(&(pad, GamepadAxis::LeftStickX)),
+            "analog consoles still record the deflection"
         );
         assert!(
             !session
@@ -2041,7 +2096,7 @@ mod tests {
                 .axis_dpad
                 .iter()
                 .any(|(source, axis, _)| *source == pad && *axis == GamepadAxis::LeftStickX),
-            "disabled stick asserts no dpad"
+            "consumed stick asserts no dpad"
         );
         session.handle_source_axis(pad, GamepadAxis::RightStickX, 0.8);
         assert!(session.input.axis_dpad.contains(&(

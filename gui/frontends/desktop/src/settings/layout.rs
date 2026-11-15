@@ -522,11 +522,11 @@ pub(super) fn inputs(
     pages
 }
 
-/// Per-pad gamepads page: one port choice plus trigger doubling plus
+/// Per-pad gamepads page: one port choice plus
 /// the pad's own stick deadzone per connection-order pad. No slot chrome
 /// (ports are global, not per-system).
-/// One pad choice row: port, trigger, and deadzone rows differ only in
-/// projectors and write-back, so one generic builds all three. Missing
+/// One pad choice row: port and deadzone rows differ only in
+/// projectors and write-back, so one generic builds both. Missing
 /// rows fail loud: the pads list and the lookup index come from the same
 /// view, so absence is a programming bug, never an empty row.
 fn pad_choice_row<T: Clone + PartialEq + Eq + Default + 'static>(
@@ -609,16 +609,6 @@ fn gamepads_page(editor: &Rc<Editor>) -> Keyed<InputPage> {
                 |row| row.label.clone(),
                 move |port| gamepads.set_pad_port(index, port),
             );
-            let triggers = vm.gamepads.clone();
-            let trigger_row = pad_choice_row(
-                editor,
-                index,
-                format!("pad-{index}-triggers"),
-                |row| row.trigger_choices.clone(),
-                |row| row.trigger_alias,
-                |row| row.trigger_label.clone(),
-                move |alias| triggers.set_trigger_alias(index, alias),
-            );
             // Deadzone choices are tab-level (identical for every pad);
             // the value and write-back ride the pad row.
             let zones = vm.gamepads.clone();
@@ -667,7 +657,7 @@ fn gamepads_page(editor: &Rc<Editor>) -> Keyed<InputPage> {
                     executor.clone(),
                 ),
             );
-            [port_row, trigger_row, deadzone_row]
+            [port_row, deadzone_row]
         })
         .collect();
     Keyed::new(
@@ -811,8 +801,9 @@ mod tests {
         })
     }
 
-    /// Gamepads page lists port, trigger, and deadzone rows per pad, and
-    /// writing a row routes through the gamepad view model.
+    /// Gamepads page lists port and deadzone rows per pad (stick/trigger
+    /// routing is automatic now), and writing a row routes through the
+    /// gamepad view model.
     #[test]
     fn gamepads_page_lists_ports_and_deadzone() {
         let (editor, _adapter, _dir) = headless_editor();
@@ -831,15 +822,13 @@ mod tests {
         assert!(!snapshot.label.is_empty());
         assert_eq!(
             snapshot.slots.len(),
-            3 * nerust_input_traits::MAX_PADS,
-            "four pads times port, trigger, and deadzone rows"
+            2 * nerust_input_traits::MAX_PADS,
+            "four pads times port and deadzone rows"
         );
         let pad = snapshot.slots[0].model.snapshot();
         assert_eq!(pad.label.get(), "Pad 1");
         assert!(!pad.choices.get().is_empty());
         assert!(pad.enabled.get());
-        let triggers = snapshot.slots[1].model.snapshot();
-        assert_eq!(triggers.label.get(), "Pad 1 triggers as shoulders");
         // Writing pad 1 to player 2 sticks in the draft.
         editor
             .vm
@@ -938,7 +927,7 @@ mod tests {
 
     /// Input pages carry slots plus section bindings; the shortcuts page
     /// collapses to one prebuilt section with no slot chrome, and the
-    /// gamepads page lists pad ports, triggers, and per-pad deadzones.
+    /// gamepads page lists pad ports and per-pad deadzones.
     #[test]
     fn inputs_pages_include_shortcuts_and_live_sections() {
         let (editor, _adapter, _dir) = headless_editor();

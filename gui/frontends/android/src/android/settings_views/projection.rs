@@ -561,7 +561,7 @@ fn controllers_quick_section(
         last.text = i18n.port_summary(&names);
     }
     // Connected pads link straight to their own screen (deadzone,
-    // triggers, button mapping).
+    // hat switch, button mapping).
     if !gamepads.is_empty() {
         quick_rows.push(header_row(i18n.text(UiText::Gamepads)));
     }

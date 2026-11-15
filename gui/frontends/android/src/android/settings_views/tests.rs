@@ -2096,27 +2096,15 @@ fn pad_screen_sets_deadzone_triggers_and_resets() {
         snapshot.shared.input.gamepad.pad_ports[1].deadzone_percent,
         DEFAULT_DEADZONE_PERCENT
     );
-    // Trigger doubling toggles per pad and resets with the screen.
-    let triggers = set_with_pads(&mut snapshot, &pads, "pad.1.triggers", 1, 0);
-    assert!(snapshot.shared.input.gamepad.pad_ports[0].triggers_as_shoulders);
-    assert_eq!(row(&triggers, "pad.1.triggers").selected, 1);
-    // Stick substitutes toggle per stick and reset with the screen.
-    let sticks = set_with_pads(&mut snapshot, &pads, "pad.1.stick_left", 0, 0);
-    assert!(!snapshot.shared.input.gamepad.pad_ports[0].left_stick_as_dpad);
-    assert!(snapshot.shared.input.gamepad.pad_ports[0].right_stick_as_dpad);
-    assert_eq!(row(&sticks, "pad.1.stick_left").selected, 0);
-    assert_eq!(row(&sticks, "pad.1.stick_right").selected, 1);
-    // D-Pad switch lives on the sources sub-screen and defaults on.
+    // Stick/trigger routing is automatic now: no toggles on the pad
+    // screen, only the manual hat switch (defaults on).
     assert!(snapshot.shared.input.gamepad.pad_ports[0].dpad_enabled);
     let dpad = set_with_pads(&mut snapshot, &pads, "pad.1.dpad", 0, 0);
     assert!(!snapshot.shared.input.gamepad.pad_ports[0].dpad_enabled);
     assert_eq!(row(&dpad, "pad.1.dpad").selected, 0);
-    // The sources sub-screen names all three inputs; the pad screen
-    // links to it instead of carrying the switches itself.
-    assert!(row(&dpad, "pad.1.sources").target.contains("pad.1.sources"));
-    assert_eq!(row(&dpad, "pad.1.stick_right").selected, 1);
-    // Screen reset restores this pad's deadzone and trigger, keeps the
-    // player slot (the devices radio owns assignment, not this screen).
+    // Screen reset restores this pad's deadzone and hat switch, keeps
+    // the player slot (the devices radio owns assignment, not this
+    // screen).
     assert_eq!(snapshot.shared.input.gamepad.pad_ports[0].slot, Some(0));
     let mut capture: CaptureSlot = None;
     let reset = with_test_deps(|| {
@@ -2145,12 +2133,6 @@ fn pad_screen_sets_deadzone_triggers_and_resets() {
     assert_eq!(
         snapshot.shared.input.gamepad.pad_ports[0].deadzone_percent,
         DEFAULT_DEADZONE_PERCENT
-    );
-    assert!(!snapshot.shared.input.gamepad.pad_ports[0].triggers_as_shoulders);
-    assert!(
-        snapshot.shared.input.gamepad.pad_ports[0].left_stick_as_dpad
-            && snapshot.shared.input.gamepad.pad_ports[0].right_stick_as_dpad,
-        "pad reset restores both stick substitutes"
     );
     assert!(
         snapshot.shared.input.gamepad.pad_ports[0].dpad_enabled,
@@ -2569,8 +2551,8 @@ fn first_pad_mapping_row(payload: &ViewPayload) -> (String, String) {
 
 #[test]
 fn pad_mapping_screens_hide_dpad_rows() {
-    // The hat stays fixed (its switch lives on the sources sub-screen),
-    // so per-pad mapping never offers dpad rows: face buttons keep
+    // The hat stays fixed (its switch rides the pad screen), so
+    // per-pad mapping never offers dpad rows: face buttons keep
     // capture rows, Up/Down/Left/Right do not.
     let (snapshot, _) = test_payload();
     let pads = two_pads();
@@ -2608,8 +2590,8 @@ fn pad_mapping_capture_lands_override_from_own_pad() {
     let pads = two_pads();
     let payload = pad_payload(&snapshot, &pads);
     let (key, _) = first_pad_mapping_row(&payload);
-    // Slot, deadzone, and trigger rows share the screen with mapping.
-    for probe in ["pad.1.slot", "pad.1.deadzone", "pad.1.triggers"] {
+    // Slot, deadzone, and hat rows share the screen with mapping.
+    for probe in ["pad.1.slot", "pad.1.deadzone", "pad.1.dpad"] {
         assert!(
             payload
                 .sections
