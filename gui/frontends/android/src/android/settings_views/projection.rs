@@ -21,7 +21,7 @@ use super::wire::{
     CaptureSlot, CaptureWire, GamepadInfo, I18n, KeyboardInfo, PLAYER_PORTS, Projection, RowWire,
     SectionWire, ViewPayload, binding_key, button_row, capture_row, choice_row, draft_issues,
     encode_target, group_row, header_row, info_row, number_row, player_id, player_label,
-    target_system, toggle_row,
+    toggle_row,
 };
 use crate::bridge_contract::SETTINGS_SCHEMA_VERSION;
 
@@ -39,7 +39,7 @@ pub(super) fn project_payload(
         sections: build_sections(vm, snapshot, truth),
         issues: draft_issues(vm, truth.i18n),
         capture: capture.as_ref().map(|(target, prompt)| CaptureWire {
-            target: encode_target(target, &target_system(target)),
+            target: encode_target(target),
             prompt: prompt.clone(),
         }),
     }
@@ -720,7 +720,7 @@ fn shortcuts_section(
         .map(|binding| {
             (
                 binding.label.clone(),
-                encode_target(&binding.target, ""),
+                encode_target(&binding.target),
                 binding.target.clone(),
             )
         })

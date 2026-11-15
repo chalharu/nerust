@@ -433,8 +433,8 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         ),
         UiText::CapturePrompt => ("Press a key…", "キーを押してください…"),
         UiText::CapturePromptPad => (
-            "Press a pad button: face, shoulders, stick clicks, Start, Back, Guide. No triggers.",
-            "A/B/X/Y・LB/RB・スティック押し込み・Start・Back・Guideのいずれかを押してください（トリガーは割り当てできません）",
+            "Press a pad button: face, shoulders, triggers, stick clicks, Start, Back, Guide.",
+            "A/B/X/Y・LB/RB/LT/RT・スティック押し込み・Start・Back・Guideのいずれかを押してください",
         ),
         UiText::CapturePromptDpadOnly => (
             "No keyboard connected. Only the dpad binds here.",

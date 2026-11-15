@@ -518,7 +518,7 @@ pub(super) fn build_keys_sections(
                         binding.label.clone(),
                         String::new(),
                         binding_value_text(binding),
-                        &encode_target(&binding.target, &view.system_id.to_string()),
+                        &encode_target(&binding.target),
                         open,
                         &reason,
                     )

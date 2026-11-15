@@ -3168,8 +3168,8 @@ fn pad_capture_prompt_names_capturable_buttons() {
     set_with_pads_capture(&mut snapshot, &pads, &mut capture, &key);
     let (_, prompt) = capture.expect("capture pending");
     assert!(
-        prompt.contains("trigger") || prompt.contains("トリガー"),
-        "pad rows warn that triggers can't map: {prompt}"
+        prompt.contains("LT") || prompt.contains("トリガー") || prompt.contains("trigger"),
+        "pad rows name the capturable buttons: {prompt}"
     );
 }
 

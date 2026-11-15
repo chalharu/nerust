@@ -249,7 +249,7 @@ fn pad_system_rows(
                 label,
                 String::new(),
                 text,
-                &encode_target(&target, &system),
+                &encode_target(&target),
                 live,
                 reason,
             ));

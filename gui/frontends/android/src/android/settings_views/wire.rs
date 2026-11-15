@@ -539,36 +539,23 @@ pub(super) fn capture_open(keyboards: &[KeyboardInfo], gamepads: &[GamepadInfo])
     !keyboards.is_empty() || !gamepads.is_empty()
 }
 
-/// Owning system of one capture target, for re-encoding the pending
-/// capture row. Shortcuts carry none (the encoder drops it); bindings
-/// always do, so there is no fallback to invent.
-pub(super) fn target_system(target: &CaptureTarget) -> String {
-    target
-        .system_id()
-        .map(|system| system.to_string())
-        .unwrap_or_default()
-}
-
 /// Opaque capture target: newline-free JSON the key must not parse.
-/// The `Value` form is the internal boundary (single serialization at the
-/// row edge); the command path decodes the row string once per command.
-fn encode_target_value(target: &CaptureTarget, system: &str) -> serde_json::Value {
+/// The owning system rides from the target itself (shortcuts carry none,
+/// the encoder drops it), so callers never re-derive it. The command path
+/// decodes the row string once per command.
+pub(super) fn encode_target(target: &CaptureTarget) -> String {
     if let Some(action) = target.action() {
-        return serde_json::json!({"kind": "shortcut", "action": action});
+        return serde_json::json!({"kind": "shortcut", "action": action}).to_string();
     }
     // Bindings and overrides share the shape; overrides add the pad.
     let mut value = serde_json::json!({
         "kind": if target.pad().is_some() { "pad_binding" } else { "binding" },
-        "system": system,
+        "system": target.system_id().map(|system| system.to_string()).unwrap_or_default(),
         "attachment": target.attachment().unwrap_or_default(),
         "control": target.control().unwrap_or_default(),
     });
     if let Some(pad) = target.pad() {
         value["pad"] = pad.into();
     }
-    value
-}
-
-pub(super) fn encode_target(target: &CaptureTarget, system: &str) -> String {
-    encode_target_value(target, system).to_string()
+    value.to_string()
 }
