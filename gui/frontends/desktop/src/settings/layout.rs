@@ -465,22 +465,24 @@ pub(super) fn inputs(
                                 },
                                 binding.label.clone(),
                                 binding.pad_default,
+                                binding.port,
                             ))
                         })
                         .collect::<Vec<_>>();
                     let values = mapping_input.pad_row_values(
                         &requests
                             .iter()
-                            .map(|(target, _, default)| (target.clone(), *default))
+                            .map(|(target, _, default, _)| (target.clone(), *default))
                             .collect::<Vec<_>>(),
                     );
                     let rows = requests
                         .into_iter()
                         .zip(values)
-                        .map(|((target, label, pad_default), row_value)| {
+                        .map(|((target, label, pad_default, port), row_value)| {
                             nerust_gui_viewmodel::settings::dto::BindingRowView {
                                 target,
                                 label,
+                                port,
                                 value: row_value,
                                 pad_default,
                             }
@@ -1257,6 +1259,7 @@ mod tests {
                 rows: vec![BindingRowView {
                     target,
                     label: "Button".into(),
+                    port: None,
                     value: BindingValueView::Bound("Space".into()),
                     pad_default: None,
                 }],

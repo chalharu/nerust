@@ -176,11 +176,10 @@ fn pad_system_rows(
             else {
                 continue;
             };
-            // Attachments name their player port
-            // (`<sys>.attachment.playerN`); unclassifiable
-            // attachments fail open so a factory addition
-            // never silently drops rows here.
-            if port_index_for_slot(attachment).is_some_and(|port| port != slot) {
+            // Scope to this pad's own player: the viewmodel resolves
+            // the port once per row, so unclassifiable attachments
+            // (port `None`) fail open and never silently drop rows.
+            if binding.port.is_some_and(|port| port != slot) {
                 continue;
             }
             pending.push((
@@ -263,6 +262,9 @@ fn conflict_rows(
 ) -> Vec<RowWire> {
     let mut rows = Vec::new();
     for (button, controls) in pad_game_binding_conflicts(entries) {
+        // Raw persisted bindings carry string attachments (no DTO port
+        // here), so scope through the canonical traits rule: unknown
+        // attachments fail open and never silently drop rows.
         let shown: Vec<_> = controls
             .iter()
             .filter(|(attachment, _)| {

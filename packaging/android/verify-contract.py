@@ -253,7 +253,9 @@ def _struct_props(decoder, struct):
 def _decoder_names_ids(definitions, decoder):
     """Every bridge id is named by the decoder: actions ride the
     generated `ACTION_*` constants, key ids ride the lookup tables,
-    motion axes ride struct fields. An unnamed id fails."""
+    motion axes ride struct fields. An unnamed id fails. Axes derive
+    from the schema (same rule as the generator), so a 9th axis
+    cannot drift silently past a hardcoded list."""
     for enum in ("action", "key"):
         members = set()
         for definition in definitions.values():
@@ -263,7 +265,13 @@ def _decoder_names_ids(definitions, decoder):
         for member in members:
             require(json.dumps(member) in decoder or f"ACTION_{member.upper()}" in decoder,
                     f"decoder must name every bridge {enum} id: {member}")
-    for member in ("left_x", "left_y", "right_x", "right_y", "trigger_l", "trigger_r", "gas", "brake"):
+    menu_props = definitions["menu"]["properties"]
+    axes = sorted(
+        name for name, prop in menu_props.items()
+        if isinstance(prop, dict) and prop.get("type") == "number"
+    )
+    require(axes, "schema must declare motion axes")
+    for member in axes:
         require(f"{member}:" in decoder or f"{member} :" in decoder,
                 f"decoder must name every motion axis: {member}")
 

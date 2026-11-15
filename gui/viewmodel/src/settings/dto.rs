@@ -193,6 +193,10 @@ pub struct BindingSectionView {
 pub struct BindingRowView {
     pub target: CaptureTarget,
     pub label: String,
+    /// Resolved player port for binding targets (`None` for shortcuts and
+    /// non-player attachments). Frontends scope per-pad rows through this
+    /// instead of parsing attachment strings.
+    pub port: Option<usize>,
     pub value: BindingValueView,
     /// Fixed-layout default pad button for this control, if the console
     /// maps it to one. Per-pad mapping screens show it when the pad

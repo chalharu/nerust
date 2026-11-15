@@ -321,6 +321,7 @@ fn project_binding_row(
     BindingRowView {
         target,
         label: descriptor.control_label.to_string(),
+        port: nerust_input_traits::port_index_for_slot(descriptor.attachment.as_str()),
         value,
         pad_default,
     }

@@ -483,30 +483,34 @@ impl InputDept {
 
     /// Abstract button of an emulated control on an attachment, resolved
     /// through the live assignments (same traversal as the overlay builder).
-    /// Powers dpad-neutral resolution for keyboards and physical controls.
-    /// Same traversal as `build_touch_overlay` in `session/input.rs`, kept
-    /// separate on purpose: the overlay fans out whole port sets into
-    /// controls, while this resolves one control's abstract.
-    fn abstract_for(
+    /// Dpad context for the OR/neutral machine: resolved abstract plus the
+    /// Copy pair the machine keys on. `None` for non-dpad controls, so both
+    /// input paths share one gate instead of copy-pasting it. No
+    /// allocation: every id here is already Copy.
+    fn dpad_for(
         &self,
         attachment: AttachmentId,
         control: DigitalControlId,
-    ) -> Option<AbstractKey> {
-        nerust_input_traits::abstract_for_attachment(
+    ) -> Option<(AttachmentId, DigitalControlId, AbstractKey)> {
+        let abs = nerust_input_traits::abstract_for_attachment(
             self.current_assignments.slots(),
             attachment,
             control,
-        )
+        )?;
+        field_press::dpad_pair(abs)?;
+        Some((attachment, control, abs))
     }
-
-    /// First console control carrying one abstract button, in slot order.
-    /// Pad resolution inverts `abstract_for` over the same traversal.
-    /// `slot` pins the pad's assigned port; `None` scans every slot.
-    fn control_for_abstract(
+    /// First console control carrying one abstract button, in slot order,
+    /// plus dpad context in the same walk. `slot` pins the pad's assigned
+    /// port; `None` scans every slot. The dpad triple derives from the
+    /// same abstract, so resolve and dpad context never walk twice.
+    /// Rebind-only (feeds `rebuild_pad_params`); edges read the fused
+    /// `abstract_route`.
+    fn control_with_dpad_for_abstract(
         &self,
         abstract_key: AbstractKey,
         slot: Option<usize>,
-    ) -> Option<(AttachmentId, DigitalControlId)> {
+    ) -> Option<ControlWithDpad> {
         use nerust_input_traits::ControlId;
         for (index, (_slot, profile)) in self.current_assignments.slots().iter().enumerate() {
             if slot.is_some_and(|pinned| pinned != index) {
@@ -521,31 +525,19 @@ impl InputDept {
                         if info.abstract_key == Some(abstract_key)
                             && let ControlId::Digital(id) = info.id
                         {
-                            return Some((*port, id));
+                            let found = (*port, id);
+                            let dpad = field_press::dpad_pair(abstract_key).is_some().then_some((
+                                found.0,
+                                found.1,
+                                abstract_key,
+                            ));
+                            return Some((found, dpad));
                         }
                     }
                 }
             }
         }
         None
-    }
-
-    /// Resolve plus dpad context in one topology walk: the commit path
-    /// used to walk twice (`control_for_abstract`, then `dpad_for`
-    /// re-resolving the abstract). The dpad triple derives from the same
-    /// abstract, so no second walk is needed.
-    fn control_with_dpad_for_abstract(
-        &self,
-        abstract_key: AbstractKey,
-        slot: Option<usize>,
-    ) -> Option<ControlWithDpad> {
-        let found = self.control_for_abstract(abstract_key, slot)?;
-        let dpad = field_press::dpad_pair(abstract_key).is_some().then_some((
-            found.0,
-            found.1,
-            abstract_key,
-        ));
-        Some((found, dpad))
     }
 }
 
@@ -678,20 +670,6 @@ impl InputDept {
     ) -> Option<usize> {
         let index = self.pads.pad_index(source)?;
         self.slot_for_index(index, ports)
-    }
-
-    /// Dpad context for the OR/neutral machine: resolved abstract plus the
-    /// Copy pair the machine keys on. `None` for non-dpad controls, so both
-    /// input paths share one gate instead of copy-pasting it. No
-    /// allocation: every id here is already Copy.
-    fn dpad_for(
-        &self,
-        attachment: AttachmentId,
-        control: DigitalControlId,
-    ) -> Option<(AttachmentId, DigitalControlId, AbstractKey)> {
-        let abs = self.abstract_for(attachment, control)?;
-        field_press::dpad_pair(abs)?;
-        Some((attachment, control, abs))
     }
 
     /// Persistable projection of the live assignments: only slot and controller ids survive.

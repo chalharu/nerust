@@ -1150,32 +1150,42 @@ internal fun breadcrumbTrail(
 }
 
 /** Search hits across every section (hidden ones included): label,
- * description, section label, value, or current text match. */
-private fun searchHits(
+ * description, section label, value, or current text match. Fields fold
+ * once per payload (not per keystroke): the remembered index below makes
+ * each keystroke a substring scan over pre-folded haystacks. */
+private fun searchIndex(
     sections: List<SettingsSection>,
-    query: String,
     onLabel: String,
     offLabel: String,
-): List<Pair<SettingsSection, SettingsRow>> {
-    if (query.isBlank()) return emptyList()
-    // Fold the query once; every field below matches against the same
-    // folded query instead of re-folding per comparison.
-    val q = query.lowercase()
-    return sections.flatMap { section ->
+): List<Triple<SettingsSection, SettingsRow, String>> =
+    sections.flatMap { section ->
         val sectionLabel = section.label.lowercase()
         section.rows
-            .filter { row ->
-                row.kind != "header" &&
-                    (
-                        row.label.lowercase().contains(q) ||
-                            row.description.lowercase().contains(q) ||
-                            sectionLabel.contains(q) ||
-                            row.text.lowercase().contains(q) ||
-                            settingsRowDisplayValue(row, onLabel, offLabel)
-                                .lowercase().contains(q)
-                    )
-            }.map { row -> section to row }
+            .filter { row -> row.kind != "header" }
+            .map { row ->
+                Triple(
+                    section,
+                    row,
+                    listOf(
+                        row.label.lowercase(),
+                        row.description.lowercase(),
+                        sectionLabel,
+                        row.text.lowercase(),
+                        settingsRowDisplayValue(row, onLabel, offLabel).lowercase(),
+                    ).joinToString("\n"),
+                )
+            }
     }
+
+private fun searchHits(
+    index: List<Triple<SettingsSection, SettingsRow, String>>,
+    query: String,
+): List<Pair<SettingsSection, SettingsRow>> {
+    if (query.isBlank()) return emptyList()
+    val q = query.lowercase()
+    return index
+        .filter { (_, _, haystack) -> haystack.contains(q) }
+        .map { (section, row, _) -> section to row }
 }
 
 @Composable
@@ -1233,8 +1243,11 @@ private fun SettingsCategoryList(
     // below only consumes them through the plain list DSL.
     val onLabel = stringResource(R.string.settings_on)
     val offLabel = stringResource(R.string.settings_off)
-    val hits = remember(state.sections, query, onLabel, offLabel) {
-        searchHits(state.sections, query, onLabel, offLabel)
+    val index = remember(state.sections, onLabel, offLabel) {
+        searchIndex(state.sections, onLabel, offLabel)
+    }
+    val hits = remember(index, query) {
+        searchHits(index, query)
     }
     // Trails depend only on the parent links: one associate per link
     // change, then each hit is a map get at composition. Ancestor labels

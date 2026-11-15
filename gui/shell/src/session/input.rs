@@ -756,11 +756,9 @@ impl SessionHandle {
                 );
                 return;
             };
-            if log::log_enabled!(log::Level::Debug) {
-                log::debug!(
-                    "pad override drives field {field}: {attachment}.{control} from {button:?}"
-                );
-            }
+            log::debug!(
+                "pad override drives field {field}: {attachment}.{control} from {button:?}"
+            );
             let dpad = self.input.dpad_for(attachment, control);
             self.commit_press(field, holder, dpad, pressed);
             return;
@@ -1203,18 +1201,19 @@ mod tests {
             AttachmentId::new("test.topology.slot"),
             Some(Rc::new(MockTopologyProfile)),
         )]);
-        let found = session
-            .input
-            .control_for_abstract(StandardButton::South.abstract_key().expect("mapped"), None);
+        let found = session.input.control_with_dpad_for_abstract(
+            StandardButton::South.abstract_key().expect("mapped"),
+            None,
+        );
         assert_eq!(
-            found.expect("topology control").0,
+            found.expect("topology control").0.0,
             AttachmentId::new("test.topology.slot")
         );
         // A pinned slot outside the assignments resolves nothing.
         assert!(
             session
                 .input
-                .control_for_abstract(
+                .control_with_dpad_for_abstract(
                     StandardButton::South.abstract_key().expect("mapped"),
                     Some(3)
                 )
@@ -1223,7 +1222,7 @@ mod tests {
         assert!(
             session
                 .input
-                .control_for_abstract(AbstractKey::Guide, None)
+                .control_with_dpad_for_abstract(AbstractKey::Guide, None)
                 .is_none()
         );
     }

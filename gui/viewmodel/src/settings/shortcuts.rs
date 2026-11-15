@@ -54,6 +54,7 @@ fn project_shortcut_row(
     BindingRowView {
         target,
         label: desc.label.to_string(),
+        port: None,
         value,
         // Shortcuts have no fixed-layout default; their pad column is a
         // binding, not a fallback.
