@@ -411,9 +411,8 @@ class MainActivity :
     private fun updateControllerAxes(deviceId: Int, event: MotionEvent): Map<String, Float>? {
         val axes = controllerAxes.getOrPut(deviceId) { mutableMapOf() }
         var crossed: MutableMap<String, Float>? = null
-        for (i in MOTION_AXIS_NAMES.indices) {
-            val axis = MOTION_AXIS_NAMES[i]
-            var value = event.getAxisValue(MOTION_AXIS_IDS[i])
+        for ((axis, id) in MOTION_AXES) {
+            var value = event.getAxisValue(id)
             // Right-stick alias: pads reporting RX/RY never ship Z/RZ, so
             // fall back per sample. The capability gate already counts both.
             if ((axis == ControllerAxis.RIGHT_X || axis == ControllerAxis.RIGHT_Y) && value == 0f) {
@@ -1060,41 +1059,21 @@ class MainActivity :
         private const val CONTROLLER_AXIS_THRESHOLD = 0.5f
         private const val CONTROLLER_AXIS_EPSILON = 0.01f
 
-        /** Motion axis names in batch order: hoisted so no pair array is
-         * built per motion callback. */
-        private val MOTION_AXIS_NAMES =
+        /** Motion axes as (name, id) pairs: one table so names and ids
+         * never skew. RX/RY ride as right-stick aliases per sample. */
+        private val MOTION_AXES =
             arrayOf(
-                ControllerAxis.LEFT_X,
-                ControllerAxis.LEFT_Y,
-                ControllerAxis.RIGHT_X,
-                ControllerAxis.RIGHT_Y,
-                ControllerAxis.TRIGGER_L,
-                ControllerAxis.TRIGGER_R,
-            )
-
-        /** Android axis ids in the same order: the batch loop reads raw
-         * values positionally, so names and ids never skew. */
-        private val MOTION_AXIS_IDS =
-            intArrayOf(
-                MotionEvent.AXIS_X,
-                MotionEvent.AXIS_Y,
-                MotionEvent.AXIS_Z,
-                MotionEvent.AXIS_RZ,
-                MotionEvent.AXIS_LTRIGGER,
-                MotionEvent.AXIS_RTRIGGER,
+                ControllerAxis.LEFT_X to MotionEvent.AXIS_X,
+                ControllerAxis.LEFT_Y to MotionEvent.AXIS_Y,
+                ControllerAxis.RIGHT_X to MotionEvent.AXIS_Z,
+                ControllerAxis.RIGHT_Y to MotionEvent.AXIS_RZ,
+                ControllerAxis.TRIGGER_L to MotionEvent.AXIS_LTRIGGER,
+                ControllerAxis.TRIGGER_R to MotionEvent.AXIS_RTRIGGER,
             )
         /** Analog recenter: every axis at neutral, sent as one batch when
-         * a device vanishes so Rust substitutes release. Hoisted so no
-         * map is built per disconnect. */
-        private val RECENTER_AXES =
-            mapOf(
-                ControllerAxis.LEFT_X to 0f,
-                ControllerAxis.LEFT_Y to 0f,
-                ControllerAxis.RIGHT_X to 0f,
-                ControllerAxis.RIGHT_Y to 0f,
-                ControllerAxis.TRIGGER_L to 0f,
-                ControllerAxis.TRIGGER_R to 0f,
-            )
+         * a device vanishes so Rust substitutes release. Derived from the
+         * single motion table so the set cannot skew. */
+        private val RECENTER_AXES = MOTION_AXES.associate { it.first to 0f }
         private const val ROM_PICKER_REQUEST_CODE = 0x4E45
         private const val DIRECTORY_PICKER_REQUEST_CODE = 0x4E46
 

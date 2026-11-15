@@ -856,7 +856,7 @@ mod tests {
             "pads times port and deadzone rows"
         );
         let pad = snapshot.slots[0].model.snapshot();
-        assert_eq!(pad.label.get(), "Pad 1");
+        assert_eq!(pad.label.get(), "Gamepad 1");
         assert!(!pad.choices.get().is_empty());
         assert!(pad.enabled.get());
         // Writing pad 1 to player 2 sticks in the draft.

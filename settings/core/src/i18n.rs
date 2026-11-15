@@ -428,9 +428,12 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
             "重複したキー割り当てを解消してください。",
         ),
         UiText::CapturePrompt => ("Press a key…", "キーを押してください…"),
-        UiText::CapturePromptPad => ("Press a pad button…", "パッドのボタンを押してください…"),
+        UiText::CapturePromptPad => (
+            "Press a controller button…",
+            "コントローラーのボタンを押してください…",
+        ),
         UiText::CapturePromptDpadOnly => (
-            "No keyboard connected. Only the dpad binds here.",
+            "No keyboard connected. Only the D-pad binds here.",
             "キーボード未接続。十字キーのみ割り当て可能。",
         ),
         UiText::InvalidCustomStorageDirectory => (
@@ -640,33 +643,33 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         ),
         UiText::Deadzone => ("Deadzone", "デッドゾーン"),
         UiText::DescDeadzone => (
-            "Stick drift guard. 0 disables.",
-            "スティックの遊び。0で無効",
+            "Ignores small stick movements. 0% turns it off.",
+            "スティックの小さな傾きを無視。0%で無効",
         ),
         UiText::DpadSource => ("D-pad source", "十字キー入力"),
         UiText::DescDpadSource => (
-            "Off disables the hat; sticks still drive.",
-            "オフでハット無効。スティックは有効",
+            "Off ignores the D-pad buttons. Stick tilt still steers.",
+            "オフで十字キーボタンを無視。スティック操作は有効",
         ),
         UiText::DescGamepadRadio => (
-            "Which pad is assigned to this player. Its settings open from the Details button.",
-            "このプレイヤーに割り当てるパッド。詳細設定は詳細ボタンから",
+            "Which controller plays as this player. Button mapping opens from Details.",
+            "このプレイヤーが使うコントローラー。ボタン割り当ては詳細から",
         ),
         UiText::DescGamepadGear => (
-            "Deadzone, d-pad source, buttons for this pad.",
-            "このパッドの遊び・十字キー入力・ボタン",
+            "Deadzone, D-pad source, buttons for this controller.",
+            "このコントローラーの遊び・十字キー入力・ボタン",
         ),
         UiText::DescPadReset => (
-            "Clears deadzone, d-pad source, buttons. Keeps the slot.",
-            "遊び・十字キー入力・ボタンを消去。スロットは保持",
+            "Clears deadzone, D-pad source, buttons. Keeps the player.",
+            "遊び・十字キー入力・ボタンを消去。プレイヤー割り当ては保持",
         ),
         UiText::DescNoGamepads => (
             "Connect a USB or Bluetooth gamepad.",
             "USB・Bluetoothゲームパッドを接続",
         ),
         UiText::DescPadUnassigned => (
-            "Assign a player in Devices to map buttons.",
-            "ボタンの割当には「デバイス」でプレイヤーを割当",
+            "Choose which player uses this controller in Devices first.",
+            "先に「デバイス」で使うプレイヤーを選んでください。",
         ),
         UiText::AlwaysAvailable => ("Always available", "常に利用可能"),
         UiText::Connected => ("Connected", "接続中"),

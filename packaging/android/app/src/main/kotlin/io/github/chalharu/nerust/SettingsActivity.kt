@@ -284,7 +284,10 @@ class SettingsActivity :
             // edge cache keys by descriptor (same key Rust rank-gates on).
             val descriptorKey =
                 InputDevice.getDevice(event.deviceId)?.descriptor ?: "id:${event.deviceId}"
-            val last = captureTriggerLast[descriptorKey] ?: (0f to 0f)
+            // Unknown means held-or-fresh: seed with the live values so a
+            // trigger already held when the row opens cannot capture on
+            // the first motion event.
+            val last = captureTriggerLast[descriptorKey] ?: (triggerL to triggerR)
             captureTriggerLast[descriptorKey] = triggerL to triggerR
             val crossed =
                 (triggerL >= TRIGGER_CAPTURE_PRESS && last.first < TRIGGER_CAPTURE_PRESS) ||

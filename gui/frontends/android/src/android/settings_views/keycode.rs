@@ -39,9 +39,10 @@ pub(crate) fn android_keycode_to_button(keycode: u32) -> Option<StandardButton> 
     })
 }
 
-/// Single table for the test: adding a row extends both.
+/// Covered buttons: explicit pairs so a dropped arm fails here instead
+/// of round-tripping the function against itself.
 #[cfg(test)]
-const TABLE: [(u32, StandardButton); 18] = [
+const COVERED_BUTTONS: [(u32, StandardButton); 18] = [
     (19, StandardButton::DpadUp),
     (20, StandardButton::DpadDown),
     (21, StandardButton::DpadLeft),
@@ -68,7 +69,7 @@ const TABLE: [(u32, StandardButton); 18] = [
 pub(crate) fn android_keycode_to_key(keycode: i32) -> Option<Key> {
     // Sorted for binary search; mirrors the settings capture vocabulary
     // so gameplay and capture never disagree on a code.
-    const TABLE: [(i32, Key); 98] = [
+    const TABLE: [(i32, Key); 100] = [
         (7, Key::Digit0),
         (8, Key::Digit1),
         (9, Key::Digit2),
@@ -135,6 +136,8 @@ pub(crate) fn android_keycode_to_key(keycode: i32) -> Option<Key> {
         (113, Key::ControlLeft),
         (114, Key::ControlRight),
         (115, Key::CapsLock),
+        (117, Key::SuperLeft),
+        (118, Key::SuperRight),
         (122, Key::Home),
         (123, Key::End),
         (124, Key::Insert),
@@ -351,9 +354,7 @@ mod tests {
 
     #[test]
     fn keycodes_cover_face_dpad_and_system_buttons() {
-        // Round-trip over the table itself: adding a row extends coverage
-        // without extending this test, and a skewed row fails here.
-        for (keycode, button) in TABLE {
+        for (keycode, button) in COVERED_BUTTONS {
             assert_eq!(android_keycode_to_button(keycode), Some(button));
         }
         for keycode in [0, 101, 255] {

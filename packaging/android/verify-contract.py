@@ -472,10 +472,7 @@ def validate_controller_vocabulary(decoder, kotlin, wire):
     require(used_axes <= set(axes),
             f"Kotlin uses unknown ControllerAxis: {sorted(used_axes - set(axes))}")
     rust_keys = set(_rust_table_keys(decoder, "CONTROLLER_KEY_TABLE"))
-    try:
-        rust_axes = set(_rust_table_keys(decoder, "CONTROLLER_AXIS_TABLE"))
-    except ContractError:
-        rust_axes = set(_rust_motion_axis_fields(decoder))
+    rust_axes = set(_rust_motion_axis_fields(decoder))
     require(set(keys.values()) == rust_keys,
             "Kotlin/Rust button vocabulary differs")
     require(set(axes.values()) == rust_axes,

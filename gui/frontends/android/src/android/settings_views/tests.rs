@@ -3570,7 +3570,7 @@ fn game_row_capture_without_keyboard_names_dpad_only() {
     });
     let (_, prompt) = capture.expect("capture pending");
     assert!(
-        prompt.contains("dpad") || prompt.contains("十字キー"),
+        prompt.contains("D-pad") || prompt.contains("dpad") || prompt.contains("十字キー"),
         "pad-only game rows name the dpad: {prompt}"
     );
 }

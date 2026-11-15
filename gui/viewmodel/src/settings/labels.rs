@@ -32,10 +32,10 @@ pub fn pad_button_plain(button: StandardButton) -> &'static str {
         StandardButton::RightShoulder => "RB",
         StandardButton::LeftTrigger => "LT",
         StandardButton::RightTrigger => "RT",
-        StandardButton::DpadUp => "D-Up",
-        StandardButton::DpadDown => "D-Down",
-        StandardButton::DpadLeft => "D-Left",
-        StandardButton::DpadRight => "D-Right",
+        StandardButton::DpadUp => "D-pad up",
+        StandardButton::DpadDown => "D-pad down",
+        StandardButton::DpadLeft => "D-pad left",
+        StandardButton::DpadRight => "D-pad right",
     }
 }
 
@@ -65,13 +65,13 @@ pub fn port_summary(i18n: I18n, names: &[String]) -> String {
     }
 }
 
-/// Connection-order pad label (`Pad 1` / `パッド 1`). The number is
-/// connection order, never the player slot, in both languages.
+/// Connection-order pad label (`Gamepad 1` / `ゲームパッド 1`). The number
+/// is connection order, never the player slot, in both languages.
 pub fn pad_label(language: AppLanguage, index: usize) -> String {
     let pad = index + 1;
     match language {
-        AppLanguage::Japanese => format!("パッド {pad}"),
-        _ => format!("Pad {pad}"),
+        AppLanguage::Japanese => format!("ゲームパッド {pad}"),
+        _ => format!("Gamepad {pad}"),
     }
 }
 
@@ -79,8 +79,8 @@ pub fn pad_label(language: AppLanguage, index: usize) -> String {
 /// is in the row label, so the description only states the action.
 pub fn slot_description(i18n: I18n) -> String {
     match i18n.language() {
-        AppLanguage::Japanese => "このポートで使うコントローラー".to_string(),
-        _ => "Controller for this port.".to_string(),
+        AppLanguage::Japanese => "このプレイヤーで使うコントローラー".to_string(),
+        _ => "Controller for this player.".to_string(),
     }
 }
 
@@ -89,7 +89,7 @@ pub fn slot_description(i18n: I18n) -> String {
 pub fn slot_in_use(i18n: I18n, owner: &str) -> String {
     match i18n.language() {
         AppLanguage::Japanese => format!("{owner}使用中"),
-        _ => format!("Used in {owner}"),
+        _ => format!("In use by {owner}"),
     }
 }
 
@@ -122,14 +122,14 @@ mod tests {
         assert_eq!(port_summary(en(), &[]), "Not assigned");
         assert_eq!(port_summary(ja(), &[]), "未割り当て");
         assert_eq!(
-            port_summary(en(), &["Pad 1".to_string()]),
-            "Pad 1".to_string()
+            port_summary(en(), &["Gamepad 1".to_string()]),
+            "Gamepad 1".to_string()
         );
         assert_eq!(
             port_summary(en(), &["A".to_string(), "B".to_string()]),
             "A +1".to_string()
         );
         assert_eq!(slot_in_use(ja(), "P1"), "P1使用中");
-        assert_eq!(slot_in_use(en(), "P1"), "Used in P1");
+        assert_eq!(slot_in_use(en(), "P1"), "In use by P1");
     }
 }
