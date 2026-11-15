@@ -64,19 +64,6 @@ pub fn port_summary(i18n: I18n, names: &[String]) -> String {
     }
 }
 
-/// Player/device-row count line: "No devices assigned" / "1 device
-/// assigned" / "N devices assigned" (singular/plural distinguished).
-pub fn port_count_line(i18n: I18n, count: usize) -> String {
-    match (i18n.language(), count) {
-        (AppLanguage::Japanese, 0) => "割り当てデバイスなし".to_string(),
-        (_, 0) => "No devices assigned".to_string(),
-        (AppLanguage::Japanese, 1) => "1台のデバイスを割り当て".to_string(),
-        (_, 1) => "1 device assigned".to_string(),
-        (AppLanguage::Japanese, n) => format!("{n}台のデバイスを割り当て"),
-        (_, n) => format!("{n} devices assigned"),
-    }
-}
-
 /// Connection-order pad label (`Pad 1` / `パッド 1`). The number is
 /// connection order, never the player slot, in both languages.
 pub fn pad_label(language: AppLanguage, index: usize) -> String {
@@ -141,8 +128,6 @@ mod tests {
             port_summary(en(), &["A".to_string(), "B".to_string()]),
             "A +1".to_string()
         );
-        assert_eq!(port_count_line(en(), 0), "No devices assigned");
-        assert_eq!(port_count_line(ja(), 2), "2台のデバイスを割り当て");
         assert_eq!(slot_in_use(ja(), "P1"), "P1使用中");
         assert_eq!(slot_in_use(en(), "P1"), "Used in P1");
     }

@@ -162,9 +162,7 @@ impl SessionHandle {
             let guid = self.input.pads.order[pos];
             let source = SourceId::Pad(guid);
             let index = self.input.pads.pad_index(source)?;
-            self.input
-                .slot_for_index(index, ports)
-                .map(|_| source)
+            self.input.slot_for_index(index, ports).map(|_| source)
         })
     }
 
@@ -240,7 +238,9 @@ impl SessionHandle {
             .pressed
             .extract_if(|(source, _)| *source == old)
             .collect();
-        self.input.pressed.extend(held.into_iter().map(|(_, button)| (new, button)));
+        self.input
+            .pressed
+            .extend(held.into_iter().map(|(_, button)| (new, button)));
         let stored: Vec<((SourceId, GamepadAxis), f32)> = self
             .input
             .analogs
@@ -255,9 +255,11 @@ impl SessionHandle {
             .extract_if(|(source, _, _)| *source == old)
             .map(|(_, axis, button)| (axis, button))
             .collect();
-        self.input
-            .axis_dpad
-            .extend(derived.into_iter().map(|(axis, button)| (new, axis, button)));
+        self.input.axis_dpad.extend(
+            derived
+                .into_iter()
+                .map(|(axis, button)| (new, axis, button)),
+        );
     }
 
     /// Disconnect-time cleanup: release the pad's holders event-fully
@@ -632,8 +634,18 @@ impl SessionHandle {
             // both holders converge instead of stranding on stale state.
             // A stick the console drives stays raw (the analog still
             // stores above).
-            let x = self.input.analogs.get(&(source, ax)).copied().unwrap_or(0.0);
-            let y = self.input.analogs.get(&(source, ay)).copied().unwrap_or(0.0);
+            let x = self
+                .input
+                .analogs
+                .get(&(source, ax))
+                .copied()
+                .unwrap_or(0.0);
+            let y = self
+                .input
+                .analogs
+                .get(&(source, ay))
+                .copied()
+                .unwrap_or(0.0);
             let (mut wx, mut wy) = Self::stick_pair_substitutes(x, y);
             let left = ax == GamepadAxis::LeftStickX;
             if !(if left {
@@ -2419,7 +2431,10 @@ mod tests {
         let next = session.settings_snapshot().clone();
         session.apply_settings(next).unwrap();
         let expected = session.touch_overlay_model(42);
-        assert!(expected.controls.is_empty(), "apply rebuilds from the new snapshot");
+        assert!(
+            expected.controls.is_empty(),
+            "apply rebuilds from the new snapshot"
+        );
         assert_eq!(expected.revision, 42);
     }
 

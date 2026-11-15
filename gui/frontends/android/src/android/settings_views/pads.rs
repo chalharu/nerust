@@ -13,11 +13,7 @@
 
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_viewmodel::settings::SettingsViewModel;
-use nerust_settings_core::{
-    editor::CaptureTarget,
-    i18n::UiText,
-    model::input::DEADZONE_STEPS,
-};
+use nerust_settings_core::{editor::CaptureTarget, i18n::UiText, model::input::DEADZONE_STEPS};
 
 use super::wire::{
     GamepadInfo, I18n, PLAYER_PORTS, RowWire, SectionWire, button_row, capture_row, encode_target,
@@ -239,9 +235,7 @@ fn pad_system_rows(
                 | BindingValueView::Bound(label)
                 | BindingValueView::Capturing(label) => label.clone(),
             };
-            let (Some(attachment), Some(control)) =
-                (target.attachment(), target.control())
-            else {
+            let (Some(attachment), Some(control)) = (target.attachment(), target.control()) else {
                 continue;
             };
             section_rows.push(capture_row(
@@ -278,4 +272,3 @@ fn pad_system_rows(
     // validation), never as duplicate rows: one surfacing, not two.
     out
 }
-

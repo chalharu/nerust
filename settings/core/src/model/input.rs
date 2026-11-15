@@ -262,10 +262,10 @@ pub fn pad_game_binding_conflicts(
     let mut by_button = std::collections::BTreeMap::<StandardButton, Vec<(&str, &str)>>::new();
     for binding in bindings {
         if matches!(binding.control, PersistedControlId::Digital(_)) {
-            by_button.entry(binding.button).or_default().push((
-                binding.attachment.as_str(),
-                binding.control.as_str(),
-            ));
+            by_button
+                .entry(binding.button)
+                .or_default()
+                .push((binding.attachment.as_str(), binding.control.as_str()));
         }
     }
     by_button.retain(|_, targets| targets.len() > 1);

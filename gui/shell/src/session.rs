@@ -38,7 +38,7 @@ use nerust_gui_runtime::settings::{
     manager::SettingsManager,
 };
 use nerust_input_traits::{
-    AbstractKey, AttachmentId, AXIS_ABSTRACT, BUTTON_ABSTRACT, DigitalControlId, GamepadAxis,
+    AXIS_ABSTRACT, AbstractKey, AttachmentId, BUTTON_ABSTRACT, DigitalControlId, GamepadAxis,
     InputAssignments, Key, PadGuid, SourceButtonId, SourceId, StandardButton, UnifiedFieldMap,
 };
 use nerust_persistence::error::PersistenceError;

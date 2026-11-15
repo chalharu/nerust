@@ -1076,8 +1076,7 @@ struct WireTarget {
 /// Opaque capture target: the row string parses exactly once per command;
 /// inner boundaries pass the `Value` through without re-serializing.
 fn decode_target(encoded: &str, deps: &VmDeps) -> Result<CaptureTarget, String> {
-    let value: WireTarget =
-        serde_json::from_str(encoded).map_err(|error| error.to_string())?;
+    let value: WireTarget = serde_json::from_str(encoded).map_err(|error| error.to_string())?;
     let system = |system: Option<String>| {
         let system = system.ok_or_else(|| "capture target misses system".to_string())?;
         deps.factories
@@ -1096,11 +1095,11 @@ fn decode_target(encoded: &str, deps: &VmDeps) -> Result<CaptureTarget, String> 
                 .control
                 .ok_or_else(|| "capture target misses control".to_string())?,
         }),
-        "shortcut" => Ok(CaptureTarget::Shortcut(
-            value
-                .action
-                .ok_or_else(|| "capture target misses action".to_string())?,
-        )),
+        "shortcut" => {
+            Ok(CaptureTarget::Shortcut(value.action.ok_or_else(|| {
+                "capture target misses action".to_string()
+            })?))
+        }
         "pad_binding" => Ok(CaptureTarget::PadBinding {
             system: system(value.system)?,
             pad: value

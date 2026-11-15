@@ -893,7 +893,11 @@ fn player_screens_wire_devices_types_and_summaries() {
     // Player rows stay bare regardless of assignment.
     let p1 = row(&payload, "controllers.player.1");
     assert_eq!(p1.text, "", "hub p1 is a bare chevron");
-    assert_eq!(row(&payload, "controllers.player.2").text, "", "hub p2 is a bare chevron");
+    assert_eq!(
+        row(&payload, "controllers.player.2").text,
+        "",
+        "hub p2 is a bare chevron"
+    );
     // Types screens fan out per machine with a player-1 row everywhere
     // and a player-2 row on NES only.
     assert_eq!(
@@ -1268,7 +1272,10 @@ fn overlay_detail_carries_settings_not_status_readouts() {
         .find(|section| section.id == "controls.overlay_detail")
         .expect("overlay detail screen exists");
     assert!(
-        section.rows.iter().all(|row| row.key != "controls.auto_hide_status"),
+        section
+            .rows
+            .iter()
+            .all(|row| row.key != "controls.auto_hide_status"),
         "no status readout next to the overlay settings"
     );
     assert!(
@@ -3097,7 +3104,10 @@ fn pad_mapping_conflict_surfaces_once_through_issues() {
         .find(|section| section.id == "pad.1")
         .expect("pad.1 screen exists");
     assert!(
-        section.rows.iter().all(|row| !row.key.contains(".conflict.")),
+        section
+            .rows
+            .iter()
+            .all(|row| !row.key.contains(".conflict.")),
         "no duplicate conflict rows next to the capture rows"
     );
 }
