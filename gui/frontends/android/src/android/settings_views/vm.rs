@@ -9,7 +9,7 @@
 
 use std::{
     rc::Rc,
-    sync::{Arc, OnceLock},
+    sync::{Arc, RwLock},
 };
 
 use nerust_gui_runtime::settings::SettingsSnapshot;
@@ -27,19 +27,23 @@ pub(crate) struct VmDeps {
     pub rates: Arc<[u32]>,
 }
 
-static VM_DEPS: OnceLock<VmDeps> = OnceLock::new();
+/// JNI-edge dependency cell: free JNI entry points cannot take `Self`,
+/// so the four entries (`open_payload`, command, key, motion) resolve
+/// deps here. Everything inside takes `&VmDeps` explicitly. Last install
+/// wins so tests can reinstall per case; production installs once.
+static VM_DEPS: RwLock<Option<VmDeps>> = RwLock::new(None);
 
-/// Publish the factories and probed sample rates once at startup.
-/// Called from the event thread; JNI commands only read. Later installs
-/// are ignored: every caller publishes the same registry and rates.
+/// Publish the factories and probed rates. Overwrites any previous
+/// install: production calls once at startup, tests reinstall per case.
 pub(crate) fn install_vm_deps(factories: Vec<Arc<dyn CoreFactory>>, rates: Arc<[u32]>) {
-    let _ = VM_DEPS.set(VmDeps { factories, rates });
+    *VM_DEPS.write().expect("vm deps lock poisoned") = Some(VmDeps { factories, rates });
 }
 
 pub(super) fn with_vm_deps<T>(
     operation: impl FnOnce(&VmDeps) -> Result<T, String>,
 ) -> Result<T, String> {
-    let Some(deps) = VM_DEPS.get() else {
+    let guard = VM_DEPS.read().expect("vm deps lock poisoned");
+    let Some(deps) = guard.as_ref() else {
         return Err("android settings not initialized".to_string());
     };
     operation(deps)
@@ -48,6 +52,9 @@ pub(super) fn with_vm_deps<T>(
 /// Android storage lives behind SAF: the document-tree picker flow owns
 /// existence, so this only rejects malformed paths. Snapshot-level URI rules
 /// still run in the view-model validator.
+/// `NoopStoragePathValidator` is `#[cfg(test)]`-only and fail-open (accepts
+/// empty/NUL): using it here would let a malformed JNI string pass the save
+/// gate and fail at persistence instead of blocking submit. Kept explicit.
 #[derive(Debug)]
 struct SafStorageValidator;
 
