@@ -214,7 +214,7 @@ fn pad_system_rows(
                 String::new(),
                 text,
                 &encode_target(&target, &system),
-                true,
+                live,
                 reason,
             ));
         }

@@ -774,11 +774,7 @@ fn shortcuts_section(
     // the same value. The block lists every connected pad by name; capture
     // from any row accepts any pad's button.
     if !gamepads.is_empty() {
-        let names: Vec<_> = gamepads
-            .iter()
-            .take(nerust_input_traits::MAX_PADS)
-            .map(|info| info.name.clone())
-            .collect();
+        let names: Vec<_> = gamepads.iter().map(|info| info.name.clone()).collect();
         rows.push(header_row(format!(
             "{} ({})",
             i18n.text(UiText::GamepadDevice),

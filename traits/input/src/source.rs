@@ -4,13 +4,6 @@
 
 use super::key::Key;
 
-/// Maximum pads the port table (and the session order) tracks.
-/// Product bound, not a hardware limit: consoles here have at most two
-/// player ports, USB allows more. Four covers spares/shared pads with
-/// fixed-size tables everywhere (settings schema, hot path, UI); a fifth
-/// pad parks behind an explicit notice instead of vanishing silently.
-pub const MAX_PADS: usize = 4;
-
 /// Position-based standard pad button. Glyph names (`A`/`B`) transpose per
 /// vendor (Nintendo swaps them); positions do not, so bindings stay portable.
 #[derive(

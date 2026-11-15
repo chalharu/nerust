@@ -241,6 +241,10 @@ pub(super) fn keyboard_member_name(member: &str, keyboards: &[KeyboardInfo], i18
 /// assigned here: at most one connected pad drives a player, Unassigned
 /// parks them all. The choice edits the same pad-port table as Controls
 /// > Gamepads (deadzone and hat switch stay there).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Projection seam: truth (snapshot, lists, order, locale) threads through"
+)]
 pub(super) fn build_devices_section(
     port: &str,
     devices_id: &str,

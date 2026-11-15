@@ -900,7 +900,7 @@ impl SessionHandle {
             .active_system_id_box()
             .and_then(|system_id| self.settings.snapshot.shared.input.systems.get(&system_id));
         let bindings = system.and_then(|s| s.implicit_keyboard_profile());
-        let pad_bindings = system.map(|s| &s.pad_bindings);
+        let pad_bindings = system.map(|s| s.pad_bindings.as_slice());
         // The department owns the maps; the session only resolves which
         // profile is active. The stick/trigger policy rebuilds here too:
         // it follows the assignments, so a system switch re-routes
@@ -1347,6 +1347,9 @@ mod tests {
         );
         // One digital override on pad 0; the analog entry never lands.
         let mut system_settings = SystemInputSettings::default();
+        system_settings
+            .pad_bindings
+            .resize_with(1, Default::default);
         system_settings.pad_bindings[0] = vec![
             PadBinding::new(
                 "test.topology.slot",
@@ -1372,7 +1375,12 @@ mod tests {
             )
         );
         assert!(
-            session.input.pads.binding_map[1].is_empty(),
+            session
+                .input
+                .pads
+                .binding_map
+                .get(1)
+                .is_none_or(|map| map.is_empty()),
             "pads stay independent"
         );
     }
@@ -1386,6 +1394,9 @@ mod tests {
         let mut session = crate::session::test_util::test_session();
         let system = session.active_system_id_box().expect("test system active");
         let mut system_settings = SystemInputSettings::default();
+        system_settings
+            .pad_bindings
+            .resize_with(1, Default::default);
         system_settings.pad_bindings[0] = vec![
             PadBinding::new(
                 "test.topology.slot",
@@ -1426,6 +1437,9 @@ mod tests {
         let mut next = session.settings_snapshot().clone();
         let system = session.active_system_id_box().expect("test system active");
         let mut system_settings = SystemInputSettings::default();
+        system_settings
+            .pad_bindings
+            .resize_with(1, Default::default);
         system_settings.pad_bindings[0] = vec![
             PadBinding::new(
                 "test.topology.slot",
@@ -1519,6 +1533,9 @@ mod tests {
         let mut next = session.settings_snapshot().clone();
         let system = session.active_system_id_box().expect("test system active");
         let mut system_settings = SystemInputSettings::default();
+        system_settings
+            .pad_bindings
+            .resize_with(1, Default::default);
         system_settings.pad_bindings[0] = vec![
             PadBinding::new(
                 "test.topology.slot",
@@ -2115,6 +2132,9 @@ mod tests {
         let mut next = session.settings_snapshot().clone();
         let system = session.active_system_id_box().expect("test system active");
         let mut system_settings = SystemInputSettings::default();
+        system_settings
+            .pad_bindings
+            .resize_with(1, Default::default);
         system_settings.pad_bindings[0] = vec![PadBinding::new(
             "test.topology.slot",
             PersistedControlId::digital("test.topology.a"),

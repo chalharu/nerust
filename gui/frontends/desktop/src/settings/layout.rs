@@ -852,8 +852,8 @@ mod tests {
         assert!(!snapshot.label.is_empty());
         assert_eq!(
             snapshot.slots.len(),
-            2 * nerust_input_traits::MAX_PADS,
-            "four pads times port and deadzone rows"
+            2 * editor.vm.gamepads.view.get().pads.len(),
+            "pads times port and deadzone rows"
         );
         let pad = snapshot.slots[0].model.snapshot();
         assert_eq!(pad.label.get(), "Pad 1");
@@ -1000,7 +1000,7 @@ mod tests {
             // Keyboard sections plus one mapping section per pad.
             assert_eq!(
                 snapshot.sections.get().len(),
-                view.sections.len() + nerust_input_traits::MAX_PADS
+                view.sections.len() + editor.vm.gamepads.view.get().pads.len()
             );
             for section in snapshot.sections.get().iter().skip(view.sections.len()) {
                 assert!(

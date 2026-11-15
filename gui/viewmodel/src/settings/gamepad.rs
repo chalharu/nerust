@@ -1,5 +1,4 @@
 use super::labels::pad_label;
-use nerust_input_traits::MAX_PADS;
 use nerust_settings_core::i18n::UiText;
 use nerust_settings_core::model::input::{DEADZONE_MAX_PERCENT, DEADZONE_STEPS};
 
@@ -70,18 +69,23 @@ impl GamepadViewModel {
         })
     }
 
-    /// One guarded write to a pad's port state; both setters share the
-    /// range check so neither duplicates it.
+    /// One write to a pad's port state; open tables grow on demand so
+    /// a newly connected pad is configurable the moment its screen
+    /// exists. Both setters share the growth so neither duplicates it.
     fn update_pad(
         &self,
         pad: usize,
         update: impl FnOnce(&mut nerust_settings_core::model::input::PadPort),
     ) -> Result<(), super::editor::ViewModelError> {
-        if pad >= MAX_PADS {
-            return Err(super::editor::ViewModelError::UnknownPad(pad));
-        }
         self.editor.transact(|state| {
-            update(&mut state.draft_mut().shared.input.gamepad.pad_ports[pad]);
+            let ports = &mut state.draft_mut().shared.input.gamepad.pad_ports;
+            if ports.len() <= pad {
+                ports.resize_with(
+                    pad + 1,
+                    nerust_settings_core::model::input::PadPort::default,
+                );
+            }
+            update(&mut ports[pad]);
             Ok(())
         })
     }
@@ -108,7 +112,7 @@ fn project_view(state: &super::EditorState) -> GamepadTabView {
                 label: format!("{step}%"),
             })
             .collect(),
-        pads: (0..MAX_PADS)
+        pads: (0..gamepad.pad_ports.len())
             .map(|index| {
                 let port = &gamepad.pad_ports[index];
                 PadPortView {
@@ -132,7 +136,12 @@ mod tests {
         use nerust_settings_core::model::input::DEFAULT_DEADZONE_PERCENT;
         let vm = test_vm();
         let view = vm.gamepads.view.get();
-        assert_eq!(view.pads.len(), nerust_input_traits::MAX_PADS);
+        assert_eq!(
+            view.pads.len(),
+            nerust_settings_core::model::input::GamepadSettings::default()
+                .pad_ports
+                .len()
+        );
         assert_eq!(view.pads[0].deadzone, DEFAULT_DEADZONE_PERCENT);
         assert_eq!(view.pads[0].port, Some(0));
         assert_eq!(view.pads[2].port, None);
@@ -146,7 +155,12 @@ mod tests {
         assert_eq!(vm.gamepads.view.get().pads[0].deadzone, 90);
         vm.gamepads.set_pad_port(2, Some(1)).unwrap();
         assert_eq!(vm.gamepads.view.get().pads[2].port, Some(1));
-        assert!(vm.gamepads.set_pad_port(9, Some(0)).is_err());
-        assert!(vm.gamepads.set_deadzone(9, 10).is_err());
+        // Open tables: addressing a new pad grows the settings instead of
+        // erroring, so a fifth pad is configurable the moment it appears.
+        vm.gamepads.set_pad_port(9, Some(0)).unwrap();
+        assert_eq!(vm.gamepads.view.get().pads.len(), 10);
+        assert_eq!(vm.gamepads.view.get().pads[9].port, Some(0));
+        vm.gamepads.set_deadzone(9, 10).unwrap();
+        assert_eq!(vm.gamepads.view.get().pads[9].deadzone, 10);
     }
 }

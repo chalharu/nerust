@@ -38,8 +38,8 @@ use nerust_gui_runtime::settings::{
     manager::SettingsManager,
 };
 use nerust_input_traits::{
-    AbstractKey, AttachmentId, DigitalControlId, GamepadAxis, InputAssignments, Key, MAX_PADS,
-    PadGuid, SourceButtonId, SourceId, StandardButton, UnifiedFieldMap,
+    AbstractKey, AttachmentId, DigitalControlId, GamepadAxis, InputAssignments, Key, PadGuid,
+    SourceButtonId, SourceId, StandardButton, UnifiedFieldMap,
 };
 use nerust_persistence::error::PersistenceError;
 use nerust_render_traits::{FrameBuffer, VideoRenderProfile};
@@ -207,7 +207,11 @@ struct PadTopology {
     /// interned `(attachment, control)`. Sparse (only remapped pairs).
     /// Absolute attachments (like keyboard bindings): an explicit entry
     /// wins over the pad's player-slot routing.
-    binding_map: [HashMap<StandardButton, (AttachmentId, DigitalControlId)>; MAX_PADS],
+    /// Sized at every rebind to cover the live order and the settings
+    /// tables; missing rows read as defaults (no overrides, deadzone 8,
+    /// hat on), so a pad that outgrows the last rebind still plays.
+    binding_map: Vec<HashMap<StandardButton, (AttachmentId, DigitalControlId)>>,
+
     /// Pad button → shortcut action (first binding wins). Parked pads
     /// never consult it (see the slot gate).
     shortcut_map: HashMap<StandardButton, ShortcutAction>,
@@ -245,8 +249,8 @@ struct InputDept {
     /// Per-pad stick deadzone (percent) and hat enable, snapshotted from
     /// the settings table at every rebind. The hot axis/button paths read
     /// this instead of chasing the settings snapshot per event.
-    pad_deadzone: [u8; MAX_PADS],
-    pad_hat: [bool; MAX_PADS],
+    pad_deadzone: Vec<u8>,
+    pad_hat: Vec<bool>,
     /// Abstract→(attachment, control, dpad) routes for the live
     /// assignments, fused at every rebind. Press/release edges resolve
     /// here instead of walking the topology per edge.
@@ -270,7 +274,7 @@ impl InputDept {
                 order: Vec::new(),
                 descriptor_order: Vec::new(),
                 device_ids: HashMap::new(),
-                binding_map: [(); MAX_PADS].map(|()| HashMap::new()),
+                binding_map: Vec::new(),
                 shortcut_map: HashMap::new(),
             },
             pressed: HashSet::new(),
@@ -281,8 +285,8 @@ impl InputDept {
             press_state: field_press::FieldPressState::default(),
             stick_substitute: [true; 2],
             trigger_alias: true,
-            pad_deadzone: [nerust_settings_core::model::input::DEFAULT_DEADZONE_PERCENT; MAX_PADS],
-            pad_hat: [true; MAX_PADS],
+            pad_deadzone: Vec::new(),
+            pad_hat: Vec::new(),
             abstract_route: HashMap::new(),
             topology_epoch: 0,
             touch_cache: Default::default(),
@@ -364,8 +368,17 @@ impl InputDept {
     /// to the same Copy ids the hot path keys on.
     pub(crate) fn rebuild_pad_binding_map(
         &mut self,
-        bindings: Option<&[Vec<nerust_settings_core::model::input::PadBinding>; MAX_PADS]>,
+        bindings: Option<&[Vec<nerust_settings_core::model::input::PadBinding>]>,
     ) {
+        // Open tables: size to the widest side (live order or settings),
+        // so a pad that outgrows either still resolves; missing rows stay
+        // empty (no overrides), never alias a neighbor.
+        let width = self
+            .pads
+            .order
+            .len()
+            .max(bindings.map(|tables| tables.len()).unwrap_or(0));
+        self.pads.binding_map.resize_with(width, Default::default);
         for map in &mut self.pads.binding_map {
             map.clear();
         }
@@ -406,6 +419,19 @@ impl InputDept {
         &mut self,
         gamepad: &nerust_settings_core::model::input::GamepadSettings,
     ) {
+        // Same width rule as the binding map; missing rows read as
+        // defaults (deadzone 8, hat on), so late connects still play.
+        let width = self
+            .pads
+            .order
+            .len()
+            .max(gamepad.pad_ports.len())
+            .max(self.pads.binding_map.len());
+        self.pad_deadzone.resize(
+            width,
+            nerust_settings_core::model::input::DEFAULT_DEADZONE_PERCENT,
+        );
+        self.pad_hat.resize(width, true);
         for (index, port) in gamepad.pad_ports.iter().enumerate() {
             self.pad_deadzone[index] = port.deadzone_percent;
             self.pad_hat[index] = port.dpad_enabled;
@@ -608,21 +634,12 @@ impl PadTopology {
 
     /// First-seen order index of one pad GUID, registering newcomers.
     /// Setting slots count descriptors only: transients register for
-    /// collapse/migration without consuming a persisted slot, and pads
-    /// past the table park instead of aliasing the last pad.
+    /// collapse/migration without consuming a persisted slot. Open tables
+    /// (see `binding_map`): newcomers always append, so no pad parks
+    /// past a cap; missing settings rows read as defaults.
     fn pad_index_for_guid(&mut self, guid: PadGuid) -> Option<usize> {
         if let Some(index) = self.order.iter().position(|known| *known == guid) {
             return Some(index);
-        }
-        if !Self::is_transient(&guid)
-            && self
-                .order
-                .iter()
-                .filter(|known| !Self::is_transient(known))
-                .count()
-                >= nerust_input_traits::MAX_PADS
-        {
-            return None;
         }
         let index = self.order.len();
         self.order.push(guid);
@@ -651,7 +668,7 @@ impl InputDept {
     /// table, clamped to the live slots. `None` parks the pad (Off, or
     /// past the table). Split from `pad_slot` so hot paths scan
     /// `pad_order` once per event and derive the slot from the index.
-    fn slot_for_index(&self, index: usize, ports: &[PadPort; MAX_PADS]) -> Option<usize> {
+    fn slot_for_index(&self, index: usize, ports: &[PadPort]) -> Option<usize> {
         let slot = ports.get(index)?.slot?;
         let live = self.current_assignments.slots().len();
         if live == 0 {
@@ -666,7 +683,7 @@ impl InputDept {
     fn pad_slot(
         &self,
         source: SourceId,
-        ports: &[nerust_settings_core::model::input::PadPort; nerust_input_traits::MAX_PADS],
+        ports: &[nerust_settings_core::model::input::PadPort],
     ) -> Option<usize> {
         let index = self.pads.pad_index(source)?;
         self.slot_for_index(index, ports)

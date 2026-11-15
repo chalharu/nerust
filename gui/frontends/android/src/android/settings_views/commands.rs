@@ -153,6 +153,10 @@ pub(crate) fn apply_command_to(
 
 /// Re-resolve the display language (the command may have changed it) and
 /// project exactly once. Snapshot-direct ops funnel here.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Projection seam: truth (snapshot, deps, lists, order, locale) threads through"
+)]
 fn project_after_snapshot_edit(
     snapshot: &SettingsSnapshot,
     deps: &VmDeps,
@@ -399,8 +403,15 @@ fn apply_gamepad_radio_command(
     };
     let pad: Option<usize> = choice(row, command.index)?;
     if let Some(pad) = pad {
-        if snapshot.shared.input.gamepad.pad_ports.get(pad).is_none() {
-            return Err(format!("{}: unknown pad index {pad}", command.key));
+        // Open tables: choosing a pad beyond the settings materializes
+        // its row, so a newly connected pad is assignable immediately.
+        if snapshot.shared.input.gamepad.pad_ports.len() <= pad {
+            snapshot
+                .shared
+                .input
+                .gamepad
+                .pad_ports
+                .resize_with(pad + 1, Default::default);
         }
         for (index, entry) in snapshot
             .shared
@@ -703,7 +714,7 @@ fn reset_pad_scope(
     let index: usize = pad
         .parse()
         .ok()
-        .filter(|index: &usize| (1..=nerust_input_traits::MAX_PADS).contains(index))
+        .filter(|index: &usize| *index >= 1)
         .ok_or_else(|| format!("unknown reset scope: {scope}"))?
         - 1;
     let Some(default_port) = default.shared.input.gamepad.pad_ports.get(index) else {
@@ -797,8 +808,7 @@ fn pad_screen_index(key: &str) -> Result<usize, String> {
         .and_then(|rest| rest.split('.').next())
         .and_then(|segment| segment.parse().ok())
         .ok_or_else(|| format!("bad pad key: {key}"))?;
-    (1..=nerust_input_traits::MAX_PADS)
-        .contains(&index)
+    (index >= 1)
         .then_some(index - 1)
         .ok_or_else(|| format!("bad pad key: {key}"))
 }
@@ -1086,9 +1096,6 @@ fn req_pad(value: &serde_json::Value) -> Result<usize, String> {
     let pad: usize = pad
         .try_into()
         .map_err(|_| "capture target pad out of range".to_string())?;
-    if pad >= nerust_input_traits::MAX_PADS {
-        return Err(format!("capture target pad out of range: {pad}"));
-    }
     Ok(pad)
 }
 

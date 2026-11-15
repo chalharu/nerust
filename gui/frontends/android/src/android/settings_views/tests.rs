@@ -95,7 +95,7 @@ fn test_payload_with_keyboards(keyboards: &[KeyboardInfo]) -> (SettingsSnapshot,
     with_test_deps(|| {
         let snapshot = default_snapshot();
         let payload: ViewPayload =
-            open_payload(&snapshot, keyboards, None, &[], None).expect("open payload builds");
+            open_payload(&snapshot, keyboards, None, &[], &[], None).expect("open payload builds");
         assert_eq!(payload.schema_version, SETTINGS_SCHEMA_VERSION);
         (snapshot, payload)
     })
@@ -252,7 +252,7 @@ fn system_locale_resolves_system_default_for_display() {
     ] {
         let snapshot = default_snapshot();
         let label = with_test_deps(|| {
-            let json = open_payload(&snapshot, &test_keyboards(), None, &[], system)
+            let json = open_payload(&snapshot, &test_keyboards(), None, &[], &[], system)
                 .expect("open payload builds");
             let payload: ViewPayload = json;
             payload
@@ -305,6 +305,7 @@ fn language_row_selects_the_draft_choice_not_the_display_copy() {
             &test_keyboards(),
             None,
             &[],
+            &[],
             Some(AppLanguage::Japanese),
         )
         .expect("open payload builds")
@@ -328,7 +329,7 @@ fn explicit_japanese_under_ja_system_persists_as_japanese() {
     let mut keyboards = test_keyboards();
     let mut locale = Some(AppLanguage::Japanese);
     let payload: ViewPayload = with_test_deps(|| {
-        open_payload(&snapshot, &keyboards, None, &[], locale).expect("open payload builds")
+        open_payload(&snapshot, &keyboards, None, &[], &[], locale).expect("open payload builds")
     });
     let language = row(&payload, "general.language");
     let japanese = language
@@ -424,6 +425,7 @@ fn display_resolution_never_concretes_the_draft() {
             &snapshot,
             &test_keyboards(),
             None,
+            &[],
             &[],
             Some(AppLanguage::Japanese),
         )
@@ -1297,7 +1299,8 @@ fn touch_payload(capable: Option<bool>) -> ViewPayload {
     // rows behave as before.
     let touch = None;
     with_test_deps(|| {
-        open_payload(&snapshot, &test_keyboards(), touch, &[], None).expect("open payload builds")
+        open_payload(&snapshot, &test_keyboards(), touch, &[], &[], None)
+            .expect("open payload builds")
     })
 }
 
@@ -2234,6 +2237,8 @@ fn device_truth_sorts_vault_into_session_order() {
 
 #[test]
 fn over_table_pads_have_no_screens_or_links() {
+    // Open tables: a fifth pad gets its screen like any other; nothing
+    // parks past a cap anymore.
     let pads: Vec<GamepadInfo> = (0..5)
         .map(|n| GamepadInfo {
             member: format!("pad:p{n}"),
@@ -2243,18 +2248,7 @@ fn over_table_pads_have_no_screens_or_links() {
     let payload = pad_payload(&test_payload().0, &pads);
     let ids: Vec<&str> = payload.sections.iter().map(|s| s.id.as_str()).collect();
     assert!(ids.contains(&"pad.4"), "fourth pad keeps its screen");
-    assert!(
-        !ids.contains(&"pad.5"),
-        "past the table a pad parks with no screen"
-    );
-    assert!(
-        payload
-            .sections
-            .iter()
-            .flat_map(|s| &s.rows)
-            .all(|row| !row.key.starts_with("controls.pad5") && !row.key.ends_with(".pad5")),
-        "no links, gears, or shortcut blocks for the parked pad"
-    );
+    assert!(ids.contains(&"pad.5"), "fifth pad gets its screen too");
 }
 
 #[test]

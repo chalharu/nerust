@@ -240,8 +240,13 @@ pub fn apply_capture_pad_target(
                 .systems
                 .entry(system.clone_box())
                 .or_default();
-            let Some(bindings) = settings.pad_bindings.get_mut(*pad) else {
-                return false;
+            let bindings = if settings.pad_bindings.len() <= *pad {
+                settings
+                    .pad_bindings
+                    .resize_with(*pad + 1, Default::default);
+                &mut settings.pad_bindings[*pad]
+            } else {
+                &mut settings.pad_bindings[*pad]
             };
             bindings.retain(|binding| {
                 !(binding.attachment.as_str() == attachment
@@ -519,14 +524,18 @@ mod tests {
     }
 
     #[test]
-    fn pad_game_binding_rejects_out_of_range_pads() {
+    fn pad_game_binding_grows_tables_for_new_pads() {
         use nerust_input_traits::StandardButton;
         let mut snapshot = snapshot_with_binding("test.att", "test.ctrl", Key::KeyZ);
-        assert!(!apply_capture_pad_target(
+        assert!(apply_capture_pad_target(
             &mut snapshot,
-            &pad_target(nerust_input_traits::MAX_PADS),
+            &pad_target(9),
             Some(StandardButton::South)
         ));
+        assert_eq!(
+            current_pad_game_binding(&snapshot, &pad_target(9)),
+            Some(StandardButton::South)
+        );
     }
 
     #[test]
