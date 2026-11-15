@@ -1016,10 +1016,28 @@ private fun LazyListScope.settingsSearchResults(
     }
 }
 
+/** True when linking `child` under `sectionId` would close a parent
+ * cycle (the child is already an ancestor of the section). Cross-links
+ * run both ways (pad screen <-> Devices radio); the first spanning link
+ * wins and later cycle-closing edges drop, so breadcrumb walks end. */
+internal fun closesParentCycle(
+    parents: Map<String, Triple<String, String, String>>,
+    sectionId: String,
+    child: String,
+): Boolean {
+    var probe: String? = sectionId
+    val seen = mutableSetOf<String>()
+    while (probe != null && seen.add(probe)) {
+        if (probe == child) return true
+        probe = parents[probe]?.first
+    }
+    return false
+}
+
 /** Child section id -> (parent section id, parent label, via row label).
  * Group rows and device Details buttons both climb one level. Shared by
  * search breadcrumbs and unsaved-dot ancestor propagation. */
-private fun parentMap(sections: List<SettingsSection>): Map<String, Triple<String, String, String>> =
+internal fun parentMap(sections: List<SettingsSection>): Map<String, Triple<String, String, String>> =
     buildMap {
         for (section in sections) {
             for (row in section.rows) {
@@ -1029,7 +1047,10 @@ private fun parentMap(sections: List<SettingsSection>): Map<String, Triple<Strin
                         row.detailTarget.isNotBlank() -> row.detailTarget
                         else -> continue
                     }
-                if (sections.any { it.id == child }) {
+                if (sections.none { it.id == child }) continue
+                // Drop the edge that would loop pad <-> Devices and hang
+                // the breadcrumb walk on the UI thread.
+                if (!closesParentCycle(this, section.id, child)) {
                     put(child, Triple(section.id, section.label, row.label))
                 }
             }
@@ -1124,14 +1145,17 @@ private fun screenSubtitle(
     }
 
 /** Breadcrumb chain for a hidden section: parent labels up to the
- * visible category, shared by search hits. */
-private fun breadcrumbTrail(
+ * visible category, shared by search hits. The visited set is defense
+ * in depth next to the cycle-safe parent map: no map shape may hang
+ * the UI thread here. */
+internal fun breadcrumbTrail(
     parents: Map<String, Triple<String, String, String>>,
     sectionId: String,
 ): String {
     val chain = mutableListOf<String>()
+    val seen = mutableSetOf<String>()
     var current: String? = sectionId
-    while (current != null) {
+    while (current != null && seen.add(current)) {
         val parent = parents[current] ?: break
         chain.add(0, parent.second)
         current = parent.first
