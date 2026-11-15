@@ -373,11 +373,10 @@ impl InputDept {
         // Open tables: size to the widest side (live order or settings),
         // so a pad that outgrows either still resolves; missing rows stay
         // empty (no overrides), never alias a neighbor.
-        let width = self
-            .pads
-            .order
-            .len()
-            .max(bindings.map(|tables| tables.len()).unwrap_or(0));
+        let mut width = self.pads.order.len();
+        if let Some(tables) = bindings {
+            width = width.max(tables.len());
+        }
         self.pads.binding_map.resize_with(width, Default::default);
         for map in &mut self.pads.binding_map {
             map.clear();
