@@ -454,7 +454,7 @@ def _rust_motion_axis_fields(decoder):
     The decoder resolves pairs without a name round-trip, so the table
     no longer exists: `self.<field>` on the right side names the wire
     vocabulary in one place."""
-    body = re.search(r'fn motion_axes\(.*?\{.*?\[(.*?)\]', decoder, re.DOTALL)
+    body = re.search(r'fn motion_axes\([^)]*\)[^{]*\{[^[]*\[([^]]*)\]', decoder, re.DOTALL)
     require(body, "unparsed Rust motion_axes")
     return re.findall(r'self\.(\w+)', body.group(1))
 

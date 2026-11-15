@@ -289,14 +289,13 @@ class SettingsActivity :
             val crossed =
                 (triggerL >= TRIGGER_CAPTURE_PRESS && last.first < TRIGGER_CAPTURE_PRESS) ||
                     (triggerR >= TRIGGER_CAPTURE_PRESS && last.second < TRIGGER_CAPTURE_PRESS)
-            if (crossed) {
-                if (routeSettingsMotionEvent(
-                        InputDevice.getDevice(event.deviceId)?.descriptor,
-                        triggerL,
-                        triggerR,
-                    )
-                ) return true
-            }
+            if (crossed &&
+                routeSettingsMotionEvent(
+                    InputDevice.getDevice(event.deviceId)?.descriptor,
+                    triggerL,
+                    triggerR,
+                )
+            ) return true
         }
         return super.onGenericMotionEvent(event)
     }
