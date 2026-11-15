@@ -23,11 +23,13 @@ use nerust_system_traits::factory::descriptor::{SystemSettingsChoiceId, SystemSe
 
 use super::devices::prune_missing_builtin;
 use super::projection::{build_sections, project_fresh, project_payload};
+use super::vm::{
+    VmDeps, build_vm, pin_draft_language, resolve_display, sync_snapshot_from_vm, with_vm_deps,
+};
 use super::wire::{
     CaptureSlot, GamepadInfo, I18n, KeyboardInfo, PLAYER_PORTS, Projection, RowKind, RowWire,
-    SectionWire, ViewPayload, VmDeps, WireCommand, WireOp, build_vm, choice, find_row,
-    pin_draft_language, range_value, resolve_display, sort_gamepads_by_order,
-    sync_snapshot_from_vm, toggle_value, with_vm_deps,
+    SectionWire, ViewPayload, WireCommand, WireOp, choice, find_row, range_value,
+    sort_gamepads_by_order, toggle_value,
 };
 
 /// Apply one wire command to the draft snapshot in place, returning the

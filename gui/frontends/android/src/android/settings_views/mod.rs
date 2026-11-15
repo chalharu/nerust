@@ -17,6 +17,7 @@ mod devices;
 mod keycode;
 mod pads;
 mod projection;
+mod vm;
 mod wire;
 
 // Open-payload dependencies only; submodules refer to each other through
@@ -24,10 +25,11 @@ mod wire;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_settings_core::model::language::AppLanguage;
 use projection::project_fresh;
-use wire::with_vm_deps;
+use vm::with_vm_deps;
 
 #[cfg(not(target_os = "android"))]
-use wire::{CaptureSlot, GamepadInfo, KeyboardInfo, ViewPayload, resolve_display};
+use vm::resolve_display;
+use wire::{CaptureSlot, GamepadInfo, KeyboardInfo, ViewPayload};
 // Android-facing surface: the bridge, vault, and save paths name these
 // through `settings_views::`. Only the JNI build (the `android` module)
 // uses them; host tests import the submodules directly.
@@ -38,9 +40,10 @@ pub(crate) use commands::{CommandVault, apply_command_to, finish_snapshot};
 #[cfg(target_os = "android")]
 pub(crate) use keycode::{android_keycode_to_button, winit_key_to_key};
 #[cfg(target_os = "android")]
+pub(crate) use vm::{app_language_tag, install_vm_deps, resolve_display};
+#[cfg(target_os = "android")]
 pub(crate) use wire::{
-    CaptureSlot, GamepadInfo, KeyboardInfo, Projection, ViewPayload, app_language_tag,
-    install_vm_deps, resolve_display, sort_gamepads_by_order,
+    CaptureSlot, GamepadInfo, KeyboardInfo, Projection, ViewPayload, sort_gamepads_by_order,
 };
 
 #[cfg(test)]

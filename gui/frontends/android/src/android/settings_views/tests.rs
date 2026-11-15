@@ -1,5 +1,5 @@
 //! Settings wire tests: payload shape, capture round-trips, review allowlists.
-use super::{capture::*, commands::*, open_payload, projection::*, wire::*};
+use super::{capture::*, commands::*, open_payload, projection::*, vm::*, wire::*};
 use std::sync::Arc;
 
 use crate::bridge_contract::SETTINGS_SCHEMA_VERSION;
