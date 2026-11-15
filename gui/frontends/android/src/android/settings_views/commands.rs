@@ -72,6 +72,7 @@ pub(crate) fn apply_command_to(
             keyboards,
             touch_capable: *touch_capable,
             gamepads,
+            pad_order,
             i18n,
         };
         match command.op {
@@ -92,6 +93,7 @@ pub(crate) fn apply_command_to(
                     keyboards,
                     *touch_capable,
                     gamepads,
+                    pad_order,
                     *system_locale,
                 )
             }
@@ -104,6 +106,7 @@ pub(crate) fn apply_command_to(
                     keyboards,
                     *touch_capable,
                     gamepads,
+                    pad_order,
                     *system_locale,
                 )
             }
@@ -116,6 +119,7 @@ pub(crate) fn apply_command_to(
                     keyboards,
                     *touch_capable,
                     gamepads,
+                    pad_order,
                     *system_locale,
                 )
             }
@@ -143,6 +147,7 @@ pub(crate) fn apply_command_to(
                         keyboards,
                         *touch_capable,
                         gamepads,
+                        pad_order,
                         *system_locale,
                     )
                 }
@@ -164,6 +169,7 @@ fn project_after_snapshot_edit(
     keyboards: &[KeyboardInfo],
     touch_capable: Option<bool>,
     gamepads: &[GamepadInfo],
+    pad_order: &[String],
     system_locale: Option<AppLanguage>,
 ) -> Result<ViewPayload, String> {
     let i18n = resolve_display(snapshot.shared.general.language, system_locale);
@@ -171,6 +177,7 @@ fn project_after_snapshot_edit(
         keyboards,
         touch_capable,
         gamepads,
+        pad_order,
         i18n,
     };
     project_fresh(snapshot, deps, capture, truth)

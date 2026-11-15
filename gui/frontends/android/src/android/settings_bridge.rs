@@ -39,6 +39,7 @@ pub(super) fn request_show_settings_dialog(
             &state.keyboards,
             state.touch_capable,
             &state.gamepads,
+            &state.pad_order,
             state.system_locale,
         )
     })
@@ -354,6 +355,7 @@ fn hardware_key(
                         keyboards: &state.keyboards,
                         touch_capable: state.touch_capable,
                         gamepads: &state.gamepads,
+                        pad_order: &state.pad_order,
                         i18n: settings_views::resolve_display(
                             draft.shared.general.language,
                             state.system_locale,

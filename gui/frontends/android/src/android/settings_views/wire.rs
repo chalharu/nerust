@@ -181,7 +181,7 @@ pub(crate) struct GamepadInfo {
 }
 
 /// Bare descriptor behind a `pad:` member id (or the raw descriptor).
-fn bare_member(member: &str) -> &str {
+pub(super) fn bare_member(member: &str) -> &str {
     member.strip_prefix("pad:").unwrap_or(member)
 }
 
@@ -236,12 +236,29 @@ pub(super) fn binding_key(target: &CaptureTarget) -> String {
 /// against the Rust side. Accepts the raw descriptor or the `pad:`
 /// member id; `None` when the device left (stale Kotlin push) or parks
 /// past the persisted table.
-pub(crate) fn pad_index_for_member(gamepads: &[GamepadInfo], descriptor: &str) -> Option<usize> {
-    let bare = bare_member(descriptor);
+/// Stable settings rank for one pad member: position in the vault
+/// order mirror (first-seen descriptor order), which the session uses as
+/// the settings index. Live-list positions skew after any disconnect
+/// cycle, so screens, radios, and capture all resolve through this —
+/// never through the live list position.
+pub(crate) fn rank_for_member(pad_order: &[String], member: &str) -> Option<usize> {
+    let bare = bare_member(member);
+    pad_order.iter().position(|known| known == bare)
+}
+
+/// Live info for one stable rank: the mirror names the pad, the scan
+/// says whether it is connected right now. `None` is a stale rank
+/// (disconnected pad whose settings restore on reconnect) or a rank
+/// past the scan, never an error.
+pub(crate) fn live_for_rank<'a>(
+    gamepads: &'a [GamepadInfo],
+    pad_order: &[String],
+    rank: usize,
+) -> Option<&'a GamepadInfo> {
+    let bare = pad_order.get(rank)?;
     gamepads
         .iter()
-        .position(|info| bare_member(&info.member) == bare)
-        .filter(|index| *index < nerust_input_traits::MAX_PADS)
+        .find(|info| bare_member(&info.member) == *bare)
 }
 
 /// Stable session order for the display list: vault order follows the
@@ -303,6 +320,10 @@ pub(crate) struct Projection<'a> {
     pub keyboards: &'a [KeyboardInfo],
     pub touch_capable: Option<bool>,
     pub gamepads: &'a [GamepadInfo],
+    /// Vault first-seen order mirror: the stable rank universe shared
+    /// with the session. Screens and radios iterate ranks, never the
+    /// live list position (which skews after disconnect cycles).
+    pub pad_order: &'a [String],
     pub i18n: I18n,
 }
 

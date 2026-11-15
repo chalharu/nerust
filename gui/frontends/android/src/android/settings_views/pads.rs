@@ -1,12 +1,18 @@
-//! Per-pad settings screens: one `pad.<n>` screen per connected pad.
+//! Per-pad settings screens: one `pad.<n>` screen per settings rank.
 //!
 //! Pure projection like the rest of `settings_views`: reads the view model,
 //! the draft snapshot, and the vault device truth, and returns wire rows.
 //! No mutation.
+//!
+//! Screens iterate stable settings ranks, never the live list position:
+//! a disconnect/reconnect cycle compacts the live list but ranks (and the
+//! session commit path) stand still, so a rank-skewed screen would edit a
+//! stranger pad's overrides while the game reads another. Live-unknown
+//! pads (scan raced ahead of the connect event) get info-only provisional
+//! screens; they re-resolve on reopen once the mirror catches up.
 
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_gui_viewmodel::settings::SettingsViewModel;
-use nerust_input_traits::port_index_for_slot;
 use nerust_settings_core::{
     editor::CaptureTarget,
     i18n::UiText,
@@ -15,130 +21,186 @@ use nerust_settings_core::{
 
 use super::wire::{
     GamepadInfo, I18n, PLAYER_PORTS, RowWire, SectionWire, button_row, capture_row, encode_target,
-    header_row, info_row, number_row, player_label, toggle_row,
+    header_row, info_row, live_for_rank, number_row, player_label, rank_for_member, toggle_row,
 };
+use nerust_gui_viewmodel::settings::labels::pad_label;
+use nerust_input_traits::port_index_for_slot;
 
-/// Per-pad settings screens: one `pad.<n>` screen per connected pad
-/// with its own deadzone, hat switch, and per-system button mapping.
+/// Per-pad settings screens: one `pad.<n>` screen per stable settings
+/// rank, with its own deadzone, hat switch, and per-system button mapping.
 /// Stick/trigger routing is automatic (the live console declares analog
-/// controls or not), so no toggles: only the hat stays manual. The list
-/// is variable: each connected pad names its own screen, so Pad 1 is
-/// always the first-seen pad while it stays connected. Ports are player
-/// slots, not devices: the connection-order table (not device ids) is
-/// what persists. Unconnected pads hide; their assignment and overrides
-/// stay in the tables and reappear on reconnect.
+/// controls or not), so no toggles: only the hat stays manual.
+/// Ranks (not live positions) key the screens: the session commit path
+/// reads overrides by rank, so the screens must write by rank too, or a
+/// reconnect cycle would silently redirect edits to a stranger pad.
+/// Unconnected ranks hide their capture rows (nothing to press) but keep
+/// their settings, which restore on reconnect. Ports are player slots,
+/// not devices: the rank table (not device ids) is what persists.
 pub(super) fn build_pad_sections(
     vm: &SettingsViewModel,
     snapshot: &SettingsSnapshot,
     i18n: I18n,
     gamepads: &[GamepadInfo],
+    pad_order: &[String],
 ) -> Vec<SectionWire> {
     let reason = i18n.text(UiText::InputDeviceRequired);
     let gamepad = &snapshot.shared.input.gamepad;
-    let mut out = Vec::new();
-    for (index, info) in gamepads
-        .iter()
-        .take(nerust_input_traits::MAX_PADS)
-        .enumerate()
-    {
-        let pad_id = format!("pad.{}", index + 1);
-        let port = gamepad.pad_ports.get(index);
-        // Assigned player slot, if any. Mapping rows below scope to
-        // this pad's own player: other players' rows carry defaults
-        // this pad can never drive, and edits there land overrides
-        // that gameplay parks, so they only mislead.
-        let slot = port.and_then(|pad| pad.slot);
-        // Assignment readout: the player this pad drives plus the pad's
-        // own name. No drill-down: the Devices gear is the single path
-        // into pad screens, so the graph stays a tree and the Kotlin
-        // breadcrumb walk needs no cycle defense. Back returns.
-        let slot_row = match slot.filter(|slot| PLAYER_PORTS.get(*slot).is_some()) {
-            Some(slot) => info_row(
-                &format!("{pad_id}.slot"),
-                player_label(slot, i18n),
-                String::new(),
-                info.name.clone(),
-            ),
-            // Unassigned pads name the same vocabulary with no player:
-            // the state, not the category, is what changed.
-            None => info_row(
-                &format!("{pad_id}.slot"),
-                i18n.text(UiText::GamepadDevice),
-                String::new(),
-                i18n.text(UiText::NotAssigned),
-            ),
-        };
-        // Only the hat stays manual (sticks and triggers follow the live
-        // console automatically): off parks the hat while stick driving
-        // continues through substitutes.
-        let mut rows = vec![
-            slot_row,
-            number_row(
-                &format!("{pad_id}.deadzone"),
-                i18n.text(UiText::Deadzone),
-                i18n.text(UiText::DescDeadzone),
-                i64::from(port.map_or(
-                    nerust_settings_core::model::input::DEFAULT_DEADZONE_PERCENT,
-                    |pad| pad.deadzone_percent,
-                )),
-                i64::from(DEADZONE_STEPS[1] - DEADZONE_STEPS[0]),
-                i64::from(DEADZONE_STEPS[0]),
-                i64::from(DEADZONE_STEPS[DEADZONE_STEPS.len() - 1]),
-                "%",
-            ),
-            toggle_row(
-                &format!("{pad_id}.dpad"),
-                i18n.text(UiText::DpadSource),
-                i18n.text(UiText::DescDpadSource),
-                i18n,
-                port.is_none_or(|pad| pad.dpad_enabled),
-            ),
-        ];
-        // Unassigned pads park every press, so mapping rows would
-        // only collect latent overrides: point at Devices instead.
-        // Assigned pads list only their own player's controls (all
-        // systems); other players' attachments never fire from here.
-        if let Some(slot) = slot {
-            for input in vm.inputs() {
-                rows.extend(pad_system_rows(
-                    input, snapshot, &pad_id, index, slot, &reason, i18n,
-                ));
-            }
-        } else {
-            rows.push(info_row(
-                &format!("{pad_id}.unassigned"),
-                i18n.text(UiText::KeyMapping),
-                i18n.text(UiText::DescPadUnassigned),
-                String::new(),
-            ));
-        }
-        rows.push(button_row(
-            &format!("reset.{pad_id}"),
-            i18n.text(UiText::ResetScreen),
-            i18n.text(UiText::DescPadReset),
+    // Stable universe: every settings row plus every mirrored rank.
+    // Live unknowns (scan raced ahead of the connect event) append as
+    // info-only provisional screens below.
+    let width = gamepad.pad_ports.len().max(pad_order.len());
+    let mut out = Vec::with_capacity(width + 1);
+    for rank in 0..width {
+        let live = live_for_rank(gamepads, pad_order, rank);
+        out.push(pad_rank_section(
+            vm,
+            snapshot,
+            i18n,
+            &reason,
+            rank,
+            live.map(|info| info.name.clone()),
+            live.is_some(),
         ));
+    }
+    for info in gamepads
+        .iter()
+        .filter(|info| rank_for_member(pad_order, &info.member).is_none())
+    {
+        let pad_id = format!("pad.provisional.{}", out.len() + 1);
         out.push(SectionWire {
             id: pad_id.clone(),
             label: info.name.clone(),
             sub: i18n.text(UiText::Gamepads),
-            rows,
+            rows: vec![info_row(
+                &format!("{pad_id}.waiting"),
+                i18n.text(UiText::GamepadDevice),
+                String::new(),
+                i18n.text(UiText::DescPadUnassigned),
+            )],
             visible: false,
         });
     }
     out
 }
 
+/// One rank's screen: assignment readout, deadzone, hat switch, mapping
+/// rows (assigned ranks only), and the screen reset. Disconnected ranks
+/// keep every row but disable capture (no device to press); their edits
+/// persist and restore on reconnect.
+fn pad_rank_section(
+    vm: &SettingsViewModel,
+    snapshot: &SettingsSnapshot,
+    i18n: I18n,
+    reason: &str,
+    rank: usize,
+    live_name: Option<String>,
+    live: bool,
+) -> SectionWire {
+    let gamepad = &snapshot.shared.input.gamepad;
+    let pad_id = format!("pad.{}", rank + 1);
+    let port = gamepad.pad_ports.get(rank);
+    // Assigned player slot, if any. Mapping rows below scope to
+    // this pad's own player: other players' rows carry defaults
+    // this pad can never drive, and edits there land overrides
+    // that gameplay parks, so they only mislead.
+    let slot = port.and_then(|pad| pad.slot);
+    let name = live_name.unwrap_or_else(|| pad_label(i18n.language(), rank));
+    // Assignment readout: the player this pad drives plus the pad's
+    // own name. No drill-down: the Devices gear is the single path
+    // into pad screens, so the graph stays a tree and the Kotlin
+    // breadcrumb walk needs no cycle defense. Back returns.
+    let slot_row = match slot.filter(|slot| PLAYER_PORTS.get(*slot).is_some()) {
+        Some(slot) => info_row(
+            &format!("{pad_id}.slot"),
+            player_label(slot, i18n),
+            String::new(),
+            name.clone(),
+        ),
+        // Unassigned pads name the same vocabulary with no player:
+        // the state, not the category, is what changed.
+        None => info_row(
+            &format!("{pad_id}.slot"),
+            i18n.text(UiText::GamepadDevice),
+            String::new(),
+            i18n.text(UiText::NotAssigned),
+        ),
+    };
+    // Only the hat stays manual (sticks and triggers follow the live
+    // console automatically): off parks the hat while stick driving
+    // continues through substitutes.
+    let mut rows = vec![
+        slot_row,
+        number_row(
+            &format!("{pad_id}.deadzone"),
+            i18n.text(UiText::Deadzone),
+            i18n.text(UiText::DescDeadzone),
+            i64::from(port.map_or(
+                nerust_settings_core::model::input::DEFAULT_DEADZONE_PERCENT,
+                |pad| pad.deadzone_percent,
+            )),
+            i64::from(DEADZONE_STEPS[1] - DEADZONE_STEPS[0]),
+            i64::from(DEADZONE_STEPS[0]),
+            i64::from(DEADZONE_STEPS[DEADZONE_STEPS.len() - 1]),
+            "%",
+        ),
+        toggle_row(
+            &format!("{pad_id}.dpad"),
+            i18n.text(UiText::DpadSource),
+            i18n.text(UiText::DescDpadSource),
+            i18n,
+            port.is_none_or(|pad| pad.dpad_enabled),
+        ),
+    ];
+    // Unassigned pads park every press, so mapping rows would
+    // only collect latent overrides: point at Devices instead.
+    // Assigned pads list only their own player's controls (all
+    // systems); other players' attachments never fire from here.
+    // Disconnected ranks keep their rows (settings restore on
+    // reconnect) but capture stays disabled: nothing to press.
+    if let Some(slot) = slot {
+        for input in vm.inputs() {
+            rows.extend(pad_system_rows(
+                input, snapshot, &pad_id, rank, slot, reason, i18n, live,
+            ));
+        }
+    } else {
+        rows.push(info_row(
+            &format!("{pad_id}.unassigned"),
+            i18n.text(UiText::KeyMapping),
+            i18n.text(UiText::DescPadUnassigned),
+            String::new(),
+        ));
+    }
+    rows.push(button_row(
+        &format!("reset.{pad_id}"),
+        i18n.text(UiText::ResetScreen),
+        i18n.text(UiText::DescPadReset),
+    ));
+    SectionWire {
+        id: pad_id.clone(),
+        label: name,
+        sub: i18n.text(UiText::Gamepads),
+        rows,
+        visible: false,
+    }
+}
+
 /// One machine's mapping block for one pad screen: machine header plus
 /// the pad's own capture rows (attachment sub-headers drop when single),
 /// plus that machine's conflict rows. Empty when the pad owns nothing here.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Projection seam: identity (pad, system, slot) plus truth rides together"
+)]
 fn pad_system_rows(
     input: &nerust_gui_viewmodel::settings::InputSettingsViewModel,
     snapshot: &SettingsSnapshot,
     pad_id: &str,
-    index: usize,
+    rank: usize,
     slot: usize,
     reason: &str,
     i18n: I18n,
+    live: bool,
 ) -> Vec<RowWire> {
     use nerust_gui_viewmodel::settings::dto::BindingValueView;
     let view = input.view.get();
@@ -185,7 +247,7 @@ fn pad_system_rows(
             pending.push((
                 CaptureTarget::PadBinding {
                     system: view.system_id.clone_box(),
-                    pad: index,
+                    pad: rank,
                     attachment: attachment.to_string(),
                     control: control.to_string(),
                 },
@@ -243,7 +305,7 @@ fn pad_system_rows(
     // Scoped like the rows above: hidden attachments have no
     // rows to disambiguate against.
     if let Some(settings) = snapshot.shared.input.systems.get(&view.system_id)
-        && let Some(entries) = settings.pad_bindings.get(index)
+        && let Some(entries) = settings.pad_bindings.get(rank)
     {
         out.extend(conflict_rows(pad_id, &system, slot, entries, i18n));
     }

@@ -1504,6 +1504,75 @@ mod tests {
     }
 
     #[test]
+    fn stale_disconnect_keeps_live_pad_on_its_rank() {
+        // Android-side twin: pad A (rank 0) disconnects, pad B connects
+        // (rank 1). The settings write lands on pad_bindings[1] and the
+        // commit path must read rank 1 too — live-compact indexing would
+        // apply stale A's row to B (or nothing at all).
+        use nerust_input_traits::{ControlId, SourceButtonId, StandardButton};
+        use nerust_settings_core::model::input::{
+            PadBinding, PersistedControlId, SystemInputSettings,
+        };
+        let mut session = crate::session::test_util::test_session();
+        session.note_pad_connected(11, "pad-a");
+        session.note_pad_disconnected(11);
+        session.note_pad_connected(12, "pad-b");
+        let pad = session.pad_source_for(12);
+        let mut next = session.settings_snapshot().clone();
+        let system = session.active_system_id_box().expect("test system active");
+        let mut system_settings = SystemInputSettings::default();
+        system_settings
+            .pad_bindings
+            .resize_with(2, Default::default);
+        system_settings.pad_bindings[1] = vec![
+            PadBinding::new(
+                "test.topology.slot",
+                PersistedControlId::digital("test.topology.b"),
+                StandardButton::South,
+            ),
+            PadBinding::new(
+                "test.topology.slot",
+                PersistedControlId::digital("test.topology.a"),
+                StandardButton::East,
+            ),
+        ];
+        next.shared.input.systems.insert(system, system_settings);
+        session.apply_settings(next).unwrap();
+        let attachment = AttachmentId::new("test.topology.slot");
+        let mut parts = crate::test_helpers::build_test_core_parts();
+        let _ = parts.field_map.insert(
+            (
+                attachment,
+                ControlId::digital(DigitalControlId::new("test.topology.a")),
+            ),
+            1,
+        );
+        let _ = parts.field_map.insert(
+            (
+                attachment,
+                ControlId::digital(DigitalControlId::new("test.topology.b")),
+            ),
+            2,
+        );
+        let (emu_core, gui_input, field_map, host_peripherals) =
+            crate::emu_core::EmuCore::from_parts(parts);
+        session.emu.runtime = Some(crate::session::ActiveRuntime {
+            core: Box::new(emu_core),
+            input: gui_input,
+            field_map,
+            host_peripherals,
+        });
+        session.handle_source_button(pad, SourceButtonId::Pad(StandardButton::South), true);
+        assert_eq!(
+            session.input.press_state.asserted_fields(),
+            vec![2],
+            "stale disconnect must not shift the swap: South still drives b"
+        );
+        session.handle_source_button(pad, SourceButtonId::Pad(StandardButton::South), false);
+        session.clear_input();
+    }
+
+    #[test]
     fn stray_pre_connect_key_never_shifts_a_swap_onto_the_wrong_pad() {
         // Third-report regression (GBA A/B swap showed in settings but not
         // in game): a stray pre-connect key from another device id must

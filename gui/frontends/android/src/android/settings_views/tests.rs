@@ -736,15 +736,25 @@ fn capture_rows_disable_without_input_device() {
         assert!(!row.reason.is_empty(), "{} names the reason", row.key);
     }
     let (_snapshot, payload) = test_payload();
-    assert!(
-        payload
-            .sections
-            .iter()
-            .flat_map(|section| &section.rows)
-            .filter(|row| row.kind == RowKind::Capture)
-            .all(|row| row.enabled),
-        "keyboards present re-enable capture"
-    );
+    // Keyboard rows re-enable with a keyboard present. Assigned-but-
+    // disconnected pad screens keep their mapping rows (settings restore
+    // on reconnect) with capture disabled: nothing to press.
+    let mut pad_disabled = 0;
+    for row in payload
+        .sections
+        .iter()
+        .flat_map(|section| &section.rows)
+        .filter(|row| row.kind == RowKind::Capture)
+    {
+        if row.key.starts_with("pad.") {
+            assert!(!row.enabled, "{} disables without its pad", row.key);
+            assert!(!row.reason.is_empty(), "{} names the reason", row.key);
+            pad_disabled += 1;
+        } else {
+            assert!(row.enabled, "{} re-enables with a keyboard", row.key);
+        }
+    }
+    assert_ne!(pad_disabled, 0, "assigned stale pads keep gated rows");
 }
 
 #[test]
@@ -758,8 +768,9 @@ fn gamepad_alone_reopens_capture() {
     }];
     let (_snapshot, payload) = with_test_deps(|| {
         let snapshot = default_snapshot();
-        let json =
-            open_payload(&snapshot, &[], None, &gamepads, None).expect("open payload builds");
+        let order = order_of(&gamepads);
+        let json = open_payload(&snapshot, &[], None, &gamepads, &order, None)
+            .expect("open payload builds");
         let payload: ViewPayload = json;
         (snapshot, payload)
     });
@@ -1542,6 +1553,7 @@ fn pad_capture_lands_on_shortcut_rows() {
             keyboards: &keyboards,
             touch_capable: None,
             gamepads: &[],
+            pad_order: &[],
             i18n: sys_display(AppLanguage::SystemDefault),
         };
         let sections = build_sections(&vm, &snapshot, truth);
@@ -1578,6 +1590,7 @@ fn pad_capture_lands_on_shortcut_rows() {
                 keyboards: &test_keyboards(),
                 touch_capable: None,
                 gamepads: &[],
+                pad_order: &[],
                 i18n: sys_display(AppLanguage::SystemDefault),
             },
         )
@@ -1615,6 +1628,7 @@ fn pad_press_on_game_row_leaves_capture_pending() {
             keyboards: &keyboards,
             touch_capable: None,
             gamepads: &[],
+            pad_order: &[],
             i18n: sys_display(AppLanguage::SystemDefault),
         };
         let sections = build_sections(&vm, &snapshot, truth);
@@ -1652,6 +1666,7 @@ fn pad_press_on_game_row_leaves_capture_pending() {
                 keyboards: &test_keyboards(),
                 touch_capable: None,
                 gamepads: &[],
+                pad_order: &[],
                 i18n: sys_display(AppLanguage::SystemDefault),
             },
         )
@@ -1681,6 +1696,7 @@ fn capture_round_trips_through_hardware_keys() {
             keyboards: &keyboards,
             touch_capable: None,
             gamepads: &[],
+            pad_order: &[],
             i18n: sys_display(AppLanguage::SystemDefault),
         };
         let sections = build_sections(&vm, &snapshot, truth);
@@ -1716,6 +1732,7 @@ fn capture_round_trips_through_hardware_keys() {
                 keyboards: &test_keyboards(),
                 touch_capable: None,
                 gamepads: &[],
+                pad_order: &[],
                 i18n: sys_display(AppLanguage::SystemDefault),
             },
         )
@@ -1734,6 +1751,7 @@ fn capture_round_trips_through_hardware_keys() {
                 keyboards: &test_keyboards(),
                 touch_capable: None,
                 gamepads: &[],
+                pad_order: &[],
                 i18n: sys_display(AppLanguage::SystemDefault),
             },
         )
@@ -1752,6 +1770,7 @@ fn capture_round_trips_through_hardware_keys() {
                 keyboards: &test_keyboards(),
                 touch_capable: None,
                 gamepads: &[],
+                pad_order: &[],
                 i18n: sys_display(AppLanguage::SystemDefault),
             },
         )
@@ -1777,6 +1796,7 @@ fn clear_binding_unbinds_without_keyboard() {
             keyboards: &keyboards,
             touch_capable: None,
             gamepads: &[],
+            pad_order: &[],
             i18n: sys_display(AppLanguage::SystemDefault),
         };
         let sections = build_sections(&vm, &snapshot, truth);
@@ -1815,6 +1835,7 @@ fn number_rows_advertise_vm_accepted_bounds() {
             keyboards: &keyboards,
             touch_capable: None,
             gamepads: &[],
+            pad_order: &[],
             i18n: sys_display(AppLanguage::SystemDefault),
         };
         let sections = build_sections(&vm, &snapshot, truth);
@@ -2112,6 +2133,7 @@ fn pad_screen_sets_deadzone_triggers_and_resets() {
     let mut capture: CaptureSlot = None;
     let reset = with_test_deps(|| {
         let mut gamepads = pads.clone();
+        let order = order_of(&gamepads);
         apply_command_to(
             &mut snapshot,
             &serde_json::to_string(&WireCommand {
@@ -2128,7 +2150,7 @@ fn pad_screen_sets_deadzone_triggers_and_resets() {
                 touch_capable: &mut None,
                 gamepads: &mut gamepads,
                 system_locale: &mut None,
-                pad_order: &[],
+                pad_order: &order,
             },
         )
         .expect("reset applies")
@@ -2150,6 +2172,19 @@ fn pad_screen_sets_deadzone_triggers_and_resets() {
         row(&reset, "pad.1.deadzone").number,
         i64::from(DEFAULT_DEADZONE_PERCENT)
     );
+}
+
+/// Vault order mirror for test pads: bare members in scan order, the
+/// way the session mirror reports first-seen descriptors in production.
+fn order_of(pads: &[GamepadInfo]) -> Vec<String> {
+    pads.iter()
+        .map(|info| {
+            info.member
+                .strip_prefix("pad:")
+                .unwrap_or(&info.member)
+                .to_string()
+        })
+        .collect()
 }
 
 fn two_pads() -> Vec<GamepadInfo> {
@@ -2306,6 +2341,7 @@ fn gamepad_radio_rejects_unknown_pads() {
     with_test_deps(|| {
         let mut keyboards = test_keyboards();
         let mut gamepads = pads;
+        let order = order_of(&gamepads);
         assert!(
             apply_command_to(
                 &mut snapshot,
@@ -2316,7 +2352,7 @@ fn gamepad_radio_rejects_unknown_pads() {
                     touch_capable: &mut None,
                     gamepads: &mut gamepads,
                     system_locale: &mut None,
-                    pad_order: &[]
+                    pad_order: &order
                 },
             )
             .is_err(),
@@ -2355,6 +2391,7 @@ fn shortcut_clear_is_per_column() {
             .unwrap();
             let mut keyboards = test_keyboards();
             let mut gamepads = pads.clone();
+            let order = order_of(&gamepads);
             apply_command_to(
                 snapshot,
                 &command_json,
@@ -2364,7 +2401,7 @@ fn shortcut_clear_is_per_column() {
                     touch_capable: &mut None,
                     gamepads: &mut gamepads,
                     system_locale: &mut None,
-                    pad_order: &[],
+                    pad_order: &order,
                 },
             )
             .unwrap_or_else(|error| panic!("command failed: {error}"))
@@ -2396,6 +2433,7 @@ fn shortcut_clear_is_per_column() {
             .unwrap();
             let mut keyboards = test_keyboards();
             let mut gamepads = two_pads();
+            let order = order_of(&gamepads);
             apply_command_to(
                 snapshot,
                 &command_json,
@@ -2405,7 +2443,7 @@ fn shortcut_clear_is_per_column() {
                     touch_capable: &mut None,
                     gamepads: &mut gamepads,
                     system_locale: &mut None,
-                    pad_order: &[],
+                    pad_order: &order,
                 },
             )
             .unwrap_or_else(|error| panic!("command failed: {error}"))
@@ -2445,8 +2483,15 @@ fn shortcuts_group_per_device_with_split_columns() {
     ensure_default_shortcuts(&mut snapshot.shared.input.shortcuts);
     let pads = two_pads();
     let payload = with_test_deps(|| {
-        let json = open_payload(&snapshot, &test_keyboards(), None, &pads, None)
-            .expect("open payload builds");
+        let json = open_payload(
+            &snapshot,
+            &test_keyboards(),
+            None,
+            &pads,
+            &order_of(&pads),
+            None,
+        )
+        .expect("open payload builds");
         let payload: ViewPayload = json;
         payload
     });
@@ -2505,8 +2550,15 @@ fn shortcuts_hide_keyboard_block_without_keyboard() {
     // Pads alone: pad blocks only, no keyboard header.
     let pads = two_pads();
     let wired = with_test_deps(|| {
-        let json =
-            open_payload(&default_snapshot(), &[], None, &pads, None).expect("open payload builds");
+        let json = open_payload(
+            &default_snapshot(),
+            &[],
+            None,
+            &pads,
+            &order_of(&pads),
+            None,
+        )
+        .expect("open payload builds");
         let payload: ViewPayload = json;
         payload
     });
@@ -2544,6 +2596,97 @@ fn first_pad_mapping_row(payload: &ViewPayload) -> (String, String) {
 }
 
 #[test]
+fn stale_disconnect_keeps_live_pad_on_its_rank() {
+    // Issue 1 regression: pad A (rank 0) disconnects, pad B connects
+    // (rank 1). The live list compacts to [B], but the screen, the
+    // radio value, and the override write must all use rank 1 — the
+    // index the session commit path reads. Live-position indexing
+    // wrote rank 0, so the remap showed in settings but never fired.
+    let (mut snapshot, _) = test_payload();
+    let live = vec![GamepadInfo {
+        member: "pad:live-b".to_string(),
+        name: "Pad B".to_string(),
+    }];
+    let order = vec!["stale-a".to_string(), "live-b".to_string()];
+    let payload = pad_payload_ordered(&snapshot, &live, &order);
+    let ids: Vec<&str> = payload.sections.iter().map(|s| s.id.as_str()).collect();
+    assert!(ids.contains(&"pad.2"), "live pad keeps its rank screen");
+    let screen = payload
+        .sections
+        .iter()
+        .find(|section| section.id == "pad.2")
+        .expect("pad.2 screen exists");
+    assert!(
+        screen.rows.iter().any(|row| row.key == "pad.2.slot"),
+        "rank screen carries its slot row"
+    );
+    // A remap started on the rank-1 screen lands in pad_bindings[1],
+    // the table the session reads for rank 1.
+    let (key, _) = screen
+        .rows
+        .iter()
+        .find(|row| row.kind == RowKind::Capture)
+        .map(|row| (row.key.clone(), row.target.clone()))
+        .expect("rank screen has mapping rows");
+    let mut capture: CaptureSlot = None;
+    let mut gamepads = live.clone();
+    let started = with_test_deps(|| {
+        apply_command_to(
+            &mut snapshot,
+            &serde_json::to_string(&WireCommand {
+                key: key.clone(),
+                index: 0,
+                number: 0,
+                op: WireOp::StartCapture,
+                payload: serde_json::Value::Null,
+            })
+            .unwrap(),
+            CommandVault {
+                capture: &mut capture,
+                keyboards: &mut test_keyboards(),
+                touch_capable: &mut None,
+                gamepads: &mut gamepads,
+                system_locale: &mut None,
+                pad_order: &order,
+            },
+        )
+        .expect("capture starts")
+    });
+    assert!(started.capture.is_some(), "rank-1 capture pending");
+    let (_, consumed) = with_test_deps(|| {
+        apply_hardware_key(
+            96,
+            Some("live-b"),
+            true,
+            &mut snapshot,
+            &mut capture,
+            Projection {
+                keyboards: &test_keyboards(),
+                touch_capable: None,
+                gamepads: &live,
+                pad_order: &order,
+                i18n: sys_display(AppLanguage::SystemDefault),
+            },
+        )
+        .expect("pad capture applies")
+    });
+    assert!(consumed, "live pad's own press is consumed");
+    let systems = &snapshot.shared.input.systems;
+    let bound: Vec<usize> = systems
+        .values()
+        .flat_map(|settings| settings.pad_bindings.iter())
+        .enumerate()
+        .filter(|(_, entries)| !entries.is_empty())
+        .map(|(index, _)| index)
+        .collect();
+    assert_eq!(
+        bound,
+        vec![1],
+        "override lands on rank 1, not live position 0"
+    );
+}
+
+#[test]
 fn pad_mapping_screens_hide_dpad_rows() {
     // The hat stays fixed (its switch rides the pad screen), so
     // per-pad mapping never offers dpad rows: face buttons keep
@@ -2572,8 +2715,17 @@ fn pad_mapping_screens_hide_dpad_rows() {
 }
 
 fn pad_payload(snapshot: &SettingsSnapshot, pads: &[GamepadInfo]) -> ViewPayload {
+    pad_payload_ordered(snapshot, pads, &order_of(pads))
+}
+
+fn pad_payload_ordered(
+    snapshot: &SettingsSnapshot,
+    pads: &[GamepadInfo],
+    order: &[String],
+) -> ViewPayload {
     with_test_deps(|| {
-        open_payload(snapshot, &test_keyboards(), None, pads, None).expect("open payload builds")
+        open_payload(snapshot, &test_keyboards(), None, pads, order, None)
+            .expect("open payload builds")
     })
 }
 
@@ -2610,6 +2762,7 @@ fn pad_mapping_capture_lands_override_from_own_pad() {
                 keyboards: &test_keyboards(),
                 touch_capable: None,
                 gamepads: &pads,
+                pad_order: &order_of(&pads),
                 i18n: sys_display(AppLanguage::SystemDefault),
             },
         )
@@ -2666,6 +2819,7 @@ fn run_with_pads(
         .unwrap();
         let mut keyboards = test_keyboards();
         let mut gamepads = pads.to_vec();
+        let order = order_of(pads);
         apply_command_to(
             snapshot,
             &command_json,
@@ -2675,7 +2829,7 @@ fn run_with_pads(
                 touch_capable: &mut None,
                 gamepads: &mut gamepads,
                 system_locale: &mut None,
-                pad_order: &[],
+                pad_order: &order,
             },
         )
         .unwrap_or_else(|error| panic!("command failed: {error}"))
@@ -2704,6 +2858,7 @@ fn reset_screen(snapshot: &mut SettingsSnapshot, pads: &[GamepadInfo], key: &str
     with_test_deps(|| {
         let mut keyboards = test_keyboards();
         let mut gamepads = pads.to_vec();
+        let order = order_of(&gamepads);
         apply_command_to(
             snapshot,
             &command_json,
@@ -2713,7 +2868,7 @@ fn reset_screen(snapshot: &mut SettingsSnapshot, pads: &[GamepadInfo], key: &str
                 touch_capable: &mut None,
                 gamepads: &mut gamepads,
                 system_locale: &mut None,
-                pad_order: &[],
+                pad_order: &order,
             },
         )
         .unwrap_or_else(|error| panic!("reset failed: {error}"))
@@ -2734,6 +2889,7 @@ fn reset_screen_err(snapshot: &mut SettingsSnapshot, pads: &[GamepadInfo], key: 
     with_test_deps(|| {
         let mut keyboards = test_keyboards();
         let mut gamepads = pads.to_vec();
+        let order = order_of(&gamepads);
         apply_command_to(
             snapshot,
             &command_json,
@@ -2743,7 +2899,7 @@ fn reset_screen_err(snapshot: &mut SettingsSnapshot, pads: &[GamepadInfo], key: 
                 touch_capable: &mut None,
                 gamepads: &mut gamepads,
                 system_locale: &mut None,
-                pad_order: &[],
+                pad_order: &order,
             },
         )
         .err()
@@ -2772,6 +2928,7 @@ fn pad_mapping_capture_ignores_other_pads_and_keys() {
                 keyboards: &test_keyboards(),
                 touch_capable: None,
                 gamepads: &pads,
+                pad_order: &order_of(&pads),
                 i18n: sys_display(AppLanguage::SystemDefault),
             },
         )
@@ -2791,6 +2948,7 @@ fn pad_mapping_capture_ignores_other_pads_and_keys() {
                 keyboards: &test_keyboards(),
                 touch_capable: None,
                 gamepads: &pads,
+                pad_order: &order_of(&pads),
                 i18n: sys_display(AppLanguage::SystemDefault),
             },
         )
@@ -2830,6 +2988,7 @@ fn pad_mapping_clear_resets_override_to_default() {
                 keyboards: &test_keyboards(),
                 touch_capable: None,
                 gamepads: &pads,
+                pad_order: &order_of(&pads),
                 i18n: sys_display(AppLanguage::SystemDefault),
             },
         )
@@ -2905,6 +3064,7 @@ fn pad_mapping_conflict_surfaces_on_screen() {
                     keyboards: &test_keyboards(),
                     touch_capable: None,
                     gamepads: &pads,
+                    pad_order: &order_of(&pads),
                     i18n: sys_display(AppLanguage::SystemDefault),
                 },
             )
@@ -2960,6 +3120,7 @@ fn double_mapping_surfaces_issue_in_the_capture_payload() {
                     keyboards: &test_keyboards(),
                     touch_capable: None,
                     gamepads: &pads,
+                    pad_order: &order_of(&pads),
                     i18n: sys_display(AppLanguage::SystemDefault),
                 },
             )
@@ -3004,7 +3165,8 @@ fn game_row_capture_without_keyboard_names_dpad_only() {
     let (mut snapshot, _) = test_payload();
     let pads = two_pads();
     let payload = with_test_deps(|| {
-        open_payload(&snapshot, &[], None, &pads, None).expect("open payload builds")
+        open_payload(&snapshot, &[], None, &pads, &order_of(&pads), None)
+            .expect("open payload builds")
     });
     let key = payload
         .sections
@@ -3028,6 +3190,7 @@ fn game_row_capture_without_keyboard_names_dpad_only() {
     })
     .unwrap();
     let mut gamepads = pads;
+    let order = order_of(&gamepads);
     with_test_deps(|| {
         apply_command_to(
             &mut snapshot,
@@ -3038,7 +3201,7 @@ fn game_row_capture_without_keyboard_names_dpad_only() {
                 touch_capable: &mut None,
                 gamepads: &mut gamepads,
                 system_locale: &mut None,
-                pad_order: &[],
+                pad_order: &order,
             },
         )
         .expect("pad-only game capture starts")
@@ -3098,6 +3261,7 @@ fn keys_reset_keeps_pad_overrides() {
                 keyboards: &keyboards,
                 touch_capable: None,
                 gamepads: &[],
+                pad_order: &[],
                 i18n: sys_display(AppLanguage::SystemDefault),
             },
         )
@@ -3131,6 +3295,7 @@ fn keys_reset_keeps_pad_overrides() {
                 keyboards: &keyboards,
                 touch_capable: None,
                 gamepads: &pads,
+                pad_order: &order_of(&pads),
                 i18n: sys_display(AppLanguage::SystemDefault),
             },
         )
@@ -3340,8 +3505,15 @@ fn devices_screen_gears_into_pad_screens() {
     let (snapshot, _) = test_payload();
     let pads = two_pads();
     let payload = with_test_deps(|| {
-        let json = open_payload(&snapshot, &test_keyboards(), None, &pads, None)
-            .expect("open payload builds");
+        let json = open_payload(
+            &snapshot,
+            &test_keyboards(),
+            None,
+            &pads,
+            &order_of(&pads),
+            None,
+        )
+        .expect("open payload builds");
         let payload: ViewPayload = json;
         payload
     });

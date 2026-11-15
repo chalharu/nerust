@@ -15,7 +15,7 @@ use nerust_settings_core::{editor::CaptureTarget, i18n::UiText};
 use super::keycode::android_keycode_to_key;
 use super::projection::project_fresh;
 use super::vm::{build_vm, sync_snapshot_from_vm, with_vm_deps};
-use super::wire::{CaptureSlot, Projection, ViewPayload, pad_index_for_member};
+use super::wire::{CaptureSlot, Projection, ViewPayload, rank_for_member};
 
 fn android_keycode_to_pad(keycode: i32) -> Option<StandardButton> {
     u32::try_from(keycode)
@@ -68,8 +68,11 @@ pub(crate) fn apply_hardware_key(
             // normal. The target gates which side lands; the shared tail
             // applies every granted side, so the two columns never fork.
             let target = target.clone();
-            let pad = pad_descriptor
-                .and_then(|descriptor| pad_index_for_member(truth.gamepads, descriptor));
+            // Rank, not live position: the target pad is a settings
+            // rank, so the pressing pad must resolve the same way or a
+            // reconnect cycle would reject its own pad's buttons.
+            let pad =
+                pad_descriptor.and_then(|descriptor| rank_for_member(truth.pad_order, descriptor));
             let (key, button) = if let Some(want) = target.pad() {
                 // Per-pad mapping rows take only their own pad's
                 // buttons: a press from another pad (or a keyboard key)

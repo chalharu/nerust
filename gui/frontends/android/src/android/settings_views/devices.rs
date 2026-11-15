@@ -11,9 +11,9 @@ use nerust_input_traits::{BUILTIN_KEYBOARD_MEMBER, member_is_gamepad, member_is_
 use nerust_settings_core::i18n::UiText;
 
 use super::wire::{
-    GamepadInfo, I18n, KeyboardInfo, PLAYER_PORTS, RowWire, SectionWire, binding_key, button_row,
-    capture_open, capture_row, choice_row, devices_id, encode_target, group_row, header_row,
-    info_row, player_id, player_label, toggle_row, types_id,
+    GamepadInfo, I18n, KeyboardInfo, PLAYER_PORTS, RowWire, SectionWire, bare_member, binding_key,
+    button_row, capture_open, capture_row, choice_row, devices_id, encode_target, group_row,
+    header_row, info_row, live_for_rank, player_id, player_label, toggle_row, types_id,
 };
 
 /// Player screens (one per global port): the Devices row opens the device
@@ -26,6 +26,7 @@ pub(super) fn build_player_sections(
     i18n: I18n,
     keyboards: &[KeyboardInfo],
     gamepads: &[GamepadInfo],
+    pad_order: &[String],
 ) -> Vec<SectionWire> {
     let mut sections = Vec::new();
     for (index, port) in PLAYER_PORTS.iter().enumerate() {
@@ -33,7 +34,7 @@ pub(super) fn build_player_sections(
         let devices_id = devices_id(port);
         let types_id = types_id(index);
         let label = player_label(index, i18n);
-        let names = port_member_names(port, snapshot, keyboards, gamepads, i18n);
+        let names = port_member_names(port, snapshot, keyboards, gamepads, pad_order, i18n);
         sections.push(SectionWire {
             id: player_id.clone(),
             label: label.clone(),
@@ -96,6 +97,7 @@ pub(super) fn build_player_sections(
             snapshot,
             keyboards,
             gamepads,
+            pad_order,
             i18n,
         ));
     }
@@ -135,6 +137,7 @@ pub(super) fn port_member_names(
     snapshot: &SettingsSnapshot,
     keyboards: &[KeyboardInfo],
     gamepads: &[GamepadInfo],
+    pad_order: &[String],
     i18n: I18n,
 ) -> Vec<String> {
     // Effective members only: rows render solely while the terminal
@@ -167,9 +170,12 @@ pub(super) fn port_member_names(
         .unwrap_or_default();
     let port_index = PLAYER_PORTS.iter().position(|known| *known == port);
     if let Some(port_index) = port_index {
-        for (pad_index, pad) in snapshot.shared.input.gamepad.pad_ports.iter().enumerate() {
+        // Rank-indexed like the session commit path: the live list
+        // compacts on disconnect, so a live position would name the
+        // wrong pad after a reconnect cycle.
+        for (rank, pad) in snapshot.shared.input.gamepad.pad_ports.iter().enumerate() {
             if pad.slot == Some(port_index)
-                && let Some(info) = gamepads.get(pad_index)
+                && let Some(info) = live_for_rank(gamepads, pad_order, rank)
             {
                 names.push(info.name.clone());
             }
@@ -252,10 +258,13 @@ pub(super) fn build_devices_section(
     snapshot: &SettingsSnapshot,
     keyboards: &[KeyboardInfo],
     gamepads: &[GamepadInfo],
+    pad_order: &[String],
     i18n: I18n,
 ) -> SectionWire {
     let mut rows = keyboard_rows(port, devices_id, snapshot, keyboards, i18n);
-    rows.extend(gamepad_rows(port, devices_id, snapshot, gamepads, i18n));
+    rows.extend(gamepad_rows(
+        port, devices_id, snapshot, gamepads, pad_order, i18n,
+    ));
     rows.push(button_row(
         &format!("reset.{devices_id}"),
         i18n.text(UiText::ResetScreen),
@@ -324,6 +333,7 @@ fn gamepad_rows(
     devices_id: &str,
     snapshot: &SettingsSnapshot,
     gamepads: &[GamepadInfo],
+    pad_order: &[String],
     i18n: I18n,
 ) -> Vec<RowWire> {
     let mut rows = Vec::new();
@@ -352,22 +362,25 @@ fn gamepad_rows(
         return rows;
     }
     rows.push(header_row(i18n.text(UiText::Gamepads)));
-    // Radio over the connected pads: one player, one pad. The none
-    // choice parks every pad for this player, so it never reads as
-    // "this port has none" the way a disconnected state does.
+    // Radio over the connected pads, valued by stable rank: one player,
+    // one pad. The none choice parks every pad for this player, so it
+    // never reads as "this port has none" the way a disconnected state
+    // does. Values are ranks (the session commit index), never live
+    // positions, so a reconnect cycle cannot redirect the assignment.
     let mut pad_choices: Vec<(Option<usize>, String)> =
         vec![(None, i18n.text(UiText::NoPadForPlayer))];
-    for (pad_index, info) in gamepads
-        .iter()
-        .take(nerust_input_traits::MAX_PADS)
-        .enumerate()
-    {
-        pad_choices.push((Some(pad_index), info.name.clone()));
+    for (rank, descriptor) in pad_order.iter().enumerate() {
+        if let Some(info) = gamepads
+            .iter()
+            .find(|info| bare_member(&info.member) == *descriptor)
+        {
+            pad_choices.push((Some(rank), info.name.clone()));
+        }
     }
     let assigned: Option<usize> = stale_slot(port_index, snapshot)
         // Disconnected assigned pads hide: the radio only names
         // connected pads, and the stale slot restores on reconnect.
-        .filter(|index| *index < gamepads.len());
+        .filter(|rank| live_for_rank(gamepads, pad_order, *rank).is_some());
     rows.push(choice_row(
         &format!("{devices_id}.gamepad"),
         i18n.text(UiText::GamepadDevice),
@@ -387,17 +400,9 @@ fn gamepad_rows(
             pad_label(i18n.language(), stale),
         ));
     }
-    rows.extend(gear_rows(port_index, devices_id, snapshot, gamepads, i18n));
-    // Past the table a pad parks with no screen of its own: say so
-    // instead of vanishing silently.
-    if gamepads.len() > nerust_input_traits::MAX_PADS {
-        rows.push(info_row(
-            &format!("{devices_id}.pads.parked"),
-            i18n.text(UiText::GamepadDevice),
-            i18n.text(UiText::DescPadParked),
-            String::new(),
-        ));
-    }
+    rows.extend(gear_rows(
+        port_index, devices_id, snapshot, gamepads, pad_order, i18n,
+    ));
     rows
 }
 
@@ -410,26 +415,32 @@ fn gear_rows(
     devices_id: &str,
     snapshot: &SettingsSnapshot,
     gamepads: &[GamepadInfo],
+    pad_order: &[String],
     i18n: I18n,
 ) -> Vec<RowWire> {
     let mut rows = Vec::new();
-    for (pad_index, info) in gamepads
-        .iter()
-        .take(nerust_input_traits::MAX_PADS)
-        .enumerate()
-    {
+    // Rank-indexed like the radio and the session commit path: the live
+    // list compacts on disconnect, so live positions would gear into a
+    // stranger pad's screen after a reconnect cycle.
+    for (rank, descriptor) in pad_order.iter().enumerate() {
         let entry_slot: Option<usize> = snapshot
             .shared
             .input
             .gamepad
             .pad_ports
-            .get(pad_index)
+            .get(rank)
             .and_then(|pad| pad.slot);
         let assigned_here = entry_slot.is_some_and(|slot| Some(slot) == port_index)
             || (entry_slot.is_none() && port_index == Some(0));
         if !assigned_here {
             continue;
         }
+        let info = gamepads
+            .iter()
+            .find(|info| bare_member(&info.member) == *descriptor);
+        let Some(info) = info else {
+            continue;
+        };
         // Unassigned pads stay reachable from player 1: say so on the
         // gear itself, so this screen never promises another
         // player's pad.
@@ -439,10 +450,10 @@ fn gear_rows(
             i18n.text(UiText::DescGamepadGear)
         };
         rows.push(group_row(
-            &format!("{devices_id}.pad{}", pad_index + 1),
+            &format!("{devices_id}.pad{}", rank + 1),
             info.name.clone(),
             gear_description,
-            &format!("pad.{}", pad_index + 1),
+            &format!("pad.{}", rank + 1),
         ));
     }
     rows

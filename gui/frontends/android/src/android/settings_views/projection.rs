@@ -79,6 +79,7 @@ pub(super) fn build_sections(
         truth.keyboards,
         truth.touch_capable,
         truth.gamepads,
+        truth.pad_order,
     ));
     sections.extend(build_player_sections(
         vm,
@@ -86,6 +87,7 @@ pub(super) fn build_sections(
         i18n,
         truth.keyboards,
         truth.gamepads,
+        truth.pad_order,
     ));
     sections.extend(build_system_sections(vm, i18n));
     sections.extend(build_input_sections(vm, i18n));
@@ -548,11 +550,12 @@ fn controllers_quick_section(
     i18n: I18n,
     keyboards: &[KeyboardInfo],
     gamepads: &[GamepadInfo],
+    pad_order: &[String],
 ) -> SectionWire {
     let mut quick_rows = Vec::new();
     for (index, port) in PLAYER_PORTS.iter().enumerate() {
         let player_id = player_id(index);
-        let names = port_member_names(port, snapshot, keyboards, gamepads, i18n);
+        let names = port_member_names(port, snapshot, keyboards, gamepads, pad_order, i18n);
         quick_rows.push(group_row(
             &format!("controllers.{player_id}"),
             player_label(index, i18n),
@@ -562,23 +565,29 @@ fn controllers_quick_section(
         let last = quick_rows.last_mut().expect("player row pushed");
         last.text = nerust_gui_viewmodel::settings::labels::port_summary(i18n, &names);
     }
-    // Connected pads link straight to their own screen (deadzone,
-    // hat switch, button mapping).
-    if !gamepads.is_empty() {
+    // Ranked pads link straight to their own screen (deadzone,
+    // hat switch, button mapping). Ranks, never live positions: the
+    // screens iterate stable ranks too, so the link and the screen
+    // cannot disagree after a reconnect cycle.
+    let ranked: Vec<(usize, &GamepadInfo)> = pad_order
+        .iter()
+        .enumerate()
+        .filter_map(|(rank, descriptor)| {
+            gamepads
+                .iter()
+                .find(|info| super::wire::bare_member(&info.member) == *descriptor)
+                .map(|info| (rank, info))
+        })
+        .collect();
+    if !ranked.is_empty() {
         quick_rows.push(header_row(i18n.text(UiText::Gamepads)));
     }
-    // Past the persisted table a pad parks with no settings of its
-    // own: no link, no screen.
-    for (index, info) in gamepads
-        .iter()
-        .take(nerust_input_traits::MAX_PADS)
-        .enumerate()
-    {
+    for (rank, info) in &ranked {
         quick_rows.push(group_row(
-            &format!("controls.pad{}.link", index + 1),
+            &format!("controls.pad{}.link", rank + 1),
             info.name.clone(),
             i18n.text(UiText::DescGamepadGear),
-            &format!("pad.{}", index + 1),
+            &format!("pad.{}", rank + 1),
         ));
     }
     // Pure navigation hub like player/about: every editable row lives on
@@ -839,13 +848,14 @@ fn build_controllers_sections(
     keyboards: &[KeyboardInfo],
     touch_capable: Option<bool>,
     gamepads: &[GamepadInfo],
+    pad_order: &[String],
 ) -> Vec<SectionWire> {
     let mut sections = vec![
-        controllers_quick_section(snapshot, i18n, keyboards, gamepads),
+        controllers_quick_section(snapshot, i18n, keyboards, gamepads, pad_order),
         overlay_detail_section(&snapshot.local.touch_overlay, gamepads, touch_capable, i18n),
         shortcuts_section(vm, snapshot, i18n, keyboards, gamepads),
     ];
-    sections.extend(build_pad_sections(vm, snapshot, i18n, gamepads));
+    sections.extend(build_pad_sections(vm, snapshot, i18n, gamepads, pad_order));
     sections
 }
 

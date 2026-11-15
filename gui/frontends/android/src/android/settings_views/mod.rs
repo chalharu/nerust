@@ -63,6 +63,7 @@ pub(super) fn open_payload(
     keyboards: &[KeyboardInfo],
     touch_capable: Option<bool>,
     gamepads: &[GamepadInfo],
+    pad_order: &[String],
     system_locale: Option<AppLanguage>,
 ) -> Result<ViewPayload, String> {
     with_vm_deps(|deps| {
@@ -71,6 +72,7 @@ pub(super) fn open_payload(
             keyboards,
             touch_capable,
             gamepads,
+            pad_order,
             i18n,
         };
         let capture: CaptureSlot = None;
