@@ -1,5 +1,8 @@
 //! Settings wire tests: payload shape, capture round-trips, review allowlists.
-use super::{capture::*, commands::*, open_payload, projection::*, vm::*, wire::*};
+use super::{
+    capture::*, commands::*, keycode::BUTTON_TABLE, open_payload, projection::*, vm::*, wire::*,
+};
+use crate::bridge_events::CONTROLLER_KEY_TABLE;
 use std::sync::Arc;
 
 use crate::bridge_contract::SETTINGS_SCHEMA_VERSION;
@@ -4296,4 +4299,20 @@ fn pad_rows_show_cap_prints_not_positions() {
     ] {
         assert_eq!(row(&payload, key).text, *want, "{key} shows its cap");
     }
+}
+
+#[test]
+fn keycode_and_bridge_tables_agree_as_button_sets() {
+    use nerust_input_traits::StandardButton;
+    let mut bridge_buttons: Vec<StandardButton> = CONTROLLER_KEY_TABLE
+        .iter()
+        .map(|(_, button)| *button)
+        .collect();
+    bridge_buttons.sort();
+    bridge_buttons.dedup();
+    let mut keycode_buttons: Vec<StandardButton> =
+        BUTTON_TABLE.iter().map(|(_, button)| *button).collect();
+    keycode_buttons.sort();
+    keycode_buttons.dedup();
+    assert_eq!(bridge_buttons, keycode_buttons);
 }

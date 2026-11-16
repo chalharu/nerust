@@ -207,7 +207,7 @@ fn apply_capture_command(
                         .clear_key(&target)
                         .map_err(|error| error.to_string())?;
                 }
-                CaptureTarget::Shortcut(_) if command.key.contains(".pad") => {
+                CaptureTarget::Shortcut(_) if command.key.ends_with(".pad") => {
                     vm.capture
                         .clear_pad(&target)
                         .map_err(|error| error.to_string())?;
@@ -640,8 +640,13 @@ fn reset_pad_scope(
     scope: &str,
     pad: &str,
 ) -> Result<(), String> {
-    let key = format!("pad.{pad}.deadzone");
-    let index = pad_screen_index(&key).map_err(|_| format!("unknown reset scope: {scope}"))?;
+    let index: usize = pad
+        .split('.')
+        .next()
+        .and_then(|segment| segment.parse().ok())
+        .filter(|index| *index >= 1)
+        .map(|index: usize| index - 1)
+        .ok_or_else(|| format!("unknown reset scope: {scope}"))?;
     let Some(default_port) = default.shared.input.gamepad.pad_ports.get(index) else {
         return Err(format!("unknown reset scope: {scope}"));
     };
@@ -1007,7 +1012,12 @@ fn decode_target(encoded: &str, deps: &VmDeps) -> Result<CaptureTarget, String> 
             .ok_or_else(|| format!("unknown system: {system}"))
     };
     match (value.action, value.pad) {
-        (Some(action), _) => Ok(CaptureTarget::Shortcut(action)),
+        (Some(action), pad) => {
+            if pad.is_some() || value.system.is_some() {
+                return Err("capture target mixes shortcut and pad fields".to_string());
+            }
+            Ok(CaptureTarget::Shortcut(action))
+        }
         (None, Some(pad)) => Ok(CaptureTarget::PadBinding {
             system: system(value.system)?,
             pad,

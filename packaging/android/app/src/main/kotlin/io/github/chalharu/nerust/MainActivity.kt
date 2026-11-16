@@ -91,15 +91,6 @@ class MainActivity :
     /** Last presence scan: identical hotplug/resume bursts skip the apply. */
     @Volatile private var lastPresenceTruth: DeviceTruth? = null
 
-    /** Live ids of counted gamepads: key events from these devices divert
-     * to the pad path even with a bare DPAD source (TV remotes never land
-     * here, only counted pads do). Refreshed with the presence scan.
-     * Kept alongside the descriptor identity Rust uses: the live id is
-     * what Android routing needs (key gate here, vibrator lookup in
-     * SensorController), while Rust port assignment uses descriptors.
-     * Never persisted or sent to Rust. */
-    @Volatile private var gamepadDeviceIds: Set<Int> = emptySet()
-
     /** Synchronous connect set: the async scan below can lag a physical
      * connect, dropping the first key (the gate reads the scan). Listener
      * callbacks and dispatch share the main thread, so a plain set updated
@@ -204,11 +195,10 @@ class MainActivity :
         // pads divert by device id too: D-pad-only sources would otherwise
         // read as a TV remote and never reach the game.
         // `connectedDeviceIds` is the synchronous routing set (the async
-        // counted scan can lag a physical connect and drop the first key);
-        // `gamepadDeviceIds` is the counted overlay set. Both hold live ids
-        // only for devices with a resolvable descriptor (null-descriptor
-        // ghosts never enter, see sendInitialDeviceAdded/onInputDeviceAdded).
-        val isController = isControllerSource(event.source) || connectedDeviceIds.contains(event.deviceId) || gamepadDeviceIds.contains(event.deviceId)
+        // counted scan can lag a physical connect and drop the first key).
+        // Both hold live ids only for devices with a resolvable descriptor
+        // (null-descriptor ghosts never enter, see sendInitialDeviceAdded/onInputDeviceAdded).
+        val isController = isControllerSource(event.source) || connectedDeviceIds.contains(event.deviceId)
         if (Log.isLoggable(TAG, Log.DEBUG)) {
             Log.d(TAG, "game key: source=0x${event.source.toString(16)} device=${event.deviceId} keyCode=${event.keyCode} action=${event.action} controller=$isController")
         }
@@ -262,7 +252,7 @@ class MainActivity :
         val deviceId = event.deviceId
         val device = event.device
         val hasAxes = if (device == null) {
-            device?.getMotionRange(axisMotion) != null
+            false
         } else {
             hasTriggerAxes.getOrPut(deviceId) { device.getMotionRange(axisMotion) != null }
         }
@@ -582,7 +572,6 @@ class MainActivity :
                 }
             if (scan == lastPresenceTruth) return@runIo
             lastPresenceTruth = scan
-            gamepadDeviceIds = scan.gamepads.map { it.deviceId }.toSet()
             val touchCapable = scan.touchCapable
             val gamepadNames = scan.gamepads.map { it.name }
             BridgeIo.postMain {

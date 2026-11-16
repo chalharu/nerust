@@ -412,30 +412,26 @@ pub(super) fn toggle_row(
     row
 }
 
-/// Slider bounds for [`number_row`]: one tuple instead of six params.
-pub(crate) struct NumberParams {
-    pub value: i64,
-    pub step: i64,
-    pub min: i64,
-    pub max: i64,
-    pub unit: String,
-}
-
+#[allow(clippy::too_many_arguments)]
 pub(super) fn number_row(
     key: &str,
     label: String,
     description: String,
-    params: NumberParams,
+    value: i64,
+    step: i64,
+    min: i64,
+    max: i64,
+    unit: String,
 ) -> RowWire {
     RowWire {
         key: key.to_string(),
         label,
         description,
-        number: params.value,
-        step: params.step,
-        min: params.min,
-        max: params.max,
-        unit: params.unit,
+        number: value,
+        step,
+        min,
+        max,
+        unit,
         ..RowWire::new(RowKind::Number)
     }
 }
@@ -513,6 +509,7 @@ pub(super) fn capture_open(keyboards: &[KeyboardInfo], gamepads: &[GamepadInfo])
 /// Lives next to [`encode_target`] so the pair cannot skew; `commands`
 /// resolves it with the factory registry.
 #[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct WireTarget {
     #[serde(default)]
     pub action: Option<nerust_settings_core::model::input::ShortcutAction>,

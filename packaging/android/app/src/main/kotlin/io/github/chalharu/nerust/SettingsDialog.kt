@@ -523,6 +523,7 @@ internal fun NerustSettingsDialogCard(
         if (activeRowKey != null && activeRowKey !in rowKeys) {
             activeRowKey = null
         }
+        dirtyKeys = dirtyKeys.intersect(rowKeys)
     }
 
     fun requestCancel() {
@@ -1341,16 +1342,18 @@ private fun SettingsCategoryList(
                             )
                         }
                     }
-                    Text(
-                        text =
-                            pluralStringResource(
-                                R.plurals.settings_count,
-                                entryCount,
-                                entryCount,
-                            ),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
+                    if (summary.isBlank()) {
+                        Text(
+                            text =
+                                pluralStringResource(
+                                    R.plurals.settings_count,
+                                    entryCount,
+                                    entryCount,
+                                ),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                     if (summary.isNotBlank()) {
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(

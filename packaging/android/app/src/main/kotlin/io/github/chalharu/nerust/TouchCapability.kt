@@ -59,7 +59,9 @@ private fun isGhostFingerprintSensor(name: String): Boolean {
     if (!name.startsWith("uinput-")) return false
     val suffix = name.removePrefix("uinput-")
     return suffix.startsWith("fpc") ||
+        suffix.startsWith("egis") ||
         suffix.startsWith("goodix") ||
+        suffix.startsWith("focaltech") ||
         suffix.startsWith("synaptics") ||
         suffix.startsWith("elan") ||
         suffix.startsWith("vfs") ||

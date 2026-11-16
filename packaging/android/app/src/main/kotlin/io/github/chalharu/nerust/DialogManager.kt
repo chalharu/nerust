@@ -37,7 +37,7 @@ class DialogManager(private val activity: MainActivity) {
         private set
 
     fun isShowing(tag: String): Boolean =
-        this.tag == tag && dialog?.isShowing == true
+        this.tag == tag && dialog?.isShowing == true && rootView?.isShown == true
 
     fun rootViewForTag(tag: String): View? = rootView.takeIf { this.tag == tag }
 
@@ -73,7 +73,7 @@ class DialogManager(private val activity: MainActivity) {
         // dismiss listener is cleared first, so it cannot consume the
         // replacement dialog's callback or references (see the
         // delayedDismissCannotAcknowledgeReplacementDialog e2e).
-        dismiss(notifyDismiss = !this.ownedByTest)
+        dismiss(notifyDismiss = true)
 
         lateinit var dialog: Dialog
         val root =

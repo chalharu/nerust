@@ -10,7 +10,7 @@ use winit::keyboard::{KeyCode, NativeKeyCode, PhysicalKey};
 /// Raw Android keycode to position button. `None` for keyboard keys
 /// and unknown codes. Single table so the function and its coverage
 /// test cannot skew.
-const BUTTON_TABLE: [(u32, StandardButton); 18] = [
+pub(crate) const BUTTON_TABLE: [(u32, StandardButton); 18] = [
     (19, StandardButton::DpadUp),
     (20, StandardButton::DpadDown),
     (21, StandardButton::DpadLeft),

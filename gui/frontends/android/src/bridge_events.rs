@@ -385,7 +385,7 @@ fn decode_json_event(raw: &str) -> Option<FrontendEvent> {
                 .iter()
                 .find(|(name, _, _)| *name == "request_id")
                 .copied()
-                .unwrap_or(("request_id", 1, i64::MAX));
+                .expect("generated request_id bound");
             let id = event.request_id;
             if id >= minimum as u64 && (id as u128) <= maximum as u128 {
                 Some(FrontendEvent::ErrorDialogDismissed(
@@ -435,15 +435,12 @@ fn decode_json_menu_action(event: &MenuEvent) -> Option<FrontendEvent> {
         let device_id = event.device_id?;
         // One JNI crossing per motion callback: every carried axis
         // decodes through the shared table; an empty batch fails loud.
+        // Range pre-checked by the shape gate on every action.
         let mut batch = Vec::with_capacity(6);
         for (axis, value) in event.motion_axes() {
             let Some(value) = value else {
                 continue;
             };
-            if !(ANALOG_VALUE_BOUNDS.0..=ANALOG_VALUE_BOUNDS.1).contains(&value) {
-                log::warn!("ignoring out-of-range Android axis value: {value}");
-                return None;
-            }
             batch.push(MenuAction::AnalogInput {
                 device_id,
                 axis,

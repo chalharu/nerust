@@ -12,16 +12,10 @@ use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_input_traits::StandardButton;
 use nerust_settings_core::{editor::CaptureTarget, i18n::UiText};
 
-use super::keycode::android_keycode_to_key;
+use super::keycode::{android_keycode_to_button, android_keycode_to_key};
 use super::projection::project_fresh;
 use super::vm::{Projection, VmDeps, build_vm, sync_snapshot_from_vm, with_vm_deps};
 use super::wire::{CaptureSlot, ViewPayload, rank_for_member};
-
-fn android_keycode_to_pad(keycode: i32) -> Option<StandardButton> {
-    u32::try_from(keycode)
-        .ok()
-        .and_then(super::keycode::android_keycode_to_button)
-}
 
 /// Prompt key for one capture target: pad rows name what a press can
 /// claim, game rows with no keyboard connected name the dpad twin,
@@ -81,13 +75,20 @@ pub(crate) fn apply_hardware_key(
                 if pad != Some(want) {
                     return Ok((None, false));
                 }
-                (None, android_keycode_to_pad(keycode))
+                (
+                    None,
+                    u32::try_from(keycode)
+                        .ok()
+                        .and_then(android_keycode_to_button),
+                )
             } else if target.action().is_some() {
                 // Shortcuts take either side: a D-pad press lands both
                 // the arrow key and the pad position in their columns.
                 (
                     android_keycode_to_key(keycode),
-                    android_keycode_to_pad(keycode),
+                    u32::try_from(keycode)
+                        .ok()
+                        .and_then(android_keycode_to_button),
                 )
             } else {
                 // Game rows take keyboard keys only: pad-only buttons
