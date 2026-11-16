@@ -249,7 +249,7 @@ class SettingsActivity :
             // Terminal locale only: Rust applies the saved in-app choice
             // itself (see MainActivity.pushSystemLocaleToVault).
             AppLocale.currentTag()?.let { payload.put("lang", it) }
-            pushOp("device truth", "device_truth", payload)
+            pushOp("device_truth", payload)
         }
     }
 
@@ -257,7 +257,7 @@ class SettingsActivity :
      * applies it. Rust owns dirty (draft vs pristine), so device-truth
      * pushes never mark the draft. JNI runs on the shared background
      * lane; only the nav apply posts back to the main thread. */
-    private fun pushOp(label: String, op: String, payload: JSONObject) {
+    private fun pushOp(op: String, payload: JSONObject) {
         if (navActions == null) return
         val command = settingsCommandJson(op, payload)
         BridgeIo.runIo {
@@ -265,7 +265,7 @@ class SettingsActivity :
                 try {
                     nativeSettingsCommand(command)
                 } catch (e: Exception) {
-                    Log.e(TAG, "$label push failed", e)
+                    Log.e(TAG, "device truth push failed", e)
                     return@runIo
                 }
             if (raw == null) return@runIo

@@ -527,8 +527,6 @@ internal fun NerustSettingsDialogCard(
     }
 
     fun requestCancel() {
-        // Dirty opens the discard confirm; clean dismisses outright. One
-        // branch, not if/else: the flag already carries the state.
         confirmDiscard = isDirty
         if (!isDirty) onDismissRequest()
     }
@@ -1350,8 +1348,7 @@ private fun SettingsCategoryList(
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.primary,
                         )
-                    }
-                    if (summary.isNotBlank()) {
+                    } else {
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = summary,
