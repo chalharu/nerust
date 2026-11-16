@@ -93,7 +93,7 @@ pub(super) struct SettingsSlot {
     pub(super) keyboards: Vec<super::settings_views::KeyboardInfo>,
     /// Whether the terminal has a touch screen (Kotlin
     /// `PackageManager`, re-pushed with the keyboard enumeration).
-    /// `None` until the first push: rows behave as before.
+    /// Vault default `true` until the first push: rows behave as before.
     pub(super) touch_capable: bool,
     /// Devices the Auto overlay gate counts (Kotlin `InputDevice`, hotplug
     /// live). Display-only device truth, never persisted. Sorted into

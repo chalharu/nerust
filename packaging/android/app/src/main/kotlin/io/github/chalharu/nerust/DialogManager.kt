@@ -33,8 +33,6 @@ class DialogManager(private val activity: MainActivity) {
     var tag: String? = null
         private set
     private var dismissCallback: (() -> Unit)? = null
-    var ownedByTest = false
-        private set
 
     fun isShowing(tag: String): Boolean =
         this.tag == tag && dialog?.isShowing == true && rootView?.isShown == true
@@ -64,7 +62,6 @@ class DialogManager(private val activity: MainActivity) {
         dialogTag: String,
         contentDescription: String,
         onDismiss: () -> Unit,
-        ownedByTest: Boolean = false,
         content: @Composable (dismiss: () -> Unit) -> Unit,
     ) {
         // Replacing acknowledges the old gate: the old request is
@@ -122,7 +119,6 @@ class DialogManager(private val activity: MainActivity) {
         this.composeView = composeView
         tag = dialogTag
         dismissCallback = onDismiss
-        this.ownedByTest = ownedByTest
         dialog.setOnDismissListener {
             // Android may already have queued this listener before replacement.
             // Never consume the replacement dialog's callback or references.
@@ -181,7 +177,6 @@ class DialogManager(private val activity: MainActivity) {
         composeView = null
         tag = null
         dismissCallback = null
-        ownedByTest = false
     }
 
     private fun View?.debugViewState(): String =

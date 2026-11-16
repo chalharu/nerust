@@ -4,7 +4,7 @@
     <string name="settings_back">Back</string>
     <string name="settings_cancel">Cancel</string>
     <string name="settings_clear">Clear</string>
-    <string name="settings_close">Close settings</string>
+    <string name="settings_close">Close</string>
     <string name="settings_save">Save</string>
     <string name="settings_save_blocked">Save (blocked)</string>
     <string name="settings_error_title">Error</string>

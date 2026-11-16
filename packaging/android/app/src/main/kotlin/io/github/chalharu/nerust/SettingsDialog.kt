@@ -273,7 +273,8 @@ internal fun settingsRowCommand(
 
 /** Cross-boundary navigation actions the activity needs for system back,
  * discard confirmation, hardware-key/capture payload delivery, and
- * out-of-band refreshes (hotplug) that must not mark the draft dirty. */
+ * out-of-band refreshes (hotplug): Rust owns dirty, so one apply path
+ * covers both edits and refreshes. */
 internal data class SettingsNavActions(
     val canNavigateUp: Boolean,
     val isDirty: Boolean,
@@ -284,7 +285,6 @@ internal data class SettingsNavActions(
     val dismissConfirm: () -> Unit,
     val cancelCapture: () -> Unit,
     val applyPayload: (String) -> Unit,
-    val refreshPayload: (String) -> Unit,
 )
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
@@ -547,9 +547,6 @@ internal fun NerustSettingsDialogCard(
                 dismissConfirm = { confirmDiscard = false },
                 cancelCapture = { sendCommand("", 0, 0L, "cancel_capture", mutating = false) },
                 applyPayload = { raw ->
-                    applyPayloadJson(raw)
-                },
-                refreshPayload = { raw ->
                     applyPayloadJson(raw)
                 },
             ),

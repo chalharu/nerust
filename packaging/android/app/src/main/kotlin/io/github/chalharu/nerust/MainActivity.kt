@@ -103,11 +103,12 @@ class MainActivity :
      * (dispatch plus listener callbacks), like the connect set above. */
     private var hasTriggerAxes = mutableMapOf<Int, Boolean>()
 
-    /** Right-stick primary absent per device: `getMotionRange` crosses
-     * Binder at motion rate, so probe once per device (evicted on
-     * add/change/remove like the trigger cache). True means Z/RZ absent
-     * and every RIGHT_X/Y sample reads RX/RY instead. */
-    private var rightStickAlias = mutableMapOf<Int, Boolean>()
+    /** Right-stick primary absent per (device, axis): `getMotionRange`
+     * crosses Binder at motion rate, so probe once per device+axis
+     * (evicted on add/change/remove like the trigger cache). True means
+     * the primary is absent and every sample reads RX/RY instead. Keyed
+     * per axis: a pad with Z but no RZ must not alias Y. */
+    private var rightStickAlias = mutableMapOf<Long, Boolean>()
 
     /** Presence-scan epoch: a scan in flight across onPause must not apply
      * after it (overlay/capture gate flipping while paused). The resume
@@ -416,7 +417,8 @@ class MainActivity :
             return event.getAxisValue(id)
         }
         val device = event.device ?: return event.getAxisValue(id)
-        val useAlias = rightStickAlias.getOrPut(deviceId) { device.getMotionRange(id) == null }
+        val key = deviceId.toLong() shl 32 or id.toLong()
+        val useAlias = rightStickAlias.getOrPut(key) { device.getMotionRange(id) == null }
         if (!useAlias) return event.getAxisValue(id)
         val alias = if (axis == ControllerAxis.RIGHT_X) MotionEvent.AXIS_RX else MotionEvent.AXIS_RY
         return event.getAxisValue(alias)
@@ -434,8 +436,15 @@ class MainActivity :
      * No pair array per callback: names come from the hoisted table. */
     private fun updateControllerAxes(deviceId: Int, event: MotionEvent): Map<String, Float>? {
         val axes = controllerAxes.getOrPut(deviceId) { mutableMapOf() }
+        // Digital-trigger mirror owns the trigger slots on axis-less pads:
+        // sampling the absent axes here would read 0 and emit a spurious
+        // release while the mirrored press is held.
+        val mirrorTriggers = hasTriggerAxes[deviceId] == false
         var crossed: MutableMap<String, Float>? = null
         for ((axis, id) in MOTION_AXES) {
+            if (mirrorTriggers &&
+                (axis == ControllerAxis.TRIGGER_L || axis == ControllerAxis.TRIGGER_R)
+            ) continue
             val value = rightStickSample(event, deviceId, axis, id)
             val last = axes[axis]
             if (last != null && kotlin.math.abs(value - last) < CONTROLLER_AXIS_EPSILON) continue
@@ -1008,7 +1017,6 @@ class MainActivity :
         dialogManager.show(
             dialogTag = ERROR_DIALOG_TAG,
             contentDescription = message,
-            ownedByTest = false,
             onDismiss = onDismiss,
         ) { dismiss ->
             NerustErrorDialogCard(

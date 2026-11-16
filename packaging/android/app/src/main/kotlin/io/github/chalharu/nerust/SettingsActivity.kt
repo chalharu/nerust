@@ -191,13 +191,7 @@ class SettingsActivity :
     }
 
     override fun onDestroy() {
-        // onPause already unregistered; a second call throws, which is
-        // expected on this path, so log instead of swallowing silently.
-        try {
-            (getSystemService(INPUT_SERVICE) as InputManager).unregisterInputDeviceListener(this)
-        } catch (e: Exception) {
-            Log.d(TAG, "input listener already unregistered", e)
-        }
+        // Listener balance lives in onResume/onPause; nothing to release here.
         if (this == activeActivityForTest) activeActivityForTest = null
         super.onDestroy()
     }
@@ -256,8 +250,9 @@ class SettingsActivity :
     }
 
     /** One push through the command pipe; Rust re-projects and the card
-     * applies it without marking the draft dirty. JNI runs on the shared
-     * background lane; only the nav apply posts back to the main thread. */
+     * applies it. Rust owns dirty (draft vs pristine), so device-truth
+     * pushes never mark the draft. JNI runs on the shared background
+     * lane; only the nav apply posts back to the main thread. */
     private fun pushOp(label: String, op: String, payload: JSONObject) {
         if (navActions == null) return
         val command = settingsCommandJson(op, payload)
@@ -270,7 +265,10 @@ class SettingsActivity :
                     return@runIo
                 }
             if (raw == null) return@runIo
-            BridgeIo.postMain { navActions?.refreshPayload(raw) }
+            BridgeIo.postMain {
+                if (isDestroyed || isFinishing) return@postMain
+                navActions?.applyPayload(raw)
+            }
         }
     }
 

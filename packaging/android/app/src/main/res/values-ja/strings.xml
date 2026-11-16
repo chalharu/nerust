@@ -6,7 +6,7 @@
     <string name="settings_clear">解除</string>
     <string name="settings_close">閉じる</string>
     <string name="settings_save">保存</string>
-    <string name="settings_save_blocked">保存（問題を解消してください）</string>
+    <string name="settings_save_blocked">保存（要修正）</string>
     <string name="settings_error_title">エラー</string>
     <string name="settings_ok">OK</string>
     <string name="settings_on">オン</string>

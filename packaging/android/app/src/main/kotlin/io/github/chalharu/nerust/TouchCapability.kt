@@ -17,23 +17,22 @@ internal fun isControllerSource(source: Int): Boolean =
 
 /** One-device verdict for the Auto gate. A counted device must expose the
  * joystick class with a gamepad source or a non-alphabetic keyboard
- * (proven uinput-fpc filter, libgdx #5007), hold a controller number
- * (zero means the platform itself does not consider it a game controller),
- * carry a gamepad button, and drive a game axis: without axes it is not
- * usable alternative input, and hiding touch controls for one strands the
- * user with no way back.
+ * (proven uinput-fpc filter, libgdx #5007), carry a gamepad button,
+ * and drive a game axis: without axes it is not usable alternative
+ * input, and hiding touch controls for one strands the user with no
+ * way back.
  * The fingerprint sensor still passes every signal above on some terminals:
  * it pretends to be SOURCE_GAMEPAD and SOURCE_JOYSTICK (sources mask
  * 16778513 on POCO X4 Pro, Godot #47656) so the OS itself lies and no
  * signal filter can catch it. The only working guard is the name prefix
  * the engine settled on: every such ghost starts with "uinput-"
- * (fpc/goodix/synaptics/elan/vfs/atrus/fortsense). Real BT/USB controllers
+ * (fpc/egis/goodix/focaltech/synaptics/elan/vfs/atrus/fortsense). Real BT/USB controllers
  * never carry it. */
 internal fun isCountedGamepad(device: InputDevice): Boolean {
     // OS-bug guard first (Godot #47656): ghost fingerprint sensors lie
     // about sources, buttons, and axes, so signals cannot catch them.
-    // Narrow to the known ghost suffixes (fpc/goodix/synaptics/elan/vfs/
-    // atrus/fortsense): a blanket `uinput-` ban would kill Steam Input,
+    // Narrow to the known ghost suffixes (fpc/egis/goodix/focaltech/
+    // synaptics/elan/vfs/atrus/fortsense): a blanket `uinput-` ban would kill Steam Input,
     // scrcpy, and rooted remappers that legitimately present as uinput.
     if (isGhostFingerprintSensor(device.name)) return false
     if (device.id < 0) return false
