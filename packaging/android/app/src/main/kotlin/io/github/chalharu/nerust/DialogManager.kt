@@ -181,9 +181,6 @@ class DialogManager(private val activity: MainActivity) {
         ownedByTest = false
     }
 
-    private fun View?.isShownInWindowForTest(): Boolean =
-        this != null && visibility == View.VISIBLE && isAttachedToWindow && windowToken != null
-
     private fun View?.debugViewState(): String =
         if (this == null) {
             "null"

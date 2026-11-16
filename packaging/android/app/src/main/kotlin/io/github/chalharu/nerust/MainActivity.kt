@@ -415,6 +415,23 @@ class MainActivity :
         sendMotionInput(deviceId, mapOf(axis to value))
     }
 
+    /** Right-stick sample with the RX/RY alias: pads reporting RX/RY
+     * never ship Z/RZ, so fall back when the primary range is absent.
+     * Cached per device (Binder probe once, not per sample); never keyed
+     * on value so calibration noise cannot disable a real axis or shadow
+     * it. Null devices never alias and never poison the cache: a vanished
+     * device must not pin RX/RY forever. */
+    private fun rightStickSample(event: MotionEvent, deviceId: Int, axis: String, id: Int): Float {
+        if (axis != ControllerAxis.RIGHT_X && axis != ControllerAxis.RIGHT_Y) {
+            return event.getAxisValue(id)
+        }
+        val device = event.device ?: return event.getAxisValue(id)
+        val useAlias = rightStickAlias.getOrPut(deviceId) { device.getMotionRange(id) == null }
+        if (!useAlias) return event.getAxisValue(id)
+        val alias = if (axis == ControllerAxis.RIGHT_X) MotionEvent.AXIS_RX else MotionEvent.AXIS_RY
+        return event.getAxisValue(alias)
+    }
+
     /** First-stage Kotlin dedup for the motion stream: motion events fire
      * at sensor rate and Rust only wants crossings, so a callback with no
      * sub-epsilon crossing sends nothing. Neutral first-sends stay local
@@ -429,28 +446,7 @@ class MainActivity :
         val axes = controllerAxes.getOrPut(deviceId) { mutableMapOf() }
         var crossed: MutableMap<String, Float>? = null
         for ((axis, id) in MOTION_AXES) {
-            var value = event.getAxisValue(id)
-            // Right-stick alias: pads reporting RX/RY never ship Z/RZ, so
-            // fall back when the primary range is absent. Cached per device
-            // (Binder probe once, not per sample); never keyed on value so
-            // calibration noise cannot disable a real axis or shadow it.
-            if (axis == ControllerAxis.RIGHT_X || axis == ControllerAxis.RIGHT_Y) {
-                // Null devices never alias and never poison the cache: a
-                // vanished device must not pin RX/RY forever.
-                val device = event.device
-                val useAlias = if (device == null) {
-                    false
-                } else {
-                    rightStickAlias.getOrPut(deviceId) {
-                        device.getMotionRange(id) == null
-                    }
-                }
-                if (useAlias) {
-                    val alias =
-                        if (axis == ControllerAxis.RIGHT_X) MotionEvent.AXIS_RX else MotionEvent.AXIS_RY
-                    value = event.getAxisValue(alias)
-                }
-            }
+            val value = rightStickSample(event, deviceId, axis, id)
             val last = axes[axis]
             if (last != null && kotlin.math.abs(value - last) < CONTROLLER_AXIS_EPSILON) continue
             if (last == null && value == 0f) continue

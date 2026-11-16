@@ -342,7 +342,7 @@ fn validate_pad_shortcuts(state: &super::EditorState, issues: &mut Vec<super::Va
             scope: super::ValidationScope::Controllers,
             kind: super::ValidationIssueKind::PadConflict {
                 button,
-                labels: names.iter().map(|s| s.to_string()).collect(),
+                labels: names.iter().map(ToString::to_string).collect(),
             },
         });
     }
