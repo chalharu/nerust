@@ -424,8 +424,8 @@ class MainActivity :
             }
         val useAlias = if (axis == ControllerAxis.RIGHT_X) alias.first else alias.second
         if (!useAlias) return event.getAxisValue(id)
-        val alias = if (axis == ControllerAxis.RIGHT_X) MotionEvent.AXIS_RX else MotionEvent.AXIS_RY
-        return event.getAxisValue(alias)
+        val aliasAxis = if (axis == ControllerAxis.RIGHT_X) MotionEvent.AXIS_RX else MotionEvent.AXIS_RY
+        return event.getAxisValue(aliasAxis)
     }
 
     /** First-stage Kotlin dedup for the motion stream: motion events fire
