@@ -93,11 +93,16 @@ pub(super) struct SettingsSlot {
     pub(super) keyboards: Vec<super::settings_views::KeyboardInfo>,
     /// Whether the terminal has a touch screen (Kotlin
     /// `PackageManager`, re-pushed with the keyboard enumeration).
-    /// `None` until the first push: rows behave as before.
-    pub(super) touch_capable: Option<bool>,
+    /// Vault default `true` until the first push: rows behave as before.
+    pub(super) touch_capable: bool,
     /// Devices the Auto overlay gate counts (Kotlin `InputDevice`, hotplug
-    /// live). Display-only device truth, never persisted.
+    /// live). Display-only device truth, never persisted. Sorted into
+    /// session order at ingest, so Pad N names session pad N.
     pub(super) gamepads: Vec<super::settings_views::GamepadInfo>,
+    /// Session first-seen descriptor order, refreshed on every connect
+    /// event: the vault sorts its display list by this. Stable per boot
+    /// like the session table (disconnects never compact), never persisted.
+    pub(super) pad_order: Vec<String>,
     /// System locale (Kotlin `configuration`, hotplug live), resolved to the
     /// app's supported set at ingestion: never SystemDefault, `None` until
     /// the first push. Ephemeral device truth, never persisted.
@@ -122,8 +127,9 @@ impl SettingsSlot {
             pristine: None,
             capture: None,
             keyboards: Vec::new(),
-            touch_capable: None,
+            touch_capable: true,
             gamepads: Vec::new(),
+            pad_order: Vec::new(),
             system_locale: None,
             emulation_paused: false,
             slots: Vec::new(),
@@ -367,11 +373,13 @@ pub(super) fn publish_all(events: &[FrontendEvent]) {
         }
     }
     with_queue(|state| {
+        // Events carry payloads now (descriptors, floats): clone instead
+        // of the old Copy move. Publishes are menu-rate, never hot-path.
         for event in events {
             if matches!(event, FrontendEvent::ErrorDialogDismissed(_)) {
-                state.priority_events.push_back(*event);
+                state.priority_events.push_back(event.clone());
             } else {
-                state.normal_events.push_back(*event);
+                state.normal_events.push_back(event.clone());
             }
         }
     });

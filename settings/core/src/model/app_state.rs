@@ -18,14 +18,12 @@ pub type PortDeviceSets = BTreeMap<String, Vec<String>>;
 
 /// Member-id prefixes for global port device sets. Keyboards ("kbd:")
 /// share ports; gamepads ("pad:") occupy exactly one port at a time.
-/// Touch is a global setting, never a port member.
-pub const KEYBOARD_MEMBER_PREFIX: &str = "kbd:";
-pub const GAMEPAD_MEMBER_PREFIX: &str = "pad:";
-
-/// The built-in keyboard row (device id 0). Unlike external descriptors
-/// it is a capability flag, not a known device: terminals without one
-/// must never display or persist it.
-pub const BUILTIN_KEYBOARD_MEMBER: &str = "kbd:builtin";
+/// Touch is a global setting, never a port member. Canonical home is
+/// `nerust_input_traits` (the HID layer); re-exported here so persisted
+/// defaults and the schema docs read from one source.
+pub use nerust_input_traits::{
+    BUILTIN_KEYBOARD_MEMBER, GAMEPAD_MEMBER_PREFIX, KEYBOARD_MEMBER_PREFIX,
+};
 
 /// Player port ids. Ports are global (not per machine): every system's
 /// player-N slot fans out from the same port set.

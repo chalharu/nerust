@@ -17,27 +17,26 @@ internal fun isControllerSource(source: Int): Boolean =
 
 /** One-device verdict for the Auto gate. A counted device must expose the
  * joystick class with a gamepad source or a non-alphabetic keyboard
- * (proven uinput-fpc filter, libgdx #5007), hold a controller number
- * (zero means the platform itself does not consider it a game controller),
- * carry a gamepad button, and drive a game axis: without axes it is not
- * usable alternative input, and hiding touch controls for one strands the
- * user with no way back.
+ * (proven uinput-fpc filter, libgdx #5007), carry a gamepad button,
+ * and drive a game axis: without axes it is not usable alternative
+ * input, and hiding touch controls for one strands the user with no
+ * way back.
  * The fingerprint sensor still passes every signal above on some terminals:
  * it pretends to be SOURCE_GAMEPAD and SOURCE_JOYSTICK (sources mask
  * 16778513 on POCO X4 Pro, Godot #47656) so the OS itself lies and no
  * signal filter can catch it. The only working guard is the name prefix
  * the engine settled on: every such ghost starts with "uinput-"
- * (fpc/goodix/synaptics/elan/vfs/atrus/fortsense). Real BT/USB controllers
+ * (fpc/egis/goodix/focaltech/synaptics/elan/vfs/atrus/fortsense). Real BT/USB controllers
  * never carry it. */
-private fun isCountedGamepad(device: InputDevice): Boolean {
+internal fun isCountedGamepad(device: InputDevice): Boolean {
     // OS-bug guard first (Godot #47656): ghost fingerprint sensors lie
     // about sources, buttons, and axes, so signals cannot catch them.
-    if (device.name.startsWith("uinput-")) return false
+    // Narrow to the known ghost suffixes (fpc/egis/goodix/focaltech/
+    // synaptics/elan/vfs/atrus/fortsense): a blanket `uinput-` ban would kill Steam Input,
+    // scrcpy, and rooted remappers that legitimately present as uinput.
+    if (isGhostFingerprintSensor(device.name)) return false
     if (device.id < 0) return false
     if (Build.VERSION.SDK_INT >= 29 && device.isVirtual) return false
-    // Canonical "is a game controller" verdict: fingerprint sensors
-    // and other button clusters never hold a controller number.
-    if (device.controllerNumber == 0) return false
     val sources = device.sources
     val joystickClass =
         sources and InputDevice.SOURCE_CLASS_JOYSTICK == InputDevice.SOURCE_CLASS_JOYSTICK
@@ -48,21 +47,41 @@ private fun isCountedGamepad(device: InputDevice): Boolean {
     if (!joystickClass || !(gamepadSource || nonAlphaKeyboard)) return false
     // Canonical gamepad buttons; any one proves a real controller.
     // All exist since API 1, so no version guard is needed.
-    if (GAMEPAD_BUTTON_CODES.none { device.hasKeys(it)[0] }) return false
+    // Single hasKeys call: one Binder IPC per device, not one per code.
+    if (!device.hasKeys(*GAMEPAD_BUTTON_CODES).any { it }) return false
     // Game axes a real controller drives; button clusters expose none.
     return GAME_AXES.any { device.getMotionRange(it) != null }
+}
+
+/** Ghost fingerprint sensors (Godot #47656): `uinput-` + sensor vendor. */
+private fun isGhostFingerprintSensor(name: String): Boolean {
+    if (!name.startsWith("uinput-")) return false
+    val suffix = name.removePrefix("uinput-")
+    return suffix.startsWith("fpc") ||
+        suffix.startsWith("egis") ||
+        suffix.startsWith("goodix") ||
+        suffix.startsWith("focaltech") ||
+        suffix.startsWith("synaptics") ||
+        suffix.startsWith("elan") ||
+        suffix.startsWith("vfs") ||
+        suffix.startsWith("atrus") ||
+        suffix.startsWith("fortsense")
 }
 
 private val GAMEPAD_BUTTON_CODES =
     intArrayOf(
         KeyEvent.KEYCODE_BUTTON_A,
         KeyEvent.KEYCODE_BUTTON_B,
+        KeyEvent.KEYCODE_BUTTON_C,
         KeyEvent.KEYCODE_BUTTON_X,
         KeyEvent.KEYCODE_BUTTON_Y,
         KeyEvent.KEYCODE_BUTTON_L1,
         KeyEvent.KEYCODE_BUTTON_R1,
         KeyEvent.KEYCODE_BUTTON_L2,
         KeyEvent.KEYCODE_BUTTON_R2,
+        KeyEvent.KEYCODE_BUTTON_MODE,
+        KeyEvent.KEYCODE_BUTTON_THUMBL,
+        KeyEvent.KEYCODE_BUTTON_THUMBR,
         KeyEvent.KEYCODE_BUTTON_START,
         KeyEvent.KEYCODE_BUTTON_SELECT,
     )
@@ -89,13 +108,21 @@ internal data class KeyboardRow(
     val builtin: Boolean,
 )
 
+/** One counted gamepad row: stable member id plus OS display name.
+ * Member mirrors the runtime port-set scheme (`pad:<descriptor>`) so the
+ * settings card and the session resolve the same device. Plain data. */
+internal data class GamepadRow(
+    val member: String,
+    val name: String,
+)
+
 /** One passive scan feeding every device-truth consumer: keyboards,
  * counted gamepads, and touch capability from a single `getDeviceIds()`
  * walk. Hotplug/resume paths share this so settings and runtime can
  * never disagree about what is connected. */
 internal data class DeviceTruth(
     val keyboards: List<KeyboardRow>,
-    val gamepadNames: List<String>,
+    val gamepads: List<GamepadRow>,
     val touchCapable: Boolean,
 )
 
@@ -123,11 +150,16 @@ private fun scanOneDevice(device: InputDevice): DeviceTruth? {
     if (Build.VERSION.SDK_INT >= 29 && device.isVirtual) return null
     val touch = device.supportsSource(InputDevice.SOURCE_TOUCHSCREEN)
     val keyboard = keyboardRowFor(device)
-    val gamepad = if (isCountedGamepad(device)) device.name else null
+    val gamepad =
+        if (isCountedGamepad(device) && device.descriptor.isNotBlank()) {
+            GamepadRow("pad:${device.descriptor}", device.name)
+        } else {
+            null
+        }
     if (!touch && keyboard == null && gamepad == null) return null
     return DeviceTruth(
         keyboards = listOfNotNull(keyboard),
-        gamepadNames = listOfNotNull(gamepad),
+        gamepads = listOfNotNull(gamepad),
         touchCapable = touch,
     )
 }
@@ -142,7 +174,7 @@ internal fun scanDeviceTruth(packageManager: PackageManager): DeviceTruth {
     var builtin: KeyboardRow? = null
     val keyboards = mutableListOf<KeyboardRow>()
     val seen = mutableSetOf<String>()
-    val gamepads = mutableListOf<String>()
+    val gamepads = mutableListOf<GamepadRow>()
     for (id in InputDevice.getDeviceIds()) {
         val device = InputDevice.getDevice(id) ?: continue
         val hit = scanOneDevice(device) ?: continue
@@ -150,8 +182,10 @@ internal fun scanDeviceTruth(packageManager: PackageManager): DeviceTruth {
         hit.keyboards.firstOrNull()?.let { row ->
             if (row.builtin) builtin = row else if (seen.add(row.member)) keyboards += row
         }
-        gamepads += hit.gamepadNames
+        for (pad in hit.gamepads) {
+            if (seen.add(pad.member)) gamepads += pad
+        }
     }
     val rows = listOfNotNull(builtin) + keyboards
-    return DeviceTruth(rows, gamepads.distinct(), touch)
+    return DeviceTruth(rows, gamepads, touch)
 }

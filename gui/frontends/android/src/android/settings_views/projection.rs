@@ -8,23 +8,53 @@ use nerust_gui_viewmodel::settings::SettingsViewModel;
 use nerust_settings_core::{
     editor::CaptureTarget,
     i18n::UiText,
-    input::{BUILTIN_KEYBOARD_MEMBER, member_is_gamepad, member_is_shareable},
-    model::{
-        app_state::{PORT_PLAYER_1, PORT_PLAYER_2},
-        input::ShortcutAction,
-        local::{
-            NotificationColor, NotificationPosition, RumbleTarget, ScreenOrientation,
-            TouchOverlayVisibility,
-        },
+    model::local::{
+        NotificationColor, NotificationPosition, RumbleTarget, ScreenOrientation,
+        TouchOverlayVisibility,
     },
 };
 
+use super::devices::{build_keys_sections, build_player_sections};
+use super::pads::build_pad_sections;
+use super::vm::{VmDeps, build_vm};
 use super::wire::{
-    CaptureSlot, CaptureWire, GamepadInfo, I18n, KeyboardInfo, Projection, RowWire, SectionWire,
-    ViewPayload, VmDeps, build_vm, button_row, capture_open, capture_row, choice_row, draft_issues,
-    encode_target, group_row, header_row, info_row, number_row, target_system, toggle_row,
+    CaptureSlot, CaptureWire, GamepadInfo, KeyboardInfo, PLAYER_PORTS, RowWire, SectionWire,
+    ViewPayload, binding_key, button_row, capture_row, choice_row, encode_target, group_row,
+    header_row, info_row, number_row, player_id, player_label, toggle_row,
 };
 use crate::bridge_contract::SETTINGS_SCHEMA_VERSION;
+use nerust_settings_core::i18n::I18n;
+
+/// Vault device truth for one projection: enumerated keyboards, touch
+/// capability, counted gamepads, and the resolved display language. One
+/// `Copy` bundle instead of five parallel params. Owned here because only
+/// projection consumes it; `vm` keeps the lifecycle cell.
+#[derive(Clone, Copy)]
+pub(crate) struct Projection<'a> {
+    pub keyboards: &'a [KeyboardInfo],
+    pub touch_capable: bool,
+    pub gamepads: &'a [GamepadInfo],
+    /// Vault first-seen order mirror: the stable rank universe shared
+    /// with the session. Screens iterate ranks, never live positions.
+    pub pad_order: &'a [String],
+    pub i18n: I18n,
+}
+
+/// Non-fatal validation probe: the same gate `finish` enforces at save,
+/// surfaced live so the UI can explain disabled/unappliable states.
+/// Text resolves in the display language; the view model only carries kinds.
+/// Owned here (sole caller is `project_payload` below), so transport stays
+/// free of the view-model dependency.
+pub(super) fn draft_issues(vm: &SettingsViewModel, i18n: I18n) -> Vec<String> {
+    match vm.finish() {
+        Ok(_) => Vec::new(),
+        Err(state) => state
+            .issues
+            .iter()
+            .map(|issue| issue.message(i18n.language()))
+            .collect(),
+    }
+}
 
 /// Assemble the wire payload from an already-built view model: sections,
 /// live issues from a non-fatal `finish` probe, and the pending capture
@@ -32,7 +62,6 @@ use crate::bridge_contract::SETTINGS_SCHEMA_VERSION;
 pub(super) fn project_payload(
     vm: &SettingsViewModel,
     snapshot: &SettingsSnapshot,
-    deps: &VmDeps,
     capture: &CaptureSlot,
     truth: Projection,
 ) -> ViewPayload {
@@ -41,7 +70,7 @@ pub(super) fn project_payload(
         sections: build_sections(vm, snapshot, truth),
         issues: draft_issues(vm, truth.i18n),
         capture: capture.as_ref().map(|(target, prompt)| CaptureWire {
-            target: encode_target(target, &target_system(target, deps)),
+            target: encode_target(target),
             prompt: prompt.clone(),
         }),
     }
@@ -56,32 +85,7 @@ pub(super) fn project_fresh(
     truth: Projection,
 ) -> Result<ViewPayload, String> {
     let vm = build_vm(snapshot, deps, truth.i18n)?;
-    Ok(project_payload(&vm, snapshot, deps, capture, truth))
-}
-
-/// Global player ports (not per machine): every system's player-N slot
-/// fans out from the same port set. Screen ids derive from the port index,
-/// so the table holds port ids only.
-pub(super) const PLAYER_PORTS: [&str; 2] = [PORT_PLAYER_1, PORT_PLAYER_2];
-
-fn player_id(index: usize) -> String {
-    format!("player.{}", index + 1)
-}
-
-fn devices_id(port: &str) -> String {
-    format!("devices.{port}")
-}
-
-fn types_id(index: usize) -> String {
-    format!("types.{}", index + 1)
-}
-
-fn player_label(index: usize, i18n: I18n) -> String {
-    i18n.text(if index == 0 {
-        UiText::PlayerOne
-    } else {
-        UiText::PlayerTwo
-    })
+    Ok(project_payload(&vm, snapshot, capture, truth))
 }
 
 pub(super) fn build_sections(
@@ -106,8 +110,16 @@ pub(super) fn build_sections(
         truth.keyboards,
         truth.touch_capable,
         truth.gamepads,
+        truth.pad_order,
     ));
-    sections.extend(build_player_sections(vm, snapshot, i18n, truth.keyboards));
+    sections.extend(build_player_sections(
+        vm,
+        snapshot,
+        i18n,
+        truth.keyboards,
+        truth.gamepads,
+        truth.pad_order,
+    ));
     sections.extend(build_system_sections(vm, i18n));
     sections.extend(build_input_sections(vm, i18n));
     sections.extend(build_keys_sections(
@@ -117,13 +129,15 @@ pub(super) fn build_sections(
         truth.gamepads,
     ));
     // Canonical order owned by Rust; dynamic device sections (device.*)
-    // keep build order after the known taxonomy.
-    sections.sort_by_key(|section| {
+    // keep build order after the known taxonomy. Rank map hoisted out of
+    // the comparator: position-in-sort per comparison is O(n^2).
+    let rank: std::collections::HashMap<&str, usize> =
         crate::settings_sections::SETTINGS_SECTION_IDS
             .iter()
-            .position(|id| *id == section.id)
-            .unwrap_or(usize::MAX)
-    });
+            .enumerate()
+            .map(|(index, id)| (*id, index))
+            .collect();
+    sections.sort_by_key(|section| rank.get(section.id.as_str()).copied().unwrap_or(usize::MAX));
     sections
 }
 
@@ -167,7 +181,7 @@ fn build_play_section(
                 1,
                 0,
                 100,
-                "%",
+                "%".to_string(),
             ),
             button_row("reset.play", i18n.text(UiText::ResetScreen), String::new()),
         ],
@@ -332,7 +346,7 @@ fn build_advanced_section(
             1,
             0,
             100,
-            "%",
+            "%".to_string(),
         ),
         choice_row(
             "controls.cartridge_rumble_target",
@@ -397,7 +411,7 @@ fn build_audio_detail_section(vm: &SettingsViewModel, i18n: I18n) -> SectionWire
                 5,
                 10,
                 200,
-                " ms",
+                " ms".to_string(),
             ),
             button_row(
                 "reset.audio.detail",
@@ -442,7 +456,7 @@ fn build_notifications_section(vm: &SettingsViewModel, i18n: I18n) -> SectionWir
                 500,
                 1000,
                 30000,
-                " ms",
+                " ms".to_string(),
             ),
             choice_row(
                 "notifications.info_color",
@@ -466,7 +480,7 @@ fn build_notifications_section(vm: &SettingsViewModel, i18n: I18n) -> SectionWir
                 500,
                 1000,
                 30000,
-                " ms",
+                " ms".to_string(),
             ),
             choice_row(
                 "notifications.warning_color",
@@ -562,63 +576,33 @@ fn build_notifications_section(vm: &SettingsViewModel, i18n: I18n) -> SectionWir
 /// sliders; haptics stays here so there is exactly one place to toggle it.
 /// Cartridge pak settings live under Advanced (set-and-forget attic).
 /// Controllers quick screen: player port rows plus overlay/shortcut links.
-fn controllers_quick_section(
-    snapshot: &SettingsSnapshot,
-    i18n: I18n,
-    keyboards: &[KeyboardInfo],
-    touch_capable: Option<bool>,
-) -> SectionWire {
-    let overlay = &snapshot.local.touch_overlay;
+/// Pad screens hang off the devices gears only (single path): the hub
+/// names players, never pads, so one link set cannot skew against the
+/// other after a reconnect cycle.
+fn controllers_quick_section(i18n: I18n) -> SectionWire {
     let mut quick_rows = Vec::new();
-    for (index, port) in PLAYER_PORTS.iter().enumerate() {
+    for (index, _) in PLAYER_PORTS.iter().enumerate() {
         let player_id = player_id(index);
-        let names = port_member_names(port, snapshot, keyboards, i18n);
+        // Bare chevron: the player screen owns the assignment summary,
+        // so the hub never repeats it one tap apart.
         quick_rows.push(group_row(
             &format!("controllers.{player_id}"),
             player_label(index, i18n),
-            i18n.port_count_line(names.len()),
+            String::new(),
             &player_id,
         ));
-        let last = quick_rows.last_mut().expect("player row pushed");
-        last.text = i18n.port_summary(&names);
     }
-    let mut visibility_row = choice_row(
-        "controls.overlay_visibility",
-        i18n.text(UiText::TouchOverlay),
-        i18n.text(UiText::DescOverlayVisibility),
-        &[
-            (TouchOverlayVisibility::Always, i18n.text(UiText::Always)),
-            (TouchOverlayVisibility::Auto, i18n.text(UiText::Auto)),
-            (TouchOverlayVisibility::Hidden, i18n.text(UiText::Hidden)),
-        ],
-        &overlay.visibility,
-    );
-    if touch_capable == Some(false) {
-        // Terminals without a touch screen can never show the overlay:
-        // disable Always/Auto with the reason instead of pretending the
-        // choice works and hiding at runtime. Order matches the literal
-        // above (Always, Auto, Hidden).
-        let reason = i18n.text(UiText::NoTouchScreen);
-        for choice in visibility_row.choices.iter_mut().take(2) {
-            choice.enabled = false;
-            choice.reason = reason.clone();
-        }
-    }
+    // Pure navigation hub like player/about: every editable row lives on
+    // a detail screen with its own reset, so this screen carries none.
+    // Overlay display rows (visibility, haptics, sliders) all live on
+    // `controls.overlay_detail`, one screen per feature.
     quick_rows.extend([
         header_row(i18n.text(UiText::TouchOverlay)),
-        visibility_row,
         group_row(
             "controls.overlay_detail_link",
             i18n.text(UiText::OverlayDetail),
             i18n.text(UiText::DescOverlayDetail),
             "controls.overlay_detail",
-        ),
-        toggle_row(
-            "controls.overlay_haptics",
-            i18n.text(UiText::OverlayHaptics),
-            String::new(),
-            i18n,
-            overlay.haptics,
         ),
         header_row(i18n.text(UiText::Shortcuts)),
         group_row(
@@ -626,11 +610,6 @@ fn controllers_quick_section(
             i18n.text(UiText::Shortcuts),
             i18n.text(UiText::DescShortcutsLink),
             "controls.shortcuts",
-        ),
-        button_row(
-            "reset.controllers",
-            i18n.text(UiText::ResetScreen),
-            String::new(),
         ),
     ]);
     SectionWire {
@@ -642,30 +621,48 @@ fn controllers_quick_section(
     }
 }
 
-/// Overlay detail screen: gamepad status plus opacity/scale/offset.
+/// Overlay detail screen: every overlay setting (visibility, haptics,
+/// opacity/scale/offset). One screen per feature, so the screen reset
+/// below covers the whole screen.
 fn overlay_detail_section(
     overlay: &nerust_settings_core::model::local::TouchOverlaySettings,
-    gamepads: &[GamepadInfo],
+    touch_capable: bool,
     i18n: I18n,
 ) -> SectionWire {
+    let mut visibility_row = choice_row(
+        "controls.overlay_visibility",
+        i18n.text(UiText::TouchOverlay),
+        i18n.text(UiText::DescOverlayVisibility),
+        &[
+            (TouchOverlayVisibility::Always, i18n.text(UiText::Always)),
+            (TouchOverlayVisibility::Auto, i18n.text(UiText::Auto)),
+            (TouchOverlayVisibility::Hidden, i18n.text(UiText::Hidden)),
+        ],
+        &overlay.visibility,
+    );
+    if !touch_capable {
+        // Terminals without a touch screen can never show the overlay:
+        // disable Always/Auto with the reason instead of pretending the
+        // choice works and hiding at runtime. Order matches the literal
+        // above (Always, Auto, Hidden).
+        let reason = i18n.text(UiText::NoTouchScreen);
+        for choice in visibility_row.choices.iter_mut().take(2) {
+            choice.enabled = false;
+            choice.reason = reason.clone();
+        }
+    }
     SectionWire {
         id: "controls.overlay_detail".to_string(),
         label: i18n.text(UiText::TouchOverlay),
         sub: i18n.text(UiText::SectionControllers),
         rows: vec![
-            info_row(
-                "controls.auto_hide_status",
-                i18n.text(UiText::ConnectedGamepads),
+            visibility_row,
+            toggle_row(
+                "controls.overlay_haptics",
+                i18n.text(UiText::OverlayHaptics),
                 String::new(),
-                if gamepads.is_empty() {
-                    i18n.text(UiText::NotAssigned)
-                } else {
-                    gamepads
-                        .iter()
-                        .map(|info| info.name.clone())
-                        .collect::<Vec<_>>()
-                        .join(" · ")
-                },
+                i18n,
+                overlay.haptics,
             ),
             number_row(
                 "controls.overlay_opacity",
@@ -675,7 +672,7 @@ fn overlay_detail_section(
                 1,
                 0,
                 100,
-                "%",
+                "%".to_string(),
             ),
             number_row(
                 "controls.overlay_scale",
@@ -685,7 +682,7 @@ fn overlay_detail_section(
                 5,
                 50,
                 150,
-                "%",
+                "%".to_string(),
             ),
             number_row(
                 "controls.overlay_vertical_offset",
@@ -695,7 +692,7 @@ fn overlay_detail_section(
                 1,
                 -30,
                 30,
-                "%",
+                "%".to_string(),
             ),
             button_row(
                 "reset.controls.overlay_detail",
@@ -707,62 +704,123 @@ fn overlay_detail_section(
     }
 }
 
-/// Global shortcuts screen: one capture row per binding plus reset.
-/// Fullscreen and debugger are desktop-only (window chrome the phone has
-/// no equivalent for): their rows never reach Android, though the shared
-/// bindings persist for desktop. Capture takes any mapped hardware key,
-/// keyboard or pad; with neither device connected the rows disable with
-/// a reason instead of opening a dead prompt.
+/// Global shortcuts screen: one device block per CONNECTED input, each
+/// with one capture row per binding. The keyboard block shows only while
+/// a keyboard is connected (keyboards are hot-pluggable like pads now);
+/// every connected pad gets its own `Gamepad (name)` block showing only
+/// its pad column. Capture accepts either input from any row and lands
+/// it in the matching column; Clear on a row clears only that row's
+/// column. With neither device connected, an empty-state row explains
+/// itself instead of opening a dead prompt. Fullscreen and debugger are
+/// desktop-only (window chrome the phone has no equivalent for): their
+/// rows never reach Android, though the shared bindings persist.
 fn shortcuts_section(
     vm: &SettingsViewModel,
+    snapshot: &SettingsSnapshot,
     i18n: I18n,
     keyboards: &[KeyboardInfo],
     gamepads: &[GamepadInfo],
 ) -> SectionWire {
-    let shortcuts_view = vm.shortcuts.view.get();
-    let open = capture_open(keyboards, gamepads);
-    let reason = i18n.text(UiText::InputDeviceRequired);
-    // Shortcut targets encode a system only as a decoding hint; every
-    // global shortcut decodes identically, so the first system suffices.
-    let shortcut_system = vm
-        .systems()
-        .first()
-        .map(|system| system.system_id().to_string())
-        .unwrap_or_default();
+    // Shortcut targets encode no system (the encoder drops it for the
+    // `shortcut` kind and the decoder never reads it); bindings carry
+    // their own. No invented hint.
+    let actions: Vec<_> = vm
+        .shortcuts
+        .view
+        .get()
+        .rows
+        .iter()
+        .filter(|binding| {
+            // The phone has no window chrome (fullscreen, debugger): rows
+            // needing it never reach Android, though shared bindings persist.
+            binding.target.action().is_none_or(|action| {
+                !matches!(
+                    action,
+                    nerust_settings_core::model::input::ShortcutAction::ToggleFullscreen
+                        | nerust_settings_core::model::input::ShortcutAction::OpenDebugger
+                )
+            })
+        })
+        .map(|binding| {
+            (
+                binding.label.clone(),
+                encode_target(&binding.target),
+                binding.target.clone(),
+            )
+        })
+        .collect();
+    let mut rows = Vec::new();
+    if !keyboards.is_empty() {
+        rows.push(header_row(i18n.text(UiText::Keyboard)));
+        for (label, target, capture) in &actions {
+            rows.push(capture_row(
+                &format!("controls.{}.kbd", binding_key(capture)),
+                label.clone(),
+                String::new(),
+                shortcut_binding_text(snapshot, capture, i18n, false),
+                target,
+            ));
+        }
+    }
+    // One shared pad block: the pad column is global (one button per
+    // action across all pads), so per-pad blocks would show N copies of
+    // the same value. The block lists every connected pad by name; capture
+    // from any row accepts any pad's button.
+    if !gamepads.is_empty() {
+        let names: Vec<_> = gamepads.iter().map(|info| info.name.clone()).collect();
+        rows.push(header_row(format!(
+            "{} ({})",
+            i18n.text(UiText::GamepadDevice),
+            names.join(", ")
+        )));
+        for (label, target, capture) in &actions {
+            rows.push(capture_row(
+                &format!("controls.{}.pad", binding_key(capture)),
+                label.clone(),
+                String::new(),
+                shortcut_binding_text(snapshot, capture, i18n, true),
+                target,
+            ));
+        }
+    }
+    if rows.is_empty() {
+        rows.push(info_row(
+            "controls.shortcuts.none",
+            i18n.text(UiText::NoInputDevices),
+            i18n.text(UiText::DescNoInputDevices),
+            String::new(),
+        ));
+    }
+    rows.push(button_row(
+        "reset.controls.shortcuts",
+        i18n.text(UiText::ResetScreen),
+        String::new(),
+    ));
     SectionWire {
         id: "controls.shortcuts".to_string(),
         label: i18n.text(UiText::Shortcuts),
         sub: i18n.text(UiText::SectionControllers),
-        rows: shortcuts_view
-            .rows
-            .iter()
-            .filter(|binding| {
-                !matches!(
-                    binding.target,
-                    CaptureTarget::Shortcut(
-                        ShortcutAction::ToggleFullscreen | ShortcutAction::OpenDebugger
-                    )
-                )
-            })
-            .map(|binding| {
-                capture_row(
-                    &format!("controls.{}", binding_key(&binding.target)),
-                    binding.label.clone(),
-                    String::new(),
-                    binding_value_text(binding),
-                    &encode_target(&binding.target, &shortcut_system),
-                    open,
-                    &reason,
-                )
-            })
-            .chain(std::iter::once(button_row(
-                "reset.controls.shortcuts",
-                i18n.text(UiText::ResetScreen),
-                String::new(),
-            )))
-            .collect(),
+        rows,
         visible: false,
     }
+}
+
+/// One column of one shortcut binding for the per-device rows: the key
+/// column or the pad column, Unbound when empty.
+fn shortcut_binding_text(
+    snapshot: &SettingsSnapshot,
+    target: &CaptureTarget,
+    i18n: I18n,
+    pad: bool,
+) -> String {
+    let label = if pad {
+        nerust_settings_core::editor::current_pad_binding(snapshot, target)
+            .map(|button| nerust_settings_core::labels::pad_button_label(i18n, button))
+    } else {
+        nerust_settings_core::editor::current_binding_key(snapshot, target)
+            .map(|key| key.label().to_string())
+    };
+    label.unwrap_or_else(|| i18n.text(UiText::Unbound))
 }
 
 fn build_controllers_sections(
@@ -770,14 +828,17 @@ fn build_controllers_sections(
     snapshot: &SettingsSnapshot,
     i18n: I18n,
     keyboards: &[KeyboardInfo],
-    touch_capable: Option<bool>,
+    touch_capable: bool,
     gamepads: &[GamepadInfo],
+    pad_order: &[String],
 ) -> Vec<SectionWire> {
-    vec![
-        controllers_quick_section(snapshot, i18n, keyboards, touch_capable),
-        overlay_detail_section(&snapshot.local.touch_overlay, gamepads, i18n),
-        shortcuts_section(vm, i18n, keyboards, gamepads),
-    ]
+    let mut sections = vec![
+        controllers_quick_section(i18n),
+        overlay_detail_section(&snapshot.local.touch_overlay, touch_capable, i18n),
+        shortcuts_section(vm, snapshot, i18n, keyboards, gamepads),
+    ];
+    sections.extend(build_pad_sections(vm, snapshot, i18n, gamepads, pad_order));
+    sections
 }
 
 /// One section per machine: settings fields plus a navigation row into the
@@ -858,10 +919,16 @@ fn slot_rows(view: &nerust_gui_viewmodel::settings::dto::InputTabView, i18n: I18
     view.slots
         .iter()
         .map(|slot| {
+            // Qualify with the system display name: every machine names its
+            // slots "Player 1" (GBC/GBA have only one), so the bare label
+            // repeats as the choice detail title across NES/GBC/GBA.
+            // The detail screen shows the row label as its title, and the
+            // subtitle only names the screen kind, never the machine.
+            let label = format!("{} {}", view.label, slot.label);
             let mut row = choice_row(
                 &format!("system.{}.slot.{}", view.system_id, slot.slot_id.as_str()),
-                slot.label.clone(),
-                i18n.slot_description(),
+                label,
+                nerust_settings_core::labels::slot_description(i18n),
                 &slot
                     .choices
                     .iter()
@@ -896,405 +963,10 @@ fn slot_rows(view: &nerust_gui_viewmodel::settings::dto::InputTabView, i18n: I18
                 let covered = covering_owner.as_ref().filter(|_| choice.value.is_some());
                 wire.enabled = covered.is_none();
                 wire.reason = covered
-                    .map(|owner| i18n.slot_in_use(owner.as_str()))
+                    .map(|owner| nerust_settings_core::labels::slot_in_use(i18n, owner.as_str()))
                     .unwrap_or_default();
             }
             row
         })
         .collect()
-}
-
-/// Player screens (one per global port): the Devices row opens the device
-/// picker, the Controller-type row opens the per-machine type list.
-/// Summaries read from the port device set, never from machine sections.
-fn build_player_sections(
-    vm: &SettingsViewModel,
-    snapshot: &SettingsSnapshot,
-    i18n: I18n,
-    keyboards: &[KeyboardInfo],
-) -> Vec<SectionWire> {
-    let mut sections = Vec::new();
-    for (index, port) in PLAYER_PORTS.iter().enumerate() {
-        let player_id = player_id(index);
-        let devices_id = devices_id(port);
-        let types_id = types_id(index);
-        let label = player_label(index, i18n);
-        let names = port_member_names(port, snapshot, keyboards, i18n);
-        sections.push(SectionWire {
-            id: player_id.clone(),
-            label: label.clone(),
-            sub: i18n.text(UiText::SectionControllers),
-            rows: vec![
-                {
-                    let mut row = group_row(
-                        &format!("{player_id}.devices"),
-                        i18n.text(UiText::Devices),
-                        String::new(),
-                        &devices_id,
-                    );
-                    row.text = i18n.port_summary(&names);
-                    row
-                },
-                group_row(
-                    &format!("{player_id}.type"),
-                    i18n.text(UiText::ControllerType),
-                    String::new(),
-                    &types_id,
-                ),
-            ],
-            visible: false,
-        });
-        // Controller-type list: one group row per machine that actually
-        // has a slot on this port (NES-only for player 2). Slot ids must
-        // end in player1/player2; fail loudly in tests when a factory
-        // diverges instead of silently dropping its slots.
-        debug_assert!(
-            {
-                let mut ok = true;
-                for input in vm.inputs() {
-                    for slot in &input.view.get().slots {
-                        ok &= slot_port_index(slot.slot_id.as_str()).is_some();
-                    }
-                }
-                ok
-            },
-            "slot ids must end with player1/player2"
-        );
-        let type_rows: Vec<RowWire> = vm
-            .inputs()
-            .iter()
-            .filter(|input| {
-                input
-                    .view
-                    .get()
-                    .slots
-                    .iter()
-                    .any(|slot| slot_port_index(slot.slot_id.as_str()) == Some(index))
-            })
-            .map(|input| {
-                let view = input.view.get();
-                group_row(
-                    &format!("{types_id}.{}", view.system_id),
-                    view.label.clone(),
-                    type_profile_summary(&view, index, i18n),
-                    &format!("input.{}", view.system_id),
-                )
-            })
-            .collect();
-        sections.push(SectionWire {
-            id: types_id.clone(),
-            label: i18n.text(UiText::ControllerType),
-            sub: label.clone(),
-            rows: type_rows,
-            visible: false,
-        });
-        sections.push(build_devices_section(
-            port,
-            &devices_id,
-            &label,
-            snapshot,
-            keyboards,
-            i18n,
-        ));
-    }
-    sections.extend(build_device_sections(vm, keyboards, i18n));
-    sections
-}
-
-/// Slot id suffix rule: every factory names player slots
-/// `<system>.attachment.playerN`. Player 2 exists on NES only.
-fn slot_port_index(slot_id: &str) -> Option<usize> {
-    if slot_id.ends_with("player2") {
-        Some(1)
-    } else if slot_id.ends_with("player1") {
-        Some(0)
-    } else {
-        None
-    }
-}
-
-/// Current controller-type summary for one machine on one port: the
-/// selected profile label, or Not assigned when the slot is empty.
-fn type_profile_summary(
-    view: &nerust_gui_viewmodel::settings::dto::InputTabView,
-    port_index: usize,
-    i18n: I18n,
-) -> String {
-    view.slots
-        .iter()
-        .find(|slot| slot_port_index(slot.slot_id.as_str()) == Some(port_index))
-        .and_then(|slot| {
-            slot.selected_profile_id.as_ref().and_then(|selected| {
-                slot.choices.iter().find_map(|choice| {
-                    (choice.value.as_deref() == Some(selected.as_str()))
-                        .then(|| choice.label.clone())
-                })
-            })
-        })
-        .unwrap_or_else(|| i18n.text(UiText::NotAssigned))
-}
-
-/// Display names for a port's member ids in set order. Unknown members
-/// fall back to a generic label so a stale id never renders blank.
-fn port_member_names(
-    port: &str,
-    snapshot: &SettingsSnapshot,
-    keyboards: &[KeyboardInfo],
-    i18n: I18n,
-) -> Vec<String> {
-    // Effective members only: rows render solely while the terminal
-    // enumerates them, so every screen shares one enumeration truth.
-    // Otherwise a reconnectable USB keyboard would read as assigned on
-    // the player screens while the device list reports none connected.
-    // Unplugged USB descriptors stay assigned (reconnect restores them);
-    // gamepads always count (no enumeration to check against yet).
-    let builtin_present = keyboards
-        .iter()
-        .any(|info| info.member == BUILTIN_KEYBOARD_MEMBER);
-    snapshot
-        .app_state
-        .port_devices
-        .get(port)
-        .map(|members| {
-            members
-                .iter()
-                .filter(|member| {
-                    if member.as_str() == BUILTIN_KEYBOARD_MEMBER {
-                        builtin_present
-                    } else if member_is_shareable(member) {
-                        keyboards.iter().any(|info| info.member == **member)
-                    } else {
-                        true
-                    }
-                })
-                .map(|member| keyboard_member_name(member, keyboards, i18n))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// Drop the built-in membership when fresh enumeration reports no
-/// built-in keyboard: a capability flag, not a known device, so there is
-/// nothing to restore on reconnect. USB descriptors are never pruned
-/// here — unplug/replug cycles keep their assignment.
-pub(super) fn prune_missing_builtin(snapshot: &mut SettingsSnapshot, keyboards: &[KeyboardInfo]) {
-    // No evidence, no pruning: an empty scan (transient enumeration race)
-    // must never wipe persisted membership. A non-empty scan missing the
-    // built-in row is positive absence and prunes.
-    if keyboards.is_empty() {
-        return;
-    }
-    if keyboards
-        .iter()
-        .any(|info| info.member == BUILTIN_KEYBOARD_MEMBER)
-    {
-        return;
-    }
-    for members in snapshot.app_state.port_devices.values_mut() {
-        members.retain(|member| member != BUILTIN_KEYBOARD_MEMBER);
-    }
-}
-
-fn keyboard_member_name(member: &str, keyboards: &[KeyboardInfo], i18n: I18n) -> String {
-    if member == BUILTIN_KEYBOARD_MEMBER {
-        i18n.text(UiText::BuiltInKeyboard)
-    } else if let Some(info) = keyboards.iter().find(|info| info.member == member) {
-        if info.name.trim().is_empty() {
-            // OS gave no name: fall back instead of rendering blank.
-            i18n.text(UiText::ExternalKeyboard)
-        } else {
-            info.name.clone()
-        }
-    } else if member_is_shareable(member) {
-        i18n.text(UiText::ExternalKeyboard)
-    } else if member_is_gamepad(member) {
-        i18n.text(UiText::GamepadDevice)
-    } else {
-        member.to_string()
-    }
-}
-
-/// Device picker: the dynamic keyboard enumeration (built-in row when
-/// present, one row per external descriptor, BT/USB agnostic, virtual
-/// devices excluded — classified Kotlin-side). Row tap toggles port
-/// membership; Details opens the device screen. Gamepad rows appear here
-/// once the gamepad backend lands; the gamepad group is omitted until then.
-fn build_devices_section(
-    port: &str,
-    devices_id: &str,
-    player: &str,
-    snapshot: &SettingsSnapshot,
-    keyboards: &[KeyboardInfo],
-    i18n: I18n,
-) -> SectionWire {
-    let members = snapshot.app_state.port_devices.get(port);
-    let is_member = |member: &str| {
-        members
-            .map(|set| set.iter().any(|entry| entry == member))
-            .unwrap_or(false)
-    };
-    let mut rows = vec![header_row(i18n.text(UiText::Keyboard))];
-    if keyboards.is_empty() {
-        rows.push(info_row(
-            &format!("{devices_id}.none"),
-            i18n.text(UiText::NoKeyboards),
-            i18n.text(UiText::DescNoKeyboards),
-            String::new(),
-        ));
-    }
-    for info in keyboards {
-        let mut row = toggle_row(
-            &format!("devices.{port}.{}", info.member),
-            keyboard_member_name(&info.member, keyboards, i18n),
-            if info.builtin {
-                i18n.text(UiText::AlwaysAvailable)
-            } else {
-                i18n.text(UiText::Connected)
-            },
-            i18n,
-            is_member(&info.member),
-        );
-        // The opaque member id rides the target; the port comes from the key.
-        row.target = info.member.clone();
-        row.detail_target = format!("device.{}", info.member);
-        rows.push(row);
-    }
-    rows.push(button_row(
-        &format!("reset.{devices_id}"),
-        i18n.text(UiText::ResetScreen),
-        String::new(),
-    ));
-    SectionWire {
-        id: devices_id.to_string(),
-        label: i18n.text(UiText::Devices),
-        sub: player.to_string(),
-        rows,
-        visible: false,
-    }
-}
-
-/// One device screen per enumerated keyboard: connection/capability
-/// readouts (labels are self-evident, so no descriptions) plus the
-/// per-system key-mapping tables (shared single table, not per device).
-fn build_device_sections(
-    vm: &SettingsViewModel,
-    keyboards: &[KeyboardInfo],
-    i18n: I18n,
-) -> Vec<SectionWire> {
-    keyboards
-        .iter()
-        .map(|info| {
-            let mut rows = vec![
-                info_row(
-                    &format!("device.{}.connection", info.member),
-                    i18n.text(UiText::Connection),
-                    String::new(),
-                    if info.builtin {
-                        i18n.text(UiText::AlwaysAvailable)
-                    } else {
-                        i18n.text(UiText::Connected)
-                    },
-                ),
-                info_row(
-                    &format!("device.{}.capabilities", info.member),
-                    i18n.text(UiText::Capabilities),
-                    String::new(),
-                    i18n.text(UiText::SharesAcrossPlayers),
-                ),
-                header_row(i18n.text(UiText::KeyMapping)),
-            ];
-            for system in vm.systems() {
-                let sid = system.system_id().to_string();
-                rows.push(group_row(
-                    &format!("device.{}.keys.{sid}", info.member),
-                    system.display_name().to_string(),
-                    String::new(),
-                    &format!("keys.{sid}"),
-                ));
-            }
-            SectionWire {
-                id: format!("device.{}", info.member),
-                label: if info.builtin {
-                    i18n.text(UiText::BuiltInKeyboard)
-                } else if info.name.trim().is_empty() {
-                    i18n.text(UiText::ExternalKeyboard)
-                } else {
-                    info.name.clone()
-                },
-                sub: i18n.text(UiText::Devices),
-                rows,
-                visible: false,
-            }
-        })
-        .collect()
-}
-/// One key-mapping screen per machine: the shared single keyboard table
-/// (per-device split is future work). Reached from each keyboard device
-/// detail screen; the controller screens hold slots only. Capture takes
-/// any mapped hardware key; with no input device the rows disable.
-fn build_keys_sections(
-    vm: &SettingsViewModel,
-    i18n: I18n,
-    keyboards: &[KeyboardInfo],
-    gamepads: &[GamepadInfo],
-) -> Vec<SectionWire> {
-    let open = capture_open(keyboards, gamepads);
-    let reason = i18n.text(UiText::InputDeviceRequired);
-    vm.inputs()
-        .iter()
-        .map(|input| {
-            let view = input.view.get();
-            let mut rows: Vec<RowWire> = Vec::new();
-            for section in &view.sections {
-                rows.push(header_row(section.label.clone()));
-                rows.extend(section.rows.iter().map(|binding| {
-                    capture_row(
-                        &format!(
-                            "keys.{}.binding.{}",
-                            view.system_id,
-                            binding_key(&binding.target)
-                        ),
-                        binding.label.clone(),
-                        String::new(),
-                        binding_value_text(binding),
-                        &encode_target(&binding.target, &view.system_id.to_string()),
-                        open,
-                        &reason,
-                    )
-                }));
-            }
-            rows.push(button_row(
-                &format!("reset.keys.{}", view.system_id),
-                i18n.text(UiText::ResetScreen),
-                String::new(),
-            ));
-            SectionWire {
-                id: format!("keys.{}", view.system_id),
-                label: view.label.clone(),
-                sub: i18n.text(UiText::KeyMapping),
-                rows,
-                visible: false,
-            }
-        })
-        .collect()
-}
-
-fn binding_key(target: &CaptureTarget) -> String {
-    match target {
-        CaptureTarget::Binding {
-            attachment,
-            control,
-            ..
-        } => format!("{attachment}.{control}"),
-        CaptureTarget::Shortcut(action) => format!("shortcut.{action:?}"),
-    }
-}
-
-fn binding_value_text(binding: &nerust_gui_viewmodel::settings::dto::BindingRowView) -> String {
-    use nerust_gui_viewmodel::settings::dto::BindingValueView;
-    match &binding.value {
-        BindingValueView::Unbound(label)
-        | BindingValueView::Bound(label)
-        | BindingValueView::Capturing(label) => label.clone(),
-    }
 }

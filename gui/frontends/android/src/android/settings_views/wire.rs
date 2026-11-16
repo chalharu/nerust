@@ -1,29 +1,13 @@
-//! Android settings wire transport: DTO structs, the VM core, and shared helpers.
+//! Android settings wire transport: DTO structs and shared row helpers.
 //!
-//! Pure transport plus the process-wide view-model core. Policy lives in
+//! Pure transport. The view-model core lives in `vm`; policy lives in
 //! `projection` (sections) and `commands` (edits); capture lives in `capture`.
 
-use std::{
-    rc::Rc,
-    sync::{Arc, OnceLock},
-};
-
-use nerust_gui_runtime::settings::SettingsSnapshot;
-use nerust_gui_viewmodel::settings::{SettingsViewModel, StoragePathError, StoragePathValidator};
 use nerust_settings_core::{
     editor::CaptureTarget,
-    i18n::{FixedLocale, UiText},
-    model::language::AppLanguage,
+    i18n::{I18n, UiText},
 };
-use nerust_system_traits::factory::CoreFactory;
 use serde::{Deserialize, Serialize};
-
-/// Shared resolved-language instance, re-exported so every builder names
-/// one type. Constructed once per projection from the draft choice and
-/// the vault system `Locale`, then threaded through every builder instead
-/// of a bare locale or language. The VM working copy is normalized with
-/// the same value, so labels from both layers agree.
-pub(crate) use nerust_settings_core::i18n::I18n;
 
 /// Full screen payload: schema version, sections Kotlin renders, live
 /// validation issues for the draft, and the pending key-capture state.
@@ -98,9 +82,10 @@ pub(crate) struct RowWire {
     pub target: String,
     #[serde(default = "default_true")]
     pub visible: bool,
-    /// Whether the row accepts input. Capture rows disable this when no
-    /// input device is connected; `reason` explains why so Kotlin never
-    /// invents copy.
+    /// Whether the row accepts input. Always true for rendered rows:
+    /// capture rows hide when closed (no input device / pad disconnected)
+    /// instead of disabling in place, so every rendered capture row
+    /// accepts input. `reason` stays reserved so Kotlin never invents copy.
     #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(default)]
@@ -182,11 +167,113 @@ pub(crate) struct KeyboardInfo {
 }
 
 /// One gamepad the Auto overlay gate counts (Kotlin `InputDevice`,
-/// same rule as the runtime gate). Names only: Rust displays them in the
-/// overlay detail screen so users see why Auto hides, without logcat.
+/// same rule as the runtime gate). Member is the stable port-set id
+/// (`pad:<descriptor>`); name is the OS display string. Display-only
+/// device truth, never persisted.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct GamepadInfo {
+    pub member: String,
     pub name: String,
+}
+
+/// Bare descriptor behind a `pad:` member id (or the raw descriptor).
+pub(super) fn bare_member(member: &str) -> &str {
+    member.strip_prefix("pad:").unwrap_or(member)
+}
+
+/// Global player ports (not per machine): every system's player-N slot
+/// fans out from the same port set. Screen ids derive from the port index,
+/// so the table holds port ids only. Lives in the leaf `wire` module so
+/// screen builders never import each other for navigation vocabulary.
+pub(super) const PLAYER_PORTS: [&str; 2] = [
+    nerust_settings_core::model::app_state::PORT_PLAYER_1,
+    nerust_settings_core::model::app_state::PORT_PLAYER_2,
+];
+
+pub(super) fn player_id(index: usize) -> String {
+    format!("player.{}", index + 1)
+}
+
+pub(super) fn devices_id(port: &str) -> String {
+    format!("devices.{port}")
+}
+
+pub(super) fn types_id(index: usize) -> String {
+    format!("types.{}", index + 1)
+}
+
+pub(super) fn player_label(index: usize, i18n: I18n) -> String {
+    i18n.text(if index == 0 {
+        UiText::PlayerOne
+    } else {
+        UiText::PlayerTwo
+    })
+}
+
+/// Stable row-key fragment for one capture target: shortcuts by action,
+/// bindings and overrides by attachment/control (overrides prefix the
+/// 1-based pad). Shortcuts return above, so both accessors hold here.
+/// Action names use the serialized (snake_case) form, never `Debug`,
+/// so row keys stay stable across refactors.
+pub(super) fn binding_key(target: &CaptureTarget) -> String {
+    if let Some(action) = target.action() {
+        use nerust_settings_core::model::input::ShortcutAction as A;
+        let name = match action {
+            A::TogglePause => "toggle_pause",
+            A::SaveActiveSlot => "save_active_slot",
+            A::SelectNextSlot => "select_next_slot",
+            A::SelectPreviousSlot => "select_previous_slot",
+            A::LoadActiveSlot => "load_active_slot",
+            A::ToggleFullscreen => "toggle_fullscreen",
+            A::Reset => "reset",
+            A::OpenDebugger => "open_debugger",
+        };
+        return format!("shortcut.{name}");
+    }
+    let (attachment, control) = (
+        target.attachment().unwrap_or_default(),
+        target.control().unwrap_or_default(),
+    );
+    match target.pad() {
+        Some(pad) => format!("pad{}.{attachment}.{control}", pad + 1),
+        None => format!("{attachment}.{control}"),
+    }
+}
+
+/// Stable settings rank for one pad member: position in the vault
+/// order mirror (first-seen descriptor order), which the session uses as
+/// the settings index. Live-list positions skew after any disconnect
+/// cycle, so screens, radios, and capture all resolve through this —
+/// never through the live list position.
+pub(crate) fn rank_for_member(pad_order: &[String], member: &str) -> Option<usize> {
+    let bare = bare_member(member);
+    pad_order.iter().position(|known| known == bare)
+}
+
+/// Live info for one stable rank: the mirror names the pad, the scan
+/// says whether it is connected right now. `None` is a stale rank
+/// (disconnected pad whose settings restore on reconnect) or a rank
+/// past the scan, never an error.
+pub(crate) fn live_for_rank<'a>(
+    gamepads: &'a [GamepadInfo],
+    pad_order: &[String],
+    rank: usize,
+) -> Option<&'a GamepadInfo> {
+    let bare = pad_order.get(rank)?;
+    gamepads
+        .iter()
+        .find(|info| bare_member(&info.member) == *bare)
+}
+
+/// Stable session order for the display list: vault order follows the
+/// session first-seen mirror (refreshed on every connect event), so Pad N
+/// names session pad N even after a disconnect/reconnect cycle compacts
+/// the scan. Linear scan: at most a handful of pads, no map needed.
+pub(crate) fn sort_gamepads_by_order(gamepads: &mut [GamepadInfo], pad_order: &[String]) {
+    gamepads.sort_by_key(|info| {
+        let bare = bare_member(&info.member);
+        rank_for_member(pad_order, bare).unwrap_or(usize::MAX)
+    });
 }
 
 /// One settings edit from Kotlin: row key plus op. `set` reads the choice
@@ -219,195 +306,8 @@ pub(crate) struct WireCommand {
     pub payload: serde_json::Value,
 }
 
-/// View-model dependencies shared across JNI calls. `CoreFactory` is
-/// `Send + Sync`; the snapshot travels per call, so no editor state is kept.
-pub(crate) struct VmDeps {
-    pub factories: Vec<Arc<dyn CoreFactory>>,
-    pub rates: Arc<[u32]>,
-}
-
-static VM_DEPS: OnceLock<VmDeps> = OnceLock::new();
-
-/// Publish the factories and probed sample rates once at startup.
-/// Called from the event thread; JNI commands only read. Later installs
-/// are ignored: every caller publishes the same registry and rates.
-pub(crate) fn install_vm_deps(factories: Vec<Arc<dyn CoreFactory>>, rates: Arc<[u32]>) {
-    let _ = VM_DEPS.set(VmDeps { factories, rates });
-}
-
-pub(super) fn with_vm_deps<T>(
-    operation: impl FnOnce(&VmDeps) -> Result<T, String>,
-) -> Result<T, String> {
-    let Some(deps) = VM_DEPS.get() else {
-        return Err("android settings not initialized".to_string());
-    };
-    operation(deps)
-}
-
-/// Android storage lives behind SAF: the document-tree picker flow owns
-/// existence, so this only rejects malformed paths. Snapshot-level URI rules
-/// still run in the view-model validator.
-#[derive(Debug)]
-struct SafStorageValidator;
-
-impl StoragePathValidator for SafStorageValidator {
-    fn validate(&self, path: &std::path::Path) -> Result<(), StoragePathError> {
-        let text = path.to_string_lossy();
-        if text.is_empty() || text.contains('\0') {
-            return Err(StoragePathError::Inaccessible(
-                "storage path must not be empty".to_string(),
-            ));
-        }
-        Ok(())
-    }
-}
-
-pub(super) fn build_vm(
-    snapshot: &SettingsSnapshot,
-    deps: &VmDeps,
-    i18n: I18n,
-) -> Result<SettingsViewModel, String> {
-    // Display copy only: the VM resolves every label through the snapshot
-    // language, so SystemDefault is concretized here (the OS query sees
-    // no locale on Android). The draft keeps the user's choice;
-    // writebacks restore it via `sync_snapshot_from_vm`.
-    let mut resolved = snapshot.clone();
-    resolved.shared.general.language = i18n.language();
-    SettingsViewModel::new(
-        resolved,
-        deps.factories.clone(),
-        Arc::clone(&deps.rates),
-        Rc::new(SafStorageValidator),
-    )
-    .map_err(|error| error.to_string())
-}
-
-/// Display language for one projection: an explicit draft choice wins,
-/// SystemDefault follows the vault-pushed terminal `Locale` (`None`
-/// until pushed keeps the choice for the host fallback).
-pub(crate) fn resolve_display(setting: AppLanguage, system: Option<AppLanguage>) -> I18n {
-    I18n::resolve_with(setting, FixedLocale(system))
-}
-
-/// Supported set back to a BCP-47 tag for the save push (empty means
-/// the terminal locale). Inverse of the shared tag→language rule.
-pub(crate) fn app_language_tag(language: AppLanguage) -> &'static str {
-    match language {
-        AppLanguage::Japanese => "ja",
-        AppLanguage::English => "en",
-        AppLanguage::SystemDefault => "",
-    }
-}
-
-/// Vault device truth for one projection: enumerated keyboards, touch
-/// capability, counted gamepads, and the resolved display language. One
-/// `Copy` struct instead of four parallel params (keeps every wire fn
-/// under the argument cap).
-#[derive(Clone, Copy)]
-pub(crate) struct Projection<'a> {
-    pub keyboards: &'a [KeyboardInfo],
-    pub touch_capable: Option<bool>,
-    pub gamepads: &'a [GamepadInfo],
-    pub i18n: I18n,
-}
-
-/// Single construction site: every command arm and test projects alike.
-pub(crate) fn projection<'a>(
-    keyboards: &'a [KeyboardInfo],
-    touch_capable: Option<bool>,
-    gamepads: &'a [GamepadInfo],
-    i18n: I18n,
-) -> Projection<'a> {
-    Projection {
-        keyboards,
-        touch_capable,
-        gamepads,
-        i18n,
-    }
-}
-
-/// Display copies concretize SystemDefault, so a resolved language readback
-/// is ambiguous: restore the draft choice when the value matches the
-/// resolved locale (untouched), keeping a genuine explicit change.
-pub(super) fn pin_draft_language(
-    draft: AppLanguage,
-    resolved: AppLanguage,
-    target: &mut AppLanguage,
-) {
-    if *target == resolved {
-        *target = draft;
-    }
-}
-
-/// Write the VM working copy back, keeping the draft language choice
-/// (the VM works on the concretized display copy).
-pub(super) fn sync_snapshot_from_vm(
-    snapshot: &mut SettingsSnapshot,
-    vm: &SettingsViewModel,
-    i18n: I18n,
-) {
-    let original = snapshot.shared.general.language;
-    let updated = vm.snapshot();
-    *snapshot = updated;
-    pin_draft_language(
-        original,
-        i18n.language(),
-        &mut snapshot.shared.general.language,
-    );
-}
-
 /// Pending capture slot: target plus the localized prompt captured at start.
 pub(crate) type CaptureSlot = Option<(CaptureTarget, String)>;
-
-/// Non-fatal validation probe: the same gate `finish` enforces at save,
-/// surfaced live so the UI can explain disabled/unappliable states.
-/// Text resolves in the display language; the view model only carries kinds.
-pub(super) fn draft_issues(vm: &SettingsViewModel, i18n: I18n) -> Vec<String> {
-    match vm.finish() {
-        Ok(_) => Vec::new(),
-        Err(state) => state
-            .issues
-            .iter()
-            .map(|issue| issue.message(i18n.language()))
-            .collect(),
-    }
-}
-
-pub(super) fn choice<T: serde::de::DeserializeOwned>(
-    row: &RowWire,
-    index: usize,
-) -> Result<T, String> {
-    row.choices
-        .get(index)
-        .ok_or_else(|| format!("{}: choice index {index} out of range", row.key))
-        .and_then(|choice| {
-            serde_json::from_value(choice.value.clone())
-                .map_err(|error| format!("{}: invalid choice value: {error}", row.key))
-        })
-}
-
-pub(super) fn toggle_value(row: &RowWire, index: usize) -> Result<bool, String> {
-    match index {
-        0 => Ok(false),
-        1 => Ok(true),
-        _ => Err(format!("{}: toggle index {index} out of range", row.key)),
-    }
-}
-
-pub(super) fn range_value<T>(key: &str, number: i64) -> Result<T, String>
-where
-    T: TryFrom<i64>,
-{
-    T::try_from(number).map_err(|_| format!("{key}: value {number} out of range"))
-}
-
-pub(super) fn find_row<'a>(sections: &'a [SectionWire], key: &str) -> Result<&'a RowWire, String> {
-    sections
-        .iter()
-        .flat_map(|section| &section.rows)
-        .find(|row| !row.key.is_empty() && row.key == key)
-        .ok_or_else(|| format!("unknown settings key: {key}"))
-}
 
 pub(super) fn choice_row<T>(
     key: &str,
@@ -471,10 +371,7 @@ pub(super) fn toggle_row(
     row
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "Wire builder: slider bounds read as one tuple"
-)]
+#[allow(clippy::too_many_arguments)]
 pub(super) fn number_row(
     key: &str,
     label: String,
@@ -483,18 +380,17 @@ pub(super) fn number_row(
     step: i64,
     min: i64,
     max: i64,
-    unit: &str,
+    unit: String,
 ) -> RowWire {
     RowWire {
         key: key.to_string(),
         label,
         description,
-        kind: RowKind::Number,
         number: value,
         step,
         min,
         max,
-        unit: unit.to_string(),
+        unit,
         ..RowWire::new(RowKind::Number)
     }
 }
@@ -504,7 +400,6 @@ pub(super) fn info_row(key: &str, label: String, description: String, text: Stri
         key: key.to_string(),
         label,
         description,
-        kind: RowKind::Info,
         text,
         ..RowWire::new(RowKind::Info)
     }
@@ -523,7 +418,6 @@ pub(super) fn group_row(key: &str, label: String, description: String, target: &
         key: key.to_string(),
         label,
         description,
-        kind: RowKind::Group,
         target: target.to_string(),
         ..RowWire::new(RowKind::Group)
     }
@@ -531,26 +425,21 @@ pub(super) fn group_row(key: &str, label: String, description: String, target: &
 
 /// Key-capture row: tap starts capture, Clear unbinds, Cancel aborts.
 /// `description` stays empty: the value line already names the binding.
-/// Disabled rows (no input device connected) keep Clear: unbinding needs no
-/// input device. `reason` carries the localized why.
+/// Rows hide when closed (no input device / pad disconnected) instead of
+/// disabling in place, so every rendered capture row accepts input.
 pub(super) fn capture_row(
     key: &str,
     label: String,
     description: String,
     text: String,
     target: &str,
-    enabled: bool,
-    reason: &str,
 ) -> RowWire {
     RowWire {
         key: key.to_string(),
         label,
         description,
-        kind: RowKind::Capture,
         text,
         target: target.to_string(),
-        enabled,
-        reason: reason.to_string(),
         ..RowWire::new(RowKind::Capture)
     }
 }
@@ -574,38 +463,41 @@ pub(super) fn capture_open(keyboards: &[KeyboardInfo], gamepads: &[GamepadInfo])
     !keyboards.is_empty() || !gamepads.is_empty()
 }
 
-pub(super) fn target_system(target: &CaptureTarget, deps: &VmDeps) -> String {
-    match target {
-        CaptureTarget::Binding { system, .. } => system.to_string(),
-        CaptureTarget::Shortcut(_) => deps
-            .factories
-            .first()
-            .map(|factory| factory.system_id().to_string())
-            .unwrap_or_default(),
-    }
+/// Wire form of one capture target: optional fields only, the shape
+/// infers the kind (action → shortcut, pad → pad binding, else binding).
+/// Lives next to [`encode_target`] so the pair cannot skew; `commands`
+/// resolves it with the factory registry.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct WireTarget {
+    #[serde(default)]
+    pub action: Option<nerust_settings_core::model::input::ShortcutAction>,
+    #[serde(default)]
+    pub system: Option<String>,
+    #[serde(default)]
+    pub attachment: Option<String>,
+    #[serde(default)]
+    pub control: Option<String>,
+    #[serde(default)]
+    pub pad: Option<usize>,
 }
 
 /// Opaque capture target: newline-free JSON the key must not parse.
-/// The `Value` form is the internal boundary (single serialization at the
-/// row edge); the command path decodes the row string once per command.
-fn encode_target_value(target: &CaptureTarget, system: &str) -> serde_json::Value {
-    match target {
-        CaptureTarget::Binding {
-            attachment,
-            control,
-            ..
-        } => serde_json::json!({
-            "kind": "binding",
-            "system": system,
-            "attachment": attachment,
-            "control": control,
-        }),
-        CaptureTarget::Shortcut(action) => {
-            serde_json::json!({"kind": "shortcut", "action": action})
-        }
+/// The owning system rides from the target itself (shortcuts carry none,
+/// the encoder drops it), so callers never re-derive it. The command path
+/// decodes the row string once per command.
+pub(super) fn encode_target(target: &CaptureTarget) -> String {
+    if let Some(action) = target.action() {
+        return serde_json::json!({"action": action}).to_string();
     }
-}
-
-pub(super) fn encode_target(target: &CaptureTarget, system: &str) -> String {
-    encode_target_value(target, system).to_string()
+    // Bindings and overrides share the shape; overrides add the pad.
+    let mut value = serde_json::json!({
+        "system": target.system_id().map(|system| system.to_string()).unwrap_or_default(),
+        "attachment": target.attachment().unwrap_or_default(),
+        "control": target.control().unwrap_or_default(),
+    });
+    if let Some(pad) = target.pad() {
+        value["pad"] = pad.into();
+    }
+    value.to_string()
 }

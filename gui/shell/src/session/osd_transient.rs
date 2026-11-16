@@ -161,7 +161,13 @@ impl TransientQueue {
         u32,
         NotificationLevel,
     )> {
-        let i18n = I18n::resolve_os(language);
+        let language = match language {
+            nerust_settings_core::model::language::AppLanguage::SystemDefault => {
+                nerust_settings_core::model::language::AppLanguage::English
+            }
+            explicit => explicit,
+        };
+        let i18n = I18n::new(language);
         let mut modal = Vec::new();
         let mut update = |item: &mut OsdItem, showing: bool| {
             if !policy.enabled(item.level) {

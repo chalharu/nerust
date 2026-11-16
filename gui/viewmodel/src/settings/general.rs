@@ -1,4 +1,4 @@
-use nerust_settings_core::i18n::{I18n, UiText};
+use nerust_settings_core::i18n::UiText;
 use nerust_settings_core::model::{language::AppLanguage, shared::StoragePolicy};
 use std::path::PathBuf;
 
@@ -103,7 +103,7 @@ mod tests {
 #[allow(clippy::items_after_test_module)]
 fn project_view(state: &super::EditorState) -> GeneralView {
     let lang = state.draft.shared.general.language;
-    let i18n = I18n::resolve_os(lang);
+    let i18n = super::state::display_i18n(state);
     GeneralView {
         language: lang,
         language_choices: vec![

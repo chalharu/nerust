@@ -61,10 +61,19 @@ pub enum ValidationIssueKind {
         system: String,
         detail: String,
     },
-    /// Duplicate physical key: key label plus the joined control labels.
+    /// Duplicate physical key: key label plus the control labels.
     KeyConflict {
         key: String,
-        labels: String,
+        labels: Vec<String>,
+    },
+    /// Duplicate physical pad button: button plus the joined
+    /// shortcut labels. Same shape as [`ValidationIssueKind::KeyConflict`],
+    /// but global (shortcuts are not per-system). The button rides
+    /// structured so frontends format through the core label table
+    /// instead of the validator naming glyphs.
+    PadConflict {
+        button: nerust_input_traits::StandardButton,
+        labels: Vec<String>,
     },
     ExclusiveMember {
         member: String,
@@ -73,9 +82,11 @@ pub enum ValidationIssueKind {
 }
 
 impl ValidationIssueKind {
+    /// `language` is the already-resolved display language (edges resolve
+    /// `SystemDefault` against the terminal before constructing the editor).
     pub fn message(&self, language: AppLanguage) -> String {
         use nerust_settings_core::i18n::{self as core_i18n, I18n, UiText};
-        let i18n = I18n::resolve_os(language);
+        let i18n = I18n::new(language);
         let lang = i18n.language();
         match self {
             Self::Storage(detail) => detail.clone(),
@@ -92,7 +103,14 @@ impl ValidationIssueKind {
                 format!("{system}: {}", i18n.text(UiText::ValidationNoController))
             }
             Self::Placement { system, detail } => format!("{system}: {detail}"),
-            Self::KeyConflict { key, labels } => format!("{key}: {labels}"),
+            Self::KeyConflict { key, labels } => format!("{key}: {}", labels.join(", ")),
+            Self::PadConflict { button, labels } => {
+                format!(
+                    "{}: {}",
+                    nerust_settings_core::labels::pad_button_label(i18n, *button),
+                    labels.join(", ")
+                )
+            }
             Self::ExclusiveMember { member, ports } => {
                 core_i18n::exclusive_member(lang, member, ports)
             }

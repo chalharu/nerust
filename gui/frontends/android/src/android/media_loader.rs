@@ -81,7 +81,6 @@ impl super::AndroidFrontend {
         self.chrome
             .input
             .reset_touch_tracking(&mut self.core.session, &self.app);
-        self.chrome.input.forget_physical_pressed();
         // Resolve before switching: a failure leaves the live session untouched.
         let options = factory.default_load_options();
         let view = nerust_settings_core::factory::settings_view(

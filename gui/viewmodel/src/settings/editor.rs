@@ -35,7 +35,9 @@ impl SettingsEditor {
         supported_sample_rates: Arc<[u32]>,
         storage_validator: Rc<dyn StoragePathValidator>,
         validator: impl Fn(&EditorState) -> ValidationState + 'static,
+        system_fallback: nerust_settings_core::model::language::AppLanguage,
     ) -> Self {
+        use nerust_settings_core::model::language::AppLanguage;
         let draft = Arc::new(snapshot);
         let editor_state = EditorState {
             draft,
@@ -45,6 +47,10 @@ impl SettingsEditor {
             catalog,
             supported_sample_rates,
             storage_validator,
+            system_fallback: match system_fallback {
+                AppLanguage::SystemDefault => AppLanguage::English,
+                explicit => explicit,
+            },
             conflicts_cache: RefCell::new(None),
             topology_cache: RefCell::new(Default::default()),
         };
@@ -181,7 +187,14 @@ mod tests {
         let catalog = crate::settings::catalog::FactoryCatalog::new(Vec::new()).unwrap();
         let noop = Rc::new(NoopStoragePathValidator);
         let always_valid = |_: &EditorState| ValidationState { issues: vec![] };
-        SettingsEditor::new(empty_snapshot(), catalog, Arc::new([]), noop, always_valid)
+        SettingsEditor::new(
+            empty_snapshot(),
+            catalog,
+            Arc::new([]),
+            noop,
+            always_valid,
+            nerust_settings_core::model::language::AppLanguage::English,
+        )
     }
 
     #[test]
@@ -206,6 +219,7 @@ mod tests {
                 calls.set(calls.get() + 1);
                 ValidationState { issues: vec![] }
             },
+            nerust_settings_core::model::language::AppLanguage::English,
         );
         let draft = Arc::clone(&editor.current().draft);
         editor
@@ -299,8 +313,14 @@ mod tests {
                 ValidationState { issues: vec![] }
             }
         };
-        let editor =
-            SettingsEditor::new(empty_snapshot(), catalog, Arc::new([]), noop, check_storage);
+        let editor = SettingsEditor::new(
+            empty_snapshot(),
+            catalog,
+            Arc::new([]),
+            noop,
+            check_storage,
+            nerust_settings_core::model::language::AppLanguage::English,
+        );
         assert!(!editor.current().validation.can_submit());
     }
 

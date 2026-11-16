@@ -36,7 +36,11 @@ pub enum StatusMessage {
 impl StatusMessage {
     pub fn render(&self, language: AppLanguage) -> String {
         use nerust_settings_core::i18n::{self as ui_msg, I18n};
-        let i18n = I18n::resolve_os(language);
+        use nerust_settings_core::model::language::AppLanguage as Lang;
+        let i18n = I18n::new(match language {
+            Lang::SystemDefault => Lang::English,
+            explicit => explicit,
+        });
         let language = i18n.language();
         match self {
             Self::Empty => String::new(),

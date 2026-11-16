@@ -66,6 +66,8 @@ pub enum UiText {
     Cancel,
     ConflictDetected,
     CapturePrompt,
+    CapturePromptPad,
+    CapturePromptDpadOnly,
     InvalidCustomStorageDirectory,
     Debugger,
     OpenDebugger,
@@ -152,6 +154,10 @@ pub enum UiText {
     PosTopRight,
     PosBottomLeft,
     PosBottomRight,
+    PosTop,
+    PosBottom,
+    PosLeft,
+    PosRight,
     AreaOverlay,
     AreaStrip,
     CrashTitle,
@@ -166,7 +172,6 @@ pub enum UiText {
     Always,
     Hidden,
     NoTouchScreen,
-    InputDeviceRequired,
     ScreenOrientation,
     AutoRotate,
     Portrait,
@@ -187,10 +192,7 @@ pub enum UiText {
     Unknown,
     NotAssigned,
     OverlayDetail,
-    ConnectedGamepads,
-    DescVsync,
     DescOrientation,
-    DescMute,
     DescSampleRate,
     DescLatency,
     DescNotifInfo,
@@ -217,20 +219,30 @@ pub enum UiText {
     DescNoKeyboards,
     ResetSettings,
     ResetScreen,
+    SearchFilter,
     Version,
     License,
     BuiltInKeyboard,
     ExternalKeyboard,
     GamepadDevice,
+    Gamepads,
+    Player,
+    NoInputDevices,
+    DescNoInputDevices,
+    Deadzone,
+    DescDeadzone,
+    DpadSource,
+    DescDpadSource,
+    DescGamepadRadio,
+    DescGamepadGear,
+    DescPadReset,
+    DescNoGamepads,
+    DescPadUnassigned,
     AlwaysAvailable,
     Connected,
-    SharesAcrossPlayers,
     Keyboard,
     AudioDetail,
     KeyMapping,
-    Connection,
-    Capabilities,
-    KeyMappingDesc,
     NotificationPaused,
     NotificationResumed,
     NotificationReset,
@@ -276,17 +288,6 @@ impl SystemLocaleSource for FixedLocale {
     }
 }
 
-/// OS-query source: `sys-locale` reads the platform locale (Win32/macOS
-/// APIs; process env on Unix, including `LANG`), so GUI launches
-/// without `LANG` still resolve correctly.
-struct OsLocale;
-
-impl SystemLocaleSource for OsLocale {
-    fn system_language(&self) -> Option<AppLanguage> {
-        sys_locale::get_locale().map(|locale| language_from_locale_tag(&locale))
-    }
-}
-
 /// Saved choice to display language: an explicit choice always wins, so
 /// the source is only queried for `SystemDefault` (concrete Android
 /// snapshots never touch it). Pure apart from the source call.
@@ -324,11 +325,6 @@ impl I18n {
         Self::new(AppLanguage::English)
     }
 
-    /// Edge constructor: saved choice plus an OS query.
-    pub fn resolve_os(choice: AppLanguage) -> Self {
-        Self::new(resolve_locale(choice, OsLocale))
-    }
-
     /// Edge constructor with an explicit source (tests, Android vault).
     pub fn resolve_with(choice: AppLanguage, source: impl SystemLocaleSource) -> Self {
         Self::new(resolve_locale(choice, source))
@@ -342,29 +338,8 @@ impl I18n {
         lookup(self.language, key).to_string()
     }
 
-    pub fn port_summary(self, names: &[String]) -> String {
-        port_summary(self.language, names)
-    }
-
-    pub fn port_count_line(self, count: usize) -> String {
-        port_count_line(self.language, count)
-    }
-
-    pub fn slot_description(self) -> String {
-        slot_description(self.language)
-    }
-
     pub fn history_count(self, count: usize) -> String {
         history_count(self.language, count)
-    }
-
-    /// Full disabled-choice sentence, formatted here so word order
-    /// follows the locale.
-    pub fn slot_in_use(self, owner: &str) -> String {
-        match self.language {
-            AppLanguage::Japanese => format!("{owner}使用中"),
-            _ => format!("Used in {owner}"),
-        }
     }
 }
 
@@ -422,10 +397,10 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::PlayerOne => ("Player 1", "プレイヤー 1"),
         UiText::PlayerTwo => ("Player 2", "プレイヤー 2"),
         UiText::Shortcuts => ("Shortcuts", "ショートカット"),
-        UiText::CurrentBinding => ("Current binding", "現在の割当"),
+        UiText::CurrentBinding => ("Current binding", "現在の割り当て"),
         UiText::Change => ("Change", "変更"),
         UiText::Clear => ("Clear", "解除"),
-        UiText::Unbound => ("Unbound", "未割当"),
+        UiText::Unbound => ("Unbound", "未割り当て"),
         UiText::FullscreenDefault => ("Fullscreen", "フルスクリーン"),
         UiText::Scaling => ("Scaling", "拡大率"),
         UiText::Vsync => ("VSync", "VSync"),
@@ -450,6 +425,14 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
             "重複したキー割り当てを解消してください。",
         ),
         UiText::CapturePrompt => ("Press a key…", "キーを押してください…"),
+        UiText::CapturePromptPad => (
+            "Press a controller button…",
+            "コントローラーのボタンを押してください…",
+        ),
+        UiText::CapturePromptDpadOnly => (
+            "No keyboard connected. Only the D-pad binds here.",
+            "キーボード未接続。十字キーのみ割り当て可能。",
+        ),
         UiText::InvalidCustomStorageDirectory => (
             "The custom storage directory must exist or be creatable.",
             "任意の保存先フォルダは存在するか作成可能である必要があります。",
@@ -551,6 +534,10 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::PosTopRight => ("Top right", "右上"),
         UiText::PosBottomLeft => ("Bottom left", "左下"),
         UiText::PosBottomRight => ("Bottom right", "右下"),
+        UiText::PosTop => ("top", "上"),
+        UiText::PosBottom => ("bottom", "下"),
+        UiText::PosLeft => ("left", "左"),
+        UiText::PosRight => ("right", "右"),
         UiText::AreaOverlay => ("Overlay", "重ねる"),
         UiText::AreaStrip => ("Strip", "専用帯"),
         UiText::CrashTitle => ("nerust", "nerust"),
@@ -574,7 +561,6 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::Always => ("Always", "常に表示"),
         UiText::Hidden => ("Hidden", "非表示"),
         UiText::NoTouchScreen => ("No touch screen", "タッチ画面がありません"),
-        UiText::InputDeviceRequired => ("Input device required", "入力デバイスが必要です"),
         UiText::ScreenOrientation => ("Screen orientation", "画面の向き"),
         UiText::AutoRotate => ("Auto rotate", "自動回転"),
         UiText::Portrait => ("Portrait", "縦向き"),
@@ -593,14 +579,12 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::Controls => ("Controls", "操作"),
         UiText::Storage => ("Storage", "ストレージ"),
         UiText::Unknown => ("Unknown", "不明"),
-        UiText::NotAssigned => ("Not assigned", "未割当"),
+        UiText::NotAssigned => ("Not assigned", "未割り当て"),
         UiText::OverlayDetail => ("Overlay detail", "オーバーレイ詳細"),
-        UiText::DescVsync => ("", ""),
         UiText::DescOrientation => (
             "Applies immediately, even mid-game.",
             "ゲーム中も即時反映されます",
         ),
-        UiText::DescMute => ("", ""),
         UiText::DescSampleRate => ("Adjust if audio crackles.", "音割れ対策用"),
         UiText::DescLatency => ("Less crackle, more delay.", "途切れ防止・遅延増加"),
         UiText::DescNotifInfo => ("Such as save confirmations.", "保存完了など"),
@@ -622,7 +606,6 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
             "振動対応カートリッジのみ使用します",
         ),
         UiText::DescOverlayDetail => ("Size, position, transparency.", "大きさ・位置・透明度調整"),
-        UiText::ConnectedGamepads => ("Connected gamepads", "接続中のゲームパッド"),
         UiText::DescAudioDetail => ("Sample rate, latency.", "サンプルレート・遅延"),
         UiText::DescShortcutsLink => ("Global save-state operations.", "セーブステート全体操作"),
         UiText::DescStoragePolicy => ("Takes effect on next launch.", "次回起動から有効です"),
@@ -640,20 +623,54 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         ),
         UiText::ResetSettings => ("Reset settings", "設定初期化"),
         UiText::ResetScreen => ("Reset this screen", "この画面初期化"),
+        UiText::SearchFilter => ("Filter bindings", "割り当てを絞り込む"),
         UiText::Version => ("Version", "バージョン"),
         UiText::License => ("License", "ライセンス"),
         UiText::BuiltInKeyboard => ("Built-in Keyboard", "内蔵キーボード"),
         UiText::ExternalKeyboard => ("External keyboard", "外付けキーボード"),
         UiText::GamepadDevice => ("Gamepad", "ゲームパッド"),
+        UiText::Gamepads => ("Gamepads", "ゲームパッド"),
+        UiText::Player => ("Player", "プレイヤー"),
+        UiText::NoInputDevices => ("No input devices", "入力デバイスなし"),
+        UiText::DescNoInputDevices => (
+            "Connect a keyboard or gamepad.",
+            "キーボードかゲームパッドを接続",
+        ),
+        UiText::Deadzone => ("Deadzone", "デッドゾーン"),
+        UiText::DescDeadzone => (
+            "Ignores small stick movements. 0% turns it off.",
+            "スティックの小さな傾きを無視。0%で無効",
+        ),
+        UiText::DpadSource => ("D-pad source", "十字キー入力"),
+        UiText::DescDpadSource => (
+            "Off ignores the D-pad buttons. Stick tilt still steers.",
+            "オフで十字キーボタンを無視。スティック操作は有効",
+        ),
+        UiText::DescGamepadRadio => (
+            "Which controller plays as this player. Button mapping opens from Details.",
+            "このプレイヤーが使うコントローラー。ボタン割り当ては詳細から",
+        ),
+        UiText::DescGamepadGear => (
+            "Deadzone, D-pad source, buttons for this controller.",
+            "このコントローラーの遊び・十字キー入力・ボタン",
+        ),
+        UiText::DescPadReset => (
+            "Clears deadzone, D-pad source, buttons. Keeps the player.",
+            "遊び・十字キー入力・ボタンを消去。プレイヤー割り当ては保持",
+        ),
+        UiText::DescNoGamepads => (
+            "Connect a USB or Bluetooth gamepad.",
+            "USB・Bluetoothゲームパッドを接続",
+        ),
+        UiText::DescPadUnassigned => (
+            "Choose which player uses this controller in Devices first.",
+            "先に「デバイス」で使うプレイヤーを選んでください。",
+        ),
         UiText::AlwaysAvailable => ("Always available", "常に利用可能"),
         UiText::Connected => ("Connected", "接続中"),
-        UiText::SharesAcrossPlayers => ("Shares across players", "複数プレイヤー共有可"),
         UiText::Keyboard => ("Keyboard", "キーボード"),
         UiText::AudioDetail => ("Audio details", "音声詳細"),
         UiText::KeyMapping => ("Key mapping", "キー割り当て"),
-        UiText::Connection => ("Connection", "接続"),
-        UiText::Capabilities => ("Capabilities", "対応機能"),
-        UiText::KeyMappingDesc => ("", ""),
         UiText::NotificationPaused => ("Paused", "一時停止しました"),
         UiText::NotificationResumed => ("Resumed", "再開しました"),
         UiText::NotificationReset => ("Reset", "リセットしました"),
@@ -696,7 +713,7 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
             "Warning notification duration must be between 1000 and 30000 ms",
             "警告通知表示時間は1000～30000 msで指定してください",
         ),
-        UiText::ValidationNoController => ("No controller assigned", "コントローラー未割当"),
+        UiText::ValidationNoController => ("No controller assigned", "コントローラー未割り当て"),
     }
 }
 
@@ -794,7 +811,7 @@ pub fn exclusive_member(language: AppLanguage, member: &str, ports: &str) -> Str
     localized!(
         language,
         format!("{member} is on multiple ports ({ports})"),
-        format!("{member}は複数ポートに割当済み ({ports})")
+        format!("{member}は複数ポートに割り当て済み ({ports})")
     )
 }
 
@@ -809,49 +826,6 @@ pub fn language_from_locale_tag(tag: &str) -> AppLanguage {
         AppLanguage::Japanese
     } else {
         AppLanguage::English
-    }
-}
-
-/// Description for a controller-slot choice row: which port the row drives
-/// is in the row label, so the description only states the action.
-fn slot_description(language: AppLanguage) -> String {
-    localized!(
-        language,
-        "Controller for this port.".to_string(),
-        "このポートで使うコントローラー".to_string()
-    )
-}
-
-/// Player/device-row summary: "Not assigned" when empty, otherwise
-/// "Name" or "Name +N" (short form is banned: the full first name reads).
-fn port_summary(language: AppLanguage, names: &[String]) -> String {
-    match names {
-        [] => lookup(language, UiText::NotAssigned).to_string(),
-        [first] => first.clone(),
-        // Count suffix is language-neutral, so no per-language branch.
-        [first, rest @ ..] => format!("{first} +{}", rest.len()),
-    }
-}
-
-/// Player/device-row count line: "No devices assigned" / "1 device
-/// assigned" / "N devices assigned" (singular/plural distinguished).
-fn port_count_line(language: AppLanguage, count: usize) -> String {
-    match count {
-        0 => localized!(
-            language,
-            "No devices assigned".to_string(),
-            "割り当てデバイスなし".to_string()
-        ),
-        1 => localized!(
-            language,
-            "1 device assigned".to_string(),
-            "1台のデバイスを割り当て".to_string()
-        ),
-        n => localized!(
-            language,
-            format!("{n} devices assigned"),
-            format!("{n}台のデバイスを割り当て")
-        ),
     }
 }
 
@@ -1009,9 +983,15 @@ mod tests {
     }
 
     #[test]
-    fn explicit_choice_never_falls_back_to_os() {
-        assert_eq!(resolve_locale(AppLanguage::Japanese, OsLocale), ja());
-        assert_eq!(resolve_locale(AppLanguage::English, OsLocale), en());
+    fn explicit_choice_never_falls_back_to_source() {
+        assert_eq!(
+            resolve_locale(AppLanguage::Japanese, StubSource(Some(en()))),
+            ja()
+        );
+        assert_eq!(
+            resolve_locale(AppLanguage::English, StubSource(Some(ja()))),
+            en()
+        );
     }
 
     struct StubSource(Option<AppLanguage>);
@@ -1043,12 +1023,10 @@ mod tests {
         let ja_i18n = I18n::resolve_with(AppLanguage::SystemDefault, StubSource(Some(ja())));
         assert_eq!(ja_i18n.language(), ja());
         assert_eq!(ja_i18n.text(UiText::Open), "開く");
-        assert_eq!(ja_i18n.slot_in_use("P1"), "P1使用中");
 
-        let en_i18n = I18n::resolve_os(AppLanguage::English);
+        let en_i18n = I18n::new(AppLanguage::English);
         assert_eq!(en_i18n.language(), en());
         assert_eq!(en_i18n.text(UiText::Open), "Open");
-        assert_eq!(en_i18n.slot_in_use("P1"), "Used in P1");
     }
 
     #[test]
@@ -1107,6 +1085,10 @@ mod tests {
             PosTopRight,
             PosBottomLeft,
             PosBottomRight,
+            PosTop,
+            PosBottom,
+            PosLeft,
+            PosRight,
             AreaOverlay,
             AreaStrip,
             CrashBody,
@@ -1121,7 +1103,6 @@ mod tests {
             Always,
             Hidden,
             NoTouchScreen,
-            InputDeviceRequired,
             ScreenOrientation,
             AutoRotate,
             Portrait,
@@ -1155,7 +1136,6 @@ mod tests {
             DescCartridgeMotion,
             DescCartridgeRumble,
             DescOverlayDetail,
-            ConnectedGamepads,
             DescAudioDetail,
             DescShortcutsLink,
             DescStoragePolicy,
@@ -1170,19 +1150,32 @@ mod tests {
             DescNoKeyboards,
             ResetSettings,
             ResetScreen,
+            SearchFilter,
             Version,
             License,
             BuiltInKeyboard,
             ExternalKeyboard,
             GamepadDevice,
+            Gamepads,
+            Player,
+            NoInputDevices,
+            DescNoInputDevices,
+            Deadzone,
+            DescDeadzone,
+            DpadSource,
+            DescDpadSource,
+            DescGamepadRadio,
+            DescGamepadGear,
+            DescPadReset,
+            DescNoGamepads,
+            DescPadUnassigned,
             AlwaysAvailable,
             Connected,
-            SharesAcrossPlayers,
             Keyboard,
             AudioDetail,
             KeyMapping,
-            Connection,
-            Capabilities,
+            CapturePromptPad,
+            CapturePromptDpadOnly,
             NotificationPaused,
             NotificationResumed,
             NotificationReset,
@@ -1212,19 +1205,6 @@ mod tests {
             assert!(!en_text.text(key).is_empty());
             assert!(!ja_text.text(key).is_empty());
             assert_ne!(en_text.text(key), ja_text.text(key));
-        }
-    }
-
-    #[test]
-    fn restating_descriptions_stay_bare() {
-        // Self-evident labels carry no supporting text: the rows render
-        // bare instead of restating the label.
-        use UiText::*;
-        let en_text = I18n::new(en());
-        let ja_text = I18n::new(ja());
-        for key in [DescVsync, DescMute, KeyMappingDesc] {
-            assert!(en_text.text(key).is_empty());
-            assert!(ja_text.text(key).is_empty());
         }
     }
 
@@ -1327,7 +1307,7 @@ mod tests {
         );
         assert_eq!(
             exclusive_member(ja(), "m", "p1"),
-            "mは複数ポートに割当済み (p1)"
+            "mは複数ポートに割り当て済み (p1)"
         );
     }
 }

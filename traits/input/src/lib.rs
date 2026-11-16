@@ -6,10 +6,13 @@ mod events;
 mod ids;
 mod key;
 mod profile;
+mod source;
 mod topology;
 
 pub use devices::{
-    Controller, ControllerCollection, ControllerHub, FieldEntry, Port, SimplePort, StrobeTarget,
+    BUILTIN_KEYBOARD_MEMBER, Controller, ControllerCollection, ControllerHub, FieldEntry,
+    GAMEPAD_MEMBER_PREFIX, KEYBOARD_MEMBER_PREFIX, Port, SimplePort, StrobeTarget,
+    member_is_gamepad, member_is_shareable,
 };
 pub use events::{
     BufferError, DigitalInputEvent, DigitalInputState, GuiInputPort, InputEvent, InputPublish,
@@ -22,8 +25,10 @@ pub use key::Key;
 pub use profile::{
     AbstractKey, BufferFactory, ControlInfo, ControlKind, ControllerProfile, CreateSplitError,
     InputAssignments, InputPorts, InputResources, InputSystemFactory, PortSet, SlotInfo,
-    TypedInputResources, UnifiedFieldMap, collect_first_wins,
+    TypedInputResources, UnifiedFieldMap, abstract_for_attachment, collect_first_wins,
+    port_index_for_slot,
 };
+pub use source::{GamepadAxis, PadGuid, SourceButtonId, SourceId, StandardButton, apply_deadzone};
 pub use topology::{
     AnalogControlDescriptor, AttachmentSlotDescriptor, ControlDescriptor, DeviceDescriptor,
     DigitalControlDescriptor, InputTopologyDescriptor, PortDescriptor,

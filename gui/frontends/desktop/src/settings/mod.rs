@@ -26,8 +26,10 @@ type Setter<T> = Rc<dyn Fn(T) -> Result<(), ViewModelError>>;
 pub(crate) type Apply = Rc<dyn Fn(SettingsSnapshot) -> Result<(), String>>;
 
 /// Validation issues rendered in the draft language at the call site.
-/// The view model only carries structured kinds; text resolves here.
-fn issues_text(language: AppLanguage, issues: &[ValidationIssue]) -> String {
+/// The view model only carries structured kinds; text resolves here
+/// against the terminal (`SystemDefault` follows the OS locale).
+fn issues_text(choice: AppLanguage, issues: &[ValidationIssue]) -> String {
+    let language = crate::display_language(choice);
     issues
         .iter()
         .map(|issue| issue.message(language))
@@ -65,6 +67,9 @@ pub(crate) struct Editor {
     page: Store<String>,
     input_page: Store<String>,
     system_page: Store<String>,
+    /// Binding-list filter query (input tab search box). Ephemeral UI
+    /// state, never persisted; empty disables filtering.
+    input_filter: Store<String>,
     exit: Rc<Cell<ExitChoice>>,
     close_prompt: Store<ExitChoice>,
 }
@@ -80,6 +85,7 @@ impl Editor {
             adapter.factories().to_vec(),
             adapter.supported_sample_rates(),
             Rc::new(FilesystemValidator),
+            crate::terminal_language(),
         )
         .map_err(|error| error.to_string())?;
         Ok(Rc::new(Self {
@@ -90,6 +96,7 @@ impl Editor {
             page: Store::new("general".into(), executor.clone()),
             input_page: Store::new(String::new(), executor.clone()),
             system_page: Store::new(String::new(), executor.clone()),
+            input_filter: Store::new(String::new(), executor.clone()),
             exit: Rc::new(Cell::new(ExitChoice::Editing)),
             close_prompt: Store::new(ExitChoice::Editing, executor.clone()),
             executor,
@@ -192,7 +199,7 @@ impl Editor {
         let general = self.vm.general.clone();
         self.binding(
             general.view.clone(),
-            move |value| I18n::resolve_os(value.language).text(key),
+            move |value| I18n::new(crate::display_language(value.language)).text(key),
             None,
         )
     }
@@ -377,8 +384,18 @@ impl Editor {
             capture,
             clear,
         } = commands;
+        let input_filter = self.input_filter.bind(
+            Clone::clone,
+            Some(|query: &mut String, value| *query = value),
+        );
         Presentation {
-            input_pages: Binding::constant(layout::inputs(self, capture, clear)),
+            input_pages: Binding::constant(layout::inputs(
+                self,
+                capture,
+                clear,
+                input_filter.clone(),
+            )),
+            input_filter,
             system_pages: Binding::constant(layout::systems(self)),
             input_selection: self
                 .input_page
@@ -414,14 +431,14 @@ impl Editor {
             volume_label: language.clone().zip(&volume).map(|(lang, value)| {
                 format!(
                     "{}: {value:.0}%",
-                    I18n::resolve_os(lang).text(UiText::MasterVolume)
+                    I18n::new(crate::display_language(lang)).text(UiText::MasterVolume)
                 )
             }),
             volume,
             latency_label: language.clone().zip(&latency).map(|(lang, value)| {
                 format!(
                     "{}: {value:.0} ms",
-                    I18n::resolve_os(lang).text(UiText::Latency)
+                    I18n::new(crate::display_language(lang)).text(UiText::Latency)
                 )
             }),
             latency,
@@ -484,7 +501,8 @@ impl Editor {
                     |value| {
                         format!(
                             "nerust {}",
-                            I18n::resolve_os(value.language).text(UiText::Settings)
+                            I18n::new(crate::display_language(value.language))
+                                .text(UiText::Settings)
                         )
                     },
                     None,
@@ -518,6 +536,7 @@ impl Editor {
                 status_section: self.tr(UiText::NotificationSectionStatus),
                 status_enabled: self.tr(UiText::NotificationEnabled),
                 follow_note: self.tr(UiText::NotificationStatusAreaFollows),
+                search_filter: self.tr(UiText::SearchFilter),
                 cancel: self.tr(UiText::Cancel),
                 save: self.tr(UiText::Save),
                 confirm: self.tr(UiText::DiscardUnsavedChanges),
@@ -645,6 +664,7 @@ struct Labels {
     status_section: Binding<String>,
     status_enabled: Binding<String>,
     follow_note: Binding<String>,
+    search_filter: Binding<String>,
     cancel: Binding<String>,
     save: Binding<String>,
     confirm: Binding<String>,
@@ -704,6 +724,7 @@ fn integer_text(binding: Binding<u32>) -> Binding<String> {
 #[derive(Clone)]
 struct Presentation {
     input_pages: Binding<Vec<panechord::Keyed<layout::InputPage>>>,
+    input_filter: Binding<String>,
     system_pages: Binding<Vec<panechord::Keyed<layout::SystemPage>>>,
     input_selection: Binding<String>,
     system_selection: Binding<String>,
@@ -1267,8 +1288,13 @@ mod tests {
         );
         assert_eq!(
             presentation.input_pages.get().len(),
-            editor.vm.inputs().len() + 1
+            editor.vm.inputs().len() + 2
         );
+        // The search box binding round-trips through the dialog state.
+        assert!(presentation.input_filter.get().is_empty());
+        assert!(presentation.input_filter.set("a".to_string()));
+        assert_eq!(presentation.input_filter.get(), "a");
+        assert!(!presentation.labels.search_filter.get().is_empty());
         assert_eq!(
             presentation.system_pages.get().len(),
             editor.vm.systems().len()

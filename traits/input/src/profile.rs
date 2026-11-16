@@ -171,6 +171,55 @@ pub trait InputPorts: std::fmt::Debug {
 /// One placed controller: the assigned profile plus its port-group index.
 pub type Placement = Option<(Rc<dyn ControllerProfile>, usize)>;
 
+/// Player-port index for one slot id. Every factory names player slots
+/// `<system>.attachment.playerN` (player 2 exists on NES only); unparseable
+/// ids fail open (`None`) so a factory addition never silently drops rows.
+/// Canonical home for the rule: frontends carry the resolved port in their
+/// DTOs and never parse slot strings.
+pub fn port_index_for_slot(slot_id: &str) -> Option<usize> {
+    if slot_id.ends_with("player2") {
+        Some(1)
+    } else if slot_id.ends_with("player1") {
+        Some(0)
+    } else {
+        None
+    }
+}
+
+/// Console-agnostic button of one emulated control, through live
+/// assignments. Single home for the port traversal: the session resolver
+/// and the viewmodel draft projector both call here so swapped controller
+/// profiles track in both.
+pub fn abstract_for_attachment(
+    ports: &[(AttachmentId, Option<Rc<dyn ControllerProfile>>)],
+    attachment: AttachmentId,
+    control: crate::ids::DigitalControlId,
+) -> Option<AbstractKey> {
+    for (_slot, profile) in ports {
+        let Some(profile) = profile else {
+            continue;
+        };
+        for set in profile.port_sets() {
+            if !set.ports.contains(&attachment) {
+                continue;
+            }
+            for (port, group) in set.ports.iter().zip(profile.port_groups()) {
+                if *port != attachment {
+                    continue;
+                }
+                for info in *group {
+                    if let ControlId::Digital(id) = info.id
+                        && id == control
+                    {
+                        return info.abstract_key;
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Slot-to-controller assignments.
 /// Equality is order-sensitive and structural (slot order + [`ProfileId`] compare).
 #[derive(Clone)]
@@ -186,7 +235,6 @@ impl InputAssignments {
     pub fn slots(&self) -> &[(AttachmentId, Option<Rc<dyn ControllerProfile>>)] {
         &self.slots
     }
-
     /// Validate once and place (registered profile, port-group index) at each
     /// physical slot. Canonical factory metadata, not caller-supplied metadata,
     /// determines topology. Missing assignments remain unconnected holes.
@@ -381,6 +429,7 @@ mod tests {
     use super::{
         AbstractKey, ControlInfo, ControlKind, ControllerProfile, CreateSplitError,
         InputAssignments, InputPorts, InputResources, InputSystemFactory, PortSet, SlotInfo,
+        port_index_for_slot,
     };
     use crate::{
         AttachmentId, ControlId, DigitalControlId, InputValue, ProfileId,
@@ -606,6 +655,15 @@ mod tests {
         let _ = (&port as &dyn Port).port_id();
         let mut target = ProbePadTarget;
         StrobeTarget::strobe(&mut target, 1);
+    }
+
+    #[test]
+    fn slot_suffix_resolves_player_port() {
+        assert_eq!(port_index_for_slot("nes.attachment.player1"), Some(0));
+        assert_eq!(port_index_for_slot("nes.attachment.player2"), Some(1));
+        assert_eq!(port_index_for_slot("nes.attachment.player3"), None);
+        assert_eq!(port_index_for_slot("player1"), Some(0));
+        assert_eq!(port_index_for_slot("unrelated"), None);
     }
 
     #[test]

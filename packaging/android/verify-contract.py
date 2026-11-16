@@ -41,6 +41,7 @@ def sources():
         "producer": (GEN.KOTLIN / "BridgeContract.kt").read_text(),
         "activity": activity,
         "callsites": callsites,
+        "wire": (GEN.KOTLIN / "BridgeWire.kt").read_text(),
         "table": (src / "android/bridge.rs").read_text(),
         "registration": (src / "android.rs").read_text(),
         "callbacks": [(src / f"android/{name}.rs").read_text()
@@ -207,9 +208,9 @@ def validate_jni(registration, table, activity, callbacks):
     return {"native": native, "outbound": outbound}
 
 
-def _enum_body(decoder):
-    """Raw text inside the typed event enum braces."""
-    match = re.search(r'enum BridgeEventV1\s*\{', decoder)
+def _struct_body(decoder, name):
+    """Raw text inside one event struct's braces (deny-gated)."""
+    match = re.search(r'struct\s+' + name + r'\s*\{', decoder)
     require(match, MISSING_DECODER)
     depth = 0
     for index in range(match.end() - 1, len(decoder)):
@@ -223,63 +224,114 @@ def _enum_body(decoder):
     raise ContractError(MISSING_DECODER)
 
 
-def _variant_gaps(body):
-    """Decoder body split into gaps and variant pairs; commas stay in gaps."""
-    gaps = []
-    variants = []
-    pos = 0
-    for match in re.finditer(r'(\w+)\s*\{([^{}]*)\}', body):
-        gaps.append(body[pos:match.start()])
-        variants.append(match.groups())
-        pos = match.end()
-    gaps.append(body[pos:])
-    return gaps, variants
+def _struct_props(decoder, struct):
+    """Field map of one event struct: name to (schema kind, required)."""
+    require(re.search(r'#\[derive\(Debug, serde::Deserialize\)\]\s*'
+                      r'#\[serde\(deny_unknown_fields\)\]\s*struct\s+' + struct, decoder),
+            f"{struct} must deny unknown fields")
+    body = _struct_body(decoder, struct)
+    field_pattern = (r'(?:#\[serde\((?:default(?:,\s*deserialize_with\s*=\s*"[^"]*")?'
+                     r'|deserialize_with\s*=\s*"[^"]*")\)\]\s*)*'
+                     r'(\w+)\s*:\s*([\w:]+(?:<\w+>)?)\s*,')
+    fields = re.findall(field_pattern, body)
+    require(not re.sub(field_pattern, '', body).strip(), "unsupported decoder field/serde rule")
+    require(fields, "unparsed event struct")
+    types = {"u32": "integer", "i32": "integer", "i64": "integer",
+             "u64": "integer", "String": "string", "bool": "boolean",
+             "f32": "number", "f64": "number",
+             "crate::error_dialog_controller::DialogRequestId": "integer"}
+    props = {"type": ("string", True)}
+    for name, kind in fields:
+        optional = kind.startswith("Option<")
+        if optional:
+            kind = kind[7:-1]
+        require(kind in types, f"unsupported decoder field type: {kind}")
+        props[name] = (types[kind], not optional)
+    return props
 
 
-def _gap_commas_ok(gap, allow_comma):
-    """Gap holds only whitespace plus at most one separator comma."""
-    if gap.replace(",", "").strip():
-        return False
-    return gap.count(",") <= (1 if allow_comma else 0)
+def _decoder_names_ids(definitions, decoder):
+    """Every bridge id is named by the decoder: actions ride the
+    generated `ACTION_*` constants, key ids ride the lookup tables,
+    motion axes ride struct fields. An unnamed id fails. Axes derive
+    from the schema (same rule as the generator), so a 9th axis
+    cannot drift silently past a hardcoded list."""
+    for enum in ("action", "key"):
+        members = set()
+        for definition in definitions.values():
+            prop = definition["properties"].get(enum)
+            if prop is not None and "enum" in prop:
+                members.update(prop["enum"])
+        for member in members:
+            require(json.dumps(member) in decoder or f"ACTION_{member.upper()}" in decoder,
+                    f"decoder must name every bridge {enum} id: {member}")
+    menu_props = definitions["menu"]["properties"]
+    axes = sorted(
+        name for name, prop in menu_props.items()
+        if isinstance(prop, dict) and prop.get("type") == "number"
+    )
+    require(axes, "schema must declare motion axes")
+    for member in axes:
+        require(f"{member}:" in decoder or f"{member} :" in decoder,
+                f"decoder must name every motion axis: {member}")
 
 
-def validate_decoder(definitions, decoder):
+def validate_decoder_tables(definitions, decoder, generated):
+    """Typed decoder and generated tables repeat the schema rules in one pass.
+
+    Field shapes, bounds, per-action required fields, and the analog range
+    feed dispatch; a schema bump the decoder ignores fails here instead of
+    silently widening. Compares the checked-in contract against the schema,
+    so a stale regeneration fails even when the decoder is untouched.
+    """
     decoder = uncomment(decoder)
     require(re.search(r'#\[serde\(tag = "type", rename_all = "snake_case"\)\]\s*enum BridgeEventV1', decoder),
             "unsupported decoder enum representation")
-    body = _enum_body(decoder)
-    gaps, variants = _variant_gaps(body)
-    require(_gap_commas_ok(gaps[0], False), "unparsed decoder variant")
-    require(all(_gap_commas_ok(gap, True) for gap in gaps[1:]), "unparsed decoder variant")
-    expected = {}
-    for variant, body in variants:
-        event = re.sub(r'(?<!^)(?=[A-Z])', '_', variant).lower()
-        field_pattern = (r'(?:#\[(?:allow\(dead_code\)|serde\(default\))\]\s*)*'
-                         r'(\w+)\s*:\s*([\w:]+(?:<\w+>)?)\s*,')
-        fields = re.findall(field_pattern, body)
-        require(not re.sub(field_pattern, '', body).strip(), "unsupported decoder field/serde rule")
-        require(event not in expected and fields, "unparsed event variant")
-        props = {"type": ("string", True)}
-        for name, kind in fields:
-            optional = kind.startswith("Option<")
-            if optional:
-                kind = kind[7:-1]
-            types = {"u32": "integer", "i32": "integer", "i64": "integer",
-                     "u64": "integer", "String": "string", "bool": "boolean",
-                     "crate::error_dialog_controller::DialogRequestId": "integer"}
-            require(kind in types, f"unsupported decoder field type: {kind}")
-            props[name] = (types[kind], not optional)
-        expected[event] = props
-    actual = {event: {name: (GEN.field_type(prop), name in definition["required"])
-                      for name, prop in definition["properties"].items()}
-              for event, definition in definitions.items()}
+    require(re.search(r'enum BridgeEventV1\s*\{\s*Menu\(MenuEvent\),\s*'
+                      r'ErrorDialogDismissed\(ErrorDialogDismissedEvent\),\s*\}', decoder),
+            "unsupported decoder enum variants")
+    actual, bounds = {}, {}
+    for event, definition in definitions.items():
+        fields = {}
+        for name, prop in definition["properties"].items():
+            fields[name] = (GEN.field_type(prop), name in definition["required"])
+            if GEN.field_type(prop) == "integer" and "minimum" in prop:
+                bounds[name] = (prop["minimum"], prop["maximum"])
+        actual[event] = fields
+    expected = {
+        event: _struct_props(decoder, struct)
+        for struct, event in (("MenuEvent", "menu"), ("ErrorDialogDismissedEvent", "error_dialog_dismissed"))
+    }
     require(expected == actual, f"schema/typed decoder fields differ: {actual} != {expected}")
     require(re.search(r'if\s+version\s*!=\s*BRIDGE_EVENT_VERSION\s*\{.*?return None;', decoder, re.DOTALL),
             "decoder must reject unsupported versions")
-    require(re.search(r'let mut value: serde_json::Value = serde_json::from_str\(raw\).ok\(\)\?;\s*'
-                      r'validate_bridge_event\(&mut value\)\?;\s*'
-                      r'let envelope: BridgeEventV1 = serde_json::from_value\(value\).ok\(\)\?;', decoder),
-            "decoder must validate the same JSON value before typed dispatch")
+    require(re.search(r'let envelope: BridgeEventV1 = serde_json::from_str\(raw\)\.ok\(\)\?;', decoder),
+            "decoder must single-parse the envelope without a Value round-trip")
+    require('serde_json::from_value(value)' not in decoder,
+            "decoder must not double-parse through a Value")
+    _decoder_names_ids(definitions, decoder)
+    table = {
+        name: (int(minimum), int(maximum))
+        for name, minimum, maximum in re.findall(
+            r'\(\s*"([^"]+)"\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*\)', generated
+        )
+    }
+    require(bounds and table == bounds,
+            f"generated integer bounds differ from schema: {table} != {bounds}")
+    gates = {}
+    for gate in definitions["menu"]["allOf"]:
+        action = gate["if"]["properties"]["action"]["const"]
+        gates[action] = sorted(gate["then"]["required"])
+    rows = re.findall(r'\(\s*"([^"]+)"\s*,\s*&\[(.*?)\]\)', generated)
+    require(rows, "generated required-field table is missing")
+    table = {action: sorted(re.findall(r'"([^"]+)"', fields)) for action, fields in rows}
+    require(table == gates,
+            f"generated required fields differ from schema gates: {table} != {gates}")
+    match = re.search(r'ANALOG_VALUE_BOUNDS[^=]*=\s*\(\s*([-\d.eE+]+)\s*,\s*([-\d.eE+]+)\s*\)', generated)
+    require(match, "generated analog range is missing")
+    left = definitions["menu"]["properties"]["left_x"]
+    require((float(match.group(1)), float(match.group(2))) == (left["minimum"], left["maximum"]),
+            "generated analog range differs from schema")
 
 
 def _producer_puts(body):
@@ -314,27 +366,17 @@ def _balanced(text, start, brackets):
     raise ContractError("unbalanced block")
 
 
-def _balanced_call(text, start):
-    """Call text from the opening paren at `start` through its match."""
-    return _balanced(text, start, "()")
-
-
-def _balanced_braces(text, start):
-    """Brace block from the opening brace at `start` through its match."""
-    return _balanced(text, start, "{}")
-
-
 def _menu_event_calls(kotlin):
     """Every `menuEvent(...)` call text across the Kotlin sources, trailing
     extras lambdas included."""
     calls = []
     for match in re.finditer(r'menuEvent\s*\(', kotlin):
         paren = match.end() - 1
-        call = _balanced_call(kotlin, paren)
+        call = _balanced(kotlin, paren, "()")
         rest = kotlin[paren + len(call):]
         gap = re.match(r'\s*', rest).group(0)
         if kotlin[paren + len(call) + len(gap):paren + len(call) + len(gap) + 1] == "{":
-            call += gap + _balanced_braces(kotlin, paren + len(call) + len(gap))
+            call += gap + _balanced(kotlin, paren + len(call) + len(gap), "{}")
         calls.append(call)
     require(calls, "no menuEvent producers found")
     return calls
@@ -344,7 +386,7 @@ def validate_producer(definitions, producer, kotlin):
     producer = uncomment(producer)
     match = re.search(r'internal fun menuEvent\s*\(', producer)
     require(match, "unparsed event producers")
-    call = _balanced_call(producer, match.end() - 1)
+    call = _balanced(producer, match.end() - 1, "()")
     args = call[1:-1]
     after = producer[match.end() - 1 + len(call):]
     body_match = re.match(r'\s*:\s*String\s*=\s*JSONObject\(\)(.*?)\.toString\(\)', after, re.DOTALL)
@@ -392,13 +434,59 @@ def validate_producer(definitions, producer, kotlin):
             and "controllerEventJson" not in code, "obsolete typed builders remain")
 
 
+def _wire_const_values(wire, obj):
+    """`const val NAME = "value"` pairs inside one Kotlin wire object."""
+    body = re.search(rf'internal object {obj}\b\s*{{(.*?)\n}}', wire, re.DOTALL)
+    require(body, f"unparsed Kotlin {obj}")
+    return dict(re.findall(r'const val (\w+)\s*=\s*"([^"]+)"', body.group(1)))
+
+
+def _rust_table_keys(decoder, table):
+    """String keys of one Rust `(&str, _)` lookup table."""
+    body = re.search(rf'pub\(crate\) const {table}:[^=]*= &\[\s*\n(.*?)\n\];', decoder, re.DOTALL)
+    require(body, f"unparsed Rust {table}")
+    return re.findall(r'\("([^"]+)",', body.group(1))
+
+
+def _rust_motion_axis_fields(decoder):
+    """Bridge axis names from `motion_axes()` direct pairs.
+
+    The decoder resolves pairs without a name round-trip, so the table
+    no longer exists: `self.<field>` on the right side names the wire
+    vocabulary in one place."""
+    body = re.search(r'fn motion_axes\([^)]*\)[^{]*\{[^[]*\[([^]]*)\]', decoder, re.DOTALL)
+    require(body, "unparsed Rust motion_axes")
+    return re.findall(r'self\.(\w+)', body.group(1))
+
+
+def validate_controller_vocabulary(decoder, kotlin, wire):
+    """Kotlin button/axis names and the Rust decoder tables name one
+    vocabulary: a Kotlin `when` arm added without a Rust row (or vice
+    versa) silently diverges to platform-fallthrough vs `None`."""
+    keys = _wire_const_values(wire, "ControllerKey")
+    axes = _wire_const_values(wire, "ControllerAxis")
+    used_keys = set(re.findall(r'ControllerKey\.(\w+)', kotlin))
+    used_axes = set(re.findall(r'ControllerAxis\.(\w+)', kotlin))
+    require(used_keys <= set(keys),
+            f"Kotlin uses unknown ControllerKey: {sorted(used_keys - set(keys))}")
+    require(used_axes <= set(axes),
+            f"Kotlin uses unknown ControllerAxis: {sorted(used_axes - set(axes))}")
+    rust_keys = set(_rust_table_keys(decoder, "CONTROLLER_KEY_TABLE"))
+    rust_axes = set(_rust_motion_axis_fields(decoder))
+    require(set(keys.values()) == rust_keys,
+            "Kotlin/Rust button vocabulary differs")
+    require(set(axes.values()) == rust_axes,
+            "Kotlin/Rust axis vocabulary differs")
+
+
 def verify(schema, source):
     try:
         definitions = GEN.event_definitions(schema)
         generated = GEN.outputs(schema)[GEN.RUST / "src/bridge_contract.rs"]
         require(source["generated"] == generated, "generated structural validation is stale or modified")
-        validate_decoder(definitions, source["decoder"])
+        validate_decoder_tables(definitions, source["decoder"], source["generated"])
         validate_producer(definitions, source["producer"], source["callsites"])
+        validate_controller_vocabulary(source["decoder"], source["callsites"], source["wire"])
         require("register_native_methods(class, &methods)" in source["registration"],
                 "registration table is not registered")
         require("register_native_methods(settings_class, &settings_methods)" in source["registration"],

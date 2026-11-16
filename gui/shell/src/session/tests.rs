@@ -1867,12 +1867,10 @@ fn cached_frame_data_rebuilds_only_on_key_change() {
         policy.error_modal,
         session.settings_snapshot().local.notifications.error_modal
     );
-    // Touch cache: same revision reuses the stored model.
-    let model = session.touch_overlay_model_cached(7).clone();
-    assert_eq!(session.touch_overlay_model_cached(7).revision, 7);
-    assert_eq!(session.touch_overlay_model(7), model);
-    let changed = session.touch_overlay_model_cached(8);
-    assert_eq!(changed.revision, 8);
+    // Overlay builds on demand: the revision rides straight through.
+    let model = session.touch_overlay_model(7);
+    assert_eq!(model.revision, 7);
+    assert_eq!(session.touch_overlay_model(8).revision, 8);
 }
 
 /// The tao/gtk `String` take path redelivers structured batches under new settings.

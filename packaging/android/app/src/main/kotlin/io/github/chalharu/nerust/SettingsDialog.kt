@@ -26,6 +26,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
@@ -175,7 +177,8 @@ private fun parseSettingsRow(row: JSONObject?): SettingsRow? {
         val choices = parseSettingsChoices(row) ?: return null
         val kind = row.getString("kind")
         if (kind !in setOf("choice", "toggle", "number", "info", "header", "group", "capture", "button")) {
-            Log.w(TAG, "unknown settings row kind: $kind (key=${row.optString("key")})")
+            Log.w(TAG, "skipping unknown settings row kind: $kind (key=${row.optString("key")})")
+            return null
         }
         SettingsRow(
             key = row.getString("key"),
@@ -270,7 +273,8 @@ internal fun settingsRowCommand(
 
 /** Cross-boundary navigation actions the activity needs for system back,
  * discard confirmation, hardware-key/capture payload delivery, and
- * out-of-band refreshes (hotplug) that must not mark the draft dirty. */
+ * out-of-band refreshes (hotplug): Rust owns dirty, so one apply path
+ * covers both edits and refreshes. */
 internal data class SettingsNavActions(
     val canNavigateUp: Boolean,
     val isDirty: Boolean,
@@ -281,7 +285,6 @@ internal data class SettingsNavActions(
     val dismissConfirm: () -> Unit,
     val cancelCapture: () -> Unit,
     val applyPayload: (String) -> Unit,
-    val refreshPayload: (String) -> Unit,
 )
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
@@ -379,15 +382,17 @@ internal fun settingsRowDisplayValue(
     offLabel: String,
 ): String =
     when (row.kind) {
-        "choice" -> row.choices.getOrNull(row.selected)?.label ?: "?"
+        "choice" -> row.choices.getOrNull(row.selected)?.label ?: row.label
         "toggle" -> row.choices.getOrNull(row.selected)?.label ?: if (row.selected == 1) onLabel else offLabel
         "number" -> "${row.number}${row.unit}"
         else -> row.text
     }
 
-/** Fallback when a settings command fails before Rust answers. */
+/** Fallback when a settings command fails before Rust answers. Rust's
+ * envelope error replaces this on the next refresh; this terse label only
+ * fills the gap so the banner never shows an empty string. */
 private const val TAG = "SettingsDialog"
-private const val COMMAND_FAILED = "command failed"
+private const val COMMAND_FAILED = "Update failed."
 
 /** Scope key restoring every setting; per-screen keys stay in their rows. */
 private const val RESET_ALL_KEY = "reset.all"
@@ -502,12 +507,28 @@ internal fun NerustSettingsDialogCard(
         }
     }
 
-    fun requestCancel() {
-        if (isDirty) {
-            confirmDiscard = true
-        } else {
-            onDismissRequest()
+    // Hotplug can delete the section under the user (pad unplugged):
+    // drop vanished ids so the screen falls back to the nearest live
+    // ancestor instead of stranding the stack on a missing section.
+    // Stale row keys clear with the same push.
+    // Identity sets hoisted from the per-payload scans: ids stay stable
+    // across value-only payloads, so the effect and the callbacks below
+    // key on these instead of `sections` and skip rebuilds when only
+    // values change.
+    val sectionIds = remember(sections) { sections.map { it.id }.toSet() }
+    val rowKeys = remember(sections) { sections.flatMap { section -> section.rows.map { it.key } }.toSet() }
+    LaunchedEffect(sectionIds, rowKeys) {
+        val live = backStack.filter { it in sectionIds }
+        if (live.size != backStack.size) backStack = live
+        if (activeRowKey != null && activeRowKey !in rowKeys) {
+            activeRowKey = null
         }
+        dirtyKeys = dirtyKeys.intersect(rowKeys)
+    }
+
+    fun requestCancel() {
+        confirmDiscard = isDirty
+        if (!isDirty) onDismissRequest()
     }
 
     // Publish exactly when navigation-relevant state changes; calling the
@@ -526,9 +547,6 @@ internal fun NerustSettingsDialogCard(
                 applyPayload = { raw ->
                     applyPayloadJson(raw)
                 },
-                refreshPayload = { raw ->
-                    applyPayloadJson(raw)
-                },
             ),
         )
     }
@@ -542,7 +560,7 @@ internal fun NerustSettingsDialogCard(
     val dirtyVisibleSections =
         remember(sections, dirtyKeys) { ancestorDirtySections(sections, dirtyKeys, parents) }
     val actions =
-        remember(sections) {
+        remember(sectionIds) {
         SettingsRowActions(
             onCancelCapture = { sendCommand("", 0, 0L, "cancel_capture", mutating = false) },
             onSelectChoice = { row, choiceIndex ->
@@ -558,7 +576,7 @@ internal fun NerustSettingsDialogCard(
             onRowClick = { row ->
                 when (row.kind) {
                     "group" -> {
-                        if (sections.any { it.id == row.target }) {
+                        if (row.target in sectionIds) {
                             pushSection(row.target)
                         }
                     }
@@ -578,7 +596,7 @@ internal fun NerustSettingsDialogCard(
             },
             onDetailClick = { row ->
                 if (row.detailTarget.isNotBlank() &&
-                    sections.any { it.id == row.detailTarget }
+                    row.detailTarget in sectionIds
                 ) {
                     pushSection(row.detailTarget)
                 }
@@ -616,7 +634,15 @@ internal fun NerustSettingsDialogCard(
                     title = screenTitle,
                     subtitle = subtitle,
                     canNavigateUp = canNavigateUp,
-                    canSave = isDirty,
+                    // Issues block the save path (finish rejects them), so
+                    // the button stays disabled until they clear: no wasted
+                    // save-reject round trip.
+                    canSave = isDirty && issues.isEmpty(),
+                    // Blocked-by-issues cue lives on the save button itself:
+                    // the banner scrolls (small-screen tradeoff), so a long
+                    // screen would otherwise leave the disabled save
+                    // unexplained.
+                    saveBlocked = isDirty && issues.isNotEmpty(),
                     onNavigateUp = ::navigateUp,
                     onCancel = ::requestCancel,
                     onSave = onSave,
@@ -658,6 +684,7 @@ private fun SettingsTopBar(
     subtitle: String?,
     canNavigateUp: Boolean,
     canSave: Boolean,
+    saveBlocked: Boolean,
     onNavigateUp: () -> Unit,
     onCancel: () -> Unit,
     onSave: () -> Unit,
@@ -704,10 +731,25 @@ private fun SettingsTopBar(
                 }
             }
             IconButton(onClick = onSave, enabled = canSave) {
-                Icon(
-                    painter = painterResource(id = R.drawable.ic_settings_save),
-                    contentDescription = stringResource(R.string.settings_save),
-                )
+                BadgedBox(
+                    badge = {
+                        if (saveBlocked) {
+                            Badge(containerColor = MaterialTheme.colorScheme.error)
+                        }
+                    },
+                ) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_settings_save),
+                        contentDescription =
+                            stringResource(
+                                if (saveBlocked) {
+                                    R.string.settings_save_blocked
+                                } else {
+                                    R.string.settings_save
+                                },
+                            ),
+                    )
+                }
             }
         },
         colors =
@@ -981,9 +1023,13 @@ private fun LazyListScope.settingsSearchResults(
 
 /** Child section id -> (parent section id, parent label, via row label).
  * Group rows and device Details buttons both climb one level. Shared by
- * search breadcrumbs and unsaved-dot ancestor propagation. */
-private fun parentMap(sections: List<SettingsSection>): Map<String, Triple<String, String, String>> =
+ * search breadcrumbs and unsaved-dot ancestor propagation. The Rust
+ * projection emits a tree — the Devices gear is the single path into pad
+ * screens, pads never link back — so a plain walk always terminates and
+ * the first link wins. */
+internal fun parentMap(sections: List<SettingsSection>): Map<String, Triple<String, String, String>> =
     buildMap {
+        val ids = sections.map { it.id }.toSet()
         for (section in sections) {
             for (row in section.rows) {
                 val child =
@@ -992,9 +1038,8 @@ private fun parentMap(sections: List<SettingsSection>): Map<String, Triple<Strin
                         row.detailTarget.isNotBlank() -> row.detailTarget
                         else -> continue
                     }
-                if (sections.any { it.id == child }) {
-                    put(child, Triple(section.id, section.label, row.label))
-                }
+                if (child !in ids || child in this) continue
+                put(child, Triple(section.id, section.label, row.label))
             }
         }
     }
@@ -1087,8 +1132,9 @@ private fun screenSubtitle(
     }
 
 /** Breadcrumb chain for a hidden section: parent labels up to the
- * visible category, shared by search hits. */
-private fun breadcrumbTrail(
+ * visible category, shared by search hits. The projection is a tree,
+ * so the climb ends at the top level. */
+internal fun breadcrumbTrail(
     parents: Map<String, Triple<String, String, String>>,
     sectionId: String,
 ): String {
@@ -1103,28 +1149,42 @@ private fun breadcrumbTrail(
 }
 
 /** Search hits across every section (hidden ones included): label,
- * description, section label, value, or current text match. */
-private fun searchHits(
+ * description, section label, value, or current text match. Fields fold
+ * once per payload (not per keystroke): the remembered index below makes
+ * each keystroke a substring scan over pre-folded haystacks. */
+private fun searchIndex(
     sections: List<SettingsSection>,
-    query: String,
     onLabel: String,
     offLabel: String,
+): List<Triple<SettingsSection, SettingsRow, String>> =
+    sections.flatMap { section ->
+        val sectionLabel = section.label.lowercase()
+        section.rows
+            .filter { row -> row.kind != "header" }
+            .map { row ->
+                Triple(
+                    section,
+                    row,
+                    listOf(
+                        row.label.lowercase(),
+                        row.description.lowercase(),
+                        sectionLabel,
+                        row.text.lowercase(),
+                        settingsRowDisplayValue(row, onLabel, offLabel).lowercase(),
+                    ).joinToString("\n"),
+                )
+            }
+    }
+
+private fun searchHits(
+    index: List<Triple<SettingsSection, SettingsRow, String>>,
+    query: String,
 ): List<Pair<SettingsSection, SettingsRow>> {
     if (query.isBlank()) return emptyList()
-    return sections.flatMap { section ->
-        section.rows
-            .filter { row ->
-                row.kind != "header" &&
-                    (
-                        row.label.contains(query, ignoreCase = true) ||
-                            row.description.contains(query, ignoreCase = true) ||
-                            section.label.contains(query, ignoreCase = true) ||
-                            row.text.contains(query, ignoreCase = true) ||
-                            settingsRowDisplayValue(row, onLabel, offLabel)
-                                .contains(query, ignoreCase = true)
-                    )
-            }.map { row -> section to row }
-    }
+    val q = query.lowercase()
+    return index
+        .filter { (_, _, haystack) -> haystack.contains(q) }
+        .map { (section, row, _) -> section to row }
 }
 
 @Composable
@@ -1182,9 +1242,18 @@ private fun SettingsCategoryList(
     // below only consumes them through the plain list DSL.
     val onLabel = stringResource(R.string.settings_on)
     val offLabel = stringResource(R.string.settings_off)
-    val hits = remember(state.sections, query, onLabel, offLabel) {
-        searchHits(state.sections, query, onLabel, offLabel)
+    val index = remember(state.sections, onLabel, offLabel) {
+        searchIndex(state.sections, onLabel, offLabel)
     }
+    val hits = remember(index, query) {
+        searchHits(index, query)
+    }
+    // Trails depend only on the parent links: one associate per link
+    // change, then each hit is a map get at composition. Ancestor labels
+    // all ride inside `parents`, so a parents-equal payload yields equal
+    // trails; ids without parents fall back to "" exactly like
+    // breadcrumbTrail does for an unknown id.
+    val crumbs = remember(state.parents) { state.sections.associate { it.id to breadcrumbTrail(state.parents, it.id) } }
     val emptyText =
         if (query.isBlank()) "" else stringResource(R.string.settings_search_empty, query)
     LazyColumn(
@@ -1213,7 +1282,7 @@ private fun SettingsCategoryList(
             settingsSearchResults(
                 hits = hits,
                 emptyText = emptyText,
-                breadcrumbOf = { sectionId -> breadcrumbTrail(state.parents, sectionId) },
+                breadcrumbOf = { sectionId -> crumbs[sectionId].orEmpty() },
                 onNavigate = actions.onSearchNavigate,
             )
             return@LazyColumn
@@ -1268,17 +1337,18 @@ private fun SettingsCategoryList(
                             )
                         }
                     }
-                    Text(
-                        text =
-                            pluralStringResource(
-                                R.plurals.settings_count,
-                                entryCount,
-                                entryCount,
-                            ),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                    if (summary.isNotBlank()) {
+                    if (summary.isBlank()) {
+                        Text(
+                            text =
+                                pluralStringResource(
+                                    R.plurals.settings_count,
+                                    entryCount,
+                                    entryCount,
+                                ),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    } else {
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = summary,

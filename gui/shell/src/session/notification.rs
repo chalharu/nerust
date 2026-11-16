@@ -747,28 +747,16 @@ mod tests {
     #[test]
     fn render_text_adds_count_suffix() {
         assert_eq!(
-            render_text(
-                &Message::paused(),
-                1,
-                I18n::resolve_os(AppLanguage::English)
-            ),
+            render_text(&Message::paused(), 1, I18n::new(AppLanguage::English)),
             "Paused"
         );
         assert_eq!(
-            render_text(
-                &Message::paused(),
-                3,
-                I18n::resolve_os(AppLanguage::English)
-            ),
+            render_text(&Message::paused(), 3, I18n::new(AppLanguage::English)),
             "Paused ×3"
         );
         assert!(
-            render_text(
-                &Message::saved_slot(7),
-                2,
-                I18n::resolve_os(AppLanguage::Japanese)
-            )
-            .contains("×2")
+            render_text(&Message::saved_slot(7), 2, I18n::new(AppLanguage::Japanese))
+                .contains("×2")
         );
     }
 
@@ -814,7 +802,7 @@ mod message_key_tests {
 
     #[test]
     fn renderer_is_the_single_format_point() {
-        let i18n = I18n::resolve_os(AppLanguage::English);
+        let i18n = I18n::new(AppLanguage::English);
         for message in [
             Message::paused(),
             Message::saved_slot(3),
@@ -846,7 +834,7 @@ mod key_tests {
 
     #[test]
     fn renderer_is_the_single_format_point() {
-        let i18n = I18n::resolve_os(AppLanguage::English);
+        let i18n = I18n::new(AppLanguage::English);
         assert_eq!(render_message(&Message::paused(), i18n), "Paused");
         assert!(!render_message(&Message::saved_slot(7), i18n).is_empty());
     }
@@ -887,7 +875,7 @@ mod notification_cov_tests {
         let message = Message::slot(MessageKey::SlotSaved, None);
         assert_eq!(message.slot, None);
         assert_eq!(message.key, MessageKey::SlotSaved);
-        let i18n = I18n::resolve_os(AppLanguage::Japanese);
+        let i18n = I18n::new(AppLanguage::Japanese);
         assert!(!level_key(NotificationLevel::Warning, i18n).is_empty());
         assert_eq!(append_count("a".to_string(), 1), "a");
         let _ = SystemClock::now_system();

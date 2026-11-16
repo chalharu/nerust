@@ -7,7 +7,9 @@ import android.content.pm.PackageManager
 import android.hardware.input.InputManager
 import android.os.Bundle
 import android.util.Log
+import android.view.InputDevice
 import android.view.KeyEvent
+import android.view.MotionEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.compose.ui.platform.ComposeView
@@ -23,6 +25,29 @@ private const val EXTRA_SCHEMA_VERSION = "nerust.extra.SCHEMA_VERSION"
 private const val EXTRA_REQUEST_ID = "nerust.extra.REQUEST_ID"
 private const val EXTRA_PAYLOAD = "nerust.extra.PAYLOAD"
 private const val EXTRA_ORIENTATION = "nerust.extra.ORIENTATION"
+
+/** Hardware keys that never start a capture: they belong to the platform
+ * even while a row waits (capturing volume would swallow the press
+ * without changing volume). BACK also never binds: it cancels capture
+ * or navigates up via `handleSettingsBack`. `KeyEvent.isSystemKey` is
+ * not public API, so the set names them explicitly. */
+private val UNCAPTUREABLE_SYSTEM_KEYS =
+    setOf(
+        KeyEvent.KEYCODE_BACK,
+        KeyEvent.KEYCODE_VOLUME_UP,
+        KeyEvent.KEYCODE_VOLUME_DOWN,
+        KeyEvent.KEYCODE_VOLUME_MUTE,
+        KeyEvent.KEYCODE_POWER,
+        KeyEvent.KEYCODE_SLEEP,
+        KeyEvent.KEYCODE_WAKEUP,
+        KeyEvent.KEYCODE_CALL,
+        KeyEvent.KEYCODE_ENDCALL,
+        KeyEvent.KEYCODE_CAMERA,
+        KeyEvent.KEYCODE_SEARCH,
+        KeyEvent.KEYCODE_EXPLORER,
+        KeyEvent.KEYCODE_APP_SWITCH,
+        KeyEvent.KEYCODE_ASSIST,
+    )
 
 /** Standalone settings screen. MainActivity pushes one versioned payload per
  * open (see `request_show_settings_dialog`); edits ride synchronous per-row
@@ -40,6 +65,12 @@ class SettingsActivity :
     /** Last pushed scan: identical hotplug/resume bursts skip the JNI push. */
     @Volatile
     private var lastDeviceTruth: DeviceTruth? = null
+
+    /** Last trigger values per device for capture edge detection: a held
+     * trigger must not capture the instant its row opens; only a
+     * below → at/above crossing forwards. Main thread only (dispatch),
+     * so no synchronization is needed. */
+    private val captureTriggerLast = mutableMapOf<String, Pair<Float, Float>>()
 
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(AppLocale.wrap(newBase))
@@ -61,6 +92,7 @@ class SettingsActivity :
         requestId = intent.getLongExtra(EXTRA_REQUEST_ID, -1L)
         if (intent.getIntExtra(EXTRA_SCHEMA_VERSION, -1) != SETTINGS_SCHEMA_VERSION) {
             Log.e(TAG, "SettingsActivity: unsupported schemaVersion")
+            sendResult(dismissed = true)
             finish()
             return
         }
@@ -71,6 +103,7 @@ class SettingsActivity :
                 JSONObject(rawPayload).getJSONObject("payload")
             } catch (e: Exception) {
                 Log.e(TAG, "SettingsActivity: malformed payload", e)
+                sendResult(dismissed = true)
                 finish()
                 return
             }
@@ -79,6 +112,7 @@ class SettingsActivity :
                 parseSettingsSections(payload)
             } catch (e: JSONException) {
                 Log.e(TAG, "SettingsActivity: malformed sections", e)
+                sendResult(dismissed = true)
                 finish()
                 return
             }
@@ -160,6 +194,12 @@ class SettingsActivity :
         super.onPause()
     }
 
+    override fun onDestroy() {
+        // Listener balance lives in onResume/onPause; nothing to release here.
+        if (this == activeActivityForTest) activeActivityForTest = null
+        super.onDestroy()
+    }
+
     override fun onInputDeviceAdded(deviceId: Int) = pushDeviceTruth()
 
     override fun onInputDeviceRemoved(deviceId: Int) = pushDeviceTruth()
@@ -172,6 +212,11 @@ class SettingsActivity :
      * only the nav apply posts back. Identical scans skip the push via the
      * last-result cache. Payload shape is unchanged. */
     internal fun pushDeviceTruth() {
+        // The card only exists after the first composition publish. Caching
+        // a scan the card can never receive would suppress the real first
+        // push (identical-scan skip), stranding device-dependent rows
+        // (connected pads, capture enablement) empty until the next hotplug.
+        if (navActions == null) return
         BridgeIo.runIo {
             val scan =
                 try {
@@ -182,6 +227,9 @@ class SettingsActivity :
                 }
             if (scan == lastDeviceTruth) return@runIo
             lastDeviceTruth = scan
+            if (Log.isLoggable(TAG, Log.DEBUG)) {
+                Log.d(TAG, "device truth scan: keyboards=${scan.keyboards.size} gamepads=${scan.gamepads.map { it.name }}")
+            }
             val keyboards = JSONArray()
             scan.keyboards.forEach { row ->
                 keyboards.put(
@@ -192,7 +240,7 @@ class SettingsActivity :
                 )
             }
             val gamepads = JSONArray()
-            scan.gamepadNames.forEach { gamepads.put(JSONObject().put("name", it)) }
+            scan.gamepads.forEach { gamepads.put(JSONObject().put("member", it.member).put("name", it.name)) }
             val payload =
                 JSONObject()
                     .put("keyboards", keyboards)
@@ -201,14 +249,15 @@ class SettingsActivity :
             // Terminal locale only: Rust applies the saved in-app choice
             // itself (see MainActivity.pushSystemLocaleToVault).
             AppLocale.currentTag()?.let { payload.put("lang", it) }
-            pushOp("device truth", "device_truth", payload)
+            pushOp("device_truth", payload)
         }
     }
 
     /** One push through the command pipe; Rust re-projects and the card
-     * applies it without marking the draft dirty. JNI runs on the shared
-     * background lane; only the nav apply posts back to the main thread. */
-    private fun pushOp(label: String, op: String, payload: JSONObject) {
+     * applies it. Rust owns dirty (draft vs pristine), so device-truth
+     * pushes never mark the draft. JNI runs on the shared background
+     * lane; only the nav apply posts back to the main thread. */
+    private fun pushOp(op: String, payload: JSONObject) {
         if (navActions == null) return
         val command = settingsCommandJson(op, payload)
         BridgeIo.runIo {
@@ -216,28 +265,85 @@ class SettingsActivity :
                 try {
                     nativeSettingsCommand(command)
                 } catch (e: Exception) {
-                    Log.e(TAG, "$label push failed", e)
+                    Log.e(TAG, "device truth push failed", e)
                     return@runIo
                 }
             if (raw == null) return@runIo
-            BridgeIo.postMain { navActions?.refreshPayload(raw) }
+            BridgeIo.postMain {
+                if (isDestroyed || isFinishing) return@postMain
+                navActions?.applyPayload(raw)
+            }
         }
-    }
-
-    override fun onDestroy() {
-        if (this == activeActivityForTest) activeActivityForTest = null
-        super.onDestroy()
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         // Capture wait takes every hardware key first, keyboard and pad
         // alike; unmapped keys fall through to the platform. Outside
         // capture, controller sources keep platform behavior.
-        if (isControllerSource(event.source) && navActions?.isCapturing != true) {
+        val capturing = navActions?.isCapturing == true
+        val controller = isControllerSource(event.source)
+        if ((controller || capturing) && Log.isLoggable(TAG, Log.DEBUG)) {
+            Log.d(
+                TAG,
+                "settings key: source=0x${event.source.toString(16)} keyCode=${event.keyCode} action=${event.action} capturing=$capturing",
+            )
+        }
+        if (controller && !capturing) {
             return super.dispatchKeyEvent(event)
         }
-        return routeSettingsKeyEvent(event.keyCode, event.action) ||
+        // Volume/power keys never start a capture: they belong to the
+        // platform even while a row waits.
+        if (capturing && event.keyCode in UNCAPTUREABLE_SYSTEM_KEYS) {
+            return super.dispatchKeyEvent(event)
+        }
+        // Descriptor identity: the live id is recycled on reconnect, so
+        // the event device resolves to its descriptor; keys pass null.
+        // Rust validates against the vault list, so no Kotlin-side order
+        // copy can skew per-pad routing.
+        val padDescriptor = InputDevice.getDevice(event.deviceId)?.descriptor
+        return routeSettingsKeyEvent(event.keyCode, padDescriptor, event.action) ||
             super.dispatchKeyEvent(event)
+    }
+
+    override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+        // Stale edge seeds must not survive between captures: a stored
+        // release followed by a held trigger at the next capture open
+        // would read as a fresh crossing. Clear while idle so the next
+        // capture re-seeds from the live values below.
+        if (navActions?.isCapturing != true) {
+            if (captureTriggerLast.isNotEmpty()) captureTriggerLast.clear()
+            return super.onGenericMotionEvent(event)
+        }
+        // Analog-only triggers (ZL/ZR on pads that send no key event)
+        // can only land through motion: forward the press edge while a
+        // capture is pending. Edge-detected per device (below → at/above
+        // the press level), so a held trigger does not capture the
+        // instant its row opens, and one squeeze captures exactly once.
+        if (event.source and InputDevice.SOURCE_CLASS_JOYSTICK == InputDevice.SOURCE_CLASS_JOYSTICK
+        ) {
+            val triggerL = event.getAxisValue(MotionEvent.AXIS_LTRIGGER)
+            val triggerR = event.getAxisValue(MotionEvent.AXIS_RTRIGGER)
+            // Descriptor identity: device ids recycle on reconnect, so the
+            // edge cache keys by descriptor (same key Rust rank-gates on).
+            val device = InputDevice.getDevice(event.deviceId)
+            val descriptorKey = device?.descriptor ?: "id:${event.deviceId}"
+            // Unknown means held-or-fresh: seed with the live values so a
+            // trigger already held when the row opens cannot capture on
+            // the first motion event.
+            val last = captureTriggerLast[descriptorKey] ?: (triggerL to triggerR)
+            captureTriggerLast[descriptorKey] = triggerL to triggerR
+            val crossed =
+                (triggerL >= TRIGGER_CAPTURE_PRESS && last.first < TRIGGER_CAPTURE_PRESS) ||
+                    (triggerR >= TRIGGER_CAPTURE_PRESS && last.second < TRIGGER_CAPTURE_PRESS)
+            if (crossed &&
+                routeSettingsMotionEvent(
+                    device?.descriptor,
+                    triggerL,
+                    triggerR,
+                )
+            ) return true
+        }
+        return super.onGenericMotionEvent(event)
     }
 
     /** Back resolves capture → navigate up → discard confirm → dismiss. */
@@ -266,9 +372,13 @@ class SettingsActivity :
     }
 
     /** Route a key event to Rust while a binding capture is pending. True only
-     * when Rust consumed the key; releases and unmapped keys fall through. */
+     * when Rust consumed the key; releases and unmapped keys fall through.
+     * `padDescriptor` is the truth-order pad descriptor (null for keys and
+     * uncounted devices): per-pad mapping rows only accept their own pad's
+     * descriptor, which survives id reuse and reconnects. */
     private fun routeSettingsKeyEvent(
         keyCode: Int,
+        padDescriptor: String?,
         action: Int,
     ): Boolean {
         val nav = navActions ?: return false
@@ -278,9 +388,41 @@ class SettingsActivity :
         if (action != KeyEvent.ACTION_DOWN && action != KeyEvent.ACTION_UP) return false
         val raw =
             try {
-                nativeHardwareKey(keyCode, action == KeyEvent.ACTION_DOWN)
+                nativeHardwareKey(keyCode, padDescriptor, action == KeyEvent.ACTION_DOWN)
             } catch (e: Exception) {
                 Log.e(TAG, "nativeHardwareKey failed", e)
+                null
+            }
+        val doc =
+            raw?.let {
+                try {
+                    JSONObject(it)
+                } catch (e: JSONException) {
+                    null
+                }
+            }
+        if (doc != null && doc.optBoolean("consumed", false)) {
+            nav.applyPayload(doc.toString())
+            return true
+        }
+        return false
+    }
+
+    /** Route a trigger-motion edge to Rust while a binding capture is
+     * pending. True only when Rust consumed the edge as a binding; stale
+     * or below-threshold motion falls through like unmapped keys. */
+    private fun routeSettingsMotionEvent(
+        padDescriptor: String?,
+        triggerL: Float,
+        triggerR: Float,
+    ): Boolean {
+        val nav = navActions ?: return false
+        if (!nav.isCapturing) return false
+        val raw =
+            try {
+                nativeMotionCapture(padDescriptor, triggerL, triggerR)
+            } catch (e: Exception) {
+                Log.e(TAG, "nativeMotionCapture failed", e)
                 null
             }
         val doc =
@@ -331,11 +473,23 @@ class SettingsActivity :
 
     private external fun nativeHardwareKey(
         keyCode: Int,
+        padDescriptor: String?,
         pressed: Boolean,
+    ): String?
+
+    private external fun nativeMotionCapture(
+        padDescriptor: String?,
+        triggerL: Float,
+        triggerR: Float,
     ): String?
 
     companion object {
         private const val TAG = "SettingsActivity"
+
+        /** Trigger press level for motion capture: a deliberate half-press.
+         * Mirrors the Rust `MOTION_CAPTURE_PRESS` (the gameplay fire level
+         * is higher at 0.9); the two agree by value, not by wire. */
+        private const val TRIGGER_CAPTURE_PRESS = 0.5f
 
         @Volatile
         private var activeActivityForTest: SettingsActivity? = null

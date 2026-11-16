@@ -33,11 +33,9 @@ class DialogManager(private val activity: MainActivity) {
     var tag: String? = null
         private set
     private var dismissCallback: (() -> Unit)? = null
-    var ownedByTest = false
-        private set
 
     fun isShowing(tag: String): Boolean =
-        this.tag == tag && dialog?.isShowing == true && rootView.isShownInWindowForTest()
+        this.tag == tag && dialog?.isShowing == true
 
     fun rootViewForTag(tag: String): View? = rootView.takeIf { this.tag == tag }
 
@@ -51,7 +49,9 @@ class DialogManager(private val activity: MainActivity) {
     }
 
     fun resetForTest() {
-        dismiss(notifyDismiss = !ownedByTest)
+        // Test teardown never acks the Rust gate: firing here would resolve
+        // a dialog the test never dismissed.
+        dismiss(notifyDismiss = false)
     }
 
     fun debugState(): String =
@@ -62,10 +62,15 @@ class DialogManager(private val activity: MainActivity) {
         dialogTag: String,
         contentDescription: String,
         onDismiss: () -> Unit,
-        ownedByTest: Boolean = false,
         content: @Composable (dismiss: () -> Unit) -> Unit,
     ) {
-        dismiss(notifyDismiss = !this.ownedByTest)
+        // Replacing acknowledges the old gate: the old request is
+        // superseded, so Rust must resolve it now instead of wedging on
+        // a dismissal that will never arrive on its own. The queued
+        // dismiss listener is cleared first, so it cannot consume the
+        // replacement dialog's callback or references (see the
+        // delayedDismissCannotAcknowledgeReplacementDialog e2e).
+        dismiss(notifyDismiss = true)
 
         lateinit var dialog: Dialog
         val root =
@@ -114,7 +119,6 @@ class DialogManager(private val activity: MainActivity) {
         this.composeView = composeView
         tag = dialogTag
         dismissCallback = onDismiss
-        this.ownedByTest = ownedByTest
         dialog.setOnDismissListener {
             // Android may already have queued this listener before replacement.
             // Never consume the replacement dialog's callback or references.
@@ -173,11 +177,7 @@ class DialogManager(private val activity: MainActivity) {
         composeView = null
         tag = null
         dismissCallback = null
-        ownedByTest = false
     }
-
-    private fun View?.isShownInWindowForTest(): Boolean =
-        this != null && visibility == View.VISIBLE && isAttachedToWindow && windowToken != null
 
     private fun View?.debugViewState(): String =
         if (this == null) {

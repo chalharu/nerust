@@ -46,7 +46,7 @@ fn register_key(name: &str) -> String {
 }
 
 fn synchronize_registers(model: &mut Model) {
-    let i18n = I18n::resolve_os(model.language);
+    let i18n = I18n::new(crate::display_language(model.language));
     let next = model
         .register_left_selection
         .as_ref()
@@ -299,7 +299,7 @@ struct Captions {
 }
 impl Captions {
     fn new(language: AppLanguage) -> Self {
-        let i18n = I18n::resolve_os(language);
+        let i18n = I18n::new(crate::display_language(language));
         let label = move |key| i18n.text(key);
         Self {
             title: label(UiText::Debugger),
@@ -456,7 +456,7 @@ impl Pane {
     pub(crate) fn new(language: AppLanguage, executor: Rc<dyn Executor>) -> Rc<Self> {
         let projection = project(&DisplayCache::default());
         let [registers_left, registers_right] = projection.registers;
-        let i18n = I18n::resolve_os(language);
+        let i18n = I18n::new(crate::display_language(language));
         let label = move |key| i18n.text(key);
         let pane = Rc::new(Self {
             model: Store::new(
@@ -520,7 +520,7 @@ impl Pane {
         let subscription = pane.model.watch(source, |store, _| {
             let _ = store.update(|model| {
                 synchronize_registers(model);
-                let i18n = I18n::resolve_os(model.language);
+                let i18n = I18n::new(crate::display_language(model.language));
                 let selected = model
                     .memory_selection
                     .as_ref()
@@ -778,7 +778,8 @@ impl Pane {
             AssistAction::FreezeClear => operations.freeze = None,
             AssistAction::RegisterSet => {
                 if register.is_none() {
-                    return Err(I18n::resolve_os(model.language).text(UiText::PickRegister));
+                    return Err(I18n::new(crate::display_language(model.language))
+                        .text(UiText::PickRegister));
                 }
                 return Ok(Some(vec![DebugAction::RegisterWrite(hex(
                     &model.register_value
@@ -917,7 +918,9 @@ impl Pane {
                 .memory_selection
                 .as_ref()
                 .and_then(|selection| selected_memory(selection, &model.memory_targets))
-                .ok_or_else(|| I18n::resolve_os(model.language).text(UiText::SelectDumpRow))
+                .ok_or_else(|| {
+                    I18n::new(crate::display_language(model.language)).text(UiText::SelectDumpRow)
+                })
         };
         let register = model
             .register_marked
@@ -1081,7 +1084,7 @@ impl Pane {
         language: AppLanguage,
     ) {
         self.refresh(&output.display, language);
-        let i18n = I18n::resolve_os(language);
+        let i18n = I18n::new(crate::display_language(language));
         if let Some(operations) = self.operations.borrow_mut().as_mut() {
             let paused_snapshot = output.display.paused;
             operations.display = output.display;

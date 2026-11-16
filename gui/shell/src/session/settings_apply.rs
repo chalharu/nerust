@@ -8,7 +8,7 @@ use nerust_gui_runtime::settings::{
     LiveStrategy, SettingsApplyPlan, SettingsSnapshot,
     apply::{validate_local_settings, validate_shared_settings},
 };
-use nerust_input_traits::InputAssignments;
+use nerust_input_traits::{InputAssignments, SourceButtonId};
 use nerust_render_traits::VideoRenderProfile;
 use nerust_system_traits::factory::CoreFactory;
 
@@ -303,15 +303,23 @@ impl SessionHandle {
             input.clear();
         }
         self.rebuild_key_field_map();
+        self.input
+            .rebuild_pad_params(&self.settings.snapshot.shared.input.gamepad);
         // One borrow of the live port for the whole re-assert loop.
+        // Keyboards re-assert by key here; pads re-resolve just below
+        // through the new assignments (ports may have moved), so both
+        // sources survive the apply without a re-press.
         if let Some(input) = self.emu.input_mut() {
-            for key in &self.input.pressed_keys {
-                if let Some(&field) = self.input.key_field_map.get(key) {
+            for (_, button) in &self.input.pressed {
+                let SourceButtonId::Key(key) = button else {
+                    continue;
+                };
+                if let Some(&field) = self.input.keys.field_map.get(key) {
                     let _ = input.set(field, nerust_input_traits::InputValue::Digital(true));
                 }
             }
         }
-        self.input.invalidate_topology();
+        self.reassert_pad_presses();
     }
 
     pub fn set_fullscreen_default(

@@ -29,7 +29,16 @@ impl ModalLine {
             } => {
                 let (policy, language) = presentation?;
                 policy.enabled(*level).then(|| {
-                    append_count(render_message(message, I18n::resolve_os(language)), *count)
+                    append_count(
+                        render_message(
+                            message,
+                            I18n::new(match language {
+                                AppLanguage::SystemDefault => AppLanguage::English,
+                                explicit => explicit,
+                            }),
+                        ),
+                        *count,
+                    )
                 })
             }
         }

@@ -29,7 +29,7 @@ impl Pane {
         detail: String,
         executor: Rc<dyn Executor>,
     ) -> Rc<Self> {
-        let i18n = I18n::resolve_os(language);
+        let i18n = I18n::new(crate::display_language(language));
         Rc::new(Self {
             model: Store::new(
                 Model {

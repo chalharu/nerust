@@ -1,4 +1,4 @@
-use nerust_settings_core::i18n::{I18n, UiText};
+use nerust_settings_core::i18n::UiText;
 use nerust_settings_core::model::local::ScalingMode;
 
 use super::{
@@ -50,7 +50,7 @@ impl VideoSettingsViewModel {
 }
 
 fn project_view(state: &super::EditorState) -> VideoView {
-    let i18n = I18n::resolve_os(state.draft.shared.general.language);
+    let i18n = super::state::display_i18n(state);
     VideoView {
         fullscreen_default: state.draft.local.video.window.fullscreen_default,
         scaling: state.draft.local.video.window.scaling,

@@ -390,10 +390,12 @@ mod tests {
         settings.input.shortcuts.keyboard.push(ShortcutBinding {
             action: ShortcutAction::SaveActiveSlot,
             key: Some(Key::F5),
+            pad: None,
         });
         settings.input.shortcuts.keyboard.push(ShortcutBinding {
             action: ShortcutAction::Reset,
             key: Some(Key::F5),
+            pad: None,
         });
         let conflicts = conflicting_keys(&settings, &single_port_topology(), &TestSysId);
         let labels = &conflicts[&Key::F5];

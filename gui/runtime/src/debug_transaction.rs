@@ -12,7 +12,15 @@ pub struct PendingWrite {
 
 impl PendingWrite {
     pub fn render(&self, language: AppLanguage) -> String {
-        let i18n = nerust_settings_core::i18n::I18n::resolve_os(language);
+        // Concrete display language only; the OS query lives at the GUI
+        // entry edges (Android vault push, desktop launch), never in a
+        // render helper. Unresolved choice falls back to English, the
+        // same fallback the entry resolution uses for unknown locales.
+        let resolved = match language {
+            AppLanguage::SystemDefault => AppLanguage::English,
+            explicit => explicit,
+        };
+        let i18n = nerust_settings_core::i18n::I18n::new(resolved);
         nerust_settings_core::i18n::pending_write(i18n.language(), self.addr, self.old, self.value)
     }
 }

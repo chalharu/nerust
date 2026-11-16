@@ -1,11 +1,11 @@
 use std::{rc::Rc, sync::Arc};
 
 use nerust_core_traits::identity::SystemId;
-use nerust_input_traits::{AttachmentId, ControllerProfile, SlotInfo};
+use nerust_input_traits::{AttachmentId, ControllerProfile, SlotInfo, StandardButton};
 use nerust_settings_core::{
     bindings::descriptors::KeyboardBindingDescriptor,
     bindings::{conflicting_keys, descriptors::keyboard_binding_sections},
-    editor::{CaptureTarget, current_binding_label},
+    editor::{CaptureTarget, current_binding_key, current_pad_binding, current_pad_game_binding},
     i18n::{I18n, UiText},
     input::clear_multi_port_conflicts,
 };
@@ -106,6 +106,23 @@ impl InputSettingsViewModel {
         self.display_name
     }
 
+    /// Display values for per-pad mapping rows, resolved against the
+    /// live draft (override else fixed-layout default) under a single
+    /// borrow. Per-pad mapping screens batch one section at a time
+    /// instead of reading the shared keyboard view, which never carries
+    /// pad columns.
+    pub fn pad_row_values(
+        &self,
+        requests: &[(CaptureTarget, Option<StandardButton>)],
+    ) -> Vec<BindingValueView> {
+        let current = self.editor.current();
+        let i18n = super::state::display_i18n(&current);
+        requests
+            .iter()
+            .map(|(target, default)| pad_binding_value(&current, target, *default, i18n))
+            .collect()
+    }
+
     pub fn set_controller_slot(
         &self,
         slot: AttachmentId,
@@ -195,8 +212,44 @@ pub(super) fn binding_value(
     if state.capture_target.as_ref() == Some(target) {
         BindingValueView::Capturing(i18n.text(UiText::CapturePrompt))
     } else {
-        match current_binding_label(&state.draft, target) {
-            Some(label) => BindingValueView::Bound(label.to_string()),
+        // Shortcut rows show both columns (`Space / Guide` means either
+        // triggers, not both together); a lone pad shows its own cap.
+        // Game rows never carry pads (`current_pad_binding` is `None`
+        // for them by construction).
+        let pad = current_pad_binding(&state.draft, target);
+        match (
+            current_binding_key(&state.draft, target).map(|key| key.label()),
+            pad,
+        ) {
+            (Some(key), Some(pad)) => BindingValueView::Bound(format!(
+                "{key} / {}",
+                nerust_settings_core::labels::pad_button_label(i18n, pad)
+            )),
+            (Some(key), None) => BindingValueView::Bound(key.to_string()),
+            (None, Some(pad)) => {
+                BindingValueView::Bound(nerust_settings_core::labels::pad_button_label(i18n, pad))
+            }
+            (None, None) => BindingValueView::Unbound(i18n.text(UiText::Unbound)),
+        }
+    }
+}
+
+/// Value for one per-pad mapping row: the override button, else the
+/// fixed-layout default, else unbound (the console maps no button to
+/// this control, so only an override can drive it).
+pub fn pad_binding_value(
+    state: &EditorState,
+    target: &CaptureTarget,
+    default: Option<StandardButton>,
+    i18n: I18n,
+) -> BindingValueView {
+    if state.capture_target.as_ref() == Some(target) {
+        BindingValueView::Capturing(i18n.text(UiText::CapturePrompt))
+    } else {
+        match current_pad_game_binding(&state.draft, target).or(default) {
+            Some(button) => BindingValueView::Bound(
+                nerust_settings_core::labels::pad_button_label(i18n, button),
+            ),
             None => BindingValueView::Unbound(i18n.text(UiText::Unbound)),
         }
     }
@@ -240,6 +293,7 @@ fn project_slot_view(
 
     ControllerSlotView {
         slot_id: slot_desc.id,
+        port: nerust_input_traits::port_index_for_slot(slot_desc.id.as_str()),
         label: slot_desc.label.to_string(),
         selected_profile_id: profile_id,
         choices,
@@ -249,6 +303,7 @@ fn project_slot_view(
 
 fn project_binding_row(
     state: &EditorState,
+    assignments: &[(AttachmentId, Option<Rc<dyn ControllerProfile>>)],
     descriptor: &KeyboardBindingDescriptor,
     i18n: I18n,
 ) -> BindingRowView {
@@ -258,10 +313,22 @@ fn project_binding_row(
         control: descriptor.control.as_str().to_string(),
     };
     let value = binding_value(state, &target, i18n);
+    // Fixed-layout default for per-pad mapping screens: the position
+    // button driving this control's abstract, if the console maps one.
+    // Single shared traversal over the draft assignments, so swapped
+    // controller profiles track here exactly as in gameplay.
+    let pad_default = nerust_input_traits::abstract_for_attachment(
+        assignments,
+        descriptor.attachment,
+        descriptor.control,
+    )
+    .and_then(StandardButton::with_abstract);
     BindingRowView {
         target,
         label: descriptor.control_label.to_string(),
+        port: nerust_input_traits::port_index_for_slot(descriptor.attachment.as_str()),
         value,
+        pad_default,
     }
 }
 
@@ -269,15 +336,16 @@ fn project_binding_sections(
     state: &EditorState,
     system_id: &dyn SystemId,
     topology: &nerust_input_traits::InputTopologyDescriptor,
+    assignments: &[(AttachmentId, Option<Rc<dyn ControllerProfile>>)],
 ) -> Vec<BindingSectionView> {
-    let i18n = I18n::resolve_os(state.draft.shared.general.language);
+    let i18n = super::state::display_i18n(state);
     keyboard_binding_sections(topology, system_id)
         .into_iter()
         .map(|section| {
             let rows: Vec<BindingRowView> = section
                 .bindings
                 .iter()
-                .map(|descriptor| project_binding_row(state, descriptor, i18n))
+                .map(|descriptor| project_binding_row(state, assignments, descriptor, i18n))
                 .collect();
             BindingSectionView {
                 label: section.attachment_label.to_string(),
@@ -298,7 +366,7 @@ fn project_view(state: &EditorState, factory: &dyn CoreFactory) -> InputTabView 
     // Build set of occupied slots (from multi-port controllers)
     let occupied = occupied_slots(&assignments);
 
-    let i18n = I18n::resolve_os(state.draft.shared.general.language);
+    let i18n = super::state::display_i18n(state);
     let slots: Vec<ControllerSlotView> = slots_descs
         .iter()
         .map(|slot_desc| project_slot_view(slot_desc, &assignments, &controllers, &occupied, i18n))
@@ -310,7 +378,7 @@ fn project_view(state: &EditorState, factory: &dyn CoreFactory) -> InputTabView 
         .get(system_id.as_ref())
         .cloned()
         .unwrap_or_else(|| Rc::new(build_topology(&assignments, slots_descs)));
-    let sections = project_binding_sections(state, system_id.as_ref(), &topology);
+    let sections = project_binding_sections(state, system_id.as_ref(), &topology, &assignments);
 
     // Build conflict messages — prefer cached result from validator
     let conflicts: Vec<InputConflictView> = state
@@ -411,6 +479,7 @@ mod tests {
             Arc::new([]),
             std::rc::Rc::new(crate::settings::NoopStoragePathValidator)
                 as std::rc::Rc<dyn crate::settings::StoragePathValidator>,
+            nerust_settings_core::model::language::AppLanguage::English,
         )
         .unwrap();
         let input_vm = &vm.inputs()[0];
@@ -495,6 +564,7 @@ mod tests {
             Arc::new([]),
             std::rc::Rc::new(crate::settings::NoopStoragePathValidator)
                 as std::rc::Rc<dyn crate::settings::StoragePathValidator>,
+            nerust_settings_core::model::language::AppLanguage::English,
         )
         .unwrap();
         let input_vm = &vm.inputs()[0];

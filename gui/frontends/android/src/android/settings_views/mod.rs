@@ -6,13 +6,18 @@
 //! returning: no resident editor crosses the JNI boundary, so the `!Send`
 //! editor never leaves its calling thread.
 //!
-//! Onion: transport lives in `wire`, projection in `projection`, edits in
-//! `commands`, capture in `capture`. Kotlin only renders sections/rows and
-//! echoes `(key, index, number)` commands back.
+//! Onion: transport lives in `wire`, projection in `projection`
+//! (+`pads`, `devices`), edits in `commands`, capture in `capture`.
+//! Kotlin only renders sections/rows and echoes `(key, index, number)`
+//! commands back.
 
 mod capture;
 mod commands;
+mod devices;
+mod keycode;
+mod pads;
 mod projection;
+mod vm;
 mod wire;
 
 // Open-payload dependencies only; submodules refer to each other through
@@ -20,21 +25,22 @@ mod wire;
 use nerust_gui_runtime::settings::SettingsSnapshot;
 use nerust_settings_core::model::language::AppLanguage;
 use projection::project_fresh;
-use wire::with_vm_deps;
+use vm::with_vm_deps;
 
 #[cfg(not(target_os = "android"))]
-use wire::{CaptureSlot, GamepadInfo, KeyboardInfo, ViewPayload, resolve_display};
+use vm::resolve_display;
+#[cfg(not(target_os = "android"))]
+use wire::{CaptureSlot, GamepadInfo, KeyboardInfo, ViewPayload};
 // Android-facing surface: the bridge, vault, and save paths name these
-// through `settings_views::`. Only the JNI build (the `android` module)
-// uses them; host tests import the submodules directly.
+// through `settings_views::`.
 #[cfg(target_os = "android")]
-pub(crate) use capture::apply_hardware_key;
-#[cfg(target_os = "android")]
-pub(crate) use commands::{apply_command_to, finish_snapshot};
-#[cfg(target_os = "android")]
-pub(crate) use wire::{
-    CaptureSlot, GamepadInfo, KeyboardInfo, ViewPayload, app_language_tag, install_vm_deps,
-    projection, resolve_display,
+pub(crate) use {
+    capture::{apply_hardware_key, apply_motion_capture},
+    commands::{CommandVault, apply_command_to, finish_snapshot},
+    keycode::{android_keycode_to_button, winit_key_to_key},
+    projection::Projection,
+    vm::{app_language_tag, install_vm_deps, resolve_display},
+    wire::{CaptureSlot, GamepadInfo, KeyboardInfo, ViewPayload, sort_gamepads_by_order},
 };
 
 #[cfg(test)]
@@ -43,20 +49,27 @@ mod tests;
 /// Open payload for Kotlin: schema version, sections, live issues from a
 /// non-fatal `finish` probe, and the pending key-capture state.
 /// `keyboards` is the vault's enumerated physical-keyboard list;
-/// `touch_capable` is `None` until Kotlin reports touch capability;
+/// `touch_capable` starts capable (vault default); Kotlin always pushes it.
 /// `system_locale` is the vault-pushed system `Locale` (`None` until pushed).
 /// Returns the payload struct: the JNI edge serializes exactly once, so the
 /// wire bytes stay identical without a parse/concat round-trip.
 pub(super) fn open_payload(
     snapshot: &SettingsSnapshot,
     keyboards: &[KeyboardInfo],
-    touch_capable: Option<bool>,
+    touch_capable: bool,
     gamepads: &[GamepadInfo],
+    pad_order: &[String],
     system_locale: Option<AppLanguage>,
 ) -> Result<ViewPayload, String> {
     with_vm_deps(|deps| {
         let i18n = resolve_display(snapshot.shared.general.language, system_locale);
-        let truth = wire::projection(keyboards, touch_capable, gamepads, i18n);
+        let truth = projection::Projection {
+            keyboards,
+            touch_capable,
+            gamepads,
+            pad_order,
+            i18n,
+        };
         let capture: CaptureSlot = None;
         project_fresh(snapshot, deps, &capture, truth)
     })

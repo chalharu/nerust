@@ -1,21 +1,11 @@
 use std::rc::Rc;
 
-use nerust_input_traits::{AttachmentId, ControllerProfile};
+use nerust_input_traits::{AttachmentId, ControllerProfile, member_is_shareable};
 
 use super::model::app_state::PortDeviceSets;
 pub use super::model::app_state::{
     BUILTIN_KEYBOARD_MEMBER, GAMEPAD_MEMBER_PREFIX, KEYBOARD_MEMBER_PREFIX,
 };
-
-/// Shareable members (keyboards) may sit in several ports at once.
-pub fn member_is_shareable(member: &str) -> bool {
-    member.starts_with(KEYBOARD_MEMBER_PREFIX)
-}
-
-/// Gamepad members: exclusive, one port at a time.
-pub fn member_is_gamepad(member: &str) -> bool {
-    member.starts_with(GAMEPAD_MEMBER_PREFIX)
-}
 
 /// Exclusive members (gamepads) appearing in more than one port.
 /// Returns one entry per offending member: (member, ports).
@@ -151,8 +141,9 @@ mod tests {
 
     #[test]
     fn keyboards_share_ports_gamepads_do_not() {
-        use super::{exclusive_member_conflicts, member_is_shareable};
+        use super::exclusive_member_conflicts;
         use crate::model::app_state::PortDeviceSets;
+        use nerust_input_traits::member_is_shareable;
         assert!(member_is_shareable("kbd:builtin"));
         assert!(member_is_shareable("kbd:05ac:024f"));
         assert!(!member_is_shareable("pad:deadbeef"));

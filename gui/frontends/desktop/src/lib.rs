@@ -24,6 +24,29 @@ use std::{
     time::Duration,
 };
 
+/// Terminal language of this machine: the OS locale, English when unknown.
+/// Edge-provided fallback for `SystemDefault` choices; the viewmodel never
+/// queries the environment. This is the desktop's edge resolution — the only
+/// OS-locale query on this frontend. Shared crates never touch the env.
+pub(crate) fn terminal_language() -> nerust_settings_core::model::language::AppLanguage {
+    use nerust_settings_core::model::language::AppLanguage;
+    sys_locale::get_locale()
+        .map(|locale| nerust_settings_core::i18n::language_from_locale_tag(&locale))
+        .unwrap_or(AppLanguage::English)
+}
+
+/// Terminal display language for a saved choice: an explicit choice always
+/// wins; `SystemDefault` follows [`terminal_language`].
+pub(crate) fn display_language(
+    choice: nerust_settings_core::model::language::AppLanguage,
+) -> nerust_settings_core::model::language::AppLanguage {
+    use nerust_settings_core::model::language::AppLanguage;
+    match choice {
+        AppLanguage::SystemDefault => terminal_language(),
+        explicit => explicit,
+    }
+}
+
 /// Window-close drain shared by panes: spin the frame-loop poll until the
 /// in-flight operation settles. The shutdown timeout bounds the wait;
 /// dropping here would leave an accepted mutation without its outcome (see
