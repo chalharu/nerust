@@ -26,6 +26,20 @@ private const val EXTRA_REQUEST_ID = "nerust.extra.REQUEST_ID"
 private const val EXTRA_PAYLOAD = "nerust.extra.PAYLOAD"
 private const val EXTRA_ORIENTATION = "nerust.extra.ORIENTATION"
 
+/** Hardware keys that never start a capture: they belong to the platform
+ * even while a row waits (capturing volume would swallow the press
+ * without changing volume). `KeyEvent.isSystemKey` is not public API,
+ * so the set names them explicitly. */
+private val UNCAPTUREABLE_SYSTEM_KEYS =
+    setOf(
+        KeyEvent.KEYCODE_VOLUME_UP,
+        KeyEvent.KEYCODE_VOLUME_DOWN,
+        KeyEvent.KEYCODE_VOLUME_MUTE,
+        KeyEvent.KEYCODE_POWER,
+        KeyEvent.KEYCODE_SLEEP,
+        KeyEvent.KEYCODE_WAKEUP,
+    )
+
 /** Standalone settings screen. MainActivity pushes one versioned payload per
  * open (see `request_show_settings_dialog`); edits ride synchronous per-row
  * commands against the Rust vault draft, save/dismiss return request-scoped
@@ -270,9 +284,9 @@ class SettingsActivity :
         if (controller && !capturing) {
             return super.dispatchKeyEvent(event)
         }
-        // System keys (volume, power, Back) never start a capture: they
-        // belong to the platform even while a row waits.
-        if (capturing && KeyEvent.isSystemKey(event.keyCode)) {
+        // Volume/power keys never start a capture: they belong to the
+        // platform even while a row waits.
+        if (capturing && event.keyCode in UNCAPTUREABLE_SYSTEM_KEYS) {
             return super.dispatchKeyEvent(event)
         }
         // Descriptor identity: the live id is recycled on reconnect, so
