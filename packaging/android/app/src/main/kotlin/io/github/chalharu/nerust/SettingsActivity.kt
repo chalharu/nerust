@@ -43,6 +43,8 @@ private val UNCAPTUREABLE_SYSTEM_KEYS =
         KeyEvent.KEYCODE_CAMERA,
         KeyEvent.KEYCODE_SEARCH,
         KeyEvent.KEYCODE_EXPLORER,
+        KeyEvent.KEYCODE_APP_SWITCH,
+        KeyEvent.KEYCODE_ASSIST,
     )
 
 /** Standalone settings screen. MainActivity pushes one versioned payload per

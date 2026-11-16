@@ -19,8 +19,8 @@ use super::pads::build_pad_sections;
 use super::vm::{VmDeps, build_vm};
 use super::wire::{
     CaptureSlot, CaptureWire, GamepadInfo, KeyboardInfo, PLAYER_PORTS, RowWire, SectionWire,
-    ViewPayload, binding_key, button_row, capture_row, choice_row, draft_issues, encode_target,
-    group_row, header_row, info_row, number_row, player_id, player_label, toggle_row,
+    ViewPayload, binding_key, button_row, capture_row, choice_row, encode_target, group_row,
+    header_row, info_row, number_row, player_id, player_label, toggle_row,
 };
 use crate::bridge_contract::SETTINGS_SCHEMA_VERSION;
 use nerust_settings_core::i18n::I18n;
@@ -38,6 +38,22 @@ pub(crate) struct Projection<'a> {
     /// with the session. Screens iterate ranks, never live positions.
     pub pad_order: &'a [String],
     pub i18n: I18n,
+}
+
+/// Non-fatal validation probe: the same gate `finish` enforces at save,
+/// surfaced live so the UI can explain disabled/unappliable states.
+/// Text resolves in the display language; the view model only carries kinds.
+/// Owned here (sole caller is `project_payload` below), so transport stays
+/// free of the view-model dependency.
+pub(super) fn draft_issues(vm: &SettingsViewModel, i18n: I18n) -> Vec<String> {
+    match vm.finish() {
+        Ok(_) => Vec::new(),
+        Err(state) => state
+            .issues
+            .iter()
+            .map(|issue| issue.message(i18n.language()))
+            .collect(),
+    }
 }
 
 /// Assemble the wire payload from an already-built view model: sections,

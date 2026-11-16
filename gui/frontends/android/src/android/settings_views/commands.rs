@@ -28,10 +28,45 @@ use super::vm::{
 };
 use super::wire::{
     CaptureSlot, GamepadInfo, KeyboardInfo, PLAYER_PORTS, RowKind, RowWire, SectionWire,
-    ViewPayload, WireCommand, WireOp, WireTarget, capture_open, choice, find_row, range_value,
-    sort_gamepads_by_order, toggle_value,
+    ViewPayload, WireCommand, WireOp, WireTarget, capture_open, sort_gamepads_by_order,
 };
 use nerust_settings_core::i18n::I18n;
+
+/// Command-decode helpers: choice index, toggle index, numeric range, and
+/// row lookup. Owned here (sole consumer is the command dispatcher below),
+/// so transport stays free of command policy.
+fn choice<T: serde::de::DeserializeOwned>(row: &RowWire, index: usize) -> Result<T, String> {
+    row.choices
+        .get(index)
+        .ok_or_else(|| format!("{}: choice index {index} out of range", row.key))
+        .and_then(|choice| {
+            serde_json::from_value(choice.value.clone())
+                .map_err(|error| format!("{}: invalid choice value: {error}", row.key))
+        })
+}
+
+fn toggle_value(row: &RowWire, index: usize) -> Result<bool, String> {
+    match index {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(format!("{}: toggle index {index} out of range", row.key)),
+    }
+}
+
+fn range_value<T>(key: &str, number: i64) -> Result<T, String>
+where
+    T: TryFrom<i64>,
+{
+    T::try_from(number).map_err(|_| format!("{key}: value {number} out of range"))
+}
+
+fn find_row<'a>(sections: &'a [SectionWire], key: &str) -> Result<&'a RowWire, String> {
+    sections
+        .iter()
+        .flat_map(|section| &section.rows)
+        .find(|row| !row.key.is_empty() && row.key == key)
+        .ok_or_else(|| format!("unknown settings key: {key}"))
+}
 
 /// Apply one wire command to the draft snapshot in place, returning the
 /// refreshed payload. Stateless per call except for the passed draft,

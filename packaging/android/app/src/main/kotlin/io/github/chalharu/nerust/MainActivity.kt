@@ -448,14 +448,14 @@ class MainActivity :
     private fun updateControllerAxes(deviceId: Int, event: MotionEvent): Map<String, Float>? {
         val axes = controllerAxes.getOrPut(deviceId) { mutableMapOf() }
         // Digital-trigger mirror owns the trigger slots on axis-less pads:
-        // sampling the absent axes here would read 0 and emit a spurious
-        // release while the mirrored press is held.
-        val mirrorTriggers = hasTriggerAxes[deviceId] == false
+        // sampling an absent axis here would read 0 and emit a spurious
+        // release while the mirrored press is held. Per-axis: skip only
+        // the side whose range is absent.
+        val present = hasTriggerAxes[deviceId]
         var crossed: MutableMap<String, Float>? = null
         for ((axis, id) in MOTION_AXES) {
-            if (mirrorTriggers &&
-                (axis == ControllerAxis.TRIGGER_L || axis == ControllerAxis.TRIGGER_R)
-            ) continue
+            if (axis == ControllerAxis.TRIGGER_L && present?.first == false) continue
+            if (axis == ControllerAxis.TRIGGER_R && present?.second == false) continue
             val value = rightStickSample(event, deviceId, axis, id)
             val last = axes[axis]
             if (last != null && kotlin.math.abs(value - last) < CONTROLLER_AXIS_EPSILON) continue
