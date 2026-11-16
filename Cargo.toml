@@ -15,7 +15,6 @@ members = [
   "console/gbc/factory",
   "console/gbc/settings",
   "console/input",
-  "console/nes/controller",
   "console/nes/core",
   "console/nes/device",
   "console/nes/factory",

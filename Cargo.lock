@@ -3348,14 +3348,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nerust_nes_controller"
-version = "0.1.0-dev"
-dependencies = [
- "nerust_core_traits",
- "nerust_input_traits",
-]
-
-[[package]]
 name = "nerust_nes_core"
 version = "0.1.0-dev"
 dependencies = [
