@@ -60,7 +60,8 @@ android {
         getByName("release") {
             isMinifyEnabled = true
             isShrinkResources = true
-            resConfigs("en", "ja")
+            // No resConfigs: the APK ships exactly en/ja (values/values-ja),
+            // so locale stripping buys nothing; minify+shrink carry the diet.
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

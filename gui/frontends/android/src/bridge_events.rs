@@ -308,18 +308,17 @@ fn check_menu_shape(action: &str, event: &MenuEvent) -> Option<()> {
         log::warn!("ignoring {action} bridge event with unknown key: {key}");
         return None;
     }
-    // Axis bounds only on the motion path: every other action would pay
-    // a six-pair walk that can never fail it.
-    if action == ACTION_MOTION {
-        for (axis, value) in event
-            .motion_axes()
-            .iter()
-            .filter_map(|(name, value)| value.map(|value| (*name, value)))
-        {
-            if !(ANALOG_VALUE_BOUNDS.0..=ANALOG_VALUE_BOUNDS.1).contains(&value) {
-                log::warn!("ignoring {action} bridge event with out-of-range {axis:?}={value}");
-                return None;
-            }
+    // Axis bounds on every action: the schema validates each present
+    // field on its own rule, so an out-of-range axis fails here instead
+    // of riding along silently on an unrelated action.
+    for (axis, value) in event
+        .motion_axes()
+        .iter()
+        .filter_map(|(name, value)| value.map(|value| (*name, value)))
+    {
+        if !(ANALOG_VALUE_BOUNDS.0..=ANALOG_VALUE_BOUNDS.1).contains(&value) {
+            log::warn!("ignoring {action} bridge event with out-of-range {axis:?}={value}");
+            return None;
         }
     }
     Some(())
