@@ -11,7 +11,7 @@
     <string name="settings_ok">OK</string>
     <string name="settings_on">On</string>
     <string name="settings_off">Off</string>
-    <string name="settings_update_retry">Please try again. If it keeps happening, reopen settings.</string>
+    <string name="settings_update_retry">Try again.</string>
     <string name="settings_discard_title">Discard changes?</string>
     <string name="settings_discard_message">Unsaved settings will be lost.</string>
     <string name="settings_discard_confirm">Discard</string>
@@ -35,8 +35,8 @@
     <string name="drawer_settings">Settings</string>
     <string name="drawer_pause">Pause</string>
     <string name="drawer_resume">Resume</string>
-    <string name="drawer_save_state">Save State</string>
-    <string name="drawer_load_state">Load State</string>
+    <string name="drawer_save_state">Save</string>
+    <string name="drawer_load_state">Load</string>
     <string name="drawer_slots">Slots</string>
     <string name="slot_title">Slot %1$d</string>
     <string name="slot_empty">Empty</string>

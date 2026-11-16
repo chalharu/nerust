@@ -5,7 +5,7 @@ use nerust_input_traits::{AttachmentId, ControllerProfile, SlotInfo, StandardBut
 use nerust_settings_core::{
     bindings::descriptors::KeyboardBindingDescriptor,
     bindings::{conflicting_keys, descriptors::keyboard_binding_sections},
-    editor::{CaptureTarget, current_binding_label, current_pad_binding, current_pad_game_binding},
+    editor::{CaptureTarget, current_binding_key, current_pad_binding, current_pad_game_binding},
     i18n::{I18n, UiText},
     input::clear_multi_port_conflicts,
 };
@@ -217,7 +217,10 @@ pub(super) fn binding_value(
         // Game rows never carry pads (`current_pad_binding` is `None`
         // for them by construction).
         let pad = current_pad_binding(&state.draft, target);
-        match (current_binding_label(&state.draft, target), pad) {
+        match (
+            current_binding_key(&state.draft, target).map(|key| key.label()),
+            pad,
+        ) {
             (Some(key), Some(pad)) => BindingValueView::Bound(format!(
                 "{key} / {}",
                 nerust_settings_core::labels::pad_button_label(i18n, pad)

@@ -414,11 +414,14 @@ class MainActivity :
         for ((axis, id) in MOTION_AXES) {
             var value = event.getAxisValue(id)
             // Right-stick alias: pads reporting RX/RY never ship Z/RZ, so
-            // fall back per sample. The capability gate already counts both.
-            if ((axis == ControllerAxis.RIGHT_X || axis == ControllerAxis.RIGHT_Y) && value == 0f) {
-                val alias =
-                    if (axis == ControllerAxis.RIGHT_X) MotionEvent.AXIS_RX else MotionEvent.AXIS_RY
-                value = event.getAxisValue(alias)
+            // fall back when the primary range is absent (never on value:
+            // calibration noise would disable a real axis or shadow it).
+            if (axis == ControllerAxis.RIGHT_X || axis == ControllerAxis.RIGHT_Y) {
+                if (event.device?.getMotionRange(id) == null) {
+                    val alias =
+                        if (axis == ControllerAxis.RIGHT_X) MotionEvent.AXIS_RX else MotionEvent.AXIS_RY
+                    value = event.getAxisValue(alias)
+                }
             }
             val last = axes[axis]
             if (last != null && kotlin.math.abs(value - last) < CONTROLLER_AXIS_EPSILON) continue
@@ -621,7 +624,11 @@ class MainActivity :
     @SuppressLint("GestureBackNavigation")
     @Suppress("DEPRECATION")
     override fun onBackPressed() {
-        handleBackNavigation()
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) {
+            handleBackNavigation()
+        } else {
+            super.onBackPressed()
+        }
     }
 
     @Suppress("DEPRECATION")

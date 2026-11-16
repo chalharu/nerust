@@ -79,7 +79,7 @@ fn pad_rank_section(
     // this pad can never drive, and edits there land overrides
     // that gameplay parks, so they only mislead.
     let slot = port.and_then(|pad| pad.slot);
-    let name = live_name.unwrap_or_else(|| pad_label(i18n.language(), rank));
+    let name = live_name.unwrap_or_else(|| pad_label(i18n, rank));
     // Assignment readout: the player this pad drives plus the pad's
     // own name. No drill-down: the Devices gear is the single path
     // into pad screens, so the graph stays a tree and the Kotlin

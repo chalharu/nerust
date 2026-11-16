@@ -301,7 +301,7 @@ fn validate_factory_settings(
             scope: super::ValidationScope::Input(sid.clone_box()),
             kind: super::ValidationIssueKind::KeyConflict {
                 key: key.label().to_string(),
-                labels: labels.join(", "),
+                labels: labels.clone(),
             },
         });
     }
@@ -342,7 +342,7 @@ fn validate_pad_shortcuts(state: &super::EditorState, issues: &mut Vec<super::Va
             scope: super::ValidationScope::Controllers,
             kind: super::ValidationIssueKind::PadConflict {
                 button,
-                labels: names.join(", "),
+                labels: names.iter().map(|s| s.to_string()).collect(),
             },
         });
     }
@@ -369,7 +369,7 @@ fn validate_pad_game_bindings(
                     scope: super::ValidationScope::Controllers,
                     kind: super::ValidationIssueKind::PadConflict {
                         button,
-                        labels: format!("{}: {}", system, names.join(", ")),
+                        labels: vec![format!("{}: {}", system, names.join(", "))],
                     },
                 });
             }

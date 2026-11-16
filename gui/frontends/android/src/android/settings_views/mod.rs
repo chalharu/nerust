@@ -38,10 +38,9 @@ pub(crate) use {
     capture::{apply_hardware_key, apply_motion_capture},
     commands::{CommandVault, apply_command_to, finish_snapshot},
     keycode::{android_keycode_to_button, winit_key_to_key},
+    vm::Projection,
     vm::{app_language_tag, install_vm_deps, resolve_display},
-    wire::{
-        CaptureSlot, GamepadInfo, KeyboardInfo, Projection, ViewPayload, sort_gamepads_by_order,
-    },
+    wire::{CaptureSlot, GamepadInfo, KeyboardInfo, ViewPayload, sort_gamepads_by_order},
 };
 
 #[cfg(test)]
@@ -64,7 +63,7 @@ pub(super) fn open_payload(
 ) -> Result<ViewPayload, String> {
     with_vm_deps(|deps| {
         let i18n = resolve_display(snapshot.shared.general.language, system_locale);
-        let truth = wire::Projection {
+        let truth = vm::Projection {
             keyboards,
             touch_capable,
             gamepads,

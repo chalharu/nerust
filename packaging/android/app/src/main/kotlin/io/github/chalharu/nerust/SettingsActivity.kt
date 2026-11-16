@@ -69,6 +69,7 @@ class SettingsActivity :
         requestId = intent.getLongExtra(EXTRA_REQUEST_ID, -1L)
         if (intent.getIntExtra(EXTRA_SCHEMA_VERSION, -1) != SETTINGS_SCHEMA_VERSION) {
             Log.e(TAG, "SettingsActivity: unsupported schemaVersion")
+            sendResult(dismissed = true)
             finish()
             return
         }
@@ -79,6 +80,7 @@ class SettingsActivity :
                 JSONObject(rawPayload).getJSONObject("payload")
             } catch (e: Exception) {
                 Log.e(TAG, "SettingsActivity: malformed payload", e)
+                sendResult(dismissed = true)
                 finish()
                 return
             }
@@ -87,6 +89,7 @@ class SettingsActivity :
                 parseSettingsSections(payload)
             } catch (e: JSONException) {
                 Log.e(TAG, "SettingsActivity: malformed sections", e)
+                sendResult(dismissed = true)
                 finish()
                 return
             }
@@ -166,6 +169,14 @@ class SettingsActivity :
     override fun onPause() {
         (getSystemService(INPUT_SERVICE) as InputManager).unregisterInputDeviceListener(this)
         super.onPause()
+    }
+
+    override fun onDestroy() {
+        try {
+            (getSystemService(INPUT_SERVICE) as InputManager).unregisterInputDeviceListener(this)
+        } catch (_: Exception) {
+        }
+        super.onDestroy()
     }
 
     override fun onInputDeviceAdded(deviceId: Int) = pushDeviceTruth()

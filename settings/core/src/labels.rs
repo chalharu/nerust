@@ -14,7 +14,7 @@ use crate::{
 /// Plain cap print for one pad button: the single home for the
 /// position-to-glyph table. Positions are the binding identity
 /// (vendors transpose caps); this table only names what is printed.
-pub fn pad_button_plain(button: StandardButton) -> &'static str {
+fn pad_button_plain(button: StandardButton) -> &'static str {
     match button {
         StandardButton::South => "A",
         StandardButton::East => "B",
@@ -65,9 +65,9 @@ pub fn port_summary(i18n: I18n, names: &[String]) -> String {
 
 /// Connection-order pad label (`Gamepad 1` / `ゲームパッド 1`). The number
 /// is connection order, never the player slot, in both languages.
-pub fn pad_label(language: AppLanguage, index: usize) -> String {
+pub fn pad_label(i18n: I18n, index: usize) -> String {
     let pad = index + 1;
-    match language {
+    match i18n.language() {
         AppLanguage::Japanese => format!("ゲームパッド {pad}"),
         _ => format!("Gamepad {pad}"),
     }

@@ -1,5 +1,3 @@
-use std::fmt;
-
 use nerust_core_traits::identity::SystemId;
 use nerust_input_traits::{AttachmentId, StandardButton};
 use nerust_settings_core::editor::CaptureTarget;
@@ -17,12 +15,6 @@ pub struct ChoiceView<T: Clone + PartialEq + Eq> {
     pub label: String,
 }
 
-impl<T: Clone + Eq> fmt::Display for ChoiceView<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.label)
-    }
-}
-
 /// Index of `value` in a shared choice list. Viewmodel order is the
 /// contract; frontends must not re-derive it per toolkit.
 pub fn choice_position<T: Clone + PartialEq + Eq>(
@@ -35,28 +27,9 @@ pub fn choice_position<T: Clone + PartialEq + Eq>(
         .map(|index| index as u32)
 }
 
-/// Owned lookup of the selected choice. Same predicate as
-/// `choice_position`; tao pick-lists and gtk combos share it so
-/// profile-id matching cannot drift per toolkit.
-pub fn find_choice<T: Clone + PartialEq + Eq>(
-    choices: &[ChoiceView<T>],
-    value: &T,
-) -> Option<ChoiceView<T>> {
-    choices.iter().find(|c| &c.value == value).cloned()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn choice_view_display_shows_label() {
-        let c = ChoiceView {
-            value: 42usize,
-            label: "Answer".into(),
-        };
-        assert_eq!(c.to_string(), "Answer");
-    }
 
     #[test]
     fn choice_lookup_shares_index_and_value() {
@@ -73,10 +46,9 @@ mod tests {
         assert_eq!(choice_position(&choices, &2), Some(1));
         assert_eq!(choice_position(&choices, &9), None);
         assert_eq!(
-            find_choice(&choices, &2).map(|c| c.label),
+            choice_position(&choices, &2).map(|i| choices[i as usize].label.clone()),
             Some("Two".into())
         );
-        assert_eq!(find_choice(&choices, &9), None);
     }
 }
 

@@ -117,7 +117,7 @@ fn project_view(state: &super::EditorState) -> GamepadTabView {
                 let port = &gamepad.pad_ports[index];
                 PadPortView {
                     index,
-                    label: pad_label(i18n.language(), index),
+                    label: pad_label(i18n, index),
                     port: port.slot,
                     choices: port_choices.clone(),
                     deadzone: port.deadzone_percent,

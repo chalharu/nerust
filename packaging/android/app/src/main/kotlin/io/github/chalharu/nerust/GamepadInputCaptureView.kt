@@ -36,8 +36,8 @@ internal class GamepadInputCaptureView(
         // (each window has its own), so run the same stack here. UP keeps
         // the standard click shape; DOWN falls through to the gate below
         // and dies unhandled like any other unconsumed key.
-        if (event.keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) {
-            activity.handleBackNavigation()
+        if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+            if (event.action == KeyEvent.ACTION_UP) activity.handleBackNavigation()
             return true
         }
         return activity.dispatchKeyEvent(event)

@@ -14,8 +14,8 @@ use nerust_settings_core::{editor::CaptureTarget, i18n::UiText};
 
 use super::keycode::android_keycode_to_key;
 use super::projection::project_fresh;
-use super::vm::{VmDeps, build_vm, sync_snapshot_from_vm, with_vm_deps};
-use super::wire::{CaptureSlot, Projection, ViewPayload, rank_for_member};
+use super::vm::{Projection, VmDeps, build_vm, sync_snapshot_from_vm, with_vm_deps};
+use super::wire::{CaptureSlot, ViewPayload, rank_for_member};
 
 fn android_keycode_to_pad(keycode: i32) -> Option<StandardButton> {
     u32::try_from(keycode)

@@ -16,12 +16,12 @@ use nerust_settings_core::{
 
 use super::devices::{build_keys_sections, build_player_sections};
 use super::pads::build_pad_sections;
-use super::vm::{VmDeps, build_vm};
+use super::vm::{Projection, VmDeps, build_vm};
 use super::wire::{
-    CaptureSlot, CaptureWire, GamepadInfo, I18n, KeyboardInfo, NumberParams, PLAYER_PORTS,
-    Projection, RowWire, SectionWire, ViewPayload, binding_key, button_row, capture_row,
-    choice_row, draft_issues, encode_target, group_row, header_row, info_row, number_row,
-    player_id, player_label, toggle_row,
+    CaptureSlot, CaptureWire, GamepadInfo, I18n, KeyboardInfo, NumberParams, PLAYER_PORTS, RowWire,
+    SectionWire, ViewPayload, binding_key, button_row, capture_row, choice_row, draft_issues,
+    encode_target, group_row, header_row, info_row, number_row, player_id, player_label,
+    toggle_row,
 };
 use crate::bridge_contract::SETTINGS_SCHEMA_VERSION;
 

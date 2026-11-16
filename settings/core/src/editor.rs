@@ -1,6 +1,7 @@
 use crate::model::{
     input::{
         KeyboardBinding, PadBinding, PersistedAttachmentId, PersistedControlId, ShortcutAction,
+        ShortcutBinding,
     },
     snapshot::SettingsSnapshot,
 };
@@ -68,96 +69,101 @@ impl CaptureTarget {
     }
 }
 
-/// One lookup for all capture columns: `(key, shortcut pad, pad override)`.
-fn binding_cols(
+fn binding_key_for(
     snapshot: &SettingsSnapshot,
-    target: &CaptureTarget,
-) -> (Option<Key>, Option<StandardButton>, Option<StandardButton>) {
+    system: &dyn nerust_core_traits::identity::SystemId,
+    attachment: &str,
+    control: &str,
+) -> Option<Key> {
+    snapshot
+        .shared
+        .input
+        .systems
+        .get(system)
+        .and_then(|systems| systems.implicit_keyboard_profile())
+        .and_then(|profile| {
+            profile.bindings.iter().find(|binding| {
+                binding.attachment.as_str() == attachment
+                    && matches!(&binding.control, PersistedControlId::Digital(id) if id == control)
+            })
+        })
+        .map(|binding| binding.key)
+}
+
+fn pad_game_button_for(
+    snapshot: &SettingsSnapshot,
+    system: &dyn nerust_core_traits::identity::SystemId,
+    pad: usize,
+    attachment: &str,
+    control: &str,
+) -> Option<StandardButton> {
+    snapshot
+        .shared
+        .input
+        .systems
+        .get(system)
+        .and_then(|systems| systems.pad_bindings.get(pad))
+        .and_then(|bindings| {
+            bindings.iter().find(|binding| {
+                binding.attachment.as_str() == attachment
+                    && matches!(&binding.control, PersistedControlId::Digital(id) if id == control)
+            })
+        })
+        .map(|binding| binding.button)
+}
+
+fn shortcut_row_for<'a>(
+    snapshot: &'a SettingsSnapshot,
+    action: &ShortcutAction,
+) -> Option<&'a ShortcutBinding> {
+    snapshot
+        .shared
+        .input
+        .shortcuts
+        .keyboard
+        .iter()
+        .find(|binding| &binding.action == action)
+}
+
+pub fn current_binding_key(snapshot: &SettingsSnapshot, target: &CaptureTarget) -> Option<Key> {
     match target {
         CaptureTarget::Binding {
             system,
             attachment,
             control,
-        } => {
-            let key = snapshot
-                .shared
-                .input
-                .systems
-                .get(system)
-                .and_then(|systems| systems.implicit_keyboard_profile())
-                .and_then(|profile| {
-                    profile
-                        .bindings
-                        .iter()
-                        .find(|binding| {
-                            binding.attachment.as_str() == attachment
-                                && matches!(&binding.control, PersistedControlId::Digital(id) if id == control)
-                        })
-                })
-                .map(|binding| binding.key);
-            (key, None, None)
-        }
-        CaptureTarget::PadBinding {
-            system,
-            pad,
-            attachment,
-            control,
-        } => {
-            let button = snapshot
-                .shared
-                .input
-                .systems
-                .get(system)
-                .and_then(|systems| systems.pad_bindings.get(*pad))
-                .and_then(|bindings| {
-                    bindings.iter().find(|binding| {
-                        binding.attachment.as_str() == attachment
-                            && matches!(&binding.control, PersistedControlId::Digital(id) if id == control)
-                    })
-                })
-                .map(|binding| binding.button);
-            (None, None, button)
-        }
+        } => binding_key_for(snapshot, system.as_ref(), attachment, control),
         CaptureTarget::Shortcut(action) => {
-            let row = snapshot
-                .shared
-                .input
-                .shortcuts
-                .keyboard
-                .iter()
-                .find(|binding| &binding.action == action);
-            (
-                row.and_then(|binding| binding.key),
-                row.and_then(|binding| binding.pad),
-                None,
-            )
+            shortcut_row_for(snapshot, action).and_then(|row| row.key)
         }
+        CaptureTarget::PadBinding { .. } => None,
     }
-}
-
-pub fn current_binding_key(snapshot: &SettingsSnapshot, target: &CaptureTarget) -> Option<Key> {
-    binding_cols(snapshot, target).0
-}
-
-pub fn current_binding_label(
-    snapshot: &SettingsSnapshot,
-    target: &CaptureTarget,
-) -> Option<&'static str> {
-    current_binding_key(snapshot, target).map(|key| key.label())
 }
 
 pub fn current_pad_binding(
     snapshot: &SettingsSnapshot,
     target: &CaptureTarget,
 ) -> Option<StandardButton> {
-    binding_cols(snapshot, target).1
+    match target {
+        CaptureTarget::Shortcut(action) => {
+            shortcut_row_for(snapshot, action).and_then(|row| row.pad)
+        }
+        _ => None,
+    }
 }
 
 pub fn current_pad_game_binding(
     snapshot: &SettingsSnapshot,
     target: &CaptureTarget,
 ) -> Option<StandardButton> {
-    binding_cols(snapshot, target).2
+    match target {
+        CaptureTarget::PadBinding {
+            system,
+            pad,
+            attachment,
+            control,
+        } => pad_game_button_for(snapshot, system.as_ref(), *pad, attachment, control),
+        _ => None,
+    }
 }
 
 pub fn apply_capture_target(
@@ -467,7 +473,7 @@ mod tests {
             attachment: "test.att".into(),
             control: "test.ctrl".into(),
         };
-        let label = current_binding_label(&snapshot, &target);
+        let label = current_binding_key(&snapshot, &target).map(|key| key.label());
         assert_eq!(label, Some("Z"));
     }
 

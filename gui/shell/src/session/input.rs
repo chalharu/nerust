@@ -9,17 +9,6 @@ use nerust_settings_core::model::input::{
 
 use crate::session::{KeyboardShortcut, SessionHandle, field_press::FieldSource};
 
-/// Routing context for one axis sample: order index, assigned slot, and the
-/// precomputed policy flags. Bundled so the per-event path stays under the
-/// argument cap without re-walking the order table.
-#[derive(Clone, Copy)]
-struct SubstituteCtx {
-    index: Option<usize>,
-    slot: Option<usize>,
-    trigger_alias: bool,
-    sticks_as_dpad: [bool; 2],
-}
-
 impl SessionHandle {
     pub fn touch_overlay_model(&self, revision: u64) -> TouchOverlayModel {
         build_touch_overlay(revision, &self.input.current_assignments)
@@ -130,9 +119,9 @@ impl SessionHandle {
     /// The router builds every pad source here, never from raw ids, so a
     /// reconnected pad (reused id) keeps its order index and slot. No
     /// allocation: both namespaces are `Copy` GUIDs.
-    pub fn pad_source_for(&mut self, device_id: i32) -> SourceId {
-        // Virtual ids never consume order slots: a ghost entry would
-        // squat a pad index and shut out a real pad past the table.
+    pub fn pad_source_for(&self, device_id: i32) -> SourceId {
+        // Unknown ids park: the transient key never enters `order`, so a
+        // pre-connect key cannot consume a pad index.
         if device_id < 0 {
             return SourceId::Pad(super::PadTopology::guid_for_transient(device_id));
         }
@@ -143,7 +132,6 @@ impl SessionHandle {
             .get(&device_id)
             .copied()
             .unwrap_or_else(|| super::PadTopology::guid_for_transient(device_id));
-        self.input.pads.pad_index_for_guid(guid);
         SourceId::Pad(guid)
     }
 
@@ -159,19 +147,13 @@ impl SessionHandle {
     /// parked pad and let one player drive another. Skips transients by
     /// rank (see `pad_index`): a pre-connect key never steals pad 0.
     pub fn primary_pad_source(&self) -> Option<SourceId> {
-        let ports = &self.settings.snapshot.shared.input.gamepad.pad_ports;
-        let mut rank = 0;
-        for guid in &self.input.pads.order {
-            if super::PadTopology::is_transient(guid) {
-                continue;
-            }
-            let source = SourceId::Pad(*guid);
-            if self.input.slot_for_index(rank, ports).is_some() {
-                return Some(source);
-            }
-            rank += 1;
-        }
-        None
+        self.input
+            .pads
+            .order
+            .iter()
+            .enumerate()
+            .find(|(index, _)| self.input.slot_for_index(*index).is_some())
+            .map(|(_, guid)| SourceId::Pad(*guid))
     }
 
     /// Connect-time device registration: descriptor to order index.
@@ -189,37 +171,10 @@ impl SessionHandle {
         }
         let guid = super::PadTopology::guid_for_descriptor(descriptor);
         self.input.pads.device_ids.insert(device_id, guid);
-        let transient = super::PadTopology::guid_for_transient(device_id);
-        if transient == guid {
-            return;
-        }
-        let old = SourceId::Pad(transient);
-        let new = SourceId::Pad(guid);
-        if let Some(pos) = self
-            .input
-            .pads
-            .order
-            .iter()
-            .position(|known| *known == transient)
-        {
-            if self.input.pads.order.contains(&guid) {
-                // An existing descriptor never moves: drop the placeholder.
-                // The mirror never stored transients, so nothing drops there.
-                self.input.pads.order.remove(pos);
-            } else {
-                // Collapse in place, but mirror by setting rank: stray
-                // transients ahead of `pos` never shift the vault list.
-                let rank = self.input.pads.setting_rank(pos);
-                self.input.pads.order[pos] = guid;
-                self.input.pads.upsert_descriptor(Some(rank), descriptor);
-            }
-            self.input.pads.rebuild_index();
-            self.migrate_pad_source(old, new);
-        } else if !self.input.pads.order.contains(&guid) {
-            self.input.pads.order.push(guid);
-            self.input.pads.upsert_descriptor(None, descriptor);
-            self.input.pads.rebuild_index();
-        }
+        self.input.pads.register_guid(guid);
+        self.input.pads.upsert_descriptor(descriptor);
+        let old = SourceId::Pad(super::PadTopology::guid_for_transient(device_id));
+        self.migrate_source_entries(old, SourceId::Pad(guid));
     }
 
     /// Session-order descriptors for the settings vault: `descriptors[i]`
@@ -227,17 +182,6 @@ impl SessionHandle {
     /// this, so rows, radios, and capture targets name session indices.
     pub fn pad_descriptors(&self) -> &[String] {
         &self.input.pads.descriptor_order
-    }
-
-    /// Rewrite holders keyed by a collapsed transient source to the
-    /// descriptor source: pressed buttons, stored analogs, and
-    /// stick-derived dpad. Without this, holds from before the connect
-    /// event strand on a dead key until the next focus-loss clear.
-    fn migrate_pad_source(&mut self, old: SourceId, new: SourceId) {
-        if old == new {
-            return;
-        }
-        self.migrate_source_entries(old, new);
     }
 
     /// Move every entry keyed by `old` source to `new`: one drain per
@@ -258,18 +202,13 @@ impl SessionHandle {
             .map(|((_, axis), value)| ((new, axis), value))
             .collect();
         self.input.analogs.extend(stored);
-        // `axis_dpad` keys are triples; same drain, different shape.
-        let derived: Vec<(GamepadAxis, StandardButton)> = self
+        let derived: Vec<((SourceId, GamepadAxis), StandardButton)> = self
             .input
             .axis_dpad
-            .extract_if(|(source, _, _)| *source == old)
-            .map(|(_, axis, button)| (axis, button))
+            .extract_if(|(source, _), _| *source == old)
+            .map(|((_, axis), button)| ((new, axis), button))
             .collect();
-        self.input.axis_dpad.extend(
-            derived
-                .into_iter()
-                .map(|(axis, button)| (new, axis, button)),
-        );
+        self.input.axis_dpad.extend(derived);
     }
 
     /// Disconnect-time cleanup: release the pad's holders event-fully
@@ -285,13 +224,12 @@ impl SessionHandle {
             return;
         };
         let source = SourceId::Pad(guid);
-        let held: Vec<SourceButtonId> = self
+        let held: Vec<(SourceId, SourceButtonId)> = self
             .input
             .pressed
             .extract_if(|(held_source, _)| *held_source == source)
-            .map(|(_, button)| button)
             .collect();
-        for button in held {
+        for (_, button) in held {
             if let SourceButtonId::Pad(std_button) = button {
                 let index = self.input.pads.pad_index(source);
                 // A disconnect releases like any other release: clear a
@@ -313,13 +251,12 @@ impl SessionHandle {
         self.input
             .analogs
             .retain(|(held_source, _), _| *held_source != source);
-        let derived: Vec<(GamepadAxis, StandardButton)> = self
+        let derived: Vec<((SourceId, GamepadAxis), StandardButton)> = self
             .input
             .axis_dpad
-            .extract_if(|(held_source, _, _)| *held_source == source)
-            .map(|(_, axis, button)| (axis, button))
+            .extract_if(|(held_source, _), _| *held_source == source)
             .collect();
-        for (axis, button) in derived {
+        for ((_, axis), button) in derived {
             let index = self.input.pads.pad_index(source);
             self.commit_holder(FieldSource::Axis(source, axis), button, index, None, false);
         }
@@ -375,9 +312,15 @@ impl SessionHandle {
                 // One order-index lookup per event: commit and the
                 // shortcut gate share it instead of scanning twice.
                 let index = self.input.pads.pad_index(source);
-                let slot = index.and_then(|i| self.slot_for_pad_index(i));
+                let slot = index.and_then(|i| self.input.slot_for_index(i));
                 if changed {
-                    self.commit_pad_press(source, std_button, pressed, index, slot);
+                    self.commit_holder(
+                        FieldSource::Pad(source, std_button),
+                        std_button,
+                        index,
+                        slot,
+                        pressed,
+                    );
                 }
                 // The slot gates firing only: releases clear through the
                 // static map so unassigning mid-hold cannot strand an
@@ -405,35 +348,6 @@ impl SessionHandle {
     /// through the arms above, so one physical press never toggles twice.
     fn fire_shortcut(&mut self, action: ShortcutAction) -> bool {
         self.input.shortcut_held.insert(action)
-    }
-
-    /// Pad press tail: position button to the pad's assigned console
-    /// control. Off-port pads never reach here (the slot gate parks them).
-    fn commit_pad_press(
-        &mut self,
-        source: SourceId,
-        button: StandardButton,
-        pressed: bool,
-        index: Option<usize>,
-        slot: Option<usize>,
-    ) {
-        self.commit_holder(
-            FieldSource::Pad(source, button),
-            button,
-            index,
-            slot,
-            pressed,
-        );
-    }
-
-    /// Assigned player slot for one pad order index. `None` parks the pad.
-    /// Shares the gate with `pad_slot_for`; the index form lets hot paths
-    /// scan `pad_order` once per event.
-    fn slot_for_pad_index(&self, index: usize) -> Option<usize> {
-        self.input.slot_for_index(
-            index,
-            &self.settings.snapshot.shared.input.gamepad.pad_ports,
-        )
     }
 
     /// Full-press level turning a trigger into a digital press when the
@@ -499,14 +413,8 @@ impl SessionHandle {
         axis: GamepadAxis,
         value: f32,
     ) -> Option<KeyboardShortcut> {
-        // One order-index lookup per event: the slot gate and the deadzone
-        // row read this instead of re-scanning `pad_order`. Routing needs
-        // no lookup: the policy cache already follows the assignments.
         let index = self.input.pads.pad_index(source);
-        let slot = index.and_then(|i| self.slot_for_pad_index(i))?;
-        // Per-pad deadzone from the rebind snapshot: sticks vary per
-        // unit, so the pad's own row tunes it. Unmapped sources fall
-        // back to the default.
+        let slot = index.and_then(|i| self.input.slot_for_index(i))?;
         let percent = index
             .and_then(|i| self.input.pad_deadzone.get(i).copied())
             .unwrap_or(DEFAULT_DEADZONE_PERCENT)
@@ -514,17 +422,7 @@ impl SessionHandle {
         let value =
             apply_deadzone(value.clamp(-1.0, 1.0), f32::from(percent) / 100.0).clamp(-1.0, 1.0);
         self.input.analogs.insert((source, axis), value);
-        self.sync_axis_substitute(
-            source,
-            axis,
-            value,
-            SubstituteCtx {
-                index,
-                slot: Some(slot),
-                trigger_alias: self.input.trigger_alias,
-                sticks_as_dpad: self.input.stick_substitute,
-            },
-        );
+        self.sync_axis_substitute(source, axis, value, index, Some(slot));
         self.sync_trigger_button(source, axis, value)
     }
 
@@ -604,8 +502,7 @@ impl SessionHandle {
     }
 
     /// Edge-sync one axis holder: release the stale button, press the
-    /// fresh one. Holders stay distinct from button holders, so hat and
-    /// stick (or shoulder and trigger) merge instead of aliasing.
+    /// fresh one.
     fn sync_substitute_holder(
         &mut self,
         source: SourceId,
@@ -614,23 +511,17 @@ impl SessionHandle {
         index: Option<usize>,
         slot: Option<usize>,
     ) {
-        // One axis holds at most one substitute (presses are edge-synced),
-        // so a single find converges without heap work on the hot path.
-        if let Some(stale) = self
-            .input
-            .axis_dpad
-            .iter()
-            .find(|(held_source, held_axis, _)| *held_source == source && *held_axis == axis)
-            .map(|(_, _, button)| *button)
-            .filter(|button| Some(*button) != want)
-        {
-            self.input.axis_dpad.remove(&(source, axis, stale));
-            self.commit_holder(FieldSource::Axis(source, axis), stale, index, slot, false);
-        }
-        if let Some(button) = want
-            && self.input.axis_dpad.insert((source, axis, button))
-        {
-            self.commit_holder(FieldSource::Axis(source, axis), button, index, slot, true);
+        let key = (source, axis);
+        let stale = self.input.axis_dpad.get(&key).copied();
+        if stale != want {
+            if let Some(stale) = stale {
+                self.input.axis_dpad.remove(&key);
+                self.commit_holder(FieldSource::Axis(source, axis), stale, index, slot, false);
+            }
+            if let Some(button) = want {
+                self.input.axis_dpad.insert(key, button);
+                self.commit_holder(FieldSource::Axis(source, axis), button, index, slot, true);
+            }
         }
     }
     /// Edge-sync axis substitutes: sticks resolve as a pair (dominant axis
@@ -644,7 +535,8 @@ impl SessionHandle {
         source: SourceId,
         axis: GamepadAxis,
         value: f32,
-        ctx: SubstituteCtx,
+        index: Option<usize>,
+        slot: Option<usize>,
     ) {
         if let Some((ax, ay)) = Self::stick_pair_axes(axis) {
             // The current value is already stored: re-resolve the pair so
@@ -666,38 +558,32 @@ impl SessionHandle {
             let (mut wx, mut wy) = Self::stick_pair_substitutes(x, y);
             let left = ax == GamepadAxis::LeftStickX;
             if !(if left {
-                ctx.sticks_as_dpad[0]
+                self.input.stick_substitute[0]
             } else {
-                ctx.sticks_as_dpad[1]
+                self.input.stick_substitute[1]
             }) {
                 wx = None;
                 wy = None;
             }
-            self.sync_substitute_holder(source, ax, wx, ctx.index, ctx.slot);
-            self.sync_substitute_holder(source, ay, wy, ctx.index, ctx.slot);
+            self.sync_substitute_holder(source, ax, wx, index, slot);
+            self.sync_substitute_holder(source, ay, wy, index, slot);
             return;
         }
         // A stick the console actually drives stays raw (the analog still
         // stores above); only substitutes park here.
-        let mut want = ctx
-            .slot
-            .and(Self::substitute_button(axis, value, ctx.trigger_alias));
+        let trigger_alias = self.input.trigger_alias;
+        let mut want = slot.and(Self::substitute_button(axis, value, trigger_alias));
         // Trigger hysteresis: a held shoulder survives down to the release
         // band so epsilon jitter at the press edge cannot flap.
         if want.is_none()
-            && ctx.trigger_alias
+            && trigger_alias
             && matches!(axis, GamepadAxis::LeftTrigger | GamepadAxis::RightTrigger)
             && value >= Self::TRIGGER_RELEASE
-            && let Some(held) = self
-                .input
-                .axis_dpad
-                .iter()
-                .find(|(held_source, held_axis, _)| *held_source == source && *held_axis == axis)
-                .map(|(_, _, button)| *button)
+            && let Some(held) = self.input.axis_dpad.get(&(source, axis)).copied()
         {
             want = Some(held);
         }
-        self.sync_substitute_holder(source, axis, want, ctx.index, ctx.slot);
+        self.sync_substitute_holder(source, axis, want, index, slot);
     }
 
     /// One digital commit through the pad's assigned slot: face buttons
@@ -838,17 +724,17 @@ impl SessionHandle {
                 .pressed
                 .remove(&(source, SourceButtonId::Pad(button)));
             let index = self.input.pads.pad_index(source);
-            let slot = index.and_then(|i| self.slot_for_pad_index(i));
-            self.commit_pad_press(source, button, false, index, slot);
+            let slot = index.and_then(|i| self.input.slot_for_index(i));
+            self.commit_holder(FieldSource::Pad(source, button), button, index, slot, false);
         }
         // Full release like any other: a shortcut held across the loss
         // must fire again on the next press instead of staying suppressed.
         self.input.shortcut_held.clear();
-        let derived: Vec<(SourceId, GamepadAxis, StandardButton)> =
-            self.input.axis_dpad.extract_if(|_| true).collect();
-        for (source, axis, button) in derived {
+        let derived: Vec<((SourceId, GamepadAxis), StandardButton)> =
+            self.input.axis_dpad.extract_if(|_, _| true).collect();
+        for ((source, axis), button) in derived {
             let index = self.input.pads.pad_index(source);
-            let slot = index.and_then(|i| self.slot_for_pad_index(i));
+            let slot = index.and_then(|i| self.input.slot_for_index(i));
             self.commit_holder(FieldSource::Axis(source, axis), button, index, slot, false);
         }
         self.input.analogs.clear();
@@ -863,8 +749,8 @@ impl SessionHandle {
         let held = Self::pad_holds(&self.input.pressed);
         for (source, button) in held {
             let index = self.input.pads.pad_index(source);
-            let slot = index.and_then(|i| self.slot_for_pad_index(i));
-            self.commit_pad_press(source, button, true, index, slot);
+            let slot = index.and_then(|i| self.input.slot_for_index(i));
+            self.commit_holder(FieldSource::Pad(source, button), button, index, slot, true);
         }
     }
 
@@ -1695,11 +1581,10 @@ mod tests {
             .abs()
                 < 1e-6
         );
-        assert!(session.input.axis_dpad.contains(&(
-            pad,
-            GamepadAxis::LeftStickX,
-            StandardButton::DpadRight
-        )));
+        assert!(
+            session.input.axis_dpad.get(&(pad, GamepadAxis::LeftStickX))
+                == Some(&StandardButton::DpadRight)
+        );
         // Recenter clears the substitute; the trigger stores yet never
         // substitutes (no console exposes it).
         session.handle_source_axis(pad, GamepadAxis::LeftStickX, 0.0);
@@ -1708,7 +1593,7 @@ mod tests {
                 .input
                 .axis_dpad
                 .iter()
-                .any(|(source, axis, _)| *source == pad && *axis == GamepadAxis::LeftStickX)
+                .any(|((source, axis), _)| *source == pad && *axis == GamepadAxis::LeftStickX)
         );
         session.handle_source_axis(pad, GamepadAxis::LeftTrigger, 0.9);
         assert!(
@@ -1824,8 +1709,8 @@ mod tests {
                 .input
                 .axis_dpad
                 .iter()
-                .filter(|(source, held_axis, _)| *source == pad && *held_axis == axis)
-                .map(|(_, _, button)| *button)
+                .filter(|((source, held_axis), _)| *source == pad && *held_axis == axis)
+                .map(|(_, button)| *button)
                 .collect::<Vec<_>>()
         };
         // Hard right first: only Right asserts.
@@ -1970,11 +1855,13 @@ mod tests {
                 .analogs
                 .contains_key(&(descriptor, GamepadAxis::LeftStickX))
         );
-        assert!(session.input.axis_dpad.contains(&(
-            descriptor,
-            GamepadAxis::LeftStickX,
-            StandardButton::DpadRight
-        )));
+        assert!(
+            session
+                .input
+                .axis_dpad
+                .get(&(descriptor, GamepadAxis::LeftStickX))
+                == Some(&StandardButton::DpadRight)
+        );
         assert!(
             !session
                 .input
@@ -2027,13 +1914,12 @@ mod tests {
     #[test]
     fn descriptor_mirror_tracks_collapse_slots() {
         let mut session = crate::session::test_util::test_session();
-        // Interleaved transient input and connects: the mirror must name
-        // the same slots as the session order, or the vault display
-        // skews onto another pad's settings.
+        // Pre-connect input reserves nothing: connects name slots in
+        // connect order, so the vault display cannot skew.
         let _ = session.pad_source_for(7);
         session.note_pad_connected(9, "pad-desc-B");
         session.note_pad_connected(7, "pad-desc-A");
-        assert_eq!(session.pad_descriptors(), &["pad-desc-A", "pad-desc-B"]);
+        assert_eq!(session.pad_descriptors(), &["pad-desc-B", "pad-desc-A"]);
         assert_eq!(
             session.input.pads.order.len(),
             session.pad_descriptors().len(),
@@ -2042,7 +1928,7 @@ mod tests {
         // Reconnect reuses the slot; the mirror never moves it.
         session.note_pad_disconnected(7);
         session.note_pad_connected(11, "pad-desc-A");
-        assert_eq!(session.pad_descriptors(), &["pad-desc-A", "pad-desc-B"]);
+        assert_eq!(session.pad_descriptors(), &["pad-desc-B", "pad-desc-A"]);
         session.clear_input();
     }
 
@@ -2115,20 +2001,20 @@ mod tests {
         session.apply_settings(next).unwrap();
         session.handle_source_axis(pad, GamepadAxis::LeftTrigger, 0.95);
         assert!(
-            session.input.axis_dpad.contains(&(
-                pad,
-                GamepadAxis::LeftTrigger,
-                StandardButton::LeftShoulder
-            )),
+            session
+                .input
+                .axis_dpad
+                .get(&(pad, GamepadAxis::LeftTrigger))
+                == Some(&StandardButton::LeftShoulder),
             "full press engages the shoulder"
         );
         session.handle_source_axis(pad, GamepadAxis::LeftTrigger, 0.85);
         assert!(
-            session.input.axis_dpad.contains(&(
-                pad,
-                GamepadAxis::LeftTrigger,
-                StandardButton::LeftShoulder
-            )),
+            session
+                .input
+                .axis_dpad
+                .get(&(pad, GamepadAxis::LeftTrigger))
+                == Some(&StandardButton::LeftShoulder),
             "release band holds instead of flapping"
         );
         session.handle_source_axis(pad, GamepadAxis::LeftTrigger, 0.5);
@@ -2137,7 +2023,7 @@ mod tests {
                 .input
                 .axis_dpad
                 .iter()
-                .any(|(source, axis, _)| *source == pad && *axis == GamepadAxis::LeftTrigger),
+                .any(|((source, axis), _)| *source == pad && *axis == GamepadAxis::LeftTrigger),
             "below the band releases"
         );
         session.clear_input();
@@ -2156,19 +2042,20 @@ mod tests {
         session.note_pad_connected(11, "test-pad-11");
         let pad = session.pad_source_for(11);
         session.handle_source_axis(pad, GamepadAxis::LeftTrigger, 1.0);
-        assert!(session.input.axis_dpad.contains(&(
-            pad,
-            GamepadAxis::LeftTrigger,
-            StandardButton::LeftShoulder
-        )));
+        assert!(
+            session
+                .input
+                .axis_dpad
+                .get(&(pad, GamepadAxis::LeftTrigger))
+                == Some(&StandardButton::LeftShoulder)
+        );
         session.handle_source_axis(pad, GamepadAxis::LeftTrigger, 0.0);
         assert!(session.input.axis_dpad.is_empty());
         session.handle_source_axis(pad, GamepadAxis::LeftStickX, 0.8);
-        assert!(session.input.axis_dpad.contains(&(
-            pad,
-            GamepadAxis::LeftStickX,
-            StandardButton::DpadRight
-        )));
+        assert!(
+            session.input.axis_dpad.get(&(pad, GamepadAxis::LeftStickX))
+                == Some(&StandardButton::DpadRight)
+        );
         session.clear_input();
         // Analog console: the same inputs store raw and assert nothing.
         session.input.current_assignments = InputAssignments::new(vec![(
@@ -2194,7 +2081,7 @@ mod tests {
                 .input
                 .axis_dpad
                 .iter()
-                .all(|(source, axis, _)| { *source != pad || *axis != GamepadAxis::LeftStickX }),
+                .all(|((source, axis), _)| { *source != pad || *axis != GamepadAxis::LeftStickX }),
             "no dpad substitution where the console drives the stick"
         );
         session.clear_input();
@@ -2212,11 +2099,10 @@ mod tests {
         let pad = session.pad_source_for(11);
         // Digital console: both sticks substitute.
         session.handle_source_axis(pad, GamepadAxis::LeftStickX, 0.8);
-        assert!(session.input.axis_dpad.contains(&(
-            pad,
-            GamepadAxis::LeftStickX,
-            StandardButton::DpadRight
-        )));
+        assert!(
+            session.input.axis_dpad.get(&(pad, GamepadAxis::LeftStickX))
+                == Some(&StandardButton::DpadRight)
+        );
         session.clear_input();
         // Analog console (drives the left stick): the substitute parks
         // while the analog value still stores; the right stick keeps
@@ -2239,15 +2125,17 @@ mod tests {
                 .input
                 .axis_dpad
                 .iter()
-                .any(|(source, axis, _)| *source == pad && *axis == GamepadAxis::LeftStickX),
+                .any(|((source, axis), _)| *source == pad && *axis == GamepadAxis::LeftStickX),
             "consumed stick asserts no dpad"
         );
         session.handle_source_axis(pad, GamepadAxis::RightStickX, 0.8);
-        assert!(session.input.axis_dpad.contains(&(
-            pad,
-            GamepadAxis::RightStickX,
-            StandardButton::DpadRight
-        )));
+        assert!(
+            session
+                .input
+                .axis_dpad
+                .get(&(pad, GamepadAxis::RightStickX))
+                == Some(&StandardButton::DpadRight)
+        );
         session.clear_input();
     }
 
@@ -2313,11 +2201,8 @@ mod tests {
         session.handle_source_button(pad, SourceButtonId::Pad(StandardButton::DpadUp), false);
         session.handle_source_axis(pad, GamepadAxis::LeftStickX, 0.8);
         assert!(
-            session.input.axis_dpad.contains(&(
-                pad,
-                GamepadAxis::LeftStickX,
-                StandardButton::DpadRight
-            )),
+            session.input.axis_dpad.get(&(pad, GamepadAxis::LeftStickX))
+                == Some(&StandardButton::DpadRight),
             "stick substitutes ignore the hat switch"
         );
         session.clear_input();

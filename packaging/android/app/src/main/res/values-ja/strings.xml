@@ -6,12 +6,12 @@
     <string name="settings_clear">解除</string>
     <string name="settings_close">閉じる</string>
     <string name="settings_save">保存</string>
-    <string name="settings_save_blocked">保存（問題を解消してください）</string>
+    <string name="settings_save_blocked">保存</string>
     <string name="settings_error_title">エラー</string>
     <string name="settings_ok">OK</string>
     <string name="settings_on">オン</string>
     <string name="settings_off">オフ</string>
-    <string name="settings_update_retry">再試行してください。直らない場合は設定を開き直してください。</string>
+    <string name="settings_update_retry">再試行</string>
     <string name="settings_discard_title">変更を破棄しますか？</string>
     <string name="settings_discard_message">未保存の設定は失われます。</string>
     <string name="settings_discard_confirm">破棄</string>
@@ -34,8 +34,8 @@
     <string name="drawer_settings">設定</string>
     <string name="drawer_pause">一時停止</string>
     <string name="drawer_resume">再開</string>
-    <string name="drawer_save_state">セーブステート保存</string>
-    <string name="drawer_load_state">セーブステート読み込み</string>
+    <string name="drawer_save_state">保存</string>
+    <string name="drawer_load_state">読込</string>
     <string name="drawer_slots">スロット</string>
     <string name="slot_title">スロット%1$d</string>
     <string name="slot_empty">空き</string>

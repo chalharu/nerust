@@ -24,11 +24,12 @@ use nerust_system_traits::factory::descriptor::{SystemSettingsChoiceId, SystemSe
 use super::devices::prune_missing_builtin;
 use super::projection::{build_sections, project_fresh, project_payload};
 use super::vm::{
-    VmDeps, build_vm, pin_draft_language, resolve_display, sync_snapshot_from_vm, with_vm_deps,
+    Projection, VmDeps, build_vm, pin_draft_language, resolve_display, sync_snapshot_from_vm,
+    with_vm_deps,
 };
 use super::wire::{
-    CaptureSlot, GamepadInfo, I18n, KeyboardInfo, PLAYER_PORTS, Projection, RowKind, RowWire,
-    SectionWire, ViewPayload, WireCommand, WireOp, WireTarget, choice, find_row, range_value,
+    CaptureSlot, GamepadInfo, I18n, KeyboardInfo, PLAYER_PORTS, RowKind, RowWire, SectionWire,
+    ViewPayload, WireCommand, WireOp, WireTarget, choice, find_row, range_value,
     sort_gamepads_by_order, toggle_value,
 };
 
@@ -1008,5 +1009,41 @@ fn apply_android_local(
 /// inner boundaries pass the `Value` through without re-serializing.
 fn decode_target(encoded: &str, deps: &VmDeps) -> Result<CaptureTarget, String> {
     let value: WireTarget = serde_json::from_str(encoded).map_err(|error| error.to_string())?;
-    value.resolve(deps)
+    let system = |system: Option<String>| {
+        let system = system.ok_or_else(|| "capture target misses system".to_string())?;
+        deps.factories
+            .iter()
+            .find(|factory| factory.system_id().to_string() == system)
+            .map(|factory| factory.system_id())
+            .ok_or_else(|| format!("unknown system: {system}"))
+    };
+    match value.kind.as_str() {
+        "binding" => Ok(CaptureTarget::Binding {
+            system: system(value.system)?,
+            attachment: value
+                .attachment
+                .ok_or_else(|| "capture target misses attachment".to_string())?,
+            control: value
+                .control
+                .ok_or_else(|| "capture target misses control".to_string())?,
+        }),
+        "shortcut" => {
+            Ok(CaptureTarget::Shortcut(value.action.ok_or_else(|| {
+                "capture target misses action".to_string()
+            })?))
+        }
+        "pad_binding" => Ok(CaptureTarget::PadBinding {
+            system: system(value.system)?,
+            pad: value
+                .pad
+                .ok_or_else(|| "capture target misses pad".to_string())?,
+            attachment: value
+                .attachment
+                .ok_or_else(|| "capture target misses attachment".to_string())?,
+            control: value
+                .control
+                .ok_or_else(|| "capture target misses control".to_string())?,
+        }),
+        _ => Err("unknown capture target".to_string()),
+    }
 }

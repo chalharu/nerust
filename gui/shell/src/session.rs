@@ -38,13 +38,13 @@ use nerust_gui_runtime::settings::{
     manager::SettingsManager,
 };
 use nerust_input_traits::{
-    AXIS_ABSTRACT, AbstractKey, AttachmentId, BUTTON_ABSTRACT, DigitalControlId, GamepadAxis,
-    InputAssignments, Key, PadGuid, SourceButtonId, SourceId, StandardButton, UnifiedFieldMap,
+    AbstractKey, AttachmentId, DigitalControlId, GamepadAxis, InputAssignments, Key, PadGuid,
+    SourceButtonId, SourceId, StandardButton, UnifiedFieldMap,
 };
 use nerust_persistence::error::PersistenceError;
 use nerust_render_traits::{FrameBuffer, VideoRenderProfile};
 use nerust_settings_core::factory::settings_view;
-use nerust_settings_core::model::input::{PadPort, ShortcutAction, ShortcutBinding};
+use nerust_settings_core::model::input::{ShortcutAction, ShortcutBinding};
 use nerust_system_traits::factory::{
     CoreFactory, FactoryError,
     load::{DynSystemLoadOptions, MediaObject},
@@ -244,10 +244,9 @@ struct InputDept {
     /// endpoint future analog consoles read; sticks also feed the
     /// dpad substitute from here.
     analogs: HashMap<(SourceId, GamepadAxis), f32>,
-    /// Stick-derived dpad directions currently asserted, per
-    /// `(source, axis, button)`. Distinct from `pressed` so a hat release
-    /// cannot strand a still-deflected stick (or vice versa).
-    axis_dpad: HashSet<(SourceId, GamepadAxis, StandardButton)>,
+    /// Stick-derived dpad direction per `(source, axis)`. One entry per
+    /// axis (edge-synced), so sync is one map op, not a set scan.
+    axis_dpad: HashMap<(SourceId, GamepadAxis), StandardButton>,
     interner: IdInterner,
     /// OR merge + neutral resolution across keyboards and controls.
     press_state: field_press::FieldPressState,
@@ -258,6 +257,10 @@ struct InputDept {
     /// decides what an axis means.
     stick_substitute: [bool; 2],
     trigger_alias: bool,
+    /// Assigned player slot per pad order index. Rebuilt with deadzones
+    /// at every rebind, so hot paths read one vec, never the settings
+    /// snapshot.
+    pad_slot: Vec<Option<usize>>,
     /// Per-pad stick deadzone (percent) and hat enable, snapshotted from
     /// the settings table at every rebind. The hot axis/button paths read
     /// this instead of chasing the settings snapshot per event.
@@ -291,11 +294,12 @@ impl InputDept {
             pressed: HashSet::new(),
             shortcut_held: HashSet::new(),
             analogs: HashMap::new(),
-            axis_dpad: HashSet::new(),
+            axis_dpad: HashMap::new(),
             interner: IdInterner::default(),
             press_state: field_press::FieldPressState::default(),
             stick_substitute: [true; 2],
             trigger_alias: true,
+            pad_slot: Vec::new(),
             pad_deadzone: Vec::new(),
             pad_hat: Vec::new(),
             abstract_route: HashMap::new(),
@@ -450,23 +454,36 @@ impl InputDept {
             nerust_settings_core::model::input::DEFAULT_DEADZONE_PERCENT,
         );
         self.pad_hat.resize(width, true);
+        self.pad_slot.resize(width, None);
+        let live = self.current_assignments.slots().len();
         for (index, port) in gamepad.pad_ports.iter().enumerate() {
             self.pad_deadzone[index] = port.deadzone_percent;
             self.pad_hat[index] = port.dpad_enabled;
+            self.pad_slot[index] = port.slot.filter(|_| live > 0).map(|s| s.min(live - 1));
         }
         const ABSTRACTS: [AbstractKey; 19] = {
-            let mut all = [AbstractKey::Button1; 19];
-            let mut i = 0;
-            while i < BUTTON_ABSTRACT.len() {
-                all[i] = BUTTON_ABSTRACT[i].1;
-                i += 1;
-            }
-            let mut j = 0;
-            while j < AXIS_ABSTRACT.len() {
-                all[i + j] = AXIS_ABSTRACT[j].1;
-                j += 1;
-            }
-            all
+            use AbstractKey as A;
+            [
+                A::Button1,
+                A::Button2,
+                A::Button3,
+                A::Button4,
+                A::Button5,
+                A::Button6,
+                A::Button7,
+                A::Button8,
+                A::Select,
+                A::Guide,
+                A::Start,
+                A::DpadUp,
+                A::DpadDown,
+                A::DpadLeft,
+                A::DpadRight,
+                A::Axis1X,
+                A::Axis1Y,
+                A::Axis2X,
+                A::Axis2Y,
+            ]
         };
         self.abstract_route.clear();
         let slots = self.current_assignments.slots().len();
@@ -598,39 +615,18 @@ impl PadTopology {
         PadGuid(bytes)
     }
 
-    /// Transient pad GUID for one frontend device id, used before any
-    /// connect event arrives. A disjoint `TRNS` namespace (never hashed),
-    /// so it cannot collide with a descriptor GUID.
+    /// Ephemeral key for input before any connect event. Never inserted
+    /// into `order`, so pre-connect keys park instead of consuming a pad
+    /// index.
     fn guid_for_transient(device_id: i32) -> PadGuid {
         let mut bytes = *b"TRNS\0\0\0\0\0\0\0\0\0\0\0\0";
         bytes[4..8].copy_from_slice(&device_id.to_le_bytes());
         PadGuid(bytes)
     }
 
-    /// Transient test: `TRNS` namespace ids never name a setting slot.
-    /// Gameplay resolves through the descriptor rank below, so a stray
-    /// pre-connect key can neither drive pad 0 nor shift a real pad onto
-    /// another pad's overrides.
-    pub(super) fn is_transient(guid: &PadGuid) -> bool {
-        guid.0[0..4] == *b"TRNS"
-    }
-
-    /// Rank of one order position among setting slots: transients park
-    /// outside the persisted table, so only descriptor entries count.
-    /// The vault mirror inserts at this rank (see `note_pad_connected`),
-    /// so the display list and the commit path name the same pad.
-    fn setting_rank(&self, pos: usize) -> usize {
-        self.order[..pos]
-            .iter()
-            .filter(|guid| !Self::is_transient(guid))
-            .count()
-    }
-
-    /// Mirror upsert for a descriptor: `None` appends (fresh connect),
-    /// `Some(rank)` takes the collapsed transient's setting slot (the
-    /// mirror skips transients, so the rank counts descriptors only).
-    /// Duplicates never insert.
-    fn upsert_descriptor(&mut self, rank: Option<usize>, descriptor: &str) {
+    /// Mirror upsert for a descriptor. Duplicates never insert. Cold path
+    /// only, so the linear check stays.
+    fn upsert_descriptor(&mut self, descriptor: &str) {
         if self
             .descriptor_order
             .iter()
@@ -638,21 +634,12 @@ impl PadTopology {
         {
             return;
         }
-        match rank {
-            Some(rank) => {
-                let at = rank.min(self.descriptor_order.len());
-                self.descriptor_order.insert(at, descriptor.to_string());
-            }
-            None => self.descriptor_order.push(descriptor.to_string()),
-        }
+        self.descriptor_order.push(descriptor.to_string());
     }
 
-    /// First-seen order index of one pad GUID, registering newcomers.
-    /// Setting slots count descriptors only: transients register for
-    /// collapse/migration without consuming a persisted slot. Open tables
-    /// (see `binding_map`): newcomers always append, so no pad parks
-    /// past a cap; missing settings rows read as defaults.
-    fn pad_index_for_guid(&mut self, guid: PadGuid) -> usize {
+    /// Register one descriptor GUID, returning its order index. Cold path
+    /// only (connect); hot paths read `order_index` directly.
+    fn register_guid(&mut self, guid: PadGuid) -> usize {
         if let Some(&index) = self.order_index.get(&guid) {
             return index;
         }
@@ -662,43 +649,21 @@ impl PadTopology {
         index
     }
 
-    /// Rebuild the position index after order mutations (connect only).
-    pub(super) fn rebuild_index(&mut self) {
-        self.order_index.clear();
-        for (index, guid) in self.order.iter().enumerate() {
-            self.order_index.insert(*guid, index);
-        }
-    }
-
-    /// Setting-slot index of one pad: the descriptor rank, so the commit
-    /// path and the vault display list name the same pad. Keyboards take
-    /// no port; transients (pre-connect keys) and unknown pads park.
+    /// Order index of one pad: direct map read. Keyboards take no port;
+    /// unknown (pre-connect) pads park since they never enter `order`.
     fn pad_index(&self, source: SourceId) -> Option<usize> {
         match source {
             SourceId::Keyboard(_) => None,
-            SourceId::Pad(guid) => {
-                if Self::is_transient(&guid) {
-                    return None;
-                }
-                let pos = self.order_index.get(&guid).copied()?;
-                Some(self.setting_rank(pos))
-            }
+            SourceId::Pad(guid) => self.order_index.get(&guid).copied(),
         }
     }
 }
 
 impl InputDept {
-    /// Assigned player slot for one pad order index: the persisted
-    /// table, clamped to the live slots. `None` parks the pad (Off, or
-    /// past the table). Split from `pad_slot` so hot paths scan
-    /// `pad_order` once per event and derive the slot from the index.
-    fn slot_for_index(&self, index: usize, ports: &[PadPort]) -> Option<usize> {
-        let slot = ports.get(index)?.slot?;
-        let live = self.current_assignments.slots().len();
-        if live == 0 {
-            return None;
-        }
-        Some(slot.min(live - 1))
+    /// Assigned player slot for one pad order index, from the rebind
+    /// snapshot. `None` parks the pad.
+    fn slot_for_index(&self, index: usize) -> Option<usize> {
+        self.pad_slot.get(index).copied().flatten()
     }
 
     /// Assigned player slot for one source: pad order into the persisted
