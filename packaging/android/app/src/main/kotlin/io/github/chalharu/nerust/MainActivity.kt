@@ -677,14 +677,14 @@ class MainActivity :
 
     // Deprecated upstream; kept because minSdk 28 predates the
     // OnBackInvokedDispatcher replacement (API 33+ path lives above).
+    // Always run the shared stack directly: routing API 33+ through
+    // super.onBackPressed() re-enters the platform dispatcher instead of
+    // the stack the activity owns (the gesture path above already covers
+    // real system Back on 33+).
     @SuppressLint("GestureBackNavigation")
     @Suppress("DEPRECATION")
     override fun onBackPressed() {
-        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) {
-            handleBackNavigation()
-        } else {
-            super.onBackPressed()
-        }
+        handleBackNavigation()
     }
 
     @Suppress("DEPRECATION")

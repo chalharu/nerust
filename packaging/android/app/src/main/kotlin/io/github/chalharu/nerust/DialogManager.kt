@@ -67,10 +67,13 @@ class DialogManager(private val activity: MainActivity) {
         ownedByTest: Boolean = false,
         content: @Composable (dismiss: () -> Unit) -> Unit,
     ) {
-        // Replacing never acks the old gate: the old callback would fire
-        // for a dialog the user never dismissed, then a new gate opens.
-        // The old request is superseded by the replacement.
-        dismiss(notifyDismiss = false)
+        // Replacing acknowledges the old gate: the old request is
+        // superseded, so Rust must resolve it now instead of wedging on
+        // a dismissal that will never arrive on its own. The queued
+        // dismiss listener is cleared first, so it cannot consume the
+        // replacement dialog's callback or references (see the
+        // delayedDismissCannotAcknowledgeReplacementDialog e2e).
+        dismiss(notifyDismiss = !this.ownedByTest)
 
         lateinit var dialog: Dialog
         val root =
