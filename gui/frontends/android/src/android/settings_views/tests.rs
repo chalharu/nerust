@@ -4378,4 +4378,8 @@ fn keycode_and_bridge_tables_agree_as_button_sets() {
     keycode_buttons.sort();
     keycode_buttons.dedup();
     assert_eq!(bridge_buttons, keycode_buttons);
+    // Both tables must cover the whole pad vocabulary (all 18
+    // `StandardButton` variants): equality alone stays green if both
+    // drop the same button together.
+    assert_eq!(bridge_buttons.len(), 18);
 }

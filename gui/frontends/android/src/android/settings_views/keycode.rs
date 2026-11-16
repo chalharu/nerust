@@ -18,7 +18,7 @@ pub(crate) const BUTTON_TABLE: [(u32, StandardButton); 18] = [
     (96, StandardButton::South),
     (97, StandardButton::East),
     // `BUTTON_C` (98) is the vendors' shared capture/share/create
-    // button (arrives here on tested pads).
+    // button (arrives here on tested pads; not AOSP-guaranteed).
     // `BUTTON_Z` (101) is intentionally unmapped: AOSP defines it as
     // a distinct Z-labeled button with no standard slot, so folding it
     // into Capture would alias two different buttons.
