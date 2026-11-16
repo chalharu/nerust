@@ -321,7 +321,7 @@ class MainActivity :
         updateControllerInput(event.deviceId, ControllerKey.DOWN, hatY > CONTROLLER_AXIS_THRESHOLD)
         // One JNI crossing per motion callback: every axis rides one
         // batched motion event instead of one crossing per axis. Axis ids
-        // ride the hoisted table (see MOTION_AXIS_IDS), so the batch loop
+        // ride the hoisted table (see MOTION_AXES), so the batch loop
         // stays a single pass with no per-callback locals.
         val crossed = updateControllerAxes(event.deviceId, event)
         if (crossed != null) {
@@ -686,6 +686,10 @@ class MainActivity :
     @SuppressLint("GestureBackNavigation")
     @Suppress("DEPRECATION")
     override fun onBackPressed() {
+        // API 33+ owns Back through the dispatcher above; running the
+        // stack here too would double-handle one press (dismiss then
+        // finish). Below 33 this is the only path.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) return
         handleBackNavigation()
     }
 

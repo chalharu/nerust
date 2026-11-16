@@ -547,13 +547,7 @@ fn build_notifications_section(vm: &SettingsViewModel, i18n: I18n) -> SectionWir
 /// Pad screens hang off the devices gears only (single path): the hub
 /// names players, never pads, so one link set cannot skew against the
 /// other after a reconnect cycle.
-fn controllers_quick_section(
-    _snapshot: &SettingsSnapshot,
-    i18n: I18n,
-    _keyboards: &[KeyboardInfo],
-    _gamepads: &[GamepadInfo],
-    _pad_order: &[String],
-) -> SectionWire {
+fn controllers_quick_section(i18n: I18n) -> SectionWire {
     let mut quick_rows = Vec::new();
     for (index, _) in PLAYER_PORTS.iter().enumerate() {
         let player_id = player_id(index);
@@ -807,7 +801,7 @@ fn build_controllers_sections(
     pad_order: &[String],
 ) -> Vec<SectionWire> {
     let mut sections = vec![
-        controllers_quick_section(snapshot, i18n, keyboards, gamepads, pad_order),
+        controllers_quick_section(i18n),
         overlay_detail_section(&snapshot.local.touch_overlay, touch_capable, i18n),
         shortcuts_section(vm, snapshot, i18n, keyboards, gamepads),
     ];

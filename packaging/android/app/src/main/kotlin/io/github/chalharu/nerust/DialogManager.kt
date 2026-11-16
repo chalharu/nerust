@@ -35,7 +35,7 @@ class DialogManager(private val activity: MainActivity) {
     private var dismissCallback: (() -> Unit)? = null
 
     fun isShowing(tag: String): Boolean =
-        this.tag == tag && dialog?.isShowing == true && rootView?.isShown == true
+        this.tag == tag && dialog?.isShowing == true
 
     fun rootViewForTag(tag: String): View? = rootView.takeIf { this.tag == tag }
 
