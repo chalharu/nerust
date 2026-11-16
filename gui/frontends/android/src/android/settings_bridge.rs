@@ -505,7 +505,7 @@ fn settings_command(env: &mut jni::EnvUnowned<'_>, command: JString<'_>) -> jni:
                         touch_capable: &mut state.touch_capable,
                         gamepads: &mut state.gamepads,
                         system_locale: &mut state.system_locale,
-                        pad_order: &state.pad_order,
+                        pad_order: &mut state.pad_order,
                     },
                 )
             });

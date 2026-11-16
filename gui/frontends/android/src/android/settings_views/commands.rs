@@ -28,7 +28,8 @@ use super::vm::{
 };
 use super::wire::{
     CaptureSlot, GamepadInfo, KeyboardInfo, PLAYER_PORTS, RowKind, RowWire, SectionWire,
-    ViewPayload, WireCommand, WireOp, WireTarget, capture_open, sort_gamepads_by_order,
+    ViewPayload, WireCommand, WireOp, WireTarget, bare_member, capture_open,
+    sort_gamepads_by_order,
 };
 use nerust_settings_core::i18n::I18n;
 
@@ -84,7 +85,12 @@ pub(crate) struct CommandVault<'a> {
     pub touch_capable: &'a mut bool,
     pub gamepads: &'a mut Vec<GamepadInfo>,
     pub system_locale: &'a mut Option<AppLanguage>,
-    pub pad_order: &'a [String],
+    /// Session first-seen mirror, mutated on device-truth ingest: scans
+    /// that raced ahead of (or arrived while the game loop is paused for
+    /// the settings screen) the connect event still join the order here,
+    /// so a hotplug with the screen open renders without a reopen.
+    /// Disconnects never compact, like the session table.
+    pub pad_order: &'a mut Vec<String>,
 }
 
 pub(crate) fn apply_command_to(
@@ -304,7 +310,7 @@ fn apply_device_truth_command(
     gamepads: &mut Vec<GamepadInfo>,
     system_locale: &mut Option<AppLanguage>,
     command: &WireCommand,
-    pad_order: &[String],
+    pad_order: &mut Vec<String>,
 ) -> Result<(), String> {
     let list: Vec<KeyboardInfo> = payload_vec(command, "keyboards")?;
     for info in &list {
@@ -327,6 +333,16 @@ fn apply_device_truth_command(
         }
     }
     *gamepads = names;
+    // First-seen mirror, like the session table: unseen scan members join
+    // the order in scan order before sorting, so a hotplug that arrived
+    // while the game loop is paused (settings screen open) still renders.
+    // The session connect event re-mirrors the same order on resume.
+    for info in gamepads.iter() {
+        let bare = bare_member(&info.member);
+        if !pad_order.iter().any(|known| known == bare) {
+            pad_order.push(bare.to_string());
+        }
+    }
     // Session order, not scan order: Pad N must name session pad N, or a
     // reconnect compacts the scan onto another pad's slot and settings.
     sort_gamepads_by_order(gamepads, pad_order);

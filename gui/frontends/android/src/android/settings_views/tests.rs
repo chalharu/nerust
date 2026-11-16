@@ -162,7 +162,7 @@ fn apply(
                 touch_capable: &mut touch_capable,
                 gamepads: &mut Vec::new(),
                 system_locale: &mut None,
-                pad_order: &[],
+                pad_order: &mut Vec::new(),
             },
         )
         .unwrap_or_else(|error| panic!("command failed: {error}"))
@@ -361,7 +361,7 @@ fn explicit_japanese_under_ja_system_persists_as_japanese() {
                 touch_capable: &mut touch_capable,
                 gamepads: &mut Vec::new(),
                 system_locale: &mut locale,
-                pad_order: &[],
+                pad_order: &mut Vec::new(),
             },
         )
         .expect("language set applies")
@@ -407,7 +407,7 @@ fn display_resolution_never_concretes_the_draft() {
                 touch_capable: &mut touch_capable,
                 gamepads: &mut Vec::new(),
                 system_locale: &mut locale,
-                pad_order: &[],
+                pad_order: &mut Vec::new(),
             },
         )
         .expect("volume set applies")
@@ -470,7 +470,7 @@ fn display_resolution_never_concretes_the_draft() {
                 touch_capable: &mut touch_capable,
                 gamepads: &mut Vec::new(),
                 system_locale: &mut locale,
-                pad_order: &[],
+                pad_order: &mut Vec::new(),
             },
         )
         .expect("language set applies")
@@ -510,7 +510,7 @@ fn locale_op_upserts_without_mutating_draft() {
                 touch_capable: &mut touch_capable,
                 gamepads: &mut Vec::new(),
                 system_locale: &mut locale,
-                pad_order: &[],
+                pad_order: &mut Vec::new(),
             },
         )
         .expect("locale op applies")
@@ -560,7 +560,7 @@ fn locale_op_upserts_without_mutating_draft() {
                         touch_capable: &mut touch_capable,
                         gamepads: &mut Vec::new(),
                         system_locale: &mut locale,
-                        pad_order: &[]
+                        pad_order: &mut Vec::new()
                     },
                 )
                 .is_err(),
@@ -841,7 +841,7 @@ fn start_capture_rejected_without_input_device() {
                 touch_capable: &mut touch_capable,
                 gamepads: &mut Vec::new(),
                 system_locale: &mut None,
-                pad_order: &[],
+                pad_order: &mut Vec::new(),
             },
         )
         .expect_err("start with no input device must fail")
@@ -1066,7 +1066,7 @@ fn phantom_builtin_never_surfaces_without_hardware() {
                 touch_capable: &mut touch_capable,
                 gamepads: &mut Vec::new(),
                 system_locale: &mut None,
-                pad_order: &[],
+                pad_order: &mut Vec::new(),
             },
         )
         .expect("keyboards op applies")
@@ -1106,7 +1106,7 @@ fn phantom_builtin_never_surfaces_without_hardware() {
                 touch_capable: &mut touch_capable,
                 gamepads: &mut Vec::new(),
                 system_locale: &mut None,
-                pad_order: &[],
+                pad_order: &mut Vec::new(),
             },
         )
         .expect("empty enumeration applies")
@@ -1156,7 +1156,7 @@ fn keyboards_op_upserts_enumeration_without_mutating_draft() {
                 touch_capable: &mut touch_capable,
                 gamepads: &mut Vec::new(),
                 system_locale: &mut None,
-                pad_order: &[],
+                pad_order: &mut Vec::new(),
             },
         )
         .expect("keyboards op applies")
@@ -1210,7 +1210,7 @@ fn gamepads_op_upserts_without_mutating_draft() {
                 touch_capable: &mut touch_capable,
                 gamepads: &mut gamepads,
                 system_locale: &mut None,
-                pad_order: &[],
+                pad_order: &mut Vec::new(),
             },
         )
         .expect("gamepads op applies")
@@ -1261,7 +1261,7 @@ fn gamepads_op_upserts_without_mutating_draft() {
                         touch_capable: &mut touch_capable,
                         gamepads: &mut gamepads,
                         system_locale: &mut None,
-                        pad_order: &[]
+                        pad_order: &mut Vec::new()
                     },
                 )
                 .is_err(),
@@ -1320,7 +1320,7 @@ fn touch_payload(capable: bool) -> ViewPayload {
                 touch_capable: &mut touch,
                 gamepads: &mut Vec::new(),
                 system_locale: &mut None,
-                pad_order: &[],
+                pad_order: &mut Vec::new(),
             },
         )
         .expect("touch op applies")
@@ -1401,7 +1401,7 @@ fn reset_section_restores_screen_defaults() {
                 touch_capable: &mut touch_capable,
                 gamepads: &mut Vec::new(),
                 system_locale: &mut None,
-                pad_order: &[],
+                pad_order: &mut Vec::new(),
             },
         )
         .expect("reset applies")
@@ -1453,7 +1453,7 @@ fn every_emitted_reset_key_executes() {
                     touch_capable: &mut touch_capable,
                     gamepads: &mut Vec::new(),
                     system_locale: &mut None,
-                    pad_order: &[],
+                    pad_order: &mut Vec::new(),
                 },
             )
         })
@@ -2484,7 +2484,7 @@ fn pad_screen_sets_deadzone_triggers_and_resets() {
                 touch_capable: &mut touch_capable,
                 gamepads: &mut gamepads,
                 system_locale: &mut None,
-                pad_order: &order,
+                pad_order: &mut order.clone(),
             },
         )
         .expect("reset applies")
@@ -2536,7 +2536,7 @@ fn two_pads() -> Vec<GamepadInfo> {
 
 /// Ingest a device-truth scan with a session order mirror, returning the
 /// stored vault order (sorted into session order at ingest).
-fn ingest_truth(pads: &[GamepadInfo], pad_order: &[String]) -> Vec<GamepadInfo> {
+fn ingest_truth(pads: &[GamepadInfo], pad_order: &mut Vec<String>) -> Vec<GamepadInfo> {
     let (mut snapshot, _) = test_payload();
     let mut gamepads = Vec::new();
     let command_json = serde_json::to_string(&WireCommand {
@@ -2585,8 +2585,8 @@ fn device_truth_sorts_vault_into_session_order() {
             name: "Pad A".to_string(),
         },
     ];
-    let order = ["a".to_string(), "b".to_string()];
-    let gamepads = ingest_truth(&pads, &order);
+    let mut order = vec!["a".to_string(), "b".to_string()];
+    let gamepads = ingest_truth(&pads, &mut order);
     assert_eq!(gamepads[0].member, "pad:a");
     assert_eq!(gamepads[1].member, "pad:b");
     // Unknown scans (raced ahead of the connect event) trail in scan
@@ -2601,9 +2601,72 @@ fn device_truth_sorts_vault_into_session_order() {
             name: "Pad A".to_string(),
         },
     ];
-    let gamepads = ingest_truth(&pads, &order);
+    let gamepads = ingest_truth(&pads, &mut order);
     assert_eq!(gamepads[0].member, "pad:a");
     assert_eq!(gamepads[1].member, "pad:c");
+}
+
+#[test]
+fn device_truth_appends_unseen_pads_to_order() {
+    // Hotplug with the settings screen open: the scan names a pad the
+    // session mirror never saw (game loop paused), so ingest must join
+    // the order itself instead of waiting for the connect event.
+    // Otherwise the new pad never renders until a reopen.
+    let pads = vec![
+        GamepadInfo {
+            member: "pad:a".to_string(),
+            name: "Pad A".to_string(),
+        },
+        GamepadInfo {
+            member: "pad:c".to_string(),
+            name: "Pad C".to_string(),
+        },
+    ];
+    let (mut snapshot, _) = test_payload();
+    let mut gamepads = Vec::new();
+    let mut order = vec!["a".to_string(), "b".to_string()];
+    let command_json = serde_json::to_string(&WireCommand {
+        key: "device_truth".to_string(),
+        index: 0,
+        number: 0,
+        op: WireOp::DeviceTruth,
+        payload: serde_json::json!({
+            "keyboards": serde_json::to_value(test_keyboards()).unwrap(),
+            "capable": true,
+            "gamepads": serde_json::to_value(&pads).unwrap(),
+        }),
+    })
+    .unwrap();
+    let payload = with_test_deps(|| {
+        let mut touch_capable = true;
+        apply_command_to(
+            &mut snapshot,
+            &command_json,
+            CommandVault {
+                capture: &mut None,
+                keyboards: &mut test_keyboards(),
+                touch_capable: &mut touch_capable,
+                gamepads: &mut gamepads,
+                system_locale: &mut None,
+                pad_order: &mut order,
+            },
+        )
+        .expect("device truth applies")
+    });
+    assert_eq!(
+        order,
+        vec!["a".to_string(), "b".to_string(), "c".to_string()]
+    );
+    let labels: Vec<_> = payload
+        .sections
+        .iter()
+        .flat_map(|section| &section.rows)
+        .map(|row| row.label.clone())
+        .collect();
+    assert!(
+        labels.iter().any(|label| label == "Pad C"),
+        "hotplugged pad renders without a reopen: {labels:?}"
+    );
 }
 
 #[test]
@@ -2689,7 +2752,7 @@ fn gamepad_radio_rejects_unknown_pads() {
                     touch_capable: &mut touch_capable,
                     gamepads: &mut gamepads,
                     system_locale: &mut None,
-                    pad_order: &order
+                    pad_order: &mut order.clone()
                 },
             )
             .is_err(),
@@ -2740,7 +2803,7 @@ fn shortcut_clear_is_per_column() {
                     touch_capable: &mut touch_capable,
                     gamepads: &mut gamepads,
                     system_locale: &mut None,
-                    pad_order: &order,
+                    pad_order: &mut order.clone(),
                 },
             )
             .unwrap_or_else(|error| panic!("command failed: {error}"))
@@ -2784,7 +2847,7 @@ fn shortcut_clear_is_per_column() {
                     touch_capable: &mut touch_capable,
                     gamepads: &mut gamepads,
                     system_locale: &mut None,
-                    pad_order: &order,
+                    pad_order: &mut order.clone(),
                 },
             )
             .unwrap_or_else(|error| panic!("command failed: {error}"))
@@ -2990,7 +3053,7 @@ fn stale_disconnect_keeps_live_pad_on_its_rank() {
                 touch_capable: &mut touch_capable,
                 gamepads: &mut gamepads,
                 system_locale: &mut None,
-                pad_order: &order,
+                pad_order: &mut order.clone(),
             },
         )
         .expect("capture starts")
@@ -3174,7 +3237,7 @@ fn run_with_pads(
                 touch_capable: &mut touch_capable,
                 gamepads: &mut gamepads,
                 system_locale: &mut None,
-                pad_order: &order,
+                pad_order: &mut order.clone(),
             },
         )
         .unwrap_or_else(|error| panic!("command failed: {error}"))
@@ -3215,7 +3278,7 @@ fn reset_screen(snapshot: &mut SettingsSnapshot, pads: &[GamepadInfo], key: &str
                 touch_capable: &mut touch_capable,
                 gamepads: &mut gamepads,
                 system_locale: &mut None,
-                pad_order: &order,
+                pad_order: &mut order.clone(),
             },
         )
         .unwrap_or_else(|error| panic!("reset failed: {error}"))
@@ -3248,7 +3311,7 @@ fn reset_screen_err(snapshot: &mut SettingsSnapshot, pads: &[GamepadInfo], key: 
                 touch_capable: &mut touch_capable,
                 gamepads: &mut gamepads,
                 system_locale: &mut None,
-                pad_order: &order,
+                pad_order: &mut order.clone(),
             },
         )
         .err()
@@ -3568,7 +3631,7 @@ fn game_row_capture_without_keyboard_names_dpad_only() {
                 touch_capable: &mut touch_capable,
                 gamepads: &mut gamepads,
                 system_locale: &mut None,
-                pad_order: &order,
+                pad_order: &mut order.clone(),
             },
         )
         .expect("pad-only game capture starts")
@@ -3836,7 +3899,7 @@ fn unknown_command_keys_fail_loud() {
                 touch_capable: &mut touch_capable,
                 gamepads: &mut Vec::new(),
                 system_locale: &mut None,
-                pad_order: &[],
+                pad_order: &mut Vec::new(),
             },
         )
         .expect_err("unknown key fails loud instead of no-op");
@@ -3964,7 +4027,7 @@ fn unknown_keys_and_indices_fail_without_mutation() {
                     touch_capable: &mut touch_capable,
                     gamepads: &mut Vec::new(),
                     system_locale: &mut None,
-                    pad_order: &[]
+                    pad_order: &mut Vec::new()
                 },
             )
             .is_err()
@@ -3988,7 +4051,7 @@ fn unknown_keys_and_indices_fail_without_mutation() {
                     touch_capable: &mut touch_capable,
                     gamepads: &mut Vec::new(),
                     system_locale: &mut None,
-                    pad_order: &[]
+                    pad_order: &mut Vec::new()
                 },
             )
             .is_err()
@@ -4008,7 +4071,7 @@ fn unknown_keys_and_indices_fail_without_mutation() {
                     touch_capable: &mut touch_capable,
                     gamepads: &mut Vec::new(),
                     system_locale: &mut None,
-                    pad_order: &[]
+                    pad_order: &mut Vec::new()
                 },
             )
             .is_err()
@@ -4032,7 +4095,7 @@ fn unknown_keys_and_indices_fail_without_mutation() {
                     touch_capable: &mut touch_capable,
                     gamepads: &mut Vec::new(),
                     system_locale: &mut None,
-                    pad_order: &[]
+                    pad_order: &mut Vec::new()
                 },
             )
             .is_err(),
@@ -4057,7 +4120,7 @@ fn unknown_keys_and_indices_fail_without_mutation() {
                     touch_capable: &mut touch_capable,
                     gamepads: &mut Vec::new(),
                     system_locale: &mut None,
-                    pad_order: &[]
+                    pad_order: &mut Vec::new()
                 },
             )
             .is_err(),
