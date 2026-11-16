@@ -306,13 +306,20 @@ class SettingsActivity :
     }
 
     override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+        // Stale edge seeds must not survive between captures: a stored
+        // release followed by a held trigger at the next capture open
+        // would read as a fresh crossing. Clear while idle so the next
+        // capture re-seeds from the live values below.
+        if (navActions?.isCapturing != true) {
+            if (captureTriggerLast.isNotEmpty()) captureTriggerLast.clear()
+            return super.onGenericMotionEvent(event)
+        }
         // Analog-only triggers (ZL/ZR on pads that send no key event)
         // can only land through motion: forward the press edge while a
         // capture is pending. Edge-detected per device (below → at/above
         // the press level), so a held trigger does not capture the
         // instant its row opens, and one squeeze captures exactly once.
-        if (navActions?.isCapturing == true &&
-            event.source and InputDevice.SOURCE_CLASS_JOYSTICK == InputDevice.SOURCE_CLASS_JOYSTICK
+        if (event.source and InputDevice.SOURCE_CLASS_JOYSTICK == InputDevice.SOURCE_CLASS_JOYSTICK
         ) {
             val triggerL = event.getAxisValue(MotionEvent.AXIS_LTRIGGER)
             val triggerR = event.getAxisValue(MotionEvent.AXIS_RTRIGGER)
