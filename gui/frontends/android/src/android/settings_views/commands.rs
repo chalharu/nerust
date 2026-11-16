@@ -78,15 +78,6 @@ pub(crate) fn apply_command_to(
                 pad_order,
             )?;
             prune_missing_builtin(snapshot, keyboards);
-            let i18n = resolve_display(snapshot.shared.general.language, *system_locale);
-            let truth = Projection {
-                keyboards,
-                touch_capable: *touch_capable,
-                gamepads,
-                pad_order,
-                i18n,
-            };
-            return project_after_snapshot_edit(snapshot, deps, capture, truth, *system_locale);
         }
         let i18n = resolve_display(snapshot.shared.general.language, *system_locale);
         let truth = Projection {
@@ -98,7 +89,7 @@ pub(crate) fn apply_command_to(
         };
         match command.op {
             WireOp::DeviceTruth => {
-                unreachable!("device truth handled above")
+                project_after_snapshot_edit(snapshot, deps, capture, truth, *system_locale)
             }
             WireOp::ResetSection => {
                 apply_reset_section(snapshot, deps, &command, truth)?;

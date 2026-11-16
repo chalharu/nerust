@@ -91,7 +91,11 @@ impl SessionHandle {
         let Some(field) = field else {
             return;
         };
-        let dpad = self.input.dpad_for(event.attachment, event.control);
+        let dpad = crate::session::InputDept::dpad_for_assignment(
+            &self.input.current_assignments,
+            event.attachment,
+            event.control,
+        );
         self.commit_press(
             field,
             FieldSource::Control(event.attachment, event.control),
@@ -212,18 +216,13 @@ impl SessionHandle {
     }
 
     /// Disconnect-time cleanup: release the pad's holders event-fully
-    /// (Kotlin synthesizes releases for its path, but the winit fallback
-    /// holds never see them), then drop the id mapping. The order entry
-    /// stays so a reconnect reuses the index instead of drifting.
-    /// Ordering is the contract: Kotlin sends release, then removed, then
-    /// (on reconnect) added, processed in order — so input for a dropped
-    /// id always resolves transient, never to a stale source.
     pub fn note_pad_disconnected(&mut self, device_id: i32) {
         let guid = self.input.pads.device_ids.remove(&device_id);
         let Some(guid) = guid else {
             return;
         };
         let source = SourceId::Pad(guid);
+        let index = self.input.pads.pad_index(source);
         let held: Vec<(SourceId, SourceButtonId)> = self
             .input
             .pressed
@@ -231,7 +230,6 @@ impl SessionHandle {
             .collect();
         for (_, button) in held {
             if let SourceButtonId::Pad(std_button) = button {
-                let index = self.input.pads.pad_index(source);
                 // A disconnect releases like any other release: clear a
                 // fired shortcut so the action stays fireable.
                 if let Some(action) = self.input.pads.shortcut_map.get(&std_button).copied() {
@@ -257,7 +255,6 @@ impl SessionHandle {
             .extract_if(|(held_source, _), _| *held_source == source)
             .collect();
         for ((_, axis), button) in derived {
-            let index = self.input.pads.pad_index(source);
             self.commit_holder(FieldSource::Axis(source, axis), button, index, None, false);
         }
     }
@@ -289,10 +286,15 @@ impl SessionHandle {
             SourceButtonId::Key(key) => {
                 if changed && let Some(&field) = self.input.keys.field_map.get(&key) {
                     // Copy ids out: no allocation on the hot path.
-                    let dpad =
-                        self.input.keys.source.get(&key).copied().and_then(
-                            |(attachment, control)| self.input.dpad_for(attachment, control),
-                        );
+                    let dpad = self.input.keys.source.get(&key).copied().and_then(
+                        |(attachment, control)| {
+                            crate::session::InputDept::dpad_for_assignment(
+                                &self.input.current_assignments,
+                                attachment,
+                                control,
+                            )
+                        },
+                    );
                     self.commit_press(field, FieldSource::Key(key), dpad, pressed);
                 }
 
@@ -361,47 +363,23 @@ impl SessionHandle {
     /// diagonal the player did not push. Past it both axes assert together.
     const DIAGONAL_MIN: f32 = 0.5;
 
-    /// Substitute direction for one post-deadzone axis value. Sticks stand
-    /// in for dpad on digital-only consoles; triggers double as shoulders
-    /// there too, else they stay analog-only. Both follow the automatic
-    /// input policy (see `rebuild_input_policy`), never a per-pad toggle.
+    /// Substitute direction for one post-deadzone trigger value. Sticks
+    /// resolve as a pair in `stick_pair_substitutes` and never reach here
+    /// (see the early return in `sync_axis_substitute`).
     fn substitute_button(
         axis: GamepadAxis,
         value: f32,
         trigger_alias: bool,
     ) -> Option<StandardButton> {
-        use StandardButton::{DpadDown, DpadLeft, DpadRight, DpadUp};
         match axis {
-            GamepadAxis::LeftStickX | GamepadAxis::RightStickX => {
-                if value < 0.0 {
-                    Some(DpadLeft)
-                } else if value > 0.0 {
-                    Some(DpadRight)
-                } else {
-                    None
-                }
-            }
-            GamepadAxis::LeftStickY | GamepadAxis::RightStickY => {
-                if value < 0.0 {
-                    Some(DpadUp)
-                } else if value > 0.0 {
-                    Some(DpadDown)
-                } else {
-                    None
-                }
-            }
             GamepadAxis::LeftTrigger => (trigger_alias && value >= Self::TRIGGER_PRESS)
                 .then_some(StandardButton::LeftShoulder),
             GamepadAxis::RightTrigger => (trigger_alias && value >= Self::TRIGGER_PRESS)
                 .then_some(StandardButton::RightShoulder),
+            _ => None,
         }
     }
 
-    /// Analog axis entry: deadzone, store, and the digital substitute
-    /// (stick dpad and trigger shoulders on digital-only consoles, raw
-    /// axes where the console actually drives them). The routing follows
-    /// the cached input policy; only the deadzone stays per-pad.
-    /// Off-port pads park silently: no store, no substitute.
     /// Analog axis entry: deadzone, store, substitutes, and the trigger
     /// button edge. Returns a fired shortcut, if any, like the button
     /// path: triggers double as shoulders (gameplay) and as bindable
@@ -539,22 +517,20 @@ impl SessionHandle {
         slot: Option<usize>,
     ) {
         if let Some((ax, ay)) = Self::stick_pair_axes(axis) {
-            // The current value is already stored: re-resolve the pair so
-            // both holders converge instead of stranding on stale state.
-            // A stick the console drives stays raw (the analog still
-            // stores above).
-            let x = self
+            // The current value is already stored: reuse it, fetch only
+            // the peer so the pair converges without a second lookup.
+            let peer = if axis == ax { ay } else { ax };
+            let peer_value = self
                 .input
                 .analogs
-                .get(&(source, ax))
+                .get(&(source, peer))
                 .copied()
                 .unwrap_or(0.0);
-            let y = self
-                .input
-                .analogs
-                .get(&(source, ay))
-                .copied()
-                .unwrap_or(0.0);
+            let (x, y) = if axis == ax {
+                (value, peer_value)
+            } else {
+                (peer_value, value)
+            };
             let (mut wx, mut wy) = Self::stick_pair_substitutes(x, y);
             let left = ax == GamepadAxis::LeftStickX;
             if !(if left {

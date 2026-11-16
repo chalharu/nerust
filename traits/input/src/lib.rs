@@ -28,10 +28,7 @@ pub use profile::{
     TypedInputResources, UnifiedFieldMap, abstract_for_attachment, collect_first_wins,
     port_index_for_slot,
 };
-pub use source::{
-    AXIS_ABSTRACT, BUTTON_ABSTRACT, GamepadAxis, PadGuid, SourceButtonId, SourceId, StandardButton,
-    apply_deadzone,
-};
+pub use source::{GamepadAxis, PadGuid, SourceButtonId, SourceId, StandardButton, apply_deadzone};
 pub use topology::{
     AnalogControlDescriptor, AttachmentSlotDescriptor, ControlDescriptor, DeviceDescriptor,
     DigitalControlDescriptor, InputTopologyDescriptor, PortDescriptor,

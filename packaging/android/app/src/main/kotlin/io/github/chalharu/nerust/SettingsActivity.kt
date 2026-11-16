@@ -176,6 +176,7 @@ class SettingsActivity :
             (getSystemService(INPUT_SERVICE) as InputManager).unregisterInputDeviceListener(this)
         } catch (_: Exception) {
         }
+        if (this == activeActivityForTest) activeActivityForTest = null
         super.onDestroy()
     }
 
@@ -249,11 +250,6 @@ class SettingsActivity :
             if (raw == null) return@runIo
             BridgeIo.postMain { navActions?.refreshPayload(raw) }
         }
-    }
-
-    override fun onDestroy() {
-        if (this == activeActivityForTest) activeActivityForTest = null
-        super.onDestroy()
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {

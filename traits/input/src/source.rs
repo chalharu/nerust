@@ -37,43 +37,6 @@ pub enum StandardButton {
     DpadRight,
 }
 
-/// Single home for the fixed standard layout: every bound
-/// `(position button, console button)` pair. Both directions derive
-/// from this table so forward and reverse can never skew.
-pub const BUTTON_ABSTRACT: [(StandardButton, crate::AbstractKey); 15] = {
-    use crate::AbstractKey as A;
-    [
-        (StandardButton::South, A::Button1),
-        (StandardButton::East, A::Button2),
-        (StandardButton::West, A::Button3),
-        (StandardButton::North, A::Button4),
-        (StandardButton::LeftShoulder, A::Button5),
-        (StandardButton::RightShoulder, A::Button6),
-        (StandardButton::LeftTrigger, A::Button7),
-        (StandardButton::RightTrigger, A::Button8),
-        (StandardButton::Back, A::Select),
-        (StandardButton::Guide, A::Guide),
-        (StandardButton::Start, A::Start),
-        (StandardButton::DpadUp, A::DpadUp),
-        (StandardButton::DpadDown, A::DpadDown),
-        (StandardButton::DpadLeft, A::DpadLeft),
-        (StandardButton::DpadRight, A::DpadRight),
-    ]
-};
-
-/// Single home for the stick layout: every bound `(axis, console axis)`
-/// pair. Triggers have no console counterpart, so they stay unbound
-/// instead of guessing.
-pub const AXIS_ABSTRACT: [(GamepadAxis, crate::AbstractKey); 4] = {
-    use crate::AbstractKey as A;
-    [
-        (GamepadAxis::LeftStickX, A::Axis1X),
-        (GamepadAxis::LeftStickY, A::Axis1Y),
-        (GamepadAxis::RightStickX, A::Axis2X),
-        (GamepadAxis::RightStickY, A::Axis2Y),
-    ]
-};
-
 impl StandardButton {
     /// Console-agnostic button for default binding resolution. Stick clicks
     /// have no console counterpart yet, so they stay unbound instead of
@@ -205,9 +168,9 @@ mod tests {
     #[test]
     fn every_button_has_a_label_and_count_matches() {
         let buttons: Vec<StandardButton> = StandardButton::iter().collect();
-        assert_eq!(buttons.len(), BUTTON_ABSTRACT.len() + 3);
+        assert_eq!(buttons.len(), 18);
         let axes: Vec<GamepadAxis> = GamepadAxis::iter().collect();
-        assert_eq!(axes.len(), AXIS_ABSTRACT.len() + 2);
+        assert_eq!(axes.len(), 6);
     }
 
     #[test]

@@ -431,7 +431,6 @@ pub(super) fn number_row(
         key: key.to_string(),
         label,
         description,
-        kind: RowKind::Number,
         number: params.value,
         step: params.step,
         min: params.min,
@@ -446,7 +445,6 @@ pub(super) fn info_row(key: &str, label: String, description: String, text: Stri
         key: key.to_string(),
         label,
         description,
-        kind: RowKind::Info,
         text,
         ..RowWire::new(RowKind::Info)
     }
@@ -465,7 +463,6 @@ pub(super) fn group_row(key: &str, label: String, description: String, target: &
         key: key.to_string(),
         label,
         description,
-        kind: RowKind::Group,
         target: target.to_string(),
         ..RowWire::new(RowKind::Group)
     }
@@ -486,7 +483,6 @@ pub(super) fn capture_row(
         key: key.to_string(),
         label,
         description,
-        kind: RowKind::Capture,
         text,
         target: target.to_string(),
         ..RowWire::new(RowKind::Capture)

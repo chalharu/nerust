@@ -492,6 +492,7 @@ class MainActivity :
     }
 
     override fun onInputDeviceAdded(deviceId: Int) {
+        devicesWithoutTriggerAxes.remove(deviceId)
         connectedDeviceIds.add(deviceId)
         sendDeviceAdded(deviceId)
         refreshControllerPresence()

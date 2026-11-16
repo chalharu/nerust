@@ -182,12 +182,13 @@ fn binding_page(
     }
 }
 
+fn hex_bytes(text: &str) -> String {
+    text.bytes().map(|byte| format!("{byte:02x}")).collect()
+}
+
 fn target_key(target: &CaptureTarget) -> String {
     if let Some(action) = target.action() {
-        return format!("shortcut_{action:?}")
-            .bytes()
-            .map(|byte| format!("{byte:02x}"))
-            .collect();
+        return hex_bytes(&format!("shortcut_{action:?}"));
     }
     // Bindings and per-pad overrides share the length-prefixed identity;
     // overrides prefix the pad. Shortcuts return above.
@@ -211,7 +212,7 @@ fn target_key(target: &CaptureTarget) -> String {
             control.len()
         ),
     };
-    identity.bytes().map(|byte| format!("{byte:02x}")).collect()
+    hex_bytes(&identity)
 }
 
 fn section_key(section: &BindingSectionView, index: usize) -> String {
@@ -233,7 +234,7 @@ fn section_key(section: &BindingSectionView, index: usize) -> String {
         .unwrap_or_default();
     let attachment = target.attachment().unwrap_or_default();
     let identity = format!("{}:{system}{}:", system.len(), attachment.len(),);
-    identity.bytes().map(|byte| format!("{byte:02x}")).collect()
+    hex_bytes(&identity)
 }
 
 /// Substring filter for binding lists: empty query keeps everything;
@@ -262,15 +263,6 @@ fn filter_sections(sections: Vec<BindingSectionView>, query: String) -> Vec<Bind
             })
         })
         .collect()
-}
-
-/// Single-section twin of [`filter_sections`] for the shortcuts page.
-fn filter_rows(section: BindingSectionView, query: String) -> BindingSectionView {
-    let mut kept = filter_sections(vec![section], query);
-    kept.pop().unwrap_or(BindingSectionView {
-        label: String::new(),
-        rows: Vec::new(),
-    })
 }
 
 fn binding_sections(
@@ -534,7 +526,7 @@ pub(super) fn inputs(
                             {
                                 let shortcuts = vm.shortcuts.clone();
                                 tick.clone().map(move |(_, query)| {
-                                    Some(filter_rows(shortcuts.view.get(), query))
+                                    filter_sections(vec![shortcuts.view.get()], query).pop()
                                 })
                             },
                             editor,

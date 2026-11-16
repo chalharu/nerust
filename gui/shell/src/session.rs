@@ -535,20 +535,9 @@ impl InputDept {
         self.trigger_alias = !analog;
     }
 
-    /// Dpad context for the OR/neutral machine: resolved abstract plus
-    /// the Copy pair the machine keys on. `None` for non-dpad controls.
-    /// No allocation: every id here is already Copy.
-    fn dpad_for(
-        &self,
-        attachment: AttachmentId,
-        control: DigitalControlId,
-    ) -> Option<(AttachmentId, DigitalControlId, AbstractKey)> {
-        Self::dpad_for_assignment(&self.current_assignments, attachment, control)
-    }
-
-    /// Assignment-parameterized twin for rebind-time fusion (no `&self`
-    /// borrow, so rebuilds can call it while filling the maps).
-    fn dpad_for_assignment(
+    /// Dpad context for the OR/neutral machine. Rebind-time fusion calls
+    /// this directly (no `&self` borrow); edges pass the live assignments.
+    pub(crate) fn dpad_for_assignment(
         assignments: &InputAssignments,
         attachment: AttachmentId,
         control: DigitalControlId,
