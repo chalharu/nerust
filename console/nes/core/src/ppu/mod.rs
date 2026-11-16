@@ -394,9 +394,9 @@ impl DecayableOpenBus {
     }
 
     pub(crate) fn unite(&mut self, data: OpenBusReadResult) -> u8 {
-        for i in 0..8 {
+        for (i, decay) in self.decay.iter_mut().enumerate() {
             if (data.mask >> i) == 1 {
-                self.decay[i] = 20;
+                *decay = 20;
             }
         }
         let result = (self.data & !data.mask) | (data.data & data.mask);
@@ -412,9 +412,9 @@ impl DecayableOpenBus {
 
     pub(crate) fn next(&mut self) {
         let mut result_mask: u8 = 0;
-        for i in 0..8 {
-            if self.decay[i] > 0 {
-                self.decay[i] -= 1;
+        for (i, decay) in self.decay.iter_mut().enumerate() {
+            if *decay > 0 {
+                *decay -= 1;
                 result_mask |= 1 << i;
             }
         }
