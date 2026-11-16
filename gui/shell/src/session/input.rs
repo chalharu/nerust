@@ -2323,11 +2323,8 @@ mod tests {
     }
 
     #[test]
-    fn topology_epoch_bumps_on_invalidate() {
-        let mut session = crate::session::test_util::test_session();
-        let epoch = session.input.topology_epoch;
-        session.input.invalidate_topology();
-        assert_eq!(session.input.topology_epoch, epoch.wrapping_add(1));
+    fn touch_overlay_model_passes_revision_through() {
+        let session = crate::session::test_util::test_session();
         assert_eq!(session.touch_overlay_model(42).revision, 42);
     }
 

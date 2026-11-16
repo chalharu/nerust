@@ -40,51 +40,39 @@ pub enum StandardButton {
 impl StandardButton {
     /// Console-agnostic button for default binding resolution. Stick clicks
     /// have no console counterpart yet, so they stay unbound instead of
-    /// guessing. `match` (not a table scan) keeps the per-event path O(1).
+    /// guessing. Single table so forward and reverse cannot skew.
+    const LAYOUT: [(Self, crate::AbstractKey); 15] = [
+        (Self::South, crate::AbstractKey::Button1),
+        (Self::East, crate::AbstractKey::Button2),
+        (Self::West, crate::AbstractKey::Button3),
+        (Self::North, crate::AbstractKey::Button4),
+        (Self::LeftShoulder, crate::AbstractKey::Button5),
+        (Self::RightShoulder, crate::AbstractKey::Button6),
+        (Self::LeftTrigger, crate::AbstractKey::Button7),
+        (Self::RightTrigger, crate::AbstractKey::Button8),
+        (Self::Back, crate::AbstractKey::Select),
+        (Self::Guide, crate::AbstractKey::Guide),
+        (Self::Start, crate::AbstractKey::Start),
+        (Self::DpadUp, crate::AbstractKey::DpadUp),
+        (Self::DpadDown, crate::AbstractKey::DpadDown),
+        (Self::DpadLeft, crate::AbstractKey::DpadLeft),
+        (Self::DpadRight, crate::AbstractKey::DpadRight),
+    ];
+
     pub fn abstract_key(self) -> Option<crate::AbstractKey> {
-        use crate::AbstractKey as A;
-        match self {
-            Self::South => Some(A::Button1),
-            Self::East => Some(A::Button2),
-            Self::West => Some(A::Button3),
-            Self::North => Some(A::Button4),
-            Self::LeftShoulder => Some(A::Button5),
-            Self::RightShoulder => Some(A::Button6),
-            Self::LeftTrigger => Some(A::Button7),
-            Self::RightTrigger => Some(A::Button8),
-            Self::Back => Some(A::Select),
-            Self::Guide => Some(A::Guide),
-            Self::Start => Some(A::Start),
-            Self::DpadUp => Some(A::DpadUp),
-            Self::DpadDown => Some(A::DpadDown),
-            Self::DpadLeft => Some(A::DpadLeft),
-            Self::DpadRight => Some(A::DpadRight),
-            Self::LeftStick | Self::RightStick | Self::Capture => None,
-        }
+        Self::LAYOUT
+            .iter()
+            .find(|(button, _)| *button == self)
+            .map(|(_, key)| *key)
     }
 
     /// Reverse of [`Self::abstract_key`]: the position button driving one
     /// console-agnostic button in the fixed standard layout.
     pub fn with_abstract(abstract_key: crate::AbstractKey) -> Option<Self> {
-        use crate::AbstractKey as A;
-        match abstract_key {
-            A::Button1 => Some(Self::South),
-            A::Button2 => Some(Self::East),
-            A::Button3 => Some(Self::West),
-            A::Button4 => Some(Self::North),
-            A::Button5 => Some(Self::LeftShoulder),
-            A::Button6 => Some(Self::RightShoulder),
-            A::Button7 => Some(Self::LeftTrigger),
-            A::Button8 => Some(Self::RightTrigger),
-            A::Select => Some(Self::Back),
-            A::Guide => Some(Self::Guide),
-            A::Start => Some(Self::Start),
-            A::DpadUp => Some(Self::DpadUp),
-            A::DpadDown => Some(Self::DpadDown),
-            A::DpadLeft => Some(Self::DpadLeft),
-            A::DpadRight => Some(Self::DpadRight),
-            _ => None,
-        }
+        Self::LAYOUT
+            .iter()
+            .find(|(_, key)| *key == abstract_key)
+            .map(|(button, _)| *button)
     }
 }
 

@@ -153,6 +153,9 @@ class ChromeManager(private val activity: MainActivity) {
         chromeAttachEnabled = false
         removePendingChromeAttachCallbacks()
         activity.window.decorView.removeCallbacks(restoreControllerOverlayRunnable)
+        // The capture popup is a window: letting it survive pause leaks it
+        // and leaves the activity unfocusable on return.
+        dismissGamepadInputCapture()
     }
 
     fun onStop() {
@@ -486,6 +489,7 @@ class ChromeManager(private val activity: MainActivity) {
     }
 
     private fun dismissGamepadInputCapture() {
+        if (gamepadInputPopup == null && gamepadInputView == null) return
         gamepadInputPopup?.dismiss()
         gamepadInputPopup = null
         gamepadInputView = null

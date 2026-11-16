@@ -1665,8 +1665,9 @@ fn pad_press_on_game_row_leaves_capture_pending() {
                 row.kind == RowKind::Capture
                     && serde_json::from_str::<serde_json::Value>(&row.target)
                         .ok()
-                        .and_then(|target| target.get("kind")?.as_str().map(str::to_string))
-                        == Some("binding".to_string())
+                        .is_some_and(|target| {
+                            target.get("action").is_none() && target.get("pad").is_none()
+                        })
             })
             .map(|row| row.key.clone())
             .expect("game capture row exists")
@@ -1893,8 +1894,9 @@ fn analog_trigger_motion_ignores_noise_and_game_rows() {
                 row.kind == RowKind::Capture
                     && serde_json::from_str::<serde_json::Value>(&row.target)
                         .ok()
-                        .and_then(|target| target.get("kind")?.as_str().map(str::to_string))
-                        == Some("binding".to_string())
+                        .is_some_and(|target| {
+                            target.get("action").is_none() && target.get("pad").is_none()
+                        })
             })
             .map(|row| row.key.clone())
             .expect("game capture row exists")

@@ -37,7 +37,7 @@ class DialogManager(private val activity: MainActivity) {
         private set
 
     fun isShowing(tag: String): Boolean =
-        this.tag == tag && dialog?.isShowing == true && rootView.isShownInWindowForTest()
+        this.tag == tag && dialog?.isShowing == true
 
     fun rootViewForTag(tag: String): View? = rootView.takeIf { this.tag == tag }
 
@@ -51,7 +51,9 @@ class DialogManager(private val activity: MainActivity) {
     }
 
     fun resetForTest() {
-        dismiss(notifyDismiss = !ownedByTest)
+        // Test teardown never acks the Rust gate: firing here would resolve
+        // a dialog the test never dismissed.
+        dismiss(notifyDismiss = false)
     }
 
     fun debugState(): String =

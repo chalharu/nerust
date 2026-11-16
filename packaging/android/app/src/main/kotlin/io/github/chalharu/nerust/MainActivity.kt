@@ -106,11 +106,11 @@ class MainActivity :
      * here never skews against routing. */
     private var connectedDeviceIds = mutableSetOf<Int>()
 
-    /** Devices known to lack analog trigger axes: `device.getMotionRange`
-     * crosses Binder on the L2/R2 key path, so a null result is cached per
-     * device id and evicted on removal/change below. Main thread only
+    /** Trigger axes present per device: `device.getMotionRange`
+     * crosses Binder on the L2/R2 key path, so probe once per device
+     * (cached both ways, evicted on add/change/remove). Main thread only
      * (dispatch plus listener callbacks), like the connect set above. */
-    private var devicesWithoutTriggerAxes = mutableSetOf<Int>()
+    private var hasTriggerAxes = mutableMapOf<Int, Boolean>()
 
     /** Right-stick primary absent per device: `getMotionRange` crosses
      * Binder at motion rate, so probe once per device (evicted on
@@ -256,16 +256,17 @@ class MainActivity :
                 ControllerAxis.TRIGGER_R
             }
         if (event.action != KeyEvent.ACTION_DOWN && event.action != KeyEvent.ACTION_UP) return false
-        // The range probe crosses Binder on the key path: a cached null
-        // skips it, a present axis re-probes (only nulls are cached, so a
-        // device that gains axes is never pinned to the mirror). A null
-        // device mirrors like before but is never cached to an id.
+        // Range probes cross Binder on the key path: cache both outcomes
+        // per device (a device that gains axes re-reports via change).
+        // Null devices mirror without caching.
         val deviceId = event.deviceId
-        val missingAxis =
-            devicesWithoutTriggerAxes.contains(deviceId) ||
-                event.device?.getMotionRange(axisMotion) == null
-        if (missingAxis && event.device != null) devicesWithoutTriggerAxes.add(deviceId)
-        if (missingAxis) {
+        val device = event.device
+        val hasAxes = if (device == null) {
+            device?.getMotionRange(axisMotion) != null
+        } else {
+            hasTriggerAxes.getOrPut(deviceId) { device.getMotionRange(axisMotion) != null }
+        }
+        if (!hasAxes) {
             updateControllerTrigger(deviceId, axisKey, event.action == KeyEvent.ACTION_DOWN)
             return true
         }
@@ -312,6 +313,11 @@ class MainActivity :
             if (Log.isLoggable(TAG, Log.DEBUG)) {
                 Log.d(TAG, "non-joystick motion: source=0x${event.source.toString(16)} device=${event.deviceId}")
             }
+            return super.onGenericMotionEvent(event)
+        }
+        // Uncounted joystick sources (joystick mice, sensors) never divert:
+        // consuming them here would eat input the platform owns.
+        if (!connectedDeviceIds.contains(event.deviceId)) {
             return super.onGenericMotionEvent(event)
         }
         val hatX = event.getAxisValue(MotionEvent.AXIS_HAT_X)
@@ -429,8 +435,15 @@ class MainActivity :
             // (Binder probe once, not per sample); never keyed on value so
             // calibration noise cannot disable a real axis or shadow it.
             if (axis == ControllerAxis.RIGHT_X || axis == ControllerAxis.RIGHT_Y) {
-                val useAlias = rightStickAlias.getOrPut(deviceId) {
-                    event.device?.getMotionRange(id) == null
+                // Null devices never alias and never poison the cache: a
+                // vanished device must not pin RX/RY forever.
+                val device = event.device
+                val useAlias = if (device == null) {
+                    false
+                } else {
+                    rightStickAlias.getOrPut(deviceId) {
+                        device.getMotionRange(id) == null
+                    }
                 }
                 if (useAlias) {
                     val alias =
@@ -489,33 +502,36 @@ class MainActivity :
     }
 
     /** Boot sweep: pads connected before resume never fire
-     * `onInputDeviceAdded`, so enumerate them once. Kept alongside
-     * [refreshControllerPresence] on purpose: the sweep pushes device
-     * identities (Rust port assignment) while the presence scan only drives
-     * the overlay/capture gate, so neither subsumes the other. Listener
-     * registration comes first; a racing add re-sends the same descriptor,
-     * and Rust collapses duplicates to one index. */
+     * `onInputDeviceAdded`, so enumerate them once. Counted-only: the
+     * routing set, the presence scan, and Rust port assignment all share
+     * the same verdict, so ghosts and joystick mice never divert.
+     * Clears first: an unplug-while-paused (listener unregistered in
+     * onPause) must not leave a stale divert. Listener registration
+     * comes first; a racing add re-sends the same descriptor, and Rust
+     * collapses duplicates to one index. */
     private fun sendInitialDeviceAdded() {
+        connectedDeviceIds.clear()
+        hasTriggerAxes.clear()
+        rightStickAlias.clear()
         for (deviceId in InputDevice.getDeviceIds()) {
             val device = InputDevice.getDevice(deviceId) ?: continue
-            if (device.supportsSource(InputDevice.SOURCE_GAMEPAD) ||
-                device.supportsSource(InputDevice.SOURCE_JOYSTICK)
-            ) {
-                // Null-descriptor ghosts never enter routing: without an
-                // identity Rust cannot port them, so diverting would be
-                // dead input.
-                if (device.descriptor == null) continue
-                connectedDeviceIds.add(deviceId)
-                sendDeviceAdded(deviceId)
-            }
+            if (!isCountedGamepad(device)) continue
+            // Null-descriptor ghosts never enter routing: without an
+            // identity Rust cannot port them, so diverting would be
+            // dead input.
+            if (device.descriptor == null) continue
+            connectedDeviceIds.add(deviceId)
+            sendDeviceAdded(deviceId)
         }
     }
 
     override fun onInputDeviceAdded(deviceId: Int) {
-        devicesWithoutTriggerAxes.remove(deviceId)
+        hasTriggerAxes.remove(deviceId)
         rightStickAlias.remove(deviceId)
-        // Same null-descriptor guard as the boot sweep above.
-        if (InputDevice.getDevice(deviceId)?.descriptor == null) {
+        val device = InputDevice.getDevice(deviceId)
+        // Same counted verdict as the boot sweep; uncounted devices never
+        // enter routing and only refresh the overlay gate.
+        if (device == null || device.descriptor == null || !isCountedGamepad(device)) {
             refreshControllerPresence()
             return
         }
@@ -525,14 +541,22 @@ class MainActivity :
     }
 
     override fun onInputDeviceChanged(deviceId: Int) {
-        devicesWithoutTriggerAxes.remove(deviceId)
+        hasTriggerAxes.remove(deviceId)
         rightStickAlias.remove(deviceId)
+        // Re-evaluate membership: a device can gain or lose gamepad
+        // signals across a change.
+        val device = InputDevice.getDevice(deviceId)
+        if (device != null && device.descriptor != null && isCountedGamepad(device)) {
+            connectedDeviceIds.add(deviceId)
+        } else {
+            connectedDeviceIds.remove(deviceId)
+        }
         refreshControllerPresence()
     }
 
     override fun onInputDeviceRemoved(deviceId: Int) {
         connectedDeviceIds.remove(deviceId)
-        devicesWithoutTriggerAxes.remove(deviceId)
+        hasTriggerAxes.remove(deviceId)
         rightStickAlias.remove(deviceId)
         releaseController(deviceId)
         sendDeviceRemoved(deviceId)
@@ -623,7 +647,7 @@ class MainActivity :
         safRepository.close()
         slotListener = null
         rightStickAlias.clear()
-        devicesWithoutTriggerAxes.clear()
+        hasTriggerAxes.clear()
         connectedDeviceIds.clear()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         store.clear()
@@ -645,15 +669,14 @@ class MainActivity :
      * window has its own dispatcher, so the capture view calls this
      * directly instead of reaching the activity dispatcher). `internal`
      * (not private) for that cross-window call; not a public API leak. */
-    internal fun handleBackNavigation(): Boolean {
+    internal fun handleBackNavigation() {
         if (dialogManager.isShowing(ERROR_DIALOG_TAG)) {
             dialogManager.dismiss(notifyDismiss = true)
-            return true
+            return
         }
-        if (chromeManager.removeDrawerOverlay()) return true
+        if (chromeManager.removeDrawerOverlay()) return
         userInitiatedExit = true
         finish()
-        return true
     }
 
     // Deprecated upstream; kept because minSdk 28 predates the

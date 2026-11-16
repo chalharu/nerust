@@ -29,7 +29,7 @@ use super::vm::{
 };
 use super::wire::{
     CaptureSlot, GamepadInfo, I18n, KeyboardInfo, PLAYER_PORTS, RowKind, RowWire, SectionWire,
-    ViewPayload, WireCommand, WireOp, WireTarget, choice, find_row, range_value,
+    ViewPayload, WireCommand, WireOp, WireTarget, capture_open, choice, find_row, range_value,
     sort_gamepads_by_order, toggle_value,
 };
 
@@ -223,8 +223,11 @@ fn apply_capture_command(
             Ok(())
         }
         WireOp::StartCapture => {
-            // Rows hide when closed, so a resolved capture row is always
-            // live: no second truth check here that could disagree.
+            // Single gate: rows hide when closed but a tampered client can
+            // still send the op, so enforce here instead of trusting render.
+            if !capture_open(truth.keyboards, truth.gamepads) {
+                return Err("no input device connected".to_string());
+            }
             vm.capture
                 .start_capture(target.clone())
                 .map_err(|error| error.to_string())?;
@@ -257,8 +260,9 @@ where
 /// Single device-truth push (Kotlin `InputDevice` enumeration, hotplug
 /// refresh included): keyboards, touch capability, counted gamepads, and
 /// the terminal locale in one op, one re-projection. Ephemeral truth,
-/// never persisted; the draft is untouched. `lang` is optional (unknown
-/// terminal locale keeps the previous push); the rest fail loud.
+/// never persisted; the draft is untouched. `capable` and `lang` stay
+/// optional (old clients omit `capable`, unknown terminal locale keeps
+/// the previous push); the rest fail loud.
 fn apply_device_truth_command(
     keyboards: &mut Vec<KeyboardInfo>,
     touch_capable: &mut bool,
@@ -274,12 +278,10 @@ fn apply_device_truth_command(
         }
     }
     *keyboards = list;
-    let capable_raw = command
-        .payload
-        .get("capable")
-        .ok_or_else(|| "device_truth op misses capable".to_string())?;
-    *touch_capable =
-        serde_json::from_value(capable_raw.clone()).map_err(|error| error.to_string())?;
+    if let Some(capable_raw) = command.payload.get("capable") {
+        *touch_capable =
+            serde_json::from_value(capable_raw.clone()).map_err(|error| error.to_string())?;
+    }
     let names: Vec<GamepadInfo> = payload_vec(command, "gamepads")?;
     for info in &names {
         if info.member.is_empty() {
@@ -638,12 +640,8 @@ fn reset_pad_scope(
     scope: &str,
     pad: &str,
 ) -> Result<(), String> {
-    let index: usize = pad
-        .parse()
-        .ok()
-        .filter(|index: &usize| *index >= 1)
-        .ok_or_else(|| format!("unknown reset scope: {scope}"))?
-        - 1;
+    let key = format!("pad.{pad}.deadzone");
+    let index = pad_screen_index(&key).map_err(|_| format!("unknown reset scope: {scope}"))?;
     let Some(default_port) = default.shared.input.gamepad.pad_ports.get(index) else {
         return Err(format!("unknown reset scope: {scope}"));
     };
@@ -1008,8 +1006,19 @@ fn decode_target(encoded: &str, deps: &VmDeps) -> Result<CaptureTarget, String> 
             .map(|factory| factory.system_id())
             .ok_or_else(|| format!("unknown system: {system}"))
     };
-    match value.kind.as_str() {
-        "binding" => Ok(CaptureTarget::Binding {
+    match (value.action, value.pad) {
+        (Some(action), _) => Ok(CaptureTarget::Shortcut(action)),
+        (None, Some(pad)) => Ok(CaptureTarget::PadBinding {
+            system: system(value.system)?,
+            pad,
+            attachment: value
+                .attachment
+                .ok_or_else(|| "capture target misses attachment".to_string())?,
+            control: value
+                .control
+                .ok_or_else(|| "capture target misses control".to_string())?,
+        }),
+        (None, None) => Ok(CaptureTarget::Binding {
             system: system(value.system)?,
             attachment: value
                 .attachment
@@ -1018,23 +1027,5 @@ fn decode_target(encoded: &str, deps: &VmDeps) -> Result<CaptureTarget, String> 
                 .control
                 .ok_or_else(|| "capture target misses control".to_string())?,
         }),
-        "shortcut" => {
-            Ok(CaptureTarget::Shortcut(value.action.ok_or_else(|| {
-                "capture target misses action".to_string()
-            })?))
-        }
-        "pad_binding" => Ok(CaptureTarget::PadBinding {
-            system: system(value.system)?,
-            pad: value
-                .pad
-                .ok_or_else(|| "capture target misses pad".to_string())?,
-            attachment: value
-                .attachment
-                .ok_or_else(|| "capture target misses attachment".to_string())?,
-            control: value
-                .control
-                .ok_or_else(|| "capture target misses control".to_string())?,
-        }),
-        _ => Err("unknown capture target".to_string()),
     }
 }

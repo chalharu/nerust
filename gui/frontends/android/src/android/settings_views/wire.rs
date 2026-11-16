@@ -508,12 +508,12 @@ pub(super) fn capture_open(keyboards: &[KeyboardInfo], gamepads: &[GamepadInfo])
     !keyboards.is_empty() || !gamepads.is_empty()
 }
 
-/// Wire form of one capture target: one struct, one parse. Lives here next
-/// to [`encode_target`] so the pair cannot skew; `commands` resolves it
-/// with the factory registry.
+/// Wire form of one capture target: optional fields only, the shape
+/// infers the kind (action → shortcut, pad → pad binding, else binding).
+/// Lives next to [`encode_target`] so the pair cannot skew; `commands`
+/// resolves it with the factory registry.
 #[derive(serde::Deserialize)]
 pub(super) struct WireTarget {
-    pub kind: String,
     #[serde(default)]
     pub action: Option<nerust_settings_core::model::input::ShortcutAction>,
     #[serde(default)]
@@ -532,11 +532,10 @@ pub(super) struct WireTarget {
 /// decodes the row string once per command.
 pub(super) fn encode_target(target: &CaptureTarget) -> String {
     if let Some(action) = target.action() {
-        return serde_json::json!({"kind": "shortcut", "action": action}).to_string();
+        return serde_json::json!({"action": action}).to_string();
     }
     // Bindings and overrides share the shape; overrides add the pad.
     let mut value = serde_json::json!({
-        "kind": if target.pad().is_some() { "pad_binding" } else { "binding" },
         "system": target.system_id().map(|system| system.to_string()).unwrap_or_default(),
         "attachment": target.attachment().unwrap_or_default(),
         "control": target.control().unwrap_or_default(),

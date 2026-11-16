@@ -172,9 +172,12 @@ class SettingsActivity :
     }
 
     override fun onDestroy() {
+        // onPause already unregistered; a second call throws, which is
+        // expected on this path, so log instead of swallowing silently.
         try {
             (getSystemService(INPUT_SERVICE) as InputManager).unregisterInputDeviceListener(this)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.d(TAG, "input listener already unregistered", e)
         }
         if (this == activeActivityForTest) activeActivityForTest = null
         super.onDestroy()
@@ -265,6 +268,11 @@ class SettingsActivity :
             )
         }
         if (controller && !capturing) {
+            return super.dispatchKeyEvent(event)
+        }
+        // System keys (volume, power, Back) never start a capture: they
+        // belong to the platform even while a row waits.
+        if (capturing && KeyEvent.isSystemKey(event.keyCode)) {
             return super.dispatchKeyEvent(event)
         }
         // Descriptor identity: the live id is recycled on reconnect, so

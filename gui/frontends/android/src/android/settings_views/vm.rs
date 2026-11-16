@@ -50,13 +50,17 @@ static VM_DEPS: RwLock<Option<VmDeps>> = RwLock::new(None);
 /// Publish the factories and probed rates. Overwrites any previous
 /// install: production calls once at startup, tests reinstall per case.
 pub(crate) fn install_vm_deps(factories: Vec<Arc<dyn CoreFactory>>, rates: Arc<[u32]>) {
-    *VM_DEPS.write().expect("vm deps lock poisoned") = Some(VmDeps { factories, rates });
+    if let Ok(mut slot) = VM_DEPS.write() {
+        *slot = Some(VmDeps { factories, rates });
+    }
 }
 
 pub(super) fn with_vm_deps<T>(
     operation: impl FnOnce(&VmDeps) -> Result<T, String>,
 ) -> Result<T, String> {
-    let guard = VM_DEPS.read().expect("vm deps lock poisoned");
+    let guard = VM_DEPS
+        .read()
+        .map_err(|_| "android settings not initialized".to_string())?;
     let Some(deps) = guard.as_ref() else {
         return Err("android settings not initialized".to_string());
     };

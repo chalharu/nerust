@@ -270,7 +270,6 @@ struct InputDept {
     /// assignments, fused at every rebind. Press/release edges resolve
     /// here instead of walking the topology per edge.
     abstract_route: HashMap<(AbstractKey, Option<usize>), Option<ControlWithDpad>>,
-    topology_epoch: u64,
 }
 
 impl InputDept {
@@ -303,12 +302,7 @@ impl InputDept {
             pad_deadzone: Vec::new(),
             pad_hat: Vec::new(),
             abstract_route: HashMap::new(),
-            topology_epoch: 0,
         }
-    }
-
-    fn invalidate_topology(&mut self) {
-        self.topology_epoch = self.topology_epoch.wrapping_add(1);
     }
 
     /// Rebuild the keyboard reverse map from the implicit profile.
@@ -866,7 +860,6 @@ impl SessionHandle {
         self.emu.replace(runtime);
         self.debug_clear_write();
         self.clear_input();
-        self.input.invalidate_topology();
         self.rebuild_key_field_map();
     }
 
@@ -1397,7 +1390,6 @@ impl SessionHandle {
         };
         self.pre_switch = Some(pre_switch);
         self.media.persistence.reset();
-        self.input.invalidate_topology();
         self.debug_clear_write();
         self.rebuild_key_field_map();
         Ok(())
@@ -1422,7 +1414,6 @@ impl SessionHandle {
         self.input.current_assignments = stashed.assignments;
         self.input.pressed = stashed.pressed;
         self.media.persistence.restore_state(stashed.persistence);
-        self.input.invalidate_topology();
         self.debug_clear_write();
         self.rebuild_key_field_map();
         // The switch froze a running core: unfreeze it now, or rollback strands a paused game.

@@ -320,7 +320,6 @@ impl SessionHandle {
             }
         }
         self.reassert_pad_presses();
-        self.input.invalidate_topology();
     }
 
     pub fn set_fullscreen_default(

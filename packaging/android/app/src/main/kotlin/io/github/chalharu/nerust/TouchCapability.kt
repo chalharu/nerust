@@ -29,7 +29,7 @@ internal fun isControllerSource(source: Int): Boolean =
  * the engine settled on: every such ghost starts with "uinput-"
  * (fpc/goodix/synaptics/elan/vfs/atrus/fortsense). Real BT/USB controllers
  * never carry it. */
-private fun isCountedGamepad(device: InputDevice): Boolean {
+internal fun isCountedGamepad(device: InputDevice): Boolean {
     // OS-bug guard first (Godot #47656): ghost fingerprint sensors lie
     // about sources, buttons, and axes, so signals cannot catch them.
     // Narrow to the known ghost suffixes (fpc/goodix/synaptics/elan/vfs/

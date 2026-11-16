@@ -8,47 +8,21 @@ use nerust_input_traits::{Key, StandardButton};
 use winit::keyboard::{KeyCode, NativeKeyCode, PhysicalKey};
 
 /// Raw Android keycode to position button. `None` for keyboard keys
-/// and unknown codes.
-pub(crate) fn android_keycode_to_button(keycode: u32) -> Option<StandardButton> {
-    Some(match keycode {
-        19 => StandardButton::DpadUp,
-        20 => StandardButton::DpadDown,
-        21 => StandardButton::DpadLeft,
-        22 => StandardButton::DpadRight,
-        96 => StandardButton::South,
-        97 => StandardButton::East,
-        // `BUTTON_C` (98) is the vendors' shared capture/share/create
-        // button (Switch capture, Xbox share, PS create all arrive here).
-        // `BUTTON_Z` (101) is intentionally unmapped: AOSP defines it as
-        // the Z-labeled / upper-row third button (N64/GC-style Z), a
-        // distinct physical button with no standard slot, so folding it
-        // into Capture would alias two different buttons.
-        98 => StandardButton::Capture,
-        99 => StandardButton::West,
-        100 => StandardButton::North,
-        102 => StandardButton::LeftShoulder,
-        103 => StandardButton::RightShoulder,
-        104 => StandardButton::LeftTrigger,
-        105 => StandardButton::RightTrigger,
-        106 => StandardButton::LeftStick,
-        107 => StandardButton::RightStick,
-        108 => StandardButton::Start,
-        109 => StandardButton::Back,
-        110 => StandardButton::Guide,
-        _ => return None,
-    })
-}
-
-/// Covered buttons: explicit pairs so a dropped arm fails here instead
-/// of round-tripping the function against itself.
-#[cfg(test)]
-const COVERED_BUTTONS: [(u32, StandardButton); 18] = [
+/// and unknown codes. Single table so the function and its coverage
+/// test cannot skew.
+const BUTTON_TABLE: [(u32, StandardButton); 18] = [
     (19, StandardButton::DpadUp),
     (20, StandardButton::DpadDown),
     (21, StandardButton::DpadLeft),
     (22, StandardButton::DpadRight),
     (96, StandardButton::South),
     (97, StandardButton::East),
+    // `BUTTON_C` (98) is the vendors' shared capture/share/create
+    // button (Switch capture, Xbox share, PS create all arrive here).
+    // `BUTTON_Z` (101) is intentionally unmapped: AOSP defines it as
+    // the Z-labeled / upper-row third button (N64/GC-style Z), a
+    // distinct physical button with no standard slot, so folding it
+    // into Capture would alias two different buttons.
     (98, StandardButton::Capture),
     (99, StandardButton::West),
     (100, StandardButton::North),
@@ -62,6 +36,13 @@ const COVERED_BUTTONS: [(u32, StandardButton); 18] = [
     (109, StandardButton::Back),
     (110, StandardButton::Guide),
 ];
+
+pub(crate) fn android_keycode_to_button(keycode: u32) -> Option<StandardButton> {
+    BUTTON_TABLE
+        .iter()
+        .find(|(code, _)| *code == keycode)
+        .map(|(_, button)| *button)
+}
 
 /// Raw Android keycode to emulated key (settings capture vocabulary).
 /// `None` for pad-only buttons, triggers, and system keys, so capture and
@@ -354,7 +335,7 @@ mod tests {
 
     #[test]
     fn keycodes_cover_face_dpad_and_system_buttons() {
-        for (keycode, button) in COVERED_BUTTONS {
+        for (keycode, button) in BUTTON_TABLE {
             assert_eq!(android_keycode_to_button(keycode), Some(button));
         }
         for keycode in [0, 101, 255] {
