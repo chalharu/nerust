@@ -226,14 +226,19 @@ fn section_key(section: &BindingSectionView, index: usize) -> String {
         return format!("padbindings_{index}");
     }
     // Section identity folds system + attachment (not control): rows of
-    // one attachment share the page. Same length-prefixed hex shape as
-    // `target_key` with an empty control.
+    // one attachment share the page. Same shape as `target_key` with an
+    // empty control, so same-length attachments (player1/player2) keep
+    // distinct keys and the backend never rejects the update.
     let system = target
         .system_id()
         .map(|system| system.to_string())
         .unwrap_or_default();
     let attachment = target.attachment().unwrap_or_default();
-    let identity = format!("{}:{system}{}:", system.len(), attachment.len(),);
+    let identity = format!(
+        "{}:{system}{}:{attachment}0:",
+        system.len(),
+        attachment.len(),
+    );
     hex_bytes(&identity)
 }
 
@@ -1292,6 +1297,109 @@ mod tests {
         assert_eq!(inner.rows.get().len(), section.rows.len());
         let _ = source.update(|sections| sections.clear());
         assert!(pages.get().is_empty());
+    }
+
+    /// Section keys must distinguish same-length attachments: the key used
+    /// to fold attachment length only, so player1/player2 (both 22 chars
+    /// on NES) collided and the backend rejected the whole TabItems update
+    /// ("duplicate Tab page key"), blanking the tab.
+    #[test]
+    fn section_keys_distinguish_same_length_attachments() {
+        use nerust_gui_viewmodel::settings::dto::BindingRowView;
+        use nerust_settings_core::editor::CaptureTarget;
+        let (editor, _adapter, _dir) = headless_editor();
+        let executor: Rc<dyn panechord::Executor> = Rc::new(TestExecutor);
+        let section = editor
+            .vm
+            .inputs()
+            .iter()
+            .flat_map(|input| input.view.get().sections)
+            .find(|section| !section.rows.is_empty())
+            .expect("a keyboard section exists");
+        let variant = |attachment: &str| {
+            let mut section = section.clone();
+            for row in &mut section.rows {
+                let BindingRowView { target, .. } = row;
+                let (system, control) = match target {
+                    CaptureTarget::Binding { system, control, .. } => {
+                        ((*system).clone(), (*control).clone())
+                    }
+                    other => panic!("keyboard row has unexpected target: {other:?}"),
+                };
+                *target = CaptureTarget::Binding {
+                    system,
+                    attachment: attachment.into(),
+                    control,
+                };
+            }
+            section.label = attachment.to_string();
+            section
+        };
+        // Same length, different values: keys must differ.
+        let first = variant("aa");
+        let second = variant("bb");
+        assert_ne!(section_key(&first, 0), section_key(&second, 1));
+        let source = Store::new(vec![first, second], executor.clone());
+        let pages = binding_sections(
+            source.bind(|sections| sections.clone(), None),
+            &editor,
+            &noop_capture(&executor),
+            &noop_capture(&executor),
+        );
+        let keys: Vec<String> = pages.get().into_iter().map(|page| page.key).collect();
+        assert_eq!(keys.len(), 2);
+        assert_ne!(keys[0], keys[1]);
+    }
+
+    /// Page and section keys across every dynamic TabItems stay unique
+    /// under the default fixture and under filter queries: a single
+    /// duplicate blanks the whole tab with "duplicate Tab page key".
+    #[test]
+    fn tab_item_keys_are_unique_across_pages_and_sections() {
+        let (editor, _adapter, _dir) = headless_editor();
+        let executor: Rc<dyn panechord::Executor> = Rc::new(TestExecutor);
+        let systems = systems(&editor);
+        let mut seen = std::collections::BTreeSet::new();
+        for page in &systems {
+            assert!(
+                seen.insert(page.key.clone()),
+                "duplicate system page key {}",
+                page.key
+            );
+        }
+        for query in [
+            String::new(),
+            "a".to_string(),
+            "zzz-no-such-control".to_string(),
+        ] {
+            let pages = inputs(
+                &editor,
+                noop_capture(&executor),
+                noop_capture(&executor),
+                Binding::constant(query.clone()),
+            );
+            let mut seen_pages = std::collections::BTreeSet::new();
+            for page in &pages {
+                assert!(
+                    seen_pages.insert(page.key.clone()),
+                    "duplicate input page key {} with query {query:?}",
+                    page.key
+                );
+                if !page.key.starts_with("system-") {
+                    continue;
+                }
+                let sections = page.model.snapshot().sections.get();
+                let mut seen_sections = std::collections::BTreeSet::new();
+                for section in &sections {
+                    assert!(
+                        seen_sections.insert(section.key.clone()),
+                        "duplicate section key {} in page {} with query {query:?}",
+                        section.key,
+                        page.key
+                    );
+                }
+            }
+        }
     }
 
     /// Row chrome delegates to the dialog commands: capture starts a
