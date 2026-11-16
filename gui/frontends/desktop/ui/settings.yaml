@@ -371,12 +371,15 @@ root:
           - id: system
             title: {bind: {path: labels.tab_system, source: External}}
             content:
-              type: TabItems
-              id: system_tabs
-              selected: {bind: {path: system_selection, source: External, mode: TwoWay}}
-              items: {bind: {path: system_pages, source: External}}
-              title: {bind: {path: label}}
-              item_template: system_page
+              type: Scroll
+              id: system_scroll
+              content:
+                type: TabItems
+                id: system_tabs
+                selected: {bind: {path: system_selection, source: External, mode: TwoWay}}
+                items: {bind: {path: system_pages, source: External}}
+                title: {bind: {path: label}}
+                item_template: system_page
       - {type: Label, id: status, text: {bind: {path: status, source: External}}}
       - type: DialogFooter
         id: actions
