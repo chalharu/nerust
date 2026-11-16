@@ -20,10 +20,10 @@ pub enum StandardButton {
     Guide,
     Start,
     /// Capture/share/create: the screenshot button vendors add beside
-    /// Start (Switch capture, Xbox share, PS create all arrive as
-    /// `KEYCODE_BUTTON_C`). No console counterpart (like stick clicks),
-    /// so it stays abstract-free and serves shortcuts plus per-pad
-    /// overrides only.
+    /// Start (Switch capture, Xbox share, PS create arrive as
+    /// `KEYCODE_BUTTON_C` on tested pads). No console counterpart (like
+    /// stick clicks), so it stays abstract-free and serves shortcuts
+    /// plus per-pad overrides only.
     Capture,
     LeftStick,
     RightStick,

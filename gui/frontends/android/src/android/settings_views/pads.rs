@@ -59,8 +59,8 @@ pub(super) fn build_pad_sections(
 }
 
 /// One rank's screen: assignment readout, deadzone, hat switch, mapping
-/// rows (assigned ranks only), and the screen reset. Disconnected ranks
-/// keep every row but disable capture (no device to press); their edits
+/// rows (assigned live ranks only), and the screen reset. Disconnected
+/// ranks hide their mapping captures (nothing to press); their edits
 /// persist and restore on reconnect.
 fn pad_rank_section(
     vm: &SettingsViewModel,

@@ -82,9 +82,10 @@ pub(crate) struct RowWire {
     pub target: String,
     #[serde(default = "default_true")]
     pub visible: bool,
-    /// Whether the row accepts input. Capture rows disable this when no
-    /// input device is connected; `reason` explains why so Kotlin never
-    /// invents copy.
+    /// Whether the row accepts input. Always true for rendered rows:
+    /// capture rows hide when closed (no input device / pad disconnected)
+    /// instead of disabling in place, so every rendered capture row
+    /// accepts input. `reason` stays reserved so Kotlin never invents copy.
     #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(default)]
@@ -212,9 +213,22 @@ pub(super) fn player_label(index: usize, i18n: I18n) -> String {
 /// Stable row-key fragment for one capture target: shortcuts by action,
 /// bindings and overrides by attachment/control (overrides prefix the
 /// 1-based pad). Shortcuts return above, so both accessors hold here.
+/// Action names use the serialized (snake_case) form, never `Debug`,
+/// so row keys stay stable across refactors.
 pub(super) fn binding_key(target: &CaptureTarget) -> String {
     if let Some(action) = target.action() {
-        return format!("shortcut.{action:?}");
+        use nerust_settings_core::model::input::ShortcutAction as A;
+        let name = match action {
+            A::TogglePause => "toggle_pause",
+            A::SaveActiveSlot => "save_active_slot",
+            A::SelectNextSlot => "select_next_slot",
+            A::SelectPreviousSlot => "select_previous_slot",
+            A::LoadActiveSlot => "load_active_slot",
+            A::ToggleFullscreen => "toggle_fullscreen",
+            A::Reset => "reset",
+            A::OpenDebugger => "open_debugger",
+        };
+        return format!("shortcut.{name}");
     }
     let (attachment, control) = (
         target.attachment().unwrap_or_default(),

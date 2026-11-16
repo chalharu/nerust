@@ -28,10 +28,12 @@ private const val EXTRA_ORIENTATION = "nerust.extra.ORIENTATION"
 
 /** Hardware keys that never start a capture: they belong to the platform
  * even while a row waits (capturing volume would swallow the press
- * without changing volume). `KeyEvent.isSystemKey` is not public API,
- * so the set names them explicitly. */
+ * without changing volume). BACK also never binds: it cancels capture
+ * or navigates up via `handleSettingsBack`. `KeyEvent.isSystemKey` is
+ * not public API, so the set names them explicitly. */
 private val UNCAPTUREABLE_SYSTEM_KEYS =
     setOf(
+        KeyEvent.KEYCODE_BACK,
         KeyEvent.KEYCODE_VOLUME_UP,
         KeyEvent.KEYCODE_VOLUME_DOWN,
         KeyEvent.KEYCODE_VOLUME_MUTE,

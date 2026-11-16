@@ -678,7 +678,7 @@ fn machine_sections_link_to_hidden_controller_screens() {
     // overlay detail screen: port-independent and always active.
     for (id, probe_key) in [
         ("controls.overlay_detail", "controls.overlay_opacity"),
-        ("controls.shortcuts", "controls.shortcut.TogglePause.kbd"),
+        ("controls.shortcuts", "controls.shortcut.toggle_pause.kbd"),
     ] {
         let hidden = payload
             .sections
@@ -2721,7 +2721,7 @@ fn shortcut_clear_is_per_column() {
             let mut touch_capable = true;
 
             let command_json = serde_json::to_string(&WireCommand {
-                key: "controls.shortcut.TogglePause.kbd".to_string(),
+                key: "controls.shortcut.toggle_pause.kbd".to_string(),
                 index: 0,
                 number: 0,
                 op: WireOp::ClearBinding,
@@ -2765,7 +2765,7 @@ fn shortcut_clear_is_per_column() {
             let mut touch_capable = true;
 
             let command_json = serde_json::to_string(&WireCommand {
-                key: "controls.shortcut.TogglePause.pad".to_string(),
+                key: "controls.shortcut.toggle_pause.pad".to_string(),
                 index: 0,
                 number: 0,
                 op: WireOp::ClearBinding,
@@ -2845,13 +2845,13 @@ fn shortcuts_group_per_device_with_split_columns() {
     let kbd = shortcuts
         .rows
         .iter()
-        .find(|row| row.key == "controls.shortcut.TogglePause.kbd")
+        .find(|row| row.key == "controls.shortcut.toggle_pause.kbd")
         .expect("keyboard pause row exists");
     assert_eq!(kbd.text, "Space");
     let pad = shortcuts
         .rows
         .iter()
-        .find(|row| row.key == "controls.shortcut.TogglePause.pad")
+        .find(|row| row.key == "controls.shortcut.toggle_pause.pad")
         .expect("pad pause row exists");
     assert_eq!(pad.text, "Guide");
     assert_eq!(

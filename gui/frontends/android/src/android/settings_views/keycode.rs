@@ -18,10 +18,9 @@ pub(crate) const BUTTON_TABLE: [(u32, StandardButton); 18] = [
     (96, StandardButton::South),
     (97, StandardButton::East),
     // `BUTTON_C` (98) is the vendors' shared capture/share/create
-    // button (Switch capture, Xbox share, PS create all arrive here).
+    // button (arrives here on tested pads).
     // `BUTTON_Z` (101) is intentionally unmapped: AOSP defines it as
-    // the Z-labeled / upper-row third button (N64/GC-style Z), a
-    // distinct physical button with no standard slot, so folding it
+    // a distinct Z-labeled button with no standard slot, so folding it
     // into Capture would alias two different buttons.
     (98, StandardButton::Capture),
     (99, StandardButton::West),
