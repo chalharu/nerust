@@ -318,8 +318,8 @@ class SettingsActivity :
             val triggerR = event.getAxisValue(MotionEvent.AXIS_RTRIGGER)
             // Descriptor identity: device ids recycle on reconnect, so the
             // edge cache keys by descriptor (same key Rust rank-gates on).
-            val descriptorKey =
-                InputDevice.getDevice(event.deviceId)?.descriptor ?: "id:${event.deviceId}"
+            val device = InputDevice.getDevice(event.deviceId)
+            val descriptorKey = device?.descriptor ?: "id:${event.deviceId}"
             // Unknown means held-or-fresh: seed with the live values so a
             // trigger already held when the row opens cannot capture on
             // the first motion event.
@@ -330,7 +330,7 @@ class SettingsActivity :
                     (triggerR >= TRIGGER_CAPTURE_PRESS && last.second < TRIGGER_CAPTURE_PRESS)
             if (crossed &&
                 routeSettingsMotionEvent(
-                    InputDevice.getDevice(event.deviceId)?.descriptor,
+                    device?.descriptor,
                     triggerL,
                     triggerR,
                 )

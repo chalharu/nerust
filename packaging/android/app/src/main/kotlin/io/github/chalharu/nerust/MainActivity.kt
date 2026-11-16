@@ -593,15 +593,15 @@ class MainActivity :
             if (scan == lastPresenceTruth) return@runIo
             lastPresenceTruth = scan
             val touchCapable = scan.touchCapable
-            val gamepadNames = scan.gamepads.map { it.name }
+            val hasGamepads = scan.gamepads.isNotEmpty()
             BridgeIo.postMain {
                 if (epoch != presenceEpoch || isDestroyed || isFinishing) return@postMain
                 chromeManager.setTouchCapable(touchCapable)
-                if (gamepadNames.isNotEmpty() && Log.isLoggable(TAG, Log.DEBUG)) {
+                if (hasGamepads && Log.isLoggable(TAG, Log.DEBUG)) {
                     // Debug breadcrumb for Auto-hide reports: which device hid it.
-                    Log.d(TAG, "overlay auto-hide counts gamepad: ${gamepadNames.joinToString()}")
+                    Log.d(TAG, "overlay auto-hide counts gamepad: ${scan.gamepads.map { it.name }.joinToString()}")
                 }
-                chromeManager.setControllerConnected(gamepadNames.isNotEmpty())
+                chromeManager.setControllerConnected(hasGamepads)
             }
         }
     }
