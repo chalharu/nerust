@@ -33,12 +33,12 @@ internal class GamepadInputCaptureView(
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         // Back never reaches the activity dispatcher from this window
-        // (each window has its own), so run the same stack here. UP keeps
-        // the standard click shape; DOWN falls through to the gate below
-        // and dies unhandled like any other unconsumed key.
+        // (each window has its own), so run the same stack here. Standard
+        // shape: DOWN passes through so the platform tracks the gesture
+        // (TalkBack/long-press), UP handles and consumes.
         if (event.keyCode == KeyEvent.KEYCODE_BACK) {
             if (event.action == KeyEvent.ACTION_UP) activity.handleBackNavigation()
-            return true
+            return event.action == KeyEvent.ACTION_UP
         }
         return activity.dispatchKeyEvent(event)
     }

@@ -177,7 +177,8 @@ private fun parseSettingsRow(row: JSONObject?): SettingsRow? {
         val choices = parseSettingsChoices(row) ?: return null
         val kind = row.getString("kind")
         if (kind !in setOf("choice", "toggle", "number", "info", "header", "group", "capture", "button")) {
-            Log.w(TAG, "unknown settings row kind: $kind (key=${row.optString("key")})")
+            Log.w(TAG, "skipping unknown settings row kind: $kind (key=${row.optString("key")})")
+            return null
         }
         SettingsRow(
             key = row.getString("key"),
@@ -381,15 +382,17 @@ internal fun settingsRowDisplayValue(
     offLabel: String,
 ): String =
     when (row.kind) {
-        "choice" -> row.choices.getOrNull(row.selected)?.label ?: "?"
+        "choice" -> row.choices.getOrNull(row.selected)?.label ?: row.label
         "toggle" -> row.choices.getOrNull(row.selected)?.label ?: if (row.selected == 1) onLabel else offLabel
         "number" -> "${row.number}${row.unit}"
         else -> row.text
     }
 
-/** Fallback when a settings command fails before Rust answers. */
+/** Fallback when a settings command fails before Rust answers. Rust's
+ * envelope error replaces this on the next refresh; this terse label only
+ * fills the gap so the banner never shows an empty string. */
 private const val TAG = "SettingsDialog"
-private const val COMMAND_FAILED = "command failed"
+private const val COMMAND_FAILED = "Update failed."
 
 /** Scope key restoring every setting; per-screen keys stay in their rows. */
 private const val RESET_ALL_KEY = "reset.all"

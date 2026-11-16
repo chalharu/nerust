@@ -192,9 +192,7 @@ pub enum UiText {
     Unknown,
     NotAssigned,
     OverlayDetail,
-    DescVsync,
     DescOrientation,
-    DescMute,
     DescSampleRate,
     DescLatency,
     DescNotifInfo,
@@ -245,7 +243,6 @@ pub enum UiText {
     Keyboard,
     AudioDetail,
     KeyMapping,
-    KeyMappingDesc,
     NotificationPaused,
     NotificationResumed,
     NotificationReset,
@@ -584,12 +581,10 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::Unknown => ("Unknown", "不明"),
         UiText::NotAssigned => ("Not assigned", "未割り当て"),
         UiText::OverlayDetail => ("Overlay detail", "オーバーレイ詳細"),
-        UiText::DescVsync => ("", ""),
         UiText::DescOrientation => (
             "Applies immediately, even mid-game.",
             "ゲーム中も即時反映されます",
         ),
-        UiText::DescMute => ("", ""),
         UiText::DescSampleRate => ("Adjust if audio crackles.", "音割れ対策用"),
         UiText::DescLatency => ("Less crackle, more delay.", "途切れ防止・遅延増加"),
         UiText::DescNotifInfo => ("Such as save confirmations.", "保存完了など"),
@@ -676,7 +671,6 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::Keyboard => ("Keyboard", "キーボード"),
         UiText::AudioDetail => ("Audio details", "音声詳細"),
         UiText::KeyMapping => ("Key mapping", "キー割り当て"),
-        UiText::KeyMappingDesc => ("", ""),
         UiText::NotificationPaused => ("Paused", "一時停止しました"),
         UiText::NotificationResumed => ("Resumed", "再開しました"),
         UiText::NotificationReset => ("Reset", "リセットしました"),
@@ -1211,19 +1205,6 @@ mod tests {
             assert!(!en_text.text(key).is_empty());
             assert!(!ja_text.text(key).is_empty());
             assert_ne!(en_text.text(key), ja_text.text(key));
-        }
-    }
-
-    #[test]
-    fn restating_descriptions_stay_bare() {
-        // Self-evident labels carry no supporting text: the rows render
-        // bare instead of restating the label.
-        use UiText::*;
-        let en_text = I18n::new(en());
-        let ja_text = I18n::new(ja());
-        for key in [DescVsync, DescMute, KeyMappingDesc] {
-            assert!(en_text.text(key).is_empty());
-            assert!(ja_text.text(key).is_empty());
         }
     }
 

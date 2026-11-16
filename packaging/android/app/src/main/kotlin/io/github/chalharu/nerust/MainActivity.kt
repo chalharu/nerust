@@ -112,6 +112,12 @@ class MainActivity :
      * (dispatch plus listener callbacks), like the connect set above. */
     private var devicesWithoutTriggerAxes = mutableSetOf<Int>()
 
+    /** Right-stick primary absent per device: `getMotionRange` crosses
+     * Binder at motion rate, so probe once per device (evicted on
+     * add/change/remove like the trigger cache). True means Z/RZ absent
+     * and every RIGHT_X/Y sample reads RX/RY instead. */
+    private var rightStickAlias = mutableMapOf<Int, Boolean>()
+
     /** Presence-scan epoch: a scan in flight across onPause must not apply
      * after it (overlay/capture gate flipping while paused). The resume
      * scan below re-converges, so dropping is safe. */
@@ -137,7 +143,7 @@ class MainActivity :
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             onBackInvokedDispatcher.registerOnBackInvokedCallback(
                 OnBackInvokedDispatcher.PRIORITY_DEFAULT,
-                ::handleBackNavigation,
+                { handleBackNavigation() },
             )
         }
         volumeControlStream = AudioManager.STREAM_MUSIC
@@ -197,6 +203,11 @@ class MainActivity :
         // behavior (volume, Back, hardware keyboards in gameplay). Counted
         // pads divert by device id too: D-pad-only sources would otherwise
         // read as a TV remote and never reach the game.
+        // `connectedDeviceIds` is the synchronous routing set (the async
+        // counted scan can lag a physical connect and drop the first key);
+        // `gamepadDeviceIds` is the counted overlay set. Both hold live ids
+        // only for devices with a resolvable descriptor (null-descriptor
+        // ghosts never enter, see sendInitialDeviceAdded/onInputDeviceAdded).
         val isController = isControllerSource(event.source) || connectedDeviceIds.contains(event.deviceId) || gamepadDeviceIds.contains(event.deviceId)
         if (Log.isLoggable(TAG, Log.DEBUG)) {
             Log.d(TAG, "game key: source=0x${event.source.toString(16)} device=${event.deviceId} keyCode=${event.keyCode} action=${event.action} controller=$isController")
@@ -414,10 +425,14 @@ class MainActivity :
         for ((axis, id) in MOTION_AXES) {
             var value = event.getAxisValue(id)
             // Right-stick alias: pads reporting RX/RY never ship Z/RZ, so
-            // fall back when the primary range is absent (never on value:
-            // calibration noise would disable a real axis or shadow it).
+            // fall back when the primary range is absent. Cached per device
+            // (Binder probe once, not per sample); never keyed on value so
+            // calibration noise cannot disable a real axis or shadow it.
             if (axis == ControllerAxis.RIGHT_X || axis == ControllerAxis.RIGHT_Y) {
-                if (event.device?.getMotionRange(id) == null) {
+                val useAlias = rightStickAlias.getOrPut(deviceId) {
+                    event.device?.getMotionRange(id) == null
+                }
+                if (useAlias) {
                     val alias =
                         if (axis == ControllerAxis.RIGHT_X) MotionEvent.AXIS_RX else MotionEvent.AXIS_RY
                     value = event.getAxisValue(alias)
@@ -453,6 +468,7 @@ class MainActivity :
     }
 
     private fun releaseController(deviceId: Int) {
+        rightStickAlias.remove(deviceId)
         controllerPressed.remove(deviceId)?.toList()?.forEach { key ->
             sendControllerInput(deviceId, key, false)
         }
@@ -485,6 +501,10 @@ class MainActivity :
             if (device.supportsSource(InputDevice.SOURCE_GAMEPAD) ||
                 device.supportsSource(InputDevice.SOURCE_JOYSTICK)
             ) {
+                // Null-descriptor ghosts never enter routing: without an
+                // identity Rust cannot port them, so diverting would be
+                // dead input.
+                if (device.descriptor == null) continue
                 connectedDeviceIds.add(deviceId)
                 sendDeviceAdded(deviceId)
             }
@@ -493,6 +513,12 @@ class MainActivity :
 
     override fun onInputDeviceAdded(deviceId: Int) {
         devicesWithoutTriggerAxes.remove(deviceId)
+        rightStickAlias.remove(deviceId)
+        // Same null-descriptor guard as the boot sweep above.
+        if (InputDevice.getDevice(deviceId)?.descriptor == null) {
+            refreshControllerPresence()
+            return
+        }
         connectedDeviceIds.add(deviceId)
         sendDeviceAdded(deviceId)
         refreshControllerPresence()
@@ -500,12 +526,14 @@ class MainActivity :
 
     override fun onInputDeviceChanged(deviceId: Int) {
         devicesWithoutTriggerAxes.remove(deviceId)
+        rightStickAlias.remove(deviceId)
         refreshControllerPresence()
     }
 
     override fun onInputDeviceRemoved(deviceId: Int) {
         connectedDeviceIds.remove(deviceId)
         devicesWithoutTriggerAxes.remove(deviceId)
+        rightStickAlias.remove(deviceId)
         releaseController(deviceId)
         sendDeviceRemoved(deviceId)
         sensorController.noteControllerRemoved(deviceId)
@@ -593,6 +621,10 @@ class MainActivity :
         dialogManager.dismissForStop()
         sensorController.onDestroy()
         safRepository.close()
+        slotListener = null
+        rightStickAlias.clear()
+        devicesWithoutTriggerAxes.clear()
+        connectedDeviceIds.clear()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         store.clear()
         onActivityDestroyed(userInitiatedExit)
@@ -613,11 +645,15 @@ class MainActivity :
      * window has its own dispatcher, so the capture view calls this
      * directly instead of reaching the activity dispatcher). `internal`
      * (not private) for that cross-window call; not a public API leak. */
-    internal fun handleBackNavigation() {
-        if (!chromeManager.removeDrawerOverlay()) {
-            userInitiatedExit = true
-            finish()
+    internal fun handleBackNavigation(): Boolean {
+        if (dialogManager.isShowing(ERROR_DIALOG_TAG)) {
+            dialogManager.dismiss(notifyDismiss = true)
+            return true
         }
+        if (chromeManager.removeDrawerOverlay()) return true
+        userInitiatedExit = true
+        finish()
+        return true
     }
 
     // Deprecated upstream; kept because minSdk 28 predates the
@@ -816,6 +852,7 @@ class MainActivity :
                 contentResolver.takePersistableUriPermission(uri, takeFlags)
             } catch (error: SecurityException) {
                 Log.w(TAG, "Failed to keep Android ROM URI permission", error)
+                showErrorDialog(-1L, "Storage permission was denied.")
             }
         }
 
@@ -894,14 +931,13 @@ class MainActivity :
                 JSONObject(payload)
             } catch (e: JSONException) {
                 Log.e(TAG, "showSettingsDialog: malformed payload", e)
+                showErrorDialog(-1L, "Settings failed to open.")
                 return
             }
         if (document.optInt("schemaVersion", -1) != SETTINGS_SCHEMA_VERSION) {
             Log.e(TAG, "showSettingsDialog: unsupported schemaVersion")
             val requestId = document.optLong("requestId", -1L)
-            if (requestId >= 0) {
-                showErrorDialog(requestId, "Unsupported settings schema")
-            }
+            showErrorDialog(requestId, "Unsupported settings schema")
             return
         }
         val requestId = document.getLong("requestId")
@@ -957,11 +993,15 @@ class MainActivity :
      * Rust resolves it before the error shows. */
     fun showErrorDialog(requestId: Long, message: String) {
         SettingsActivity.currentActivityForTest()?.finishForReplacement()
+        // Malformed payloads carry no gate: dismiss runs no callback so a
+        // -1 id never wedges the Rust dialog gate.
+        val onDismiss: () -> Unit =
+            if (requestId >= 0) ({ onErrorDialogDismissed(requestId) }) else ({})
         dialogManager.show(
             dialogTag = ERROR_DIALOG_TAG,
             contentDescription = message,
             ownedByTest = false,
-            onDismiss = { onErrorDialogDismissed(requestId) },
+            onDismiss = onDismiss,
         ) { dismiss ->
             NerustErrorDialogCard(
                 message = message,

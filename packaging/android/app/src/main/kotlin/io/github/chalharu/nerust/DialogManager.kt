@@ -65,7 +65,10 @@ class DialogManager(private val activity: MainActivity) {
         ownedByTest: Boolean = false,
         content: @Composable (dismiss: () -> Unit) -> Unit,
     ) {
-        dismiss(notifyDismiss = !this.ownedByTest)
+        // Replacing never acks the old gate: the old callback would fire
+        // for a dialog the user never dismissed, then a new gate opens.
+        // The old request is superseded by the replacement.
+        dismiss(notifyDismiss = false)
 
         lateinit var dialog: Dialog
         val root =

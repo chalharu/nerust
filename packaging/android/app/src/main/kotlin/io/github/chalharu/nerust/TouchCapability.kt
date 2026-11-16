@@ -32,12 +32,12 @@ internal fun isControllerSource(source: Int): Boolean =
 private fun isCountedGamepad(device: InputDevice): Boolean {
     // OS-bug guard first (Godot #47656): ghost fingerprint sensors lie
     // about sources, buttons, and axes, so signals cannot catch them.
-    if (device.name.startsWith("uinput-")) return false
+    // Narrow to the known ghost suffixes (fpc/goodix/synaptics/elan/vfs/
+    // atrus/fortsense): a blanket `uinput-` ban would kill Steam Input,
+    // scrcpy, and rooted remappers that legitimately present as uinput.
+    if (isGhostFingerprintSensor(device.name)) return false
     if (device.id < 0) return false
     if (Build.VERSION.SDK_INT >= 29 && device.isVirtual) return false
-    // Canonical "is a game controller" verdict: fingerprint sensors
-    // and other button clusters never hold a controller number.
-    if (device.controllerNumber == 0) return false
     val sources = device.sources
     val joystickClass =
         sources and InputDevice.SOURCE_CLASS_JOYSTICK == InputDevice.SOURCE_CLASS_JOYSTICK
@@ -52,6 +52,19 @@ private fun isCountedGamepad(device: InputDevice): Boolean {
     if (!device.hasKeys(*GAMEPAD_BUTTON_CODES).any { it }) return false
     // Game axes a real controller drives; button clusters expose none.
     return GAME_AXES.any { device.getMotionRange(it) != null }
+}
+
+/** Ghost fingerprint sensors (Godot #47656): `uinput-` + sensor vendor. */
+private fun isGhostFingerprintSensor(name: String): Boolean {
+    if (!name.startsWith("uinput-")) return false
+    val suffix = name.removePrefix("uinput-")
+    return suffix.startsWith("fpc") ||
+        suffix.startsWith("goodix") ||
+        suffix.startsWith("synaptics") ||
+        suffix.startsWith("elan") ||
+        suffix.startsWith("vfs") ||
+        suffix.startsWith("atrus") ||
+        suffix.startsWith("fortsense")
 }
 
 private val GAMEPAD_BUTTON_CODES =
