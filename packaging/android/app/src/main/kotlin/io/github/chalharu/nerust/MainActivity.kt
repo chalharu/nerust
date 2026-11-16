@@ -103,12 +103,12 @@ class MainActivity :
      * (dispatch plus listener callbacks), like the connect set above. */
     private var hasTriggerAxes = mutableMapOf<Int, Boolean>()
 
-    /** Right-stick primary absent per (device, axis): `getMotionRange`
-     * crosses Binder at motion rate, so probe once per device+axis
-     * (evicted on add/change/remove like the trigger cache). True means
-     * the primary is absent and every sample reads RX/RY instead. Keyed
-     * per axis: a pad with Z but no RZ must not alias Y. */
-    private var rightStickAlias = mutableMapOf<Long, Boolean>()
+    /** Right-stick primary absent per device (X/Y pair): `getMotionRange`
+     * crosses Binder at motion rate, so probe once per device
+     * (evicted on add/change/remove like the trigger cache). Pair holds
+     * Z-absent and RZ-absent separately: a pad with Z but no RZ must not
+     * alias Y. */
+    private var rightStickAlias = mutableMapOf<Int, Pair<Boolean, Boolean>>()
 
     /** Presence-scan epoch: a scan in flight across onPause must not apply
      * after it (overlay/capture gate flipping while paused). The resume
@@ -417,8 +417,12 @@ class MainActivity :
             return event.getAxisValue(id)
         }
         val device = event.device ?: return event.getAxisValue(id)
-        val key = deviceId.toLong() shl 32 or id.toLong()
-        val useAlias = rightStickAlias.getOrPut(key) { device.getMotionRange(id) == null }
+        val alias =
+            rightStickAlias.getOrPut(deviceId) {
+                (device.getMotionRange(MotionEvent.AXIS_Z) == null) to
+                    (device.getMotionRange(MotionEvent.AXIS_RZ) == null)
+            }
+        val useAlias = if (axis == ControllerAxis.RIGHT_X) alias.first else alias.second
         if (!useAlias) return event.getAxisValue(id)
         val alias = if (axis == ControllerAxis.RIGHT_X) MotionEvent.AXIS_RX else MotionEvent.AXIS_RY
         return event.getAxisValue(alias)
