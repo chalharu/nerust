@@ -97,11 +97,13 @@ class MainActivity :
      * here never skews against routing. */
     private var connectedDeviceIds = mutableSetOf<Int>()
 
-    /** Trigger axes present per device: `device.getMotionRange`
+    /** Trigger axes present per device (L/R pair): `device.getMotionRange`
      * crosses Binder on the L2/R2 key path, so probe once per device
-     * (cached both ways, evicted on add/change/remove). Main thread only
-     * (dispatch plus listener callbacks), like the connect set above. */
-    private var hasTriggerAxes = mutableMapOf<Int, Boolean>()
+     * (cached both ways, evicted on add/change/remove). Pair holds
+     * LTRIGGER-absent and RTRIGGER-absent separately: L2 must not reuse
+     * the R2 verdict. Main thread only (dispatch plus listener
+     * callbacks), like the connect set above. */
+    private var hasTriggerAxes = mutableMapOf<Int, Pair<Boolean, Boolean>>()
 
     /** Right-stick primary absent per device (X/Y pair): `getMotionRange`
      * crosses Binder at motion rate, so probe once per device
@@ -234,12 +236,11 @@ class MainActivity :
      * handled here. `null` device capability lookups and non-DOWN/UP
      * actions fall through to the platform path below. */
     private fun mirrorDigitalTrigger(event: KeyEvent): Boolean {
-        val axisMotion =
-            when (event.keyCode) {
-                KeyEvent.KEYCODE_BUTTON_L2 -> MotionEvent.AXIS_LTRIGGER
-                KeyEvent.KEYCODE_BUTTON_R2 -> MotionEvent.AXIS_RTRIGGER
-                else -> return false
-            }
+        if (event.keyCode != KeyEvent.KEYCODE_BUTTON_L2 &&
+            event.keyCode != KeyEvent.KEYCODE_BUTTON_R2
+        ) {
+            return false
+        }
         val axisKey =
             if (event.keyCode == KeyEvent.KEYCODE_BUTTON_L2) {
                 ControllerAxis.TRIGGER_L
@@ -252,11 +253,17 @@ class MainActivity :
         // Null devices mirror without caching.
         val deviceId = event.deviceId
         val device = event.device
-        val hasAxes = if (device == null) {
-            false
-        } else {
-            hasTriggerAxes.getOrPut(deviceId) { device.getMotionRange(axisMotion) != null }
-        }
+        val hasAxes =
+            if (device == null) {
+                false
+            } else {
+                val present =
+                    hasTriggerAxes.getOrPut(deviceId) {
+                        (device.getMotionRange(MotionEvent.AXIS_LTRIGGER) != null) to
+                            (device.getMotionRange(MotionEvent.AXIS_RTRIGGER) != null)
+                    }
+                if (event.keyCode == KeyEvent.KEYCODE_BUTTON_L2) !present.first else !present.second
+            }
         if (!hasAxes) {
             updateControllerTrigger(deviceId, axisKey, event.action == KeyEvent.ACTION_DOWN)
             return true
