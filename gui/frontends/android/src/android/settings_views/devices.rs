@@ -10,10 +10,11 @@ use nerust_input_traits::{BUILTIN_KEYBOARD_MEMBER, member_is_gamepad, member_is_
 use nerust_settings_core::i18n::UiText;
 
 use super::wire::{
-    GamepadInfo, I18n, KeyboardInfo, PLAYER_PORTS, RowWire, SectionWire, bare_member, binding_key,
+    GamepadInfo, KeyboardInfo, PLAYER_PORTS, RowWire, SectionWire, bare_member, binding_key,
     button_row, capture_open, capture_row, choice_row, devices_id, encode_target, group_row,
     header_row, info_row, live_for_rank, player_id, player_label, toggle_row, types_id,
 };
+use nerust_settings_core::i18n::I18n;
 
 /// Player screens (one per global port): the Devices row opens the device
 /// picker, the Controller-type row opens the per-machine type list.

@@ -22,16 +22,16 @@ use nerust_settings_core::{
 use nerust_system_traits::factory::descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId};
 
 use super::devices::prune_missing_builtin;
-use super::projection::{build_sections, project_fresh, project_payload};
+use super::projection::{Projection, build_sections, project_fresh, project_payload};
 use super::vm::{
-    Projection, VmDeps, build_vm, pin_draft_language, resolve_display, sync_snapshot_from_vm,
-    with_vm_deps,
+    VmDeps, build_vm, pin_draft_language, resolve_display, sync_snapshot_from_vm, with_vm_deps,
 };
 use super::wire::{
-    CaptureSlot, GamepadInfo, I18n, KeyboardInfo, PLAYER_PORTS, RowKind, RowWire, SectionWire,
+    CaptureSlot, GamepadInfo, KeyboardInfo, PLAYER_PORTS, RowKind, RowWire, SectionWire,
     ViewPayload, WireCommand, WireOp, WireTarget, capture_open, choice, find_row, range_value,
     sort_gamepads_by_order, toggle_value,
 };
+use nerust_settings_core::i18n::I18n;
 
 /// Apply one wire command to the draft snapshot in place, returning the
 /// refreshed payload. Stateless per call except for the passed draft,

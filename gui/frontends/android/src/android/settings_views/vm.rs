@@ -27,20 +27,6 @@ pub(crate) struct VmDeps {
     pub rates: Arc<[u32]>,
 }
 
-/// Vault device truth for one projection: enumerated keyboards, touch
-/// capability, counted gamepads, and the resolved display language. One
-/// `Copy` bundle instead of five parallel params.
-#[derive(Clone, Copy)]
-pub(crate) struct Projection<'a> {
-    pub keyboards: &'a [super::wire::KeyboardInfo],
-    pub touch_capable: bool,
-    pub gamepads: &'a [super::wire::GamepadInfo],
-    /// Vault first-seen order mirror: the stable rank universe shared
-    /// with the session. Screens iterate ranks, never live positions.
-    pub pad_order: &'a [String],
-    pub i18n: super::wire::I18n,
-}
-
 /// JNI-edge dependency cell: free JNI entry points cannot take `Self`,
 /// so the four entries (`open_payload`, command, key, motion) resolve
 /// deps here. Everything inside takes `&VmDeps` explicitly. Last install

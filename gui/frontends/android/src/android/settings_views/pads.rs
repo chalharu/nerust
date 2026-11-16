@@ -16,9 +16,10 @@ use nerust_gui_viewmodel::settings::SettingsViewModel;
 use nerust_settings_core::{editor::CaptureTarget, i18n::UiText, model::input::DEADZONE_STEPS};
 
 use super::wire::{
-    GamepadInfo, I18n, PLAYER_PORTS, RowWire, SectionWire, button_row, capture_row, encode_target,
+    GamepadInfo, PLAYER_PORTS, RowWire, SectionWire, button_row, capture_row, encode_target,
     header_row, info_row, live_for_rank, number_row, player_label, toggle_row,
 };
+use nerust_settings_core::i18n::I18n;
 use nerust_settings_core::labels::pad_label;
 
 /// Per-pad settings screens: one `pad.<n>` screen per stable settings

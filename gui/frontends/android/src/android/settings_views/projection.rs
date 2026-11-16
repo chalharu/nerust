@@ -16,13 +16,29 @@ use nerust_settings_core::{
 
 use super::devices::{build_keys_sections, build_player_sections};
 use super::pads::build_pad_sections;
-use super::vm::{Projection, VmDeps, build_vm};
+use super::vm::{VmDeps, build_vm};
 use super::wire::{
-    CaptureSlot, CaptureWire, GamepadInfo, I18n, KeyboardInfo, PLAYER_PORTS, RowWire, SectionWire,
+    CaptureSlot, CaptureWire, GamepadInfo, KeyboardInfo, PLAYER_PORTS, RowWire, SectionWire,
     ViewPayload, binding_key, button_row, capture_row, choice_row, draft_issues, encode_target,
     group_row, header_row, info_row, number_row, player_id, player_label, toggle_row,
 };
 use crate::bridge_contract::SETTINGS_SCHEMA_VERSION;
+use nerust_settings_core::i18n::I18n;
+
+/// Vault device truth for one projection: enumerated keyboards, touch
+/// capability, counted gamepads, and the resolved display language. One
+/// `Copy` bundle instead of five parallel params. Owned here because only
+/// projection consumes it; `vm` keeps the lifecycle cell.
+#[derive(Clone, Copy)]
+pub(crate) struct Projection<'a> {
+    pub keyboards: &'a [KeyboardInfo],
+    pub touch_capable: bool,
+    pub gamepads: &'a [GamepadInfo],
+    /// Vault first-seen order mirror: the stable rank universe shared
+    /// with the session. Screens iterate ranks, never live positions.
+    pub pad_order: &'a [String],
+    pub i18n: I18n,
+}
 
 /// Assemble the wire payload from an already-built view model: sections,
 /// live issues from a non-fatal `finish` probe, and the pending capture

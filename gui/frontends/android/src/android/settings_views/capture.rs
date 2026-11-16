@@ -13,8 +13,8 @@ use nerust_input_traits::StandardButton;
 use nerust_settings_core::{editor::CaptureTarget, i18n::UiText};
 
 use super::keycode::{android_keycode_to_button, android_keycode_to_key};
-use super::projection::project_fresh;
-use super::vm::{Projection, VmDeps, build_vm, sync_snapshot_from_vm, with_vm_deps};
+use super::projection::{Projection, project_fresh};
+use super::vm::{VmDeps, build_vm, sync_snapshot_from_vm, with_vm_deps};
 use super::wire::{CaptureSlot, ViewPayload, rank_for_member};
 
 /// Prompt key for one capture target: pad rows name what a press can
