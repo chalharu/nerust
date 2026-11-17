@@ -308,31 +308,40 @@ impl InputDept {
     /// Rebuild the keyboard reverse map from the implicit profile.
     /// Takes only the bindings it reads; never reaches into settings or the registry.
     /// Attachment/control names intern to Copy ids here so the hot path
-    /// never allocates.
+    /// never allocates. Port-routed: bindings whose attachment resolves to
+    /// a player port outside `keyboard_ports` are dropped up front so the
+    /// source map and the field map below cannot skew (unresolvable
+    /// attachments fail open); shortcuts stay global and are unaffected.
     pub(crate) fn rebuild_key_field_map(
         &mut self,
         bindings: Option<&[nerust_settings_core::model::input::KeyboardBinding]>,
         field_map: Option<&UnifiedFieldMap>,
+        keyboard_ports: &[usize],
     ) {
+        use crate::session::input_map::binding_reaches_port;
         self.keys.field_map.clear();
         self.keys.source.clear();
-        if let Some(bindings) = bindings {
-            for binding in bindings {
-                if let nerust_settings_core::model::input::PersistedControlId::Digital(control) =
-                    &binding.control
-                {
-                    let (Some(attachment), Some(control)) = (
-                        self.interner.attachment(binding.attachment.as_str()),
-                        self.interner.control(control),
-                    ) else {
-                        continue;
-                    };
-                    self.keys.source.insert(binding.key, (attachment, control));
-                }
+        let allowed: Vec<nerust_settings_core::model::input::KeyboardBinding> = bindings
+            .unwrap_or_default()
+            .iter()
+            .filter(|binding| binding_reaches_port(binding, keyboard_ports))
+            .cloned()
+            .collect();
+        let bindings = allowed.as_slice();
+        for binding in bindings {
+            if let nerust_settings_core::model::input::PersistedControlId::Digital(control) =
+                &binding.control
+            {
+                let (Some(attachment), Some(control)) = (
+                    self.interner.attachment(binding.attachment.as_str()),
+                    self.interner.control(control),
+                ) else {
+                    continue;
+                };
+                self.keys.source.insert(binding.key, (attachment, control));
             }
         }
-        if let Some(bindings) = bindings
-            && let Some(field_map) = field_map
+        if let Some(field_map) = field_map
             && let Err(duplicate) = crate::session::input_map::rebuild_input_map(
                 field_map,
                 bindings,
