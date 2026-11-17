@@ -106,6 +106,23 @@ impl SettingsViewModel {
         self.editor.finish()
     }
 
+    /// Restore part of the draft from a defaults snapshot (per-screen
+    /// reset). The closure copies the scope's fields; validation,
+    /// projections, and revision advance through the normal transact
+    /// path, so bound rows re-render without a dialog rebuild.
+    pub fn restore_scope(
+        &self,
+        defaults: &SettingsSnapshot,
+        update: impl FnOnce(&mut SettingsSnapshot, &SettingsSnapshot),
+    ) -> Result<(), super::editor::ViewModelError> {
+        self.editor.transact(|state| {
+            let mut draft = state.draft.as_ref().clone();
+            update(&mut draft, defaults);
+            state.set_draft(draft);
+            Ok(())
+        })
+    }
+
     pub fn systems(&self) -> &[SystemSettingsViewModel] {
         &self.systems
     }
@@ -537,5 +554,28 @@ mod tests {
             "shared Guide binding must block with a pad conflict, got {:?}",
             err.issues
         );
+    }
+
+    #[test]
+    fn restore_scope_replaces_only_the_scoped_fields() {
+        use crate::settings::test_support::test_vm;
+
+        let vm = test_vm();
+        vm.audio.set_volume(33).expect("volume applies");
+        let flipped = !vm.video.view.get().vsync;
+        vm.video.set_vsync(flipped).expect("vsync applies");
+        let defaults = SettingsSnapshot {
+            shared: Default::default(),
+            local: Default::default(),
+            app_state: Default::default(),
+        };
+        vm.restore_scope(&defaults, |draft, defaults| {
+            draft.local.audio = defaults.local.audio.clone();
+        })
+        .expect("restore applies");
+        assert_eq!(vm.audio.view.get().volume_percent, 100);
+        assert_eq!(vm.video.view.get().vsync, flipped);
+        // Restored fields read back from the draft snapshot too.
+        assert_eq!(vm.snapshot().local.audio.master_volume_percent, 100);
     }
 }
