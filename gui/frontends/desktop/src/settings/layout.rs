@@ -1321,9 +1321,9 @@ mod tests {
             for row in &mut section.rows {
                 let BindingRowView { target, .. } = row;
                 let (system, control) = match target {
-                    CaptureTarget::Binding { system, control, .. } => {
-                        ((*system).clone(), (*control).clone())
-                    }
+                    CaptureTarget::Binding {
+                        system, control, ..
+                    } => ((*system).clone(), (*control).clone()),
                     other => panic!("keyboard row has unexpected target: {other:?}"),
                 };
                 *target = CaptureTarget::Binding {
