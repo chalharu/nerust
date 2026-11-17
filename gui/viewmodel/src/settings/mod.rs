@@ -11,6 +11,7 @@ mod projection;
 #[cfg(test)]
 mod projection_test;
 pub mod property;
+mod rumble_motion;
 mod settings_viewmodel;
 mod shortcuts;
 pub(crate) mod state;
@@ -35,6 +36,7 @@ pub use gamepad::GamepadViewModel;
 pub use general::GeneralSettingsViewModel;
 pub use input::InputSettingsViewModel;
 pub use notification::NotificationSettingsViewModel;
+pub use rumble_motion::RumbleMotionViewModel;
 pub use shortcuts::ShortcutsViewModel;
 pub use system::SystemSettingsViewModel;
 pub use topology_adapter::build_topology;

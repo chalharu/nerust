@@ -3,7 +3,9 @@ use nerust_input_traits::{AttachmentId, StandardButton};
 use nerust_settings_core::editor::CaptureTarget;
 use nerust_settings_core::model::{
     language::AppLanguage,
-    local::{NotificationAreaMode, NotificationColor, NotificationPosition, ScalingMode},
+    local::{
+        NotificationAreaMode, NotificationColor, NotificationPosition, RumbleTarget, ScalingMode,
+    },
     shared::StoragePolicy,
 };
 use nerust_system_traits::factory::descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId};
@@ -208,6 +210,20 @@ pub struct PadPortView {
     pub port: Option<usize>,
     pub choices: Vec<ChoiceView<Option<usize>>>,
     pub deadzone: u8,
+}
+
+// ── Rumble & Motion ────────────────────────────────────────────────
+
+/// Rumble & Motion tab: motion sensor enable, rumble switch, strength,
+/// and output target. Values persist ahead of the gamepad backend and
+/// apply once it connects.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RumbleMotionView {
+    pub motion_enabled: bool,
+    pub rumble_enabled: bool,
+    pub rumble_strength_percent: u8,
+    pub rumble_target: RumbleTarget,
+    pub rumble_target_choices: Vec<ChoiceView<RumbleTarget>>,
 }
 
 // ── Capture ──────────────────────────────────────────────────────────

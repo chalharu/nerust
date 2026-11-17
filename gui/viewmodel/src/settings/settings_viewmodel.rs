@@ -18,6 +18,7 @@ use super::{
     input::InputSettingsViewModel,
     notification::NotificationSettingsViewModel,
     property::ReadOnlyObservableProperty,
+    rumble_motion::RumbleMotionViewModel,
     shortcuts::ShortcutsViewModel,
     system::SystemSettingsViewModel,
     video::VideoSettingsViewModel,
@@ -35,6 +36,7 @@ pub struct SettingsViewModel {
     pub capture: CaptureViewModel,
     pub shortcuts: ShortcutsViewModel,
     pub gamepads: GamepadViewModel,
+    pub rumble_motion: RumbleMotionViewModel,
     systems: Vec<SystemSettingsViewModel>,
     inputs: Vec<InputSettingsViewModel>,
 }
@@ -68,6 +70,7 @@ impl SettingsViewModel {
         let capture = CaptureViewModel::new(&editor);
         let shortcuts = ShortcutsViewModel::new(&editor);
         let gamepads = GamepadViewModel::new(&editor);
+        let rumble_motion = RumbleMotionViewModel::new(&editor);
         let systems: Vec<SystemSettingsViewModel> = factories
             .iter()
             .map(|f| SystemSettingsViewModel::new(&editor, f))
@@ -88,6 +91,7 @@ impl SettingsViewModel {
             capture,
             shortcuts,
             gamepads,
+            rumble_motion,
             systems,
             inputs,
             editor,
