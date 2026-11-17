@@ -7,7 +7,7 @@ pub struct HostBackendLocalSettings {
     pub video: VideoSettings,
     pub audio: AudioSettings,
     pub touch_overlay: TouchOverlaySettings,
-    pub cartridge_peripherals: CartridgePeripheralSettings,
+    pub rumble_motion: RumbleMotionSettings,
     pub screen_orientation: ScreenOrientation,
     pub notifications: NotificationSettings,
 }
@@ -19,7 +19,7 @@ impl Default for HostBackendLocalSettings {
             video: VideoSettings::default(),
             audio: AudioSettings::default(),
             touch_overlay: TouchOverlaySettings::default(),
-            cartridge_peripherals: CartridgePeripheralSettings::default(),
+            rumble_motion: RumbleMotionSettings::default(),
             screen_orientation: ScreenOrientation::default(),
             notifications: NotificationSettings::default(),
         }
@@ -28,14 +28,14 @@ impl Default for HostBackendLocalSettings {
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
-pub struct CartridgePeripheralSettings {
+pub struct RumbleMotionSettings {
     pub motion_enabled: bool,
     pub rumble_enabled: bool,
     pub rumble_strength_percent: u8,
     pub rumble_target: RumbleTarget,
 }
 
-impl Default for CartridgePeripheralSettings {
+impl Default for RumbleMotionSettings {
     fn default() -> Self {
         Self {
             motion_enabled: true,
