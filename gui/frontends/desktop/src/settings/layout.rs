@@ -864,79 +864,89 @@ fn pad_mapping_sections(
         let slot = gamepads.view.get().pads.get(pad).and_then(|row| row.port);
         let mut out = Vec::new();
         for input in &inputs {
-            let value = input.view.get();
-            let mut section_rows: Vec<BindingRowView> = Vec::new();
-            if let Some(slot) = slot {
-                // Collect the section's targets first so values resolve
-                // under one borrow; rows render from the zipped results.
-                let mut pending: Vec<(
-                    CaptureTarget,
-                    Option<nerust_input_traits::StandardButton>,
-                    String,
-                )> = Vec::new();
-                for binding in value.sections.iter().flat_map(|section| &section.rows) {
-                    if matches!(
-                        binding.pad_default,
-                        Some(
-                            nerust_input_traits::StandardButton::DpadUp
-                                | nerust_input_traits::StandardButton::DpadDown
-                                | nerust_input_traits::StandardButton::DpadLeft
-                                | nerust_input_traits::StandardButton::DpadRight
-                        )
-                    ) {
-                        continue;
-                    }
-                    let (Some(attachment), Some(control)) =
-                        (binding.target.attachment(), binding.target.control())
-                    else {
-                        continue;
-                    };
-                    if binding.port.is_some_and(|port| port != slot) {
-                        continue;
-                    }
-                    pending.push((
-                        CaptureTarget::PadBinding {
-                            system: value.system_id.clone_box(),
-                            pad,
-                            attachment: attachment.to_string(),
-                            control: control.to_string(),
-                        },
-                        binding.pad_default,
-                        binding.label.clone(),
-                    ));
-                }
-                let values = input.pad_row_values(
-                    &pending
-                        .iter()
-                        .map(|(target, default, _)| (target.clone(), *default))
-                        .collect::<Vec<_>>(),
-                );
-                for ((target, _, label), value) in pending.into_iter().zip(values) {
-                    let text = match &value {
-                        BindingValueView::Unbound(label)
-                        | BindingValueView::Bound(label)
-                        | BindingValueView::Capturing(label) => label.clone(),
-                    };
-                    section_rows.push(BindingRowView {
-                        target,
-                        label,
-                        port: Some(slot),
-                        value: BindingValueView::Bound(text),
-                        pad_default: None,
-                    });
-                }
+            if let Some(section) = pad_section_for_input(input, pad, slot) {
+                out.push(section);
             }
-            if section_rows.is_empty() {
-                continue;
-            }
-            out.push(BindingSectionView {
-                label: value.label.clone(),
-                rows: section_rows,
-            });
         }
         out
     });
     binding_sections(sections, editor, capture, clear)
+}
+
+/// One machine's pad mapping section for one pad: rows scoped to the
+/// pad's own player (unassigned pads map nothing). `None` keeps the
+/// machine off the block. The physical hat stays fixed (its switch
+/// lives with the pad settings), so dpad rows never render here.
+fn pad_section_for_input(
+    input: &InputSettingsViewModel,
+    pad: usize,
+    slot: Option<usize>,
+) -> Option<BindingSectionView> {
+    let value = input.view.get();
+    let slot = slot?;
+    // Collect the section's targets first so values resolve under one
+    // borrow; rows render from the zipped results.
+    let mut pending: Vec<(
+        CaptureTarget,
+        Option<nerust_input_traits::StandardButton>,
+        String,
+    )> = Vec::new();
+    for binding in value.sections.iter().flat_map(|section| &section.rows) {
+        if matches!(
+            binding.pad_default,
+            Some(
+                nerust_input_traits::StandardButton::DpadUp
+                    | nerust_input_traits::StandardButton::DpadDown
+                    | nerust_input_traits::StandardButton::DpadLeft
+                    | nerust_input_traits::StandardButton::DpadRight
+            )
+        ) {
+            continue;
+        }
+        let (Some(attachment), Some(control)) =
+            (binding.target.attachment(), binding.target.control())
+        else {
+            continue;
+        };
+        if binding.port.is_some_and(|port| port != slot) {
+            continue;
+        }
+        pending.push((
+            CaptureTarget::PadBinding {
+                system: value.system_id.clone_box(),
+                pad,
+                attachment: attachment.to_string(),
+                control: control.to_string(),
+            },
+            binding.pad_default,
+            binding.label.clone(),
+        ));
+    }
+    let values = input.pad_row_values(
+        &pending
+            .iter()
+            .map(|(target, default, _)| (target.clone(), *default))
+            .collect::<Vec<_>>(),
+    );
+    let mut section_rows: Vec<BindingRowView> = Vec::new();
+    for ((target, _, label), value) in pending.into_iter().zip(values) {
+        let text = match &value {
+            BindingValueView::Unbound(label)
+            | BindingValueView::Bound(label)
+            | BindingValueView::Capturing(label) => label.clone(),
+        };
+        section_rows.push(BindingRowView {
+            target,
+            label,
+            port: Some(slot),
+            value: BindingValueView::Bound(text),
+            pad_default: None,
+        });
+    }
+    (!section_rows.is_empty()).then(|| BindingSectionView {
+        label: value.label.clone(),
+        rows: section_rows,
+    })
 }
 
 /// Keyboard-only binding sections for one machine tab: the view's own

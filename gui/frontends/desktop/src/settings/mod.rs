@@ -105,70 +105,10 @@ fn apply_reset_scope(
             draft.app_state.last_successful_rom_directory = last_successful_rom_directory;
         }
         ResetScope::Player(port) => {
-            let port_id = if *port == 0 {
-                PORT_PLAYER_1
-            } else {
-                PORT_PLAYER_2
-            };
-            match defaults.app_state.port_devices.get(port_id) {
-                Some(members) => {
-                    draft
-                        .app_state
-                        .port_devices
-                        .insert(port_id.to_string(), members.clone());
-                }
-                None => {
-                    draft.app_state.port_devices.remove(port_id);
-                }
-            }
-            // Pad slots for this port return to the default table: entries
-            // whose default parks elsewhere (or is missing) clear.
-            for (index, entry) in draft.shared.input.gamepad.pad_ports.iter_mut().enumerate() {
-                let slot = defaults
-                    .shared
-                    .input
-                    .gamepad
-                    .pad_ports
-                    .get(index)
-                    .and_then(|pad| pad.slot)
-                    .filter(|slot| *slot == *port);
-                if slot.is_some() || entry.slot == Some(*port) {
-                    entry.slot = slot;
-                }
-            }
-            // Controller slots on this port unbind (absent entry means the
-            // factory default at resolve time).
-            for pairs in draft.app_state.controller_assignments.values_mut() {
-                for (slot_id, controller) in pairs.iter_mut() {
-                    if nerust_input_traits::port_index_for_slot(slot_id.as_str()) == Some(*port) {
-                        *controller = None;
-                    }
-                }
-            }
+            reset_player_scope(draft, defaults, *port);
         }
         ResetScope::Pad(pad) => {
-            let (deadzone, dpad) = defaults
-                .shared
-                .input
-                .gamepad
-                .pad_ports
-                .get(*pad)
-                .map(|port| (port.deadzone_percent, port.dpad_enabled))
-                .unwrap_or_else(|| {
-                    let fallback = nerust_settings_core::model::input::PadPort::default();
-                    (fallback.deadzone_percent, fallback.dpad_enabled)
-                });
-            if let Some(entry) = draft.shared.input.gamepad.pad_ports.get_mut(*pad) {
-                entry.deadzone_percent = deadzone;
-                entry.dpad_enabled = dpad;
-            }
-            // Pad mappings belong to this screen; the slot stays (the
-            // Player radio owns it, mirroring the Android pad reset).
-            for settings in draft.shared.input.systems.values_mut() {
-                if let Some(entries) = settings.pad_bindings.get_mut(*pad) {
-                    entries.clear();
-                }
-            }
+            reset_pad_scope(draft, defaults, *pad);
         }
         ResetScope::Shortcuts => {
             draft.shared.input.shortcuts = defaults.shared.input.shortcuts.clone();
@@ -192,6 +132,85 @@ fn apply_reset_scope(
                     entry.keyboard_profiles.clear();
                 }
             }
+        }
+    }
+}
+
+/// Player-scoped reset: port membership, same-port pad slots, and
+/// same-port controller slots return to the sparse default.
+fn reset_player_scope(draft: &mut SettingsSnapshot, defaults: &SettingsSnapshot, port: usize) {
+    let port_id = if port == 0 {
+        PORT_PLAYER_1
+    } else {
+        PORT_PLAYER_2
+    };
+    match defaults.app_state.port_devices.get(port_id) {
+        Some(members) => {
+            draft
+                .app_state
+                .port_devices
+                .insert(port_id.to_string(), members.clone());
+        }
+        None => {
+            draft.app_state.port_devices.remove(port_id);
+        }
+    }
+    reset_pad_slots_for_port(draft, defaults, port);
+    // Controller slots on this port unbind (absent entry means the
+    // factory default at resolve time).
+    for pairs in draft.app_state.controller_assignments.values_mut() {
+        for (slot_id, controller) in pairs.iter_mut() {
+            if nerust_input_traits::port_index_for_slot(slot_id.as_str()) == Some(port) {
+                *controller = None;
+            }
+        }
+    }
+}
+
+/// Pad slots for one port return to the default table: entries whose
+/// default parks elsewhere (or is missing) clear.
+fn reset_pad_slots_for_port(
+    draft: &mut SettingsSnapshot,
+    defaults: &SettingsSnapshot,
+    port: usize,
+) {
+    for (index, entry) in draft.shared.input.gamepad.pad_ports.iter_mut().enumerate() {
+        let slot = defaults
+            .shared
+            .input
+            .gamepad
+            .pad_ports
+            .get(index)
+            .and_then(|pad| pad.slot)
+            .filter(|slot| *slot == port);
+        if slot.is_some() || entry.slot == Some(port) {
+            entry.slot = slot;
+        }
+    }
+}
+
+/// Pad-scoped reset: deadzone, D-pad switch, and per-system mappings
+/// return to the default; the slot stays (the Player radio owns it,
+/// mirroring the Android pad reset).
+fn reset_pad_scope(draft: &mut SettingsSnapshot, defaults: &SettingsSnapshot, pad: usize) {
+    let (deadzone, dpad) = defaults
+        .shared
+        .input
+        .gamepad
+        .pad_ports
+        .get(pad)
+        .map(|port| (port.deadzone_percent, port.dpad_enabled))
+        .unwrap_or_else(|| {
+            let fallback = nerust_settings_core::model::input::PadPort::default();
+            (fallback.deadzone_percent, fallback.dpad_enabled)
+        });
+    if let Some(entry) = draft.shared.input.gamepad.pad_ports.get_mut(pad) {
+        entry.deadzone_percent = deadzone;
+        entry.dpad_enabled = dpad;
+    }
+    for settings in draft.shared.input.systems.values_mut() {
+        if let Some(entries) = settings.pad_bindings.get_mut(pad) {
+            entries.clear();
         }
     }
 }
