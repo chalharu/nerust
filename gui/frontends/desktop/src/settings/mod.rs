@@ -13,11 +13,8 @@ use nerust_gui_viewmodel::settings::{
 use nerust_settings_core::{
     i18n::{I18n, UiText},
     model::{
-        app_state::{DesktopAppState, PORT_PLAYER_1, PORT_PLAYER_2},
-        input::ensure_default_shortcuts,
-        language::AppLanguage,
-        local::HostBackendLocalSettings,
-        shared::DesktopSharedSettings,
+        app_state::DesktopAppState, input::ensure_default_shortcuts, language::AppLanguage,
+        local::HostBackendLocalSettings, shared::DesktopSharedSettings,
     },
 };
 use nerust_system_traits::factory::CoreFactory;
@@ -43,11 +40,10 @@ pub(super) enum ResetScope {
     RumbleMotion,
     Saves,
     All,
-    Player(usize),
+    ControllerSystem(String),
     Pad(usize),
     Shortcuts,
     SystemFields(String),
-    SystemKeys(String),
 }
 
 /// Canonical defaults for a reset: stock shared/local/app state plus each
@@ -104,8 +100,8 @@ fn apply_reset_scope(
             draft.app_state.window_sizes = window_sizes;
             draft.app_state.last_successful_rom_directory = last_successful_rom_directory;
         }
-        ResetScope::Player(port) => {
-            reset_player_scope(draft, defaults, *port);
+        ResetScope::ControllerSystem(system) => {
+            reset_controller_system(draft, defaults, system);
         }
         ResetScope::Pad(pad) => {
             reset_pad_scope(draft, defaults, *pad);
@@ -115,83 +111,35 @@ fn apply_reset_scope(
         }
         ResetScope::SystemFields(system) => {
             copy_system_entry(&mut draft.shared.systems, &defaults.shared.systems, system);
-            // Slot assignments return to the sparse default (absent entry
-            // means factory defaults at resolve time).
-            copy_system_entry(
-                &mut draft.app_state.controller_assignments,
-                &defaults.app_state.controller_assignments,
-                system,
-            );
-        }
-        ResetScope::SystemKeys(system) => {
-            // Keys reset clears keyboard overrides back to the sparse
-            // default but keeps per-pad overrides (those belong to the
-            // pad screens, mirroring the Android keys reset).
-            for (key, entry) in draft.shared.input.systems.iter_mut() {
-                if key.to_string() == *system {
-                    entry.keyboard_profiles.clear();
-                }
-            }
         }
     }
 }
 
-/// Player-scoped reset: port membership, same-port pad slots, and
-/// same-port controller slots return to the sparse default.
-fn reset_player_scope(draft: &mut SettingsSnapshot, defaults: &SettingsSnapshot, port: usize) {
-    let port_id = if port == 0 {
-        PORT_PLAYER_1
-    } else {
-        PORT_PLAYER_2
-    };
-    match defaults.app_state.port_devices.get(port_id) {
-        Some(members) => {
-            draft
-                .app_state
-                .port_devices
-                .insert(port_id.to_string(), members.clone());
-        }
-        None => {
-            draft.app_state.port_devices.remove(port_id);
-        }
-    }
-    reset_pad_slots_for_port(draft, defaults, port);
-    // Controller slots on this port unbind (absent entry means the
-    // factory default at resolve time).
-    for pairs in draft.app_state.controller_assignments.values_mut() {
-        for (slot_id, controller) in pairs.iter_mut() {
-            if nerust_input_traits::port_index_for_slot(slot_id.as_str()) == Some(port) {
-                *controller = None;
-            }
-        }
-    }
-}
-
-/// Pad slots for one port return to the default table: entries whose
-/// default parks elsewhere (or is missing) clear.
-fn reset_pad_slots_for_port(
+/// Controllers-scoped reset for one machine: controller-type slot
+/// assignments return to the sparse default (absent entry means
+/// factory defaults at resolve time) and keyboard overrides clear
+/// back to the sparse default. Per-pad overrides stay (those belong
+/// to the Gamepads page).
+fn reset_controller_system(
     draft: &mut SettingsSnapshot,
     defaults: &SettingsSnapshot,
-    port: usize,
+    system: &str,
 ) {
-    for (index, entry) in draft.shared.input.gamepad.pad_ports.iter_mut().enumerate() {
-        let slot = defaults
-            .shared
-            .input
-            .gamepad
-            .pad_ports
-            .get(index)
-            .and_then(|pad| pad.slot)
-            .filter(|slot| *slot == port);
-        if slot.is_some() || entry.slot == Some(port) {
-            entry.slot = slot;
+    copy_system_entry(
+        &mut draft.app_state.controller_assignments,
+        &defaults.app_state.controller_assignments,
+        system,
+    );
+    for (key, entry) in draft.shared.input.systems.iter_mut() {
+        if key.to_string() == system {
+            entry.keyboard_profiles.clear();
         }
     }
 }
 
 /// Pad-scoped reset: deadzone, D-pad switch, and per-system mappings
-/// return to the default; the slot stays (the Player radio owns it,
-/// mirroring the Android pad reset).
+/// return to the default; the player slot stays (the Gamepads radio
+/// owns it, mirroring the Android pad reset).
 fn reset_pad_scope(draft: &mut SettingsSnapshot, defaults: &SettingsSnapshot, pad: usize) {
     let (deadzone, dpad) = defaults
         .shared
@@ -321,7 +269,7 @@ impl Editor {
             status: Store::new(String::new(), executor.clone()),
             page: Store::new("general".into(), executor.clone()),
             general_page: Store::new("app".into(), executor.clone()),
-            controllers_page: Store::new("player-1".into(), executor.clone()),
+            controllers_page: Store::new(String::new(), executor.clone()),
             system_page: Store::new(String::new(), executor.clone()),
             exit: Rc::new(Cell::new(ExitChoice::Editing)),
             close_prompt: Store::new(ExitChoice::Editing, executor.clone()),
@@ -832,9 +780,7 @@ impl Editor {
                 .general_page
                 .bind(Clone::clone, Some(|page: &mut String, value| *page = value)),
             controllers_pages: Binding::constant(layout::controllers_pages(
-                self,
-                &reset,
-                &self.gamepads,
+                self, &reset, &capture, &clear,
             )),
             controllers_selection: self
                 .controllers_page
@@ -846,15 +792,13 @@ impl Editor {
                 &reset,
                 &self.gamepads,
             )),
-            gamepads_empty_note: self.tr(UiText::DescNoGamepads),
-            gamepads_empty_visible: Binding::constant(self.gamepads.is_empty()),
             shortcuts_page: layout::shortcuts_page(self, &capture, &clear),
             shortcuts_resets: Binding::constant(vec![mk_reset(
                 "reset",
                 ResetScope::Shortcuts,
                 self.tr(UiText::ResetScreen),
             )]),
-            system_pages: Binding::constant(layout::systems(self, &capture, &clear, &reset)),
+            system_pages: Binding::constant(layout::systems(self, &reset)),
             system_selection: self
                 .system_page
                 .bind(Clone::clone, Some(|page: &mut String, value| *page = value)),
@@ -1133,11 +1077,9 @@ fn integer_text(binding: Binding<u32>) -> Binding<String> {
 struct Presentation {
     general_tabs: Binding<Vec<panechord::Keyed<layout::GeneralTab>>>,
     general_selection: Binding<String>,
-    controllers_pages: Binding<Vec<panechord::Keyed<layout::PlayerPage>>>,
+    controllers_pages: Binding<Vec<panechord::Keyed<layout::ControllerPage>>>,
     controllers_selection: Binding<String>,
     gamepads_blocks: Binding<Vec<panechord::Keyed<layout::GamepadBlock>>>,
-    gamepads_empty_note: Binding<String>,
-    gamepads_empty_visible: Binding<bool>,
     shortcuts_page: Binding<Vec<Keyed<layout::BindingPage>>>,
     shortcuts_resets: Binding<Vec<Keyed<layout::ResetRow>>>,
     system_pages: Binding<Vec<panechord::Keyed<layout::SystemPage>>>,
@@ -1771,8 +1713,8 @@ mod tests {
         assert_eq!(rumble.rumble_strength.get(), 100.0);
         assert_eq!(
             presentation.controllers_pages.get().len(),
-            2,
-            "one player page per global port"
+            editor.vm.inputs().len(),
+            "one controllers page per machine"
         );
         assert!(
             presentation.gamepads_blocks.get().is_empty(),

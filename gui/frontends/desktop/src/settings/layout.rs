@@ -77,15 +77,16 @@ pub(super) struct CheckRow {
     pub checked: Binding<bool>,
 }
 
+/// One per-system controllers page: the machine's controller-type
+/// slots plus its keyboard mapping tables. The built-in keyboard
+/// always drives every port (routing enforced at rebuild), so this
+/// page owns no keyboard toggle. Gamepad-to-player assignment lives
+/// on the Gamepads page, one radio per pad.
 #[derive(Clone)]
-pub(super) struct PlayerPage {
+pub(super) struct ControllerPage {
     pub label: String,
-    pub radio: Option<Keyed<ChoiceRow>>,
-    pub radio_visible: bool,
-    pub note: Binding<String>,
-    pub note_visible: bool,
-    pub keyboard: Option<Keyed<CheckRow>>,
     pub slots: Vec<Keyed<ChoiceRow>>,
+    pub key_sections: Binding<Vec<Keyed<BindingPage>>>,
     pub resets: Vec<Keyed<ResetRow>>,
 }
 
@@ -123,12 +124,10 @@ pub(super) struct GeneralTab {
 #[derive(Clone)]
 pub(super) struct GamepadBlock {
     pub label: Binding<String>,
-    pub assignment: Binding<String>,
+    pub assignment: Option<Keyed<ChoiceRow>>,
     pub deadzone: Option<Keyed<ChoiceRow>>,
     pub dpad: Option<Keyed<ChoiceRow>>,
     pub sections: Binding<Vec<Keyed<BindingPage>>>,
-    pub note: Binding<String>,
-    pub note_visible: Binding<bool>,
     pub resets: Vec<Keyed<ResetRow>>,
 }
 
@@ -137,7 +136,6 @@ pub(super) struct SystemPage {
     pub label: String,
     pub fields: Vec<Keyed<ChoiceRow>>,
     pub viewport: Viewport,
-    pub key_sections: Binding<Vec<Keyed<BindingPage>>>,
     pub resets: Vec<Keyed<ResetRow>>,
 }
 
@@ -366,61 +364,45 @@ fn binding_sections(
     })
 }
 
-/// One global player page: the gamepad radio for this port plus the
-/// controller-type slot choices of the machines that actually have a
-/// slot on this port. Keyboard tables live on the machine pages and
-/// pad mappings on the Gamepads page, so this page owns no binding lists.
+/// One per-system controllers page: the machine's controller-type
+/// slots plus its keyboard mapping tables (keyboard-only sections,
+/// never the per-pad appendages). The built-in keyboard always
+/// drives every port, so no toggle lives here; gamepad assignment
+/// lives on the Gamepads page.
 pub(super) fn controllers_pages(
     editor: &Rc<Editor>,
     reset: &Reset,
-    pads: &[String],
-) -> Vec<Keyed<PlayerPage>> {
+    capture: &Capture,
+    clear: &Capture,
+) -> Vec<Keyed<ControllerPage>> {
     let vm = &editor.vm;
     let executor = editor.executor.clone();
     let tick = editor.binding(vm.revision.clone(), Clone::clone, None);
     let reset_label = editor.tr(UiText::ResetScreen);
-    (0..2)
-        .map(|port| {
-            let label = editor
-                .tr(if port == 0 {
-                    UiText::PlayerOne
-                } else {
-                    UiText::PlayerTwo
-                })
-                .get();
-            let radio = gamepad_radio(editor, port, &tick, pads);
-            let radio_visible = !pads.is_empty();
-            // One note line, switching with enumeration: without pads it
-            // names the missing hardware, otherwise it points at the
-            // Gamepads tab (deadzone and mappings live there).
-            let note = if radio_visible {
-                editor.tr(UiText::DescGamepadTab)
-            } else {
-                editor.tr(UiText::DescNoGamepads)
-            };
-            let keyboard = keyboard_toggle(editor, port);
-            let slots = slot_rows_for_port(editor, port);
+    vm.inputs()
+        .iter()
+        .map(|input| {
+            let value = input.view.get();
+            let system_id = value.system_id.to_string();
+            let slots = slot_rows_for_system(editor, input);
+            let key_sections = keyboard_sections(editor, input, &tick, capture, clear);
             let resets = vec![Keyed::new(
                 "reset".to_string(),
                 Store::new(
                     ResetRow {
                         label: reset_label.clone(),
-                        reset: reset(super::ResetScope::Player(port)),
+                        reset: reset(super::ResetScope::ControllerSystem(system_id.clone())),
                     },
                     executor.clone(),
                 ),
             )];
             Keyed::new(
-                format!("player-{port}"),
+                system_id.clone(),
                 Store::new(
-                    PlayerPage {
-                        label,
-                        radio: Some(radio),
-                        radio_visible,
-                        note,
-                        note_visible: true,
-                        keyboard: Some(keyboard),
+                    ControllerPage {
+                        label: value.label.clone(),
                         slots,
+                        key_sections,
                         resets,
                     },
                     executor.clone(),
@@ -430,249 +412,92 @@ pub(super) fn controllers_pages(
         .collect()
 }
 
-/// Built-in keyboard membership toggle for one player port. Routing is
-/// enforced at rebuild time, so flipping this takes effect on apply;
-/// keyboards share ports freely, so the other port keeps working.
-fn keyboard_toggle(editor: &Rc<Editor>, port: usize) -> Keyed<CheckRow> {
-    use nerust_input_traits::BUILTIN_KEYBOARD_MEMBER;
-    use nerust_settings_core::model::app_state::{PORT_PLAYER_1, PORT_PLAYER_2};
-
-    let vm = &editor.vm;
-    let port_id = if port == 0 {
-        PORT_PLAYER_1
-    } else {
-        PORT_PLAYER_2
-    }
-    .to_string();
-    let read_vm = vm.clone();
-    let write_vm = vm.clone();
-    let write_port = port_id.clone();
-    let checked = editor.binding(
-        vm.revision.clone(),
-        move |_| {
-            read_vm
-                .snapshot()
-                .app_state
-                .port_devices
-                .get(&port_id)
-                .is_some_and(|members| members.iter().any(|m| m == BUILTIN_KEYBOARD_MEMBER))
-        },
-        Some(Rc::new(move |enabled: bool| {
-            write_vm.restore_scope(&write_vm.snapshot(), |draft, _| {
-                let members = draft
-                    .app_state
-                    .port_devices
-                    .entry(write_port.clone())
-                    .or_default();
-                if enabled {
-                    if !members.iter().any(|m| m == BUILTIN_KEYBOARD_MEMBER) {
-                        members.push(BUILTIN_KEYBOARD_MEMBER.to_string());
-                    }
-                } else {
-                    members.retain(|member| member != BUILTIN_KEYBOARD_MEMBER);
-                }
-            })
-        })),
-    );
-    Keyed::new(
-        format!("keyboard-{port}"),
-        Store::new(
-            CheckRow {
-                label: editor.tr(UiText::BuiltInKeyboard),
-                checked,
-            },
-            editor.executor.clone(),
-        ),
-    )
-}
-
-/// Controller-type slot rows for one player port: every machine slot
-/// whose resolved port matches. Ports are global, so the same slot
-/// never renders on two player pages.
-fn slot_rows_for_port(editor: &Rc<Editor>, port: usize) -> Vec<Keyed<ChoiceRow>> {
-    let vm = &editor.vm;
+/// Controller-type slot rows for one machine: every slot the factory
+/// exposes. Ports are global routing detail; the built-in keyboard
+/// drives all of them, so no port filter applies here.
+fn slot_rows_for_system(
+    editor: &Rc<Editor>,
+    input: &InputSettingsViewModel,
+) -> Vec<Keyed<ChoiceRow>> {
     let executor = editor.executor.clone();
-    vm.inputs()
+    let value = input.view.get();
+    value
+        .slots
         .iter()
         .enumerate()
-        .flat_map(|(system_index, input)| {
-            let value = input.view.get();
-            value
-                .slots
-                .iter()
-                .filter(|slot| slot.port == Some(port))
-                .enumerate()
-                .map(|(slot_index, slot)| {
-                    let slot_id = slot.slot_id;
-                    let choice_vm = input.clone();
-                    let selection = choice(
-                        editor.binding(
-                            input.view.clone(),
+        .map(|(slot_index, slot)| {
+            let slot_id = slot.slot_id;
+            let choice_vm = input.clone();
+            let input_label = input.clone();
+            let input_enabled = input.clone();
+            let selection = choice(
+                editor.binding(
+                    input.view.clone(),
+                    move |value| {
+                        value
+                            .slots
+                            .iter()
+                            .find(|slot| slot.slot_id == slot_id)
+                            .map(|slot| slot.choices.clone())
+                            .unwrap_or_default()
+                    },
+                    None,
+                ),
+                editor.binding(
+                    input.view.clone(),
+                    move |value| {
+                        value
+                            .slots
+                            .iter()
+                            .find(|slot| slot.slot_id == slot_id)
+                            .and_then(|slot| slot.selected_profile_id.clone())
+                    },
+                    Some(Rc::new(move |value: Option<String>| {
+                        choice_vm.set_controller_slot(slot_id, value.as_deref())
+                    })),
+                ),
+            );
+            Keyed::new(
+                format!("slot-{slot_index}"),
+                Store::new(
+                    ChoiceRow {
+                        label: editor.binding(
+                            input_label.view.clone(),
                             move |value| {
                                 value
                                     .slots
                                     .iter()
                                     .find(|slot| slot.slot_id == slot_id)
-                                    .map(|slot| slot.choices.clone())
+                                    .map(|slot| slot.label.clone())
                                     .unwrap_or_default()
                             },
                             None,
                         ),
-                        editor.binding(
-                            input.view.clone(),
+                        choices: selection.items,
+                        selected: selection.selected,
+                        enabled: editor.binding(
+                            input_enabled.view.clone(),
                             move |value| {
                                 value
                                     .slots
                                     .iter()
                                     .find(|slot| slot.slot_id == slot_id)
-                                    .and_then(|slot| slot.selected_profile_id.clone())
+                                    .is_some_and(|slot| !slot.occupied_by_other_slot)
                             },
-                            Some(Rc::new(move |value: Option<String>| {
-                                choice_vm.set_controller_slot(slot_id, value.as_deref())
-                            })),
+                            None,
                         ),
-                    );
-                    Keyed::new(
-                        format!("system-{system_index}-slot-{slot_index}"),
-                        Store::new(
-                            ChoiceRow {
-                                label: editor.binding(
-                                    input.view.clone(),
-                                    move |value| {
-                                        value
-                                            .slots
-                                            .iter()
-                                            .find(|slot| slot.slot_id == slot_id)
-                                            .map(|slot| slot.label.clone())
-                                            .unwrap_or_default()
-                                    },
-                                    None,
-                                ),
-                                choices: selection.items,
-                                selected: selection.selected,
-                                enabled: editor.binding(
-                                    input.view.clone(),
-                                    move |value| {
-                                        value
-                                            .slots
-                                            .iter()
-                                            .find(|slot| slot.slot_id == slot_id)
-                                            .is_some_and(|slot| !slot.occupied_by_other_slot)
-                                    },
-                                    None,
-                                ),
-                            },
-                            executor.clone(),
-                        ),
-                    )
-                })
-                .collect::<Vec<_>>()
+                    },
+                    executor.clone(),
+                ),
+            )
         })
         .collect()
 }
 
-/// Gamepad radio for one player port: Not assigned plus one entry per
-/// enumerated pad (live index as the value). The assignment writes
-/// through the settings table with rival clearing; unassigning clears
-/// every same-port entry. Disconnected ranks read as unassigned until
-/// they reconnect (stable identity arrives with the backend).
-fn gamepad_radio(
-    editor: &Rc<Editor>,
-    port: usize,
-    tick: &Binding<u64>,
-    pads: &[String],
-) -> Keyed<ChoiceRow> {
-    let vm = &editor.vm;
-    let count = pads.len();
-    let lang = vm.general.clone();
-    let items: Binding<Vec<ChoiceView<Option<usize>>>> = tick.clone().map(move |_| {
-        let i18n = I18n::new(crate::display_language(lang.view.get().language));
-        let mut out = vec![ChoiceView {
-            value: None,
-            label: i18n.text(UiText::NotAssigned),
-        }];
-        for index in 0..count {
-            out.push(ChoiceView {
-                value: Some(index),
-                label: pad_label(i18n, index),
-            });
-        }
-        out
-    });
-    let gamepads_read = vm.gamepads.clone();
-    let selected: Binding<Option<usize>> = editor.binding(
-        vm.revision.clone(),
-        move |_| {
-            let table = &gamepads_read.view.get().pads;
-            table
-                .iter()
-                .position(|pad| pad.port == Some(port))
-                .filter(|rank| *rank < count)
-        },
-        None,
-    );
-    let gamepads_write = vm.gamepads.clone();
-    let selected_string: Binding<String> = selected.convert(
-        move |value| {
-            value
-                .map(|index| index.to_string())
-                .unwrap_or_else(|| "none".to_string())
-        },
-        move |id: String| -> Result<Option<usize>, String> {
-            if id == "none" {
-                let len = gamepads_write.view.get().pads.len();
-                for index in 0..len {
-                    if gamepads_write.view.get().pads[index].port == Some(port) {
-                        gamepads_write
-                            .set_pad_port(index, None)
-                            .map_err(|error| error.to_string())?;
-                    }
-                }
-                Ok(None)
-            } else if let Ok(pad) = id.parse::<usize>() {
-                gamepads_write
-                    .set_pad_port(pad, Some(port))
-                    .map(|_| Some(pad))
-                    .map_err(|error| error.to_string())
-            } else {
-                // Ids come from our own items list; unreachable.
-                Ok(None)
-            }
-        },
-    );
-    let selection = super::ChoiceBinding {
-        items: items.map(|views| {
-            views
-                .into_iter()
-                .map(|view| Choice {
-                    id: view
-                        .value
-                        .map(|index| index.to_string())
-                        .unwrap_or_else(|| "none".to_string()),
-                    label: view.label,
-                })
-                .collect()
-        }),
-        selected: selected_string,
-    };
-    Keyed::new(
-        format!("radio-{port}"),
-        Store::new(
-            ChoiceRow {
-                label: editor.tr(UiText::GamepadDevice),
-                choices: selection.items,
-                selected: selection.selected,
-                enabled: Binding::constant(true),
-            },
-            editor.executor.clone(),
-        ),
-    )
-}
-
 /// Pad blocks for the Gamepads page: one block per enumerated pad.
-/// Assignment is display-only here (the Controllers radio owns it);
-/// deadzone, D-pad source, and per-system mappings edit in place.
-/// Unassigned pads show the pick-a-player note instead of mappings.
+/// Assignment is one radio per pad here (the Controllers pages own no
+/// port state); deadzone, D-pad source, and per-system mappings edit
+/// in place.
 pub(super) fn gamepads_blocks(
     editor: &Rc<Editor>,
     capture: &Capture,
@@ -684,7 +509,6 @@ pub(super) fn gamepads_blocks(
     let executor = editor.executor.clone();
     let tick = editor.binding(vm.revision.clone(), Clone::clone, None);
     let reset_label = editor.tr(UiText::ResetScreen);
-    let no_player_note = editor.tr(UiText::DescControllersTab);
     pads.iter()
         .enumerate()
         .map(|(pad, _)| {
@@ -695,29 +519,10 @@ pub(super) fn gamepads_blocks(
                     pad,
                 )
             });
-            let gamepads = vm.gamepads.clone();
-            let lang = vm.general.clone();
-            let assignment = tick.clone().map(move |_| {
-                let i18n = I18n::new(crate::display_language(lang.view.get().language));
-                match gamepads.view.get().pads.get(pad).and_then(|row| row.port) {
-                    Some(0) => i18n.text(UiText::PlayerOne),
-                    Some(1) => i18n.text(UiText::PlayerTwo),
-                    _ => i18n.text(UiText::NotAssigned),
-                }
-            });
+            let assignment = pad_assignment_radio(editor, pad, &tick);
             let deadzone = pad_deadzone_row(editor, pad, &tick);
             let dpad = pad_dpad_row(editor, pad, &tick);
             let sections = pad_mapping_sections(editor, pad, &tick, capture, clear);
-            let gamepads = vm.gamepads.clone();
-            let note_visible = tick.clone().map(move |_| {
-                gamepads
-                    .view
-                    .get()
-                    .pads
-                    .get(pad)
-                    .and_then(|row| row.port)
-                    .is_none()
-            });
             let resets = vec![Keyed::new(
                 "reset".to_string(),
                 Store::new(
@@ -733,12 +538,10 @@ pub(super) fn gamepads_blocks(
                 Store::new(
                     GamepadBlock {
                         label,
-                        assignment,
+                        assignment: Some(assignment),
                         deadzone: Some(deadzone),
                         dpad: Some(dpad),
                         sections,
-                        note: no_player_note.clone(),
-                        note_visible,
                         resets,
                     },
                     executor.clone(),
@@ -746,6 +549,96 @@ pub(super) fn gamepads_blocks(
             )
         })
         .collect()
+}
+
+/// Player assignment radio for one enumerated pad: Not assigned plus
+/// Player 1/2. Writes through the settings table with rival clearing
+/// (assigning here parks rivals on the other port, mirroring the old
+/// player-page radio).
+fn pad_assignment_radio(editor: &Rc<Editor>, pad: usize, tick: &Binding<u64>) -> Keyed<ChoiceRow> {
+    let vm = &editor.vm;
+    let lang = vm.general.clone();
+    let items: Binding<Vec<ChoiceView<Option<usize>>>> = tick.clone().map(move |_| {
+        let i18n = I18n::new(crate::display_language(lang.view.get().language));
+        vec![
+            ChoiceView {
+                value: None,
+                label: i18n.text(UiText::NotAssigned),
+            },
+            ChoiceView {
+                value: Some(0),
+                label: i18n.text(UiText::PlayerOne),
+            },
+            ChoiceView {
+                value: Some(1),
+                label: i18n.text(UiText::PlayerTwo),
+            },
+        ]
+    });
+    let gamepads_read = vm.gamepads.clone();
+    let selected: Binding<Option<usize>> = editor.binding(
+        vm.revision.clone(),
+        move |_| {
+            gamepads_read
+                .view
+                .get()
+                .pads
+                .get(pad)
+                .and_then(|row| row.port)
+        },
+        None,
+    );
+    let gamepads_write = vm.gamepads.clone();
+    let selected_string: Binding<String> = selected.convert(
+        move |value| {
+            value
+                .map(|port| port.to_string())
+                .unwrap_or_else(|| "none".to_string())
+        },
+        move |id: String| -> Result<Option<usize>, String> {
+            if id == "none" {
+                gamepads_write
+                    .set_pad_port(pad, None)
+                    .map(|_| None)
+                    .map_err(|error| error.to_string())
+            } else if let Ok(port) = id.parse::<usize>() {
+                gamepads_write
+                    .set_pad_port(pad, Some(port))
+                    .map(|_| Some(port))
+                    .map_err(|error| error.to_string())
+            } else {
+                // Ids come from our own items list; unreachable.
+                Ok(None)
+            }
+        },
+    );
+    let selection = super::ChoiceBinding {
+        items: items.map(|views| {
+            views
+                .into_iter()
+                .map(|view| Choice {
+                    id: view
+                        .value
+                        .map(|port| port.to_string())
+                        .unwrap_or_else(|| "none".to_string()),
+                    label: view.label,
+                })
+                .collect()
+        }),
+        selected: selected_string,
+    };
+    Keyed::new(
+        format!("pad-{pad}-assignment"),
+        Store::new(
+            ChoiceRow {
+                label: editor.tr(UiText::GamepadDevice),
+                choices: selection.items,
+                selected: selection.selected,
+                enabled: Binding::constant(true),
+            },
+            editor.executor.clone(),
+        ),
+    )
 }
 
 /// Deadzone choice row for one enumerated pad. The choices ride the
@@ -992,22 +885,13 @@ pub(super) fn shortcuts_page(
     })
 }
 
-pub(super) fn systems(
-    editor: &Rc<Editor>,
-    capture: &Capture,
-    clear: &Capture,
-    reset: &Reset,
-) -> Vec<Keyed<SystemPage>> {
+/// One per-system advanced page: the machine's own settings fields
+/// only. Controller slots and keyboard mappings live on the
+/// Controllers page; pad mappings live on the Gamepads page.
+pub(super) fn systems(editor: &Rc<Editor>, reset: &Reset) -> Vec<Keyed<SystemPage>> {
     let vm = &editor.vm;
     let executor = editor.executor.clone();
-    let tick = editor.binding(vm.revision.clone(), Clone::clone, None);
     let reset_label = editor.tr(UiText::ResetScreen);
-    // The two resets on one machine page share the base label; the keys
-    // one names its scope so the pair stays distinct.
-    let reset_keys_label = reset_label
-        .clone()
-        .zip(&editor.tr(UiText::KeyMapping))
-        .map(|(reset, section)| format!("{reset} ({section})"));
     vm.systems()
         .iter()
         .enumerate()
@@ -1052,32 +936,16 @@ pub(super) fn systems(
                 })
                 .collect();
             let system_id = system.system_id().to_string();
-            let resets = [
-                (
-                    "reset-fields",
-                    super::ResetScope::SystemFields(system_id.clone()),
-                    reset_label.clone(),
+            let resets = vec![Keyed::new(
+                "reset".to_string(),
+                Store::new(
+                    ResetRow {
+                        label: reset_label.clone(),
+                        reset: reset(super::ResetScope::SystemFields(system_id)),
+                    },
+                    executor.clone(),
                 ),
-                (
-                    "reset-keys",
-                    super::ResetScope::SystemKeys(system_id),
-                    reset_keys_label.clone(),
-                ),
-            ]
-            .into_iter()
-            .map(|(key, scope, label)| {
-                Keyed::new(
-                    key.to_string(),
-                    Store::new(
-                        ResetRow {
-                            label,
-                            reset: reset(scope),
-                        },
-                        executor.clone(),
-                    ),
-                )
-            })
-            .collect();
+            )];
             Keyed::new(
                 format!("system-{index}"),
                 Store::new(
@@ -1085,19 +953,6 @@ pub(super) fn systems(
                         label: value.label,
                         fields,
                         viewport: viewport(value.fields.len(), 46.0),
-                        key_sections: keyboard_sections(
-                            editor,
-                            vm.inputs()
-                                .iter()
-                                .find(|input| {
-                                    input.system_id().to_string()
-                                        == system.system_id().to_string()
-                                })
-                                .expect("input view exists for its own system"),
-                            &tick,
-                            capture,
-                            clear,
-                        ),
                         resets,
                     },
                     executor.clone(),
@@ -1186,9 +1041,10 @@ mod tests {
         vec!["pad-a".to_string(), "pad-b".to_string()]
     }
 
-    /// Gamepads blocks render one block per enumerated pad (deadzone,
-    /// D-pad source, per-system mappings), and writing a row routes
-    /// through the gamepad view model. Pre-backend enumeration is empty.
+    /// Gamepads blocks render one block per enumerated pad (assignment
+    /// radio, deadzone, D-pad source, per-system mappings), and writing
+    /// a row routes through the gamepad view model. Pre-backend
+    /// enumeration is empty.
     #[test]
     fn gamepads_blocks_list_per_pad_settings() {
         let (editor, _adapter, _dir) = headless_editor();
@@ -1204,7 +1060,14 @@ mod tests {
         let blocks = gamepads_blocks(&editor, &capture, &clear, &reset, &test_pads());
         assert_eq!(blocks.len(), 2, "one block per enumerated pad");
         let snapshot = blocks[0].model.snapshot();
-        assert!(!snapshot.assignment.get().is_empty());
+        let assignment = snapshot
+            .assignment
+            .as_ref()
+            .expect("assignment radio builds")
+            .model
+            .snapshot();
+        assert_eq!(assignment.choices.get().len(), 3, "none plus two players");
+        assert_eq!(assignment.selected.get(), "0", "pad 0 drives player 1");
         assert_eq!(snapshot.label.get(), "Gamepad 1");
         assert_eq!(
             snapshot.deadzone.as_ref().expect("deadzone row builds").key,
@@ -1215,24 +1078,29 @@ mod tests {
             "pad-0-dpad"
         );
         assert!(!snapshot.resets.is_empty(), "pad blocks carry a reset");
-        // Assigned pads map instead of noting; unassigning shows the note.
-        assert!(
-            !snapshot.note_visible.get(),
-            "assigned pads map instead of noting"
-        );
+        // Reassigning to player 2 parks rivals: the radio re-reads there.
         editor
             .vm
             .gamepads
-            .set_pad_port(0, None)
-            .expect("unassign applies");
-        assert!(
-            gamepads_blocks(&editor, &capture, &clear, &reset, &test_pads())[0]
-                .model
-                .snapshot()
-                .note_visible
-                .get(),
-            "unassigned pads show the pick-a-player note"
-        );
+            .set_pad_port(0, Some(1))
+            .expect("port applies");
+        let selected: Vec<String> =
+            gamepads_blocks(&editor, &capture, &clear, &reset, &test_pads())
+                .iter()
+                .map(|block| {
+                    block
+                        .model
+                        .snapshot()
+                        .assignment
+                        .as_ref()
+                        .expect("assignment radio builds")
+                        .model
+                        .snapshot()
+                        .selected
+                        .get()
+                })
+                .collect();
+        assert_eq!(selected, vec!["1".to_string(), "none".to_string()]);
         editor
             .vm
             .gamepads
@@ -1249,81 +1117,78 @@ mod tests {
         assert_eq!(editor.vm.gamepads.view.get().pads[0].deadzone, 10);
     }
 
-    /// Player pages carry the gamepad radio plus the machines' slots for
-    /// their own port only. The radio is hidden while nothing is
-    /// enumerated, and assigning one player parks rivals on the other.
+    /// Controllers pages are per-system: the machine's controller-type
+    /// slots plus its keyboard mapping tables. No port state lives here
+    /// (the built-in keyboard always drives every port; gamepad
+    /// assignment lives on the Gamepads page).
     #[test]
-    fn controllers_pages_scope_slots_and_radio_to_their_port() {
+    fn controllers_pages_list_per_system_slots_and_keys() {
         let (editor, _adapter, _dir) = headless_editor();
         let executor: Rc<dyn panechord::Executor> = Rc::new(TestExecutor);
+        let capture = noop_capture(&executor);
+        let clear = noop_capture(&executor);
         let reset = noop_reset(&executor);
-        let pages = controllers_pages(&editor, &reset, &[]);
-        assert_eq!(pages.len(), 2, "one page per global port");
-        for (index, page) in pages.iter().enumerate() {
+        let pages = controllers_pages(&editor, &reset, &capture, &clear);
+        assert_eq!(
+            pages.len(),
+            editor.vm.inputs().len(),
+            "one page per machine"
+        );
+        for page in &pages {
             let snapshot = page.model.snapshot();
-            assert_eq!(snapshot.label, format!("Player {}", index + 1));
-            assert!(
-                !snapshot.radio_visible,
-                "radio hides with no enumerated pads"
-            );
-            assert!(
-                !snapshot.note.get().is_empty(),
-                "unconnected ports explain themselves"
-            );
+            assert!(!snapshot.label.is_empty());
             assert!(
                 !snapshot.slots.is_empty(),
-                "player pages keep their machine slots"
+                "controllers pages keep their machine slots"
             );
-            assert_eq!(snapshot.resets.len(), 1, "one reset per player page");
+            for slot in &snapshot.slots {
+                let row = slot.model.snapshot();
+                assert!(!row.label.get().is_empty());
+                assert!(!row.choices.get().is_empty());
+                assert!(!row.selected.get().is_empty());
+            }
+            assert!(
+                !snapshot.key_sections.get().is_empty(),
+                "controllers pages carry their key tables"
+            );
+            for section in snapshot.key_sections.get().iter() {
+                assert!(
+                    !section.key.starts_with("padbindings_"),
+                    "controllers pages never carry pad appendages: {}",
+                    section.key
+                );
+            }
+            assert_eq!(snapshot.resets.len(), 1, "one reset per controllers page");
         }
-        // With enumerated pads the radio lists Not assigned plus each pad.
-        // The default draft parks pad 0 on player 1.
-        let pages = controllers_pages(&editor, &reset, &test_pads());
-        let radio = pages[0]
-            .model
-            .snapshot()
-            .radio
-            .as_ref()
-            .expect("radio builds")
-            .model
-            .snapshot();
-        assert_eq!(radio.choices.get().len(), 3, "none plus two pads");
-        assert_eq!(radio.selected.get(), "0", "pad 0 drives player 1");
-        // Assigning pad 0 to player 2 clears its player-1 slot: the radio
-        // re-reads as unassigned on this page.
-        editor
-            .vm
-            .gamepads
-            .set_pad_port(0, Some(1))
-            .expect("port applies");
-        let pages = controllers_pages(&editor, &reset, &test_pads());
-        let selected: Vec<String> = pages
+        // Slot writes route through the input view model.
+        let slot = pages
             .iter()
-            .map(|page| {
-                page.model
-                    .snapshot()
-                    .radio
-                    .as_ref()
-                    .expect("radio builds")
-                    .model
-                    .snapshot()
-                    .selected
-                    .get()
-            })
+            .flat_map(|page| page.model.snapshot().slots)
+            .map(|slot| slot.model.snapshot())
+            .find(|row| row.choices.get().len() > 1)
+            .expect("a controllers slot has an alternative");
+        let ids: Vec<String> = slot
+            .choices
+            .get()
+            .into_iter()
+            .map(|choice| choice.id)
             .collect();
-        assert_eq!(selected, vec!["none".to_string(), "0".to_string()]);
-        editor
-            .vm
-            .gamepads
-            .set_pad_port(0, Some(0))
-            .expect("port restores");
+        let original = slot.selected.get();
+        let other = ids
+            .iter()
+            .find(|id| **id != original)
+            .expect("slot has an alternative")
+            .clone();
+        assert!(slot.selected.set(other.clone()));
+        assert_eq!(slot.selected.get(), other);
+        assert!(slot.selected.set(original.clone()));
+        assert_eq!(slot.selected.get(), original);
     }
 
-    /// Player pages carry a built-in keyboard toggle bound to port
-    /// membership: unchecking parks the keyboard from that port (routing
-    /// picks it up on apply), and a player reset restores the default.
+    /// A controllers-scoped reset restores the machine's slots and
+    /// clears its keyboard overrides back to the sparse default.
     #[test]
-    fn controllers_pages_keyboard_toggle_flips_port_membership() {
+    fn controllers_reset_restores_slots_and_keys() {
         use super::super::{Apply, ResetScope};
         use nerust_gui_runtime::settings::SettingsSnapshot;
         let (editor, _adapter, _dir) = headless_editor();
@@ -1332,42 +1197,48 @@ mod tests {
         let slot = Rc::new(RefCell::new(None));
         let commands = editor.commands(&apply, quit, &slot);
         let reset = &commands.reset;
-        let keyboard = |pages: &[Keyed<PlayerPage>], index: usize| {
-            pages[index]
-                .model
-                .snapshot()
-                .keyboard
-                .as_ref()
-                .expect("keyboard toggle builds")
-                .model
-                .snapshot()
-        };
-        let pages = controllers_pages(&editor, reset, &test_pads());
-        assert!(keyboard(&pages, 0).checked.get(), "builtin drives p1");
-        assert!(keyboard(&pages, 1).checked.get(), "builtin drives p2");
-        assert!(!keyboard(&pages, 0).label.get().is_empty());
-        // Uncheck on player 1: membership drops only there.
-        assert!(keyboard(&pages, 0).checked.set(false));
-        let pages = controllers_pages(&editor, reset, &test_pads());
-        assert!(!keyboard(&pages, 0).checked.get(), "p1 unchecks");
-        assert!(keyboard(&pages, 1).checked.get(), "p2 keeps sharing");
-        // A player-scoped reset restores the default membership.
-        let _ = (reset.clone())(ResetScope::Player(0)).invoke();
-        let pages = controllers_pages(&editor, reset, &test_pads());
-        assert!(keyboard(&pages, 0).checked.get(), "reset restores p1");
+        let executor: Rc<dyn panechord::Executor> = Rc::new(TestExecutor);
+        let capture = noop_capture(&executor);
+        let clear = noop_capture(&executor);
+        let system_id = editor.vm.inputs()[0].system_id().to_string();
+        // Flip a slot away from the default, then reset the scope: the
+        // built selection returns without touching other machines.
+        let slot_row = controllers_pages(&editor, reset, &capture, &clear)
+            .into_iter()
+            .flat_map(|page| page.model.snapshot().slots)
+            .map(|slot| slot.model.snapshot())
+            .find(|row| row.choices.get().len() > 1)
+            .expect("a controllers slot has an alternative");
+        let original = slot_row.selected.get();
+        let other = slot_row
+            .choices
+            .get()
+            .into_iter()
+            .map(|choice| choice.id)
+            .find(|id| *id != original)
+            .expect("slot has an alternative");
+        assert!(slot_row.selected.set(other));
+        let _ = (reset.clone())(ResetScope::ControllerSystem(system_id)).invoke();
+        let restored = controllers_pages(&editor, reset, &capture, &clear)
+            .into_iter()
+            .flat_map(|page| page.model.snapshot().slots)
+            .map(|slot| slot.model.snapshot())
+            .find(|row| row.choices.get().len() > 1)
+            .expect("slots rebuild after reset")
+            .selected
+            .get();
+        assert_eq!(restored, original, "reset restores the slot");
     }
 
     /// System pages mirror the live registry: every factory system yields
-    /// a labeled page whose rows track the view model selections, plus
-    /// key-mapping sections and per-scope resets.
+    /// a labeled page of its own settings fields plus one reset. Slots
+    /// and key tables live on the Controllers page.
     #[test]
     fn systems_pages_expose_live_choices_and_viewports() {
         let (editor, _adapter, _dir) = headless_editor();
         let executor: Rc<dyn panechord::Executor> = Rc::new(TestExecutor);
-        let capture = noop_capture(&executor);
-        let clear = noop_capture(&executor);
         let reset = noop_reset(&executor);
-        let pages = systems(&editor, &capture, &clear, &reset);
+        let pages = systems(&editor, &reset);
         assert!(!pages.is_empty(), "real registry exposes systems");
         for page in &pages {
             let snapshot = page.model.snapshot();
@@ -1381,11 +1252,7 @@ mod tests {
                 assert!(!row.selected.get().is_empty());
                 assert!(row.enabled.get());
             }
-            assert!(
-                !snapshot.key_sections.get().is_empty(),
-                "machine pages carry their key tables"
-            );
-            assert_eq!(snapshot.resets.len(), 2, "fields and keys reset separately");
+            assert_eq!(snapshot.resets.len(), 1, "one reset per machine page");
         }
         // Flipping a choice on the view model moves the built selection.
         let (field_label, position) = {
@@ -1423,7 +1290,7 @@ mod tests {
                     .unwrap_or_default(),
             )
         };
-        let selected = systems(&editor, &capture, &clear, &reset)
+        let selected = systems(&editor, &reset)
             .iter()
             .flat_map(|page| page.model.snapshot().fields)
             .map(|row| row.model.snapshot())
@@ -1434,10 +1301,10 @@ mod tests {
         assert_eq!(selected, position);
     }
 
-    /// Player pages carry the radio plus slots scoped to their own port;
-    /// machine pages carry fields plus keyboard-only key tables, and the
-    /// shortcuts page is one global section. Key tables never carry the
-    /// per-pad appendages (those live on the Gamepads page).
+    /// Controllers pages carry per-system slots plus keyboard-only key
+    /// tables; machine pages carry fields only, and the shortcuts page
+    /// is one global section. Key tables never carry the per-pad
+    /// appendages (those live on the Gamepads page).
     #[test]
     fn controllers_and_machine_pages_split_slots_and_key_tables() {
         let (editor, _adapter, _dir) = headless_editor();
@@ -1445,11 +1312,15 @@ mod tests {
         let capture = noop_capture(&executor);
         let clear = noop_capture(&executor);
         let reset = noop_reset(&executor);
-        let players = controllers_pages(&editor, &reset, &test_pads());
-        assert_eq!(players.len(), 2, "one page per global port");
-        // Every machine slot lands on exactly one player page.
+        let controllers = controllers_pages(&editor, &reset, &capture, &clear);
+        assert_eq!(
+            controllers.len(),
+            editor.vm.inputs().len(),
+            "one controllers page per machine"
+        );
+        // Every machine slot lands on its own controllers page.
         let mut slot_total = 0;
-        for page in &players {
+        for page in &controllers {
             let snapshot = page.model.snapshot();
             for slot in &snapshot.slots {
                 let row = slot.model.snapshot();
@@ -1463,33 +1334,29 @@ mod tests {
             .vm
             .inputs()
             .iter()
-            .map(|input| {
-                input
-                    .view
-                    .get()
-                    .slots
-                    .iter()
-                    .filter(|slot| slot.port.is_some())
-                    .count()
-            })
+            .map(|input| input.view.get().slots.len())
             .sum();
-        assert_eq!(
-            slot_total, expected,
-            "slots split across ports without loss"
-        );
-        // Machine pages keep keyboard-only sections (no pad appendages).
-        let machines = systems(&editor, &capture, &clear, &reset);
-        assert!(!machines.is_empty(), "real registry exposes systems");
-        for page in &machines {
+        assert_eq!(slot_total, expected, "slots land without loss");
+        // Controllers pages keep keyboard-only sections (no pad appendages).
+        for page in &controllers {
             let snapshot = page.model.snapshot();
+            assert!(!snapshot.key_sections.get().is_empty());
             for section in snapshot.key_sections.get().iter() {
                 assert!(
                     !section.key.starts_with("padbindings_"),
-                    "machine pages never carry pad appendages: {}",
+                    "controllers pages never carry pad appendages: {}",
                     section.key
                 );
             }
         }
+        // Machine pages carry fields only.
+        let machines = systems(&editor, &reset);
+        assert!(!machines.is_empty(), "real registry exposes systems");
+        assert_eq!(
+            machines.len(),
+            controllers.len(),
+            "one machine page per controllers page"
+        );
         // Shortcuts stay a single global section with rows.
         let section = shortcuts_page(&editor, &capture, &clear);
         assert!(
@@ -1504,8 +1371,8 @@ mod tests {
                 .get()
                 .is_empty()
         );
-        // Player radio writes route through the port assignment.
-        let slot = players
+        // Slot writes route through the input view model.
+        let slot = controllers
             .iter()
             .flat_map(|page| page.model.snapshot().slots)
             .map(|slot| slot.model.snapshot())
@@ -1781,10 +1648,17 @@ mod tests {
         let clear = noop_capture(&executor);
         let reset = noop_reset(&executor);
         let mut seen_pages = std::collections::BTreeSet::new();
-        for page in &systems(&editor, &capture, &clear, &reset) {
+        for page in &systems(&editor, &reset) {
             assert!(
                 seen_pages.insert(page.key.clone()),
                 "duplicate machine page key {}",
+                page.key
+            );
+        }
+        for page in &controllers_pages(&editor, &reset, &capture, &clear) {
+            assert!(
+                seen_pages.insert(page.key.clone()),
+                "duplicate controllers page key {}",
                 page.key
             );
             let sections = page.model.snapshot().key_sections.get();
@@ -1797,13 +1671,6 @@ mod tests {
                     page.key
                 );
             }
-        }
-        for page in &controllers_pages(&editor, &reset, &test_pads()) {
-            assert!(
-                seen_pages.insert(page.key.clone()),
-                "duplicate player page key {}",
-                page.key
-            );
         }
         for block in &gamepads_blocks(&editor, &capture, &clear, &reset, &test_pads()) {
             assert!(
