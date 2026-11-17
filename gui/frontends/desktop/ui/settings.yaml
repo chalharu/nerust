@@ -33,6 +33,7 @@ templates:
       children:
         - type: Button
           id: reset_button
+          style: {horizontal_alignment: End}
           text: {bind: {path: label, source: External}}
           command: reset
   binding_row:
@@ -212,33 +213,25 @@ templates:
               items: {bind: {path: resets}}
               gap: 6
               item_template: reset_row
-  player_page:
+  controller_page:
     root:
       type: StackLayout
-      id: player_fields
+      id: controller_fields
       padding: 6
       gap: 6
       children:
-        - type: Label
-          id: no_gamepads_note
-          visible: {bind: {path: note_visible}}
-          text: {bind: {path: note, source: External}}
-        - type: ContentControl
-          id: radio
-          visible: {bind: {path: radio_visible}}
-          content: {bind: {path: radio}}
-          content_template: choice_row
-        - type: ContentControl
-          id: keyboard
-          content: {bind: {path: keyboard}}
-          content_template: check_row
         - type: Repeat
-          id: player_slots
+          id: controller_slots
           items: {bind: {path: slots}}
           gap: 6
           item_template: choice_row
         - type: Repeat
-          id: player_resets
+          id: controller_keys
+          items: {bind: {path: key_sections, source: External}}
+          gap: 6
+          item_template: binding_page
+        - type: Repeat
+          id: controller_resets
           items: {bind: {path: resets}}
           gap: 6
           item_template: reset_row
@@ -253,9 +246,10 @@ templates:
           id: pad_name
           style: {text: {role: Subtitle, scale: 1.0}}
           text: {bind: {path: label, source: External}}
-        - type: Label
-          id: pad_assignment
-          text: {bind: {path: assignment, source: External}}
+        - type: ContentControl
+          id: assignment
+          content: {bind: {path: assignment}}
+          content_template: choice_row
         - type: ContentControl
           id: deadzone
           content: {bind: {path: deadzone}}
@@ -264,10 +258,6 @@ templates:
           id: dpad
           content: {bind: {path: dpad}}
           content_template: choice_row
-        - type: Label
-          id: unassigned_note
-          visible: {bind: {path: note_visible, source: External}}
-          text: {bind: {path: note, source: External}}
         - type: Repeat
           id: pad_sections
           items: {bind: {path: sections, source: External}}
@@ -290,11 +280,6 @@ templates:
           items: {bind: {path: fields}}
           viewport: {bind: {path: viewport}}
           item_template: choice_row
-        - type: Repeat
-          id: key_sections
-          items: {bind: {path: key_sections, source: External}}
-          gap: 6
-          item_template: binding_page
         - type: Repeat
           id: machine_resets
           items: {bind: {path: resets}}
@@ -333,7 +318,7 @@ root:
               selected: {bind: {path: controllers_selection, source: External, mode: TwoWay}}
               items: {bind: {path: controllers_pages, source: External}}
               title: {bind: {path: label}}
-              item_template: player_page
+              item_template: controller_page
           - id: gamepads
             title: {bind: {path: labels.tab_gamepads, source: External}}
             content:
@@ -341,10 +326,6 @@ root:
               id: gamepads_column
               gap: 6
               children:
-                - type: Label
-                  id: gamepads_empty
-                  visible: {bind: {path: gamepads_empty_visible, source: External}}
-                  text: {bind: {path: gamepads_empty_note, source: External}}
                 - type: Repeat
                   id: gamepad_blocks
                   items: {bind: {path: gamepads_blocks, source: External}}
