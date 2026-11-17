@@ -747,6 +747,12 @@ impl SessionHandle {
             .and_then(|system_id| self.settings.snapshot.shared.input.systems.get(&system_id));
         let bindings = system.and_then(|s| s.implicit_keyboard_profile());
         let pad_bindings = system.map(|s| s.pad_bindings.as_slice());
+        // Keyboard port routing: the implicit keyboard drives only the
+        // ports whose member set contains it (settings-change time, never
+        // the hot path). Shortcuts stay global.
+        let keyboard_ports = crate::session::input_map::keyboard_port_indices(
+            &self.settings.snapshot.app_state.port_devices,
+        );
         // The department owns the maps; the session only resolves which
         // profile is active. The stick/trigger policy rebuilds here too:
         // it follows the assignments, so a system switch re-routes
@@ -754,6 +760,7 @@ impl SessionHandle {
         self.input.rebuild_key_field_map(
             bindings.map(|p| p.bindings.as_slice()),
             self.emu.field_map(),
+            &keyboard_ports,
         );
         self.input.rebuild_pad_binding_map(pad_bindings);
         self.input.rebuild_input_policy();
@@ -1172,6 +1179,55 @@ mod tests {
             "post-loss press fires instead of staying suppressed"
         );
         session.clear_input();
+    }
+
+    #[test]
+    fn keyboard_routing_honors_port_membership() {
+        use nerust_settings_core::model::app_state::PORT_PLAYER_2;
+        use nerust_settings_core::model::input::{
+            IMPLICIT_PROFILE_ID, KeyboardBinding, KeyboardProfile, PersistedControlId,
+            SystemInputSettings,
+        };
+        let mut session = crate::session::test_util::test_session();
+        let system = session.active_system_id_box().expect("test system active");
+        // Two player bindings plus one unresolvable attachment (fail open).
+        let mut profile = KeyboardProfile::default();
+        profile.bindings = vec![
+            KeyboardBinding::new(
+                "test pad player1",
+                PersistedControlId::digital("test.a"),
+                Key::KeyA,
+            ),
+            KeyboardBinding::new(
+                "test pad player2",
+                PersistedControlId::digital("test.b"),
+                Key::KeyB,
+            ),
+            KeyboardBinding::new(
+                "unparseable attachment",
+                PersistedControlId::digital("test.c"),
+                Key::KeyC,
+            ),
+        ];
+        let mut system_settings = SystemInputSettings::default();
+        system_settings
+            .keyboard_profiles
+            .insert(IMPLICIT_PROFILE_ID.to_string(), profile);
+        let mut next = session.settings_snapshot().clone();
+        next.shared.input.systems.insert(system, system_settings);
+        // Fresh default: builtin keyboard drives every port.
+        session.apply_settings(next.clone()).unwrap();
+        let source = &session.input.keys.source;
+        assert!(source.contains_key(&Key::KeyA), "p1 reachable by default");
+        assert!(source.contains_key(&Key::KeyB), "p2 reachable by default");
+        assert!(source.contains_key(&Key::KeyC), "unresolvable stays");
+        // Restricted to player 1: the player-2 binding parks.
+        next.app_state.port_devices.remove(PORT_PLAYER_2);
+        session.apply_settings(next.clone()).unwrap();
+        let source = &session.input.keys.source;
+        assert!(source.contains_key(&Key::KeyA), "p1 still reachable");
+        assert!(!source.contains_key(&Key::KeyB), "p2 parked");
+        assert!(source.contains_key(&Key::KeyC), "unresolvable stays");
     }
 
     #[test]
