@@ -23,6 +23,13 @@ impl EditorState {
     pub(crate) fn draft_mut(&mut self) -> &mut SettingsSnapshot {
         Arc::make_mut(&mut self.draft)
     }
+
+    /// Replace the draft wholesale (scoped resets through
+    /// [`SettingsViewModel::restore_scope`]). Validation, projections,
+    /// and revision advance through the transact path, not here.
+    pub fn set_draft(&mut self, snapshot: SettingsSnapshot) {
+        self.draft = Arc::new(snapshot);
+    }
 }
 
 /// Storage path validation error.
