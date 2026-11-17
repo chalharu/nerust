@@ -193,11 +193,12 @@ pub struct InputConflictView {
 // ── Gamepads ─────────────────────────────────────────────────────────
 
 /// Per-pad gamepads screen: each connection-order pad carries its own
-/// deadzone, D-pad switch, and player port. Labels and steps stay
-/// tab-level (identical for every pad); values ride the pad rows.
+/// deadzone, D-pad switch, and player port. Steps stay tab-level
+/// (identical for every pad); values ride the pad rows. Row labels and
+/// port options are built by the frontend (the only reader), so the
+/// view carries no per-pad strings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GamepadTabView {
-    pub label: String,
     pub deadzone_choices: Vec<ChoiceView<u8>>,
     pub pads: Vec<PadPortView>,
 }
@@ -207,9 +208,7 @@ pub struct GamepadTabView {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PadPortView {
     pub index: usize,
-    pub label: String,
     pub port: Option<usize>,
-    pub choices: Vec<ChoiceView<Option<usize>>>,
     pub deadzone: u8,
     pub dpad_enabled: bool,
 }

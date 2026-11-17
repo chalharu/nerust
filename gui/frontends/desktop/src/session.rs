@@ -44,11 +44,13 @@ impl SessionAdapter {
         &self.session
     }
 
-    /// Live gamepad descriptors for the settings dialog (enumeration
-    /// truth). Empty until the gamepad backend connects its first pad.
-    /// Snapshot at dialog open; hotplug while open does not refresh.
-    pub(crate) fn gamepad_descriptors(&self) -> Vec<String> {
-        self.session.pad_descriptors().to_vec()
+    /// Enumerated gamepad count for the settings dialog. Zero until
+    /// the gamepad backend connects its first pad. Snapshot at dialog
+    /// open; hotplug while open does not refresh. The dialog only needs
+    /// the count (row labels derive from the rank), so descriptors stay
+    /// in the session.
+    pub(crate) fn gamepad_count(&self) -> usize {
+        self.session.pad_descriptors().len()
     }
 
     pub(crate) fn ppu_live_begin(
