@@ -138,7 +138,6 @@ mod tests {
 
     #[test]
     fn migrate_port_devices_upgrades_only_the_legacy_default() {
-        use serde_json::json;
         // Exactly the schema-2 default: adopt the new both-ports default.
         let mut legacy = DesktopAppState {
             schema_version: 2,
