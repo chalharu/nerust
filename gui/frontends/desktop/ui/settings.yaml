@@ -26,7 +26,6 @@ templates:
           id: check
           text: {bind: {path: label, source: External}}
           checked: {bind: {path: checked, source: External, mode: TwoWay}}
-
   reset_row:
     root:
       type: StackLayout
@@ -36,7 +35,6 @@ templates:
           id: reset_button
           text: {bind: {path: label, source: External}}
           command: reset
-
   binding_row:
     root:
       type: StackLayout
@@ -214,7 +212,6 @@ templates:
               items: {bind: {path: resets}}
               gap: 6
               item_template: reset_row
-
   player_page:
     root:
       type: StackLayout
@@ -245,7 +242,6 @@ templates:
           items: {bind: {path: resets}}
           gap: 6
           item_template: reset_row
-
   gamepad_block:
     root:
       type: StackLayout
@@ -282,7 +278,6 @@ templates:
           items: {bind: {path: resets}}
           gap: 6
           item_template: reset_row
-
   system_page:
     root:
       type: StackLayout
