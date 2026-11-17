@@ -189,11 +189,11 @@ pub(super) mod methods {
     bridge_method!(PERFORM_CONTROL_HAPTIC, "performControlHaptic", "()V");
     bridge_method!(UPDATE_FLOATING_DPAD, "updateFloatingDpad", "(ZFFFF)V");
     bridge_method!(
-        CONFIGURE_CARTRIDGE_PERIPHERALS,
-        "configureCartridgePeripherals",
+        CONFIGURE_RUMBLE_MOTION,
+        "configureRumbleMotion",
         "(ZZILjava/lang/String;)V"
     );
-    bridge_method!(SET_CARTRIDGE_RUMBLE, "setCartridgeRumble", "(I)V");
+    bridge_method!(SET_RUMBLE, "setRumble", "(I)V");
     bridge_method!(APPLY_SCREEN_ORIENTATION, "applyScreenOrientation", "(I)V");
     bridge_method!(
         APPLY_APP_LANGUAGE,

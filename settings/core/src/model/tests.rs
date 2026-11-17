@@ -128,7 +128,7 @@ schema_version: 3
 }
 
 #[test]
-fn legacy_local_settings_enable_cartridge_peripherals_by_default() {
+fn legacy_local_settings_enable_rumble_motion_by_default() {
     let decoded: HostBackendLocalSettings = serde_saphyr::from_str(
         r#"
 schema_version: 4
@@ -136,11 +136,8 @@ schema_version: 4
     )
     .unwrap();
 
-    assert!(decoded.cartridge_peripherals.motion_enabled);
-    assert!(decoded.cartridge_peripherals.rumble_enabled);
-    assert_eq!(decoded.cartridge_peripherals.rumble_strength_percent, 100);
-    assert_eq!(
-        decoded.cartridge_peripherals.rumble_target,
-        RumbleTarget::Auto
-    );
+    assert!(decoded.rumble_motion.motion_enabled);
+    assert!(decoded.rumble_motion.rumble_enabled);
+    assert_eq!(decoded.rumble_motion.rumble_strength_percent, 100);
+    assert_eq!(decoded.rumble_motion.rumble_target, RumbleTarget::Auto);
 }

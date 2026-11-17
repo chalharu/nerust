@@ -309,7 +309,7 @@ fn build_advanced_section(
     i18n: I18n,
 ) -> SectionWire {
     let video = vm.video.view.get();
-    let peripherals = &snapshot.local.cartridge_peripherals;
+    let peripherals = &snapshot.local.rumble_motion;
     let mut rows = vec![
         toggle_row(
             "video.vsync",
@@ -325,21 +325,21 @@ fn build_advanced_section(
             "audio.detail",
         ),
         toggle_row(
-            "controls.cartridge_motion",
+            "controls.rumble_motion",
             i18n.text(UiText::CartridgeMotion),
             i18n.text(UiText::DescCartridgeMotion),
             i18n,
             peripherals.motion_enabled,
         ),
         toggle_row(
-            "controls.cartridge_rumble",
+            "controls.rumble",
             i18n.text(UiText::CartridgeRumble),
             i18n.text(UiText::DescCartridgeRumble),
             i18n,
             peripherals.rumble_enabled,
         ),
         number_row(
-            "controls.cartridge_rumble_strength",
+            "controls.rumble_strength",
             i18n.text(UiText::RumbleStrength),
             String::new(),
             i64::from(peripherals.rumble_strength_percent),
@@ -349,7 +349,7 @@ fn build_advanced_section(
             "%".to_string(),
         ),
         choice_row(
-            "controls.cartridge_rumble_target",
+            "controls.rumble_target",
             i18n.text(UiText::RumbleTarget),
             String::new(),
             &[
