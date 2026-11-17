@@ -291,7 +291,7 @@ impl Editor {
             crate::terminal_language(),
         )
         .map_err(|error| error.to_string())?;
-        let defaults = default_snapshot(&adapter.factories());
+        let defaults = default_snapshot(adapter.factories());
         let gamepads = adapter.gamepad_descriptors();
         Ok(Rc::new(Self {
             vm,

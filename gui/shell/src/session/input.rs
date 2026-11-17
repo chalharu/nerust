@@ -1191,24 +1191,25 @@ mod tests {
         let mut session = crate::session::test_util::test_session();
         let system = session.active_system_id_box().expect("test system active");
         // Two player bindings plus one unresolvable attachment (fail open).
-        let mut profile = KeyboardProfile::default();
-        profile.bindings = vec![
-            KeyboardBinding::new(
-                "test pad player1",
-                PersistedControlId::digital("test.a"),
-                Key::KeyA,
-            ),
-            KeyboardBinding::new(
-                "test pad player2",
-                PersistedControlId::digital("test.b"),
-                Key::KeyB,
-            ),
-            KeyboardBinding::new(
-                "unparseable attachment",
-                PersistedControlId::digital("test.c"),
-                Key::KeyC,
-            ),
-        ];
+        let profile = KeyboardProfile {
+            bindings: vec![
+                KeyboardBinding::new(
+                    "test pad player1",
+                    PersistedControlId::digital("test.a"),
+                    Key::KeyA,
+                ),
+                KeyboardBinding::new(
+                    "test pad player2",
+                    PersistedControlId::digital("test.b"),
+                    Key::KeyB,
+                ),
+                KeyboardBinding::new(
+                    "unparseable attachment",
+                    PersistedControlId::digital("test.c"),
+                    Key::KeyC,
+                ),
+            ],
+        };
         let mut system_settings = SystemInputSettings::default();
         system_settings
             .keyboard_profiles

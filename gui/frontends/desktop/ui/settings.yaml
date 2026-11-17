@@ -231,6 +231,10 @@ templates:
           visible: {bind: {path: radio_visible}}
           content: {bind: {path: radio}}
           content_template: choice_row
+        - type: ContentControl
+          id: keyboard
+          content: {bind: {path: keyboard}}
+          content_template: check_row
         - type: Repeat
           id: player_slots
           items: {bind: {path: slots}}

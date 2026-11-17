@@ -84,6 +84,7 @@ pub(super) struct PlayerPage {
     pub radio_visible: bool,
     pub note: Binding<String>,
     pub note_visible: bool,
+    pub keyboard: Option<Keyed<CheckRow>>,
     pub slots: Vec<Keyed<ChoiceRow>>,
     pub resets: Vec<Keyed<ResetRow>>,
 }
@@ -397,6 +398,7 @@ pub(super) fn controllers_pages(
             } else {
                 editor.tr(UiText::DescNoGamepads)
             };
+            let keyboard = keyboard_toggle(editor, port);
             let slots = slot_rows_for_port(editor, port);
             let resets = vec![Keyed::new(
                 "reset".to_string(),
@@ -417,6 +419,7 @@ pub(super) fn controllers_pages(
                         radio_visible,
                         note,
                         note_visible: true,
+                        keyboard: Some(keyboard),
                         slots,
                         resets,
                     },
@@ -425,6 +428,57 @@ pub(super) fn controllers_pages(
             )
         })
         .collect()
+}
+
+/// Built-in keyboard membership toggle for one player port. Routing is
+/// enforced at rebuild time, so flipping this takes effect on apply;
+/// keyboards share ports freely, so the other port keeps working.
+fn keyboard_toggle(editor: &Rc<Editor>, port: usize) -> Keyed<CheckRow> {
+    use nerust_input_traits::BUILTIN_KEYBOARD_MEMBER;
+    use nerust_settings_core::model::app_state::{PORT_PLAYER_1, PORT_PLAYER_2};
+
+    let vm = &editor.vm;
+    let port_id = if port == 0 { PORT_PLAYER_1 } else { PORT_PLAYER_2 }.to_string();
+    let read_vm = vm.clone();
+    let write_vm = vm.clone();
+    let write_port = port_id.clone();
+    let checked = editor.binding(
+        vm.revision.clone(),
+        move |_| {
+            read_vm
+                .snapshot()
+                .app_state
+                .port_devices
+                .get(&port_id)
+                .is_some_and(|members| members.iter().any(|m| m == BUILTIN_KEYBOARD_MEMBER))
+        },
+        Some(Rc::new(move |enabled: bool| {
+            write_vm.restore_scope(&write_vm.snapshot(), |draft, _| {
+                let members = draft
+                    .app_state
+                    .port_devices
+                    .entry(write_port.clone())
+                    .or_default();
+                if enabled {
+                    if !members.iter().any(|m| m == BUILTIN_KEYBOARD_MEMBER) {
+                        members.push(BUILTIN_KEYBOARD_MEMBER.to_string());
+                    }
+                } else {
+                    members.retain(|member| member != BUILTIN_KEYBOARD_MEMBER);
+                }
+            })
+        })),
+    );
+    Keyed::new(
+        format!("keyboard-{port}"),
+        Store::new(
+            CheckRow {
+                label: editor.tr(UiText::BuiltInKeyboard),
+                checked,
+            },
+            editor.executor.clone(),
+        ),
+    )
 }
 
 /// Controller-type slot rows for one player port: every machine slot
@@ -1248,6 +1302,44 @@ mod tests {
             .gamepads
             .set_pad_port(0, Some(0))
             .expect("port restores");
+    }
+
+    /// Player pages carry a built-in keyboard toggle bound to port
+    /// membership: unchecking parks the keyboard from that port (routing
+    /// picks it up on apply), and a player reset restores the default.
+    #[test]
+    fn controllers_pages_keyboard_toggle_flips_port_membership() {
+        use super::super::{Apply, ResetScope};
+        use nerust_gui_runtime::settings::SettingsSnapshot;
+        let (editor, _adapter, _dir) = headless_editor();
+        let apply: Apply = Rc::new(|_: SettingsSnapshot| Ok(()));
+        let quit: Rc<dyn Fn()> = Rc::new(|| {});
+        let slot = Rc::new(RefCell::new(None));
+        let commands = editor.commands(&apply, quit, &slot);
+        let reset = &commands.reset;
+        let keyboard = |pages: &[Keyed<PlayerPage>], index: usize| {
+            pages[index]
+                .model
+                .snapshot()
+                .keyboard
+                .as_ref()
+                .expect("keyboard toggle builds")
+                .model
+                .snapshot()
+        };
+        let pages = controllers_pages(&editor, reset, &test_pads());
+        assert!(keyboard(&pages, 0).checked.get(), "builtin drives p1");
+        assert!(keyboard(&pages, 1).checked.get(), "builtin drives p2");
+        assert!(!keyboard(&pages, 0).label.get().is_empty());
+        // Uncheck on player 1: membership drops only there.
+        assert!(keyboard(&pages, 0).checked.set(false));
+        let pages = controllers_pages(&editor, reset, &test_pads());
+        assert!(!keyboard(&pages, 0).checked.get(), "p1 unchecks");
+        assert!(keyboard(&pages, 1).checked.get(), "p2 keeps sharing");
+        // A player-scoped reset restores the default membership.
+        let _ = (reset.clone())(ResetScope::Player(0)).invoke();
+        let pages = controllers_pages(&editor, reset, &test_pads());
+        assert!(keyboard(&pages, 0).checked.get(), "reset restores p1");
     }
 
     /// System pages mirror the live registry: every factory system yields
