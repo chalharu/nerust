@@ -242,34 +242,6 @@ fn section_key(section: &BindingSectionView, index: usize) -> String {
     hex_bytes(&identity)
 }
 
-/// Substring filter for binding lists: empty query keeps everything;
-/// otherwise a section survives when its label matches (whole section)
-/// or when at least one row label matches (matching rows only).
-/// Case-insensitive; used by the input-tab search box.
-fn filter_sections(sections: Vec<BindingSectionView>, query: String) -> Vec<BindingSectionView> {
-    let needle = query.trim().to_lowercase();
-    if needle.is_empty() {
-        return sections;
-    }
-    sections
-        .into_iter()
-        .filter_map(|section| {
-            if section.label.to_lowercase().contains(&needle) {
-                return Some(section);
-            }
-            let rows = section
-                .rows
-                .into_iter()
-                .filter(|row| row.label.to_lowercase().contains(&needle))
-                .collect::<Vec<_>>();
-            (!rows.is_empty()).then_some(BindingSectionView {
-                label: section.label,
-                rows,
-            })
-        })
-        .collect()
-}
-
 fn binding_sections(
     source: Binding<Vec<BindingSectionView>>,
     editor: &Rc<Editor>,
@@ -324,16 +296,15 @@ pub(super) fn inputs(
     editor: &Rc<Editor>,
     capture: Capture,
     clear: Capture,
-    query: Binding<String>,
 ) -> Vec<Keyed<InputPage>> {
     let vm = &editor.vm;
     let executor = editor.executor.clone();
     // Freshness tick: revision bumps on every transact (pad applies,
-    // captures, language), query on every keystroke. Section forwards
-    // read views and the live draft inside, so one source covers both.
-    let tick = editor
-        .binding(vm.revision.clone(), Clone::clone, None)
-        .zip(&query);
+    // captures, language), so section forwards always re-read the live
+    // draft and views. Pad applies and captures never change the keyboard
+    // projection, so the view alone would not notify and the pad values
+    // would go stale without the tick.
+    let tick = editor.binding(vm.revision.clone(), Clone::clone, None);
     let mut pages: Vec<_> = vm
         .inputs()
         .iter()
@@ -412,14 +383,14 @@ pub(super) fn inputs(
             // Keyboard sections plus per-pad button overrides on the same
             // page: one section per connection-order pad, rows mirrored
             // from the keyboard rows with the pad routed in. Sourced on
-            // the freshness tick (revision + filter query): pad applies
-            // and captures never change the keyboard projection, so the
-            // view alone would not notify and the pad values would go
-            // stale. The tick covers both, so the rows below always read
-            // the live draft, views, and query.
+            // the freshness tick (revision): pad applies and captures
+            // never change the keyboard projection, so the view alone
+            // would not notify and the pad values would go stale. The
+            // tick covers both, so the rows below always read the live
+            // draft and views.
             let mapping_input = input.clone();
             let mapping_gamepads = vm.gamepads.clone();
-            let all_sections = tick.clone().map(move |(_, query)| {
+            let all_sections = tick.clone().map(move |_| {
                 let value = mapping_input.view.get();
                 let mut sections = value.sections.clone();
                 let pads = mapping_gamepads.view.get().pads;
@@ -493,7 +464,7 @@ pub(super) fn inputs(
                         rows,
                     });
                 }
-                filter_sections(sections, query)
+                sections
             });
             let sections = binding_sections(all_sections, editor, &capture, &clear);
             Keyed::new(
@@ -530,8 +501,8 @@ pub(super) fn inputs(
                         binding_page(
                             {
                                 let shortcuts = vm.shortcuts.clone();
-                                tick.clone().map(move |(_, query)| {
-                                    filter_sections(vec![shortcuts.view.get()], query).pop()
+                                tick.clone().map(move |_| {
+                                    Some(shortcuts.view.get())
                                 })
                             },
                             editor,
@@ -839,7 +810,6 @@ mod tests {
             &editor,
             noop_capture(&executor),
             noop_capture(&executor),
-            Binding::constant(String::new()),
         );
         let gamepads = pages
             .iter()
@@ -866,7 +836,6 @@ mod tests {
             &editor,
             noop_capture(&executor),
             noop_capture(&executor),
-            Binding::constant(String::new()),
         );
         let row = pages
             .iter()
@@ -963,7 +932,6 @@ mod tests {
             &editor,
             noop_capture(&executor),
             noop_capture(&executor),
-            Binding::constant(String::new()),
         );
         assert_eq!(pages.len(), editor.vm.inputs().len() + 2);
         let gamepads = pages.last().expect("gamepads page closes the list");
@@ -1048,56 +1016,6 @@ mod tests {
         assert_eq!(row.selected.get(), original);
     }
 
-    /// The input-tab filter narrows binding rows by label substring:
-    /// empty query keeps everything, a miss keeps nothing, and a hit
-    /// keeps its rows (pad mapping sections filter like keyboard ones).
-    #[test]
-    fn input_filter_narrows_sections_and_rows() {
-        fn row_count(pages: &[Keyed<InputPage>]) -> usize {
-            pages
-                .iter()
-                .filter(|page| page.key.starts_with("system-"))
-                .flat_map(|page| page.model.snapshot().sections.get())
-                .map(|section| section.model.snapshot().rows.get().len())
-                .sum()
-        }
-        let (editor, _adapter, _dir) = headless_editor();
-        let executor: Rc<dyn panechord::Executor> = Rc::new(TestExecutor);
-        let full = inputs(
-            &editor,
-            noop_capture(&executor),
-            noop_capture(&executor),
-            Binding::constant(String::new()),
-        );
-        let total = row_count(&full);
-        assert!(total > 0, "system pages expose binding rows");
-        let missing = inputs(
-            &editor,
-            noop_capture(&executor),
-            noop_capture(&executor),
-            Binding::constant("zzz-no-such-control".to_string()),
-        );
-        assert_eq!(row_count(&missing), 0, "a miss keeps no rows");
-        // A hit on a real row label keeps that row and drops the rest.
-        let probe = full
-            .iter()
-            .filter(|page| page.key.starts_with("system-"))
-            .flat_map(|page| page.model.snapshot().sections.get())
-            .flat_map(|section| section.model.snapshot().rows.get())
-            .map(|row| row.model.snapshot().label.get())
-            .find(|label| label.len() > 3)
-            .expect("a row label to probe with");
-        let needle = probe.chars().take(4).collect::<String>();
-        let hits = inputs(
-            &editor,
-            noop_capture(&executor),
-            noop_capture(&executor),
-            Binding::constant(needle),
-        );
-        let kept = row_count(&hits);
-        assert!(kept > 0 && kept < total, "a hit narrows but keeps rows");
-    }
-
     /// Binding rows localize their chrome live: switching the draft
     /// language re-renders Change/Clear without rebuilding the page.
     #[test]
@@ -1110,7 +1028,6 @@ mod tests {
             &editor,
             noop_capture(&executor),
             noop_capture(&executor),
-            Binding::constant(String::new()),
         );
         let rows = pages
             .iter()
@@ -1158,7 +1075,6 @@ mod tests {
             &editor,
             noop_capture(&executor),
             noop_capture(&executor),
-            Binding::constant(String::new()),
         );
         let rows = pages
             .iter()
@@ -1352,8 +1268,8 @@ mod tests {
     }
 
     /// Page and section keys across every dynamic TabItems stay unique
-    /// under the default fixture and under filter queries: a single
-    /// duplicate blanks the whole tab with "duplicate Tab page key".
+    /// under the default fixture: a single duplicate blanks the whole
+    /// tab with "duplicate Tab page key".
     #[test]
     fn tab_item_keys_are_unique_across_pages_and_sections() {
         let (editor, _adapter, _dir) = headless_editor();
@@ -1367,37 +1283,26 @@ mod tests {
                 page.key
             );
         }
-        for query in [
-            String::new(),
-            "a".to_string(),
-            "zzz-no-such-control".to_string(),
-        ] {
-            let pages = inputs(
-                &editor,
-                noop_capture(&executor),
-                noop_capture(&executor),
-                Binding::constant(query.clone()),
+        let pages = inputs(&editor, noop_capture(&executor), noop_capture(&executor));
+        let mut seen_pages = std::collections::BTreeSet::new();
+        for page in &pages {
+            assert!(
+                seen_pages.insert(page.key.clone()),
+                "duplicate input page key {}",
+                page.key
             );
-            let mut seen_pages = std::collections::BTreeSet::new();
-            for page in &pages {
+            if !page.key.starts_with("system-") {
+                continue;
+            }
+            let sections = page.model.snapshot().sections.get();
+            let mut seen_sections = std::collections::BTreeSet::new();
+            for section in &sections {
                 assert!(
-                    seen_pages.insert(page.key.clone()),
-                    "duplicate input page key {} with query {query:?}",
+                    seen_sections.insert(section.key.clone()),
+                    "duplicate section key {} in page {}",
+                    section.key,
                     page.key
                 );
-                if !page.key.starts_with("system-") {
-                    continue;
-                }
-                let sections = page.model.snapshot().sections.get();
-                let mut seen_sections = std::collections::BTreeSet::new();
-                for section in &sections {
-                    assert!(
-                        seen_sections.insert(section.key.clone()),
-                        "duplicate section key {} in page {} with query {query:?}",
-                        section.key,
-                        page.key
-                    );
-                }
             }
         }
     }
