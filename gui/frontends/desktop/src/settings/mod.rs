@@ -30,20 +30,13 @@ use std::{
 type Setter<T> = Rc<dyn Fn(T) -> Result<(), ViewModelError>>;
 pub(crate) type Apply = Rc<dyn Fn(SettingsSnapshot) -> Result<(), String>>;
 
-/// One screen scope for the per-page reset buttons. Scopes name L2 pages
-/// (or groups/slots within them), never wire ids: the mapping lives in
-/// `apply_reset_scope` below.
+/// Screen scopes for the two remaining reset buttons: the App tab's
+/// reset-all and the Shortcuts page reset. Every other page owns no
+/// reset (per-page resets proved barely needed, so they are gone).
 #[derive(Clone)]
 pub(super) enum ResetScope {
-    GeneralVideo,
-    Audio,
-    RumbleMotion,
-    Saves,
     All,
-    ControllerSystem(String),
-    Pad(usize),
     Shortcuts,
-    SystemFields(String),
 }
 
 /// Canonical defaults for a reset: stock shared/local/app state plus each
@@ -68,28 +61,12 @@ fn default_snapshot(factories: &[Arc<dyn CoreFactory>]) -> SettingsSnapshot {
 }
 
 /// Copy one reset scope's backing fields wholesale from the defaults.
-/// Navigation-only scopes do not exist here (every L2 page owns editable
-/// state, so every page carries a reset).
 fn apply_reset_scope(
     draft: &mut SettingsSnapshot,
     defaults: &SettingsSnapshot,
     scope: &ResetScope,
 ) {
     match scope {
-        ResetScope::GeneralVideo => {
-            draft.local.video = defaults.local.video.clone();
-        }
-        ResetScope::Audio => {
-            draft.local.audio = defaults.local.audio.clone();
-        }
-        ResetScope::RumbleMotion => {
-            draft.local.rumble_motion = defaults.local.rumble_motion.clone();
-        }
-        ResetScope::Saves => {
-            draft.shared.persistence.storage_policy = defaults.shared.persistence.storage_policy;
-            draft.shared.persistence.storage_directory =
-                defaults.shared.persistence.storage_directory.clone();
-        }
         ResetScope::All => {
             // Window geometry and the last ROM directory are not settings
             // rows; keep them while everything else returns to defaults.
@@ -100,93 +77,9 @@ fn apply_reset_scope(
             draft.app_state.window_sizes = window_sizes;
             draft.app_state.last_successful_rom_directory = last_successful_rom_directory;
         }
-        ResetScope::ControllerSystem(system) => {
-            reset_controller_system(draft, defaults, system);
-        }
-        ResetScope::Pad(pad) => {
-            reset_pad_scope(draft, defaults, *pad);
-        }
         ResetScope::Shortcuts => {
             draft.shared.input.shortcuts = defaults.shared.input.shortcuts.clone();
         }
-        ResetScope::SystemFields(system) => {
-            copy_system_entry(&mut draft.shared.systems, &defaults.shared.systems, system);
-        }
-    }
-}
-
-/// Controllers-scoped reset for one machine: controller-type slot
-/// assignments return to the sparse default (absent entry means
-/// factory defaults at resolve time) and keyboard overrides clear
-/// back to the sparse default. Per-pad overrides stay (those belong
-/// to the Gamepads page).
-fn reset_controller_system(
-    draft: &mut SettingsSnapshot,
-    defaults: &SettingsSnapshot,
-    system: &str,
-) {
-    copy_system_entry(
-        &mut draft.app_state.controller_assignments,
-        &defaults.app_state.controller_assignments,
-        system,
-    );
-    for (key, entry) in draft.shared.input.systems.iter_mut() {
-        if key.to_string() == system {
-            entry.keyboard_profiles.clear();
-        }
-    }
-}
-
-/// Pad-scoped reset: deadzone, D-pad switch, and per-system mappings
-/// return to the default; the player slot stays (the Gamepads radio
-/// owns it, mirroring the Android pad reset).
-fn reset_pad_scope(draft: &mut SettingsSnapshot, defaults: &SettingsSnapshot, pad: usize) {
-    let (deadzone, dpad) = defaults
-        .shared
-        .input
-        .gamepad
-        .pad_ports
-        .get(pad)
-        .map(|port| (port.deadzone_percent, port.dpad_enabled))
-        .unwrap_or_else(|| {
-            let fallback = nerust_settings_core::model::input::PadPort::default();
-            (fallback.deadzone_percent, fallback.dpad_enabled)
-        });
-    if let Some(entry) = draft.shared.input.gamepad.pad_ports.get_mut(pad) {
-        entry.deadzone_percent = deadzone;
-        entry.dpad_enabled = dpad;
-    }
-    for settings in draft.shared.input.systems.values_mut() {
-        if let Some(entries) = settings.pad_bindings.get_mut(pad) {
-            entries.clear();
-        }
-    }
-}
-
-/// Wholesale per-system entry: the default's value, or absent when the
-/// default has none (unbound slots, cleared bindings).
-fn copy_system_entry<K, V>(
-    map: &mut std::collections::HashMap<K, V>,
-    default: &std::collections::HashMap<K, V>,
-    system: &str,
-) where
-    K: Eq + std::hash::Hash + Clone + std::fmt::Display,
-    V: Clone,
-{
-    let default_pair = default
-        .iter()
-        .find(|(key, _)| key.to_string() == system)
-        .map(|(key, value)| (key.clone(), value.clone()));
-    let stale: Vec<K> = map
-        .keys()
-        .filter(|key| key.to_string() == system)
-        .cloned()
-        .collect();
-    for key in stale {
-        map.remove(&key);
-    }
-    if let Some((key, value)) = default_pair {
-        map.insert(key, value);
     }
 }
 
@@ -227,19 +120,17 @@ pub(crate) struct Editor {
     vm: SettingsViewModel,
     executor: Rc<dyn Executor>,
     baseline: Rc<RefCell<SettingsSnapshot>>,
-    /// Canonical defaults for the per-screen reset buttons, built once
-    /// from the installed factories (mirrors the Android reset source).
+    /// Canonical defaults for the two reset buttons, built once from
+    /// the installed factories (mirrors the Android reset source).
     defaults: SettingsSnapshot,
-    /// Live gamepad descriptors at dialog open (enumeration truth for the
-    /// Player radio and the Gamepads page). Empty until the gamepad
+    /// Enumerated gamepad count at dialog open. Zero until the gamepad
     /// backend connects its first pad; hotplug while open does not refresh.
-    gamepads: Vec<String>,
+    pad_count: usize,
     closed: Rc<Cell<bool>>,
     status: Store<String>,
     page: Store<String>,
     general_page: Store<String>,
     controllers_page: Store<String>,
-    system_page: Store<String>,
     exit: Rc<Cell<ExitChoice>>,
     close_prompt: Store<ExitChoice>,
 }
@@ -259,18 +150,17 @@ impl Editor {
         )
         .map_err(|error| error.to_string())?;
         let defaults = default_snapshot(adapter.factories());
-        let gamepads = adapter.gamepad_descriptors();
+        let pad_count = adapter.gamepad_count();
         Ok(Rc::new(Self {
             vm,
             baseline: Rc::new(RefCell::new(snapshot)),
             defaults,
-            gamepads,
+            pad_count,
             closed: Rc::new(Cell::new(false)),
             status: Store::new(String::new(), executor.clone()),
             page: Store::new("general".into(), executor.clone()),
             general_page: Store::new("app".into(), executor.clone()),
             controllers_page: Store::new(String::new(), executor.clone()),
-            system_page: Store::new(String::new(), executor.clone()),
             exit: Rc::new(Cell::new(ExitChoice::Editing)),
             close_prompt: Store::new(ExitChoice::Editing, executor.clone()),
             executor,
@@ -308,7 +198,6 @@ impl Editor {
         self.page.close();
         self.general_page.close();
         self.controllers_page.close();
-        self.system_page.close();
         self.close_prompt.close();
     }
     fn validation_status(&self) {
@@ -647,7 +536,6 @@ impl Editor {
                 Store::new(layout::CheckRow { label, checked }, executor.clone()),
             ))
         };
-        let reset_label = self.tr(UiText::ResetScreen);
         let language_choice = choices!(general, language, language_choices, set_language);
         let storage_choice = choices!(
             general,
@@ -677,10 +565,6 @@ impl Editor {
             )
         });
         let sample_rate = choices!(audio, sample_rate, sample_rate_choices, set_sample_rate);
-        let saves_reset_label = reset_label
-            .clone()
-            .zip(&self.tr(UiText::SaveStoragePolicy))
-            .map(|(reset, section)| format!("{reset} ({section})"));
         let general_tabs: Vec<Keyed<layout::GeneralTab>> = ["app", "video", "audio", "rumble"]
             .into_iter()
             .map(|key| {
@@ -691,22 +575,15 @@ impl Editor {
                     "audio" => self.tr(UiText::Audio).get(),
                     _ => self.tr(UiText::RumbleMotion).get(),
                 };
+                // Only App carries a reset (whole-settings); the other
+                // tabs own no reset.
                 let resets = match key {
-                    "app" => vec![
-                        mk_reset("reset-saves", ResetScope::Saves, saves_reset_label.clone()),
-                        mk_reset("reset-all", ResetScope::All, self.tr(UiText::ResetSettings)),
-                    ],
-                    "video" => vec![mk_reset(
-                        "reset",
-                        ResetScope::GeneralVideo,
-                        reset_label.clone(),
+                    "app" => vec![mk_reset(
+                        "reset-all",
+                        ResetScope::All,
+                        self.tr(UiText::ResetSettings),
                     )],
-                    "audio" => vec![mk_reset("reset", ResetScope::Audio, reset_label.clone())],
-                    _ => vec![mk_reset(
-                        "reset",
-                        ResetScope::RumbleMotion,
-                        reset_label.clone(),
-                    )],
+                    _ => Vec::new(),
                 };
                 Keyed::new(
                     key.to_string(),
@@ -779,9 +656,7 @@ impl Editor {
             general_selection: self
                 .general_page
                 .bind(Clone::clone, Some(|page: &mut String, value| *page = value)),
-            controllers_pages: Binding::constant(layout::controllers_pages(
-                self, &reset, &capture, &clear,
-            )),
+            controllers_pages: Binding::constant(layout::controllers_pages(self, &capture, &clear)),
             controllers_selection: self
                 .controllers_page
                 .bind(Clone::clone, Some(|page: &mut String, value| *page = value)),
@@ -789,8 +664,7 @@ impl Editor {
                 self,
                 &capture,
                 &clear,
-                &reset,
-                &self.gamepads,
+                self.pad_count,
             )),
             shortcuts_page: layout::shortcuts_page(self, &capture, &clear),
             shortcuts_resets: Binding::constant(vec![mk_reset(
@@ -798,10 +672,6 @@ impl Editor {
                 ResetScope::Shortcuts,
                 self.tr(UiText::ResetScreen),
             )]),
-            system_pages: Binding::constant(layout::systems(self, &reset)),
-            system_selection: self
-                .system_page
-                .bind(Clone::clone, Some(|page: &mut String, value| *page = value)),
             page: self
                 .page
                 .bind(Clone::clone, Some(|page: &mut String, value| *page = value)),
@@ -879,7 +749,6 @@ impl Editor {
                 tab_gamepads: self.tr(UiText::Gamepads),
                 tab_shortcuts: self.tr(UiText::Shortcuts),
                 tab_notifications: self.tr(UiText::Notifications),
-                tab_advanced: self.tr(UiText::SectionAdvanced),
                 info: self.tr(UiText::NotificationInfo),
                 info_enabled: self.tr(UiText::NotificationEnabled),
                 info_duration: self.tr(UiText::NotificationDuration),
@@ -1000,7 +869,6 @@ struct Labels {
     tab_gamepads: Binding<String>,
     tab_shortcuts: Binding<String>,
     tab_notifications: Binding<String>,
-    tab_advanced: Binding<String>,
     info: Binding<String>,
     info_enabled: Binding<String>,
     info_duration: Binding<String>,
@@ -1082,8 +950,6 @@ struct Presentation {
     gamepads_blocks: Binding<Vec<panechord::Keyed<layout::GamepadBlock>>>,
     shortcuts_page: Binding<Vec<Keyed<layout::BindingPage>>>,
     shortcuts_resets: Binding<Vec<Keyed<layout::ResetRow>>>,
-    system_pages: Binding<Vec<panechord::Keyed<layout::SystemPage>>>,
-    system_selection: Binding<String>,
     page: Binding<String>,
     status: Binding<String>,
     confirmation: Binding<bool>,
@@ -1194,6 +1060,33 @@ mod tests {
         });
         assert_eq!(selected.as_ref(), Some(&other));
         assert!(reopened.confirm_close(false));
+    }
+
+    /// The App-level reset-all restores every default except window
+    /// geometry and the last ROM directory (which are not settings rows).
+    #[test]
+    fn reset_all_restores_defaults_but_keeps_window_geometry() {
+        use crate::session::test_fixture::loaded_adapter;
+        use nerust_gui_application::SettingsPort;
+        let (adapter, _dir) = loaded_adapter();
+        let editor = Editor::new(adapter.settings().clone(), &adapter, Rc::new(TestExecutor))
+            .expect("editor builds on real factories");
+        let before = editor.vm.snapshot();
+        editor.vm.audio.set_volume(11).expect("volume applies");
+        assert_ne!(editor.vm.snapshot(), before, "draft diverges");
+        let apply: Apply = Rc::new(|_: SettingsSnapshot| Ok(()));
+        let view_slot = Rc::new(RefCell::new(None));
+        let commands = editor.commands(&apply, Rc::new(|| {}), &view_slot);
+        let _ = (commands.reset)(ResetScope::All).invoke();
+        let after = editor.vm.snapshot();
+        let defaults = default_snapshot(adapter.factories());
+        assert_eq!(after.shared, defaults.shared);
+        assert_eq!(after.local, defaults.local);
+        let mut expected_app = defaults.app_state.clone();
+        expected_app.window_sizes = before.app_state.window_sizes.clone();
+        expected_app.last_successful_rom_directory =
+            before.app_state.last_successful_rom_directory.clone();
+        assert_eq!(after.app_state, expected_app);
     }
 
     /// Same-edge gating for the status area picker: when notification and
@@ -1734,8 +1627,9 @@ mod tests {
             "shortcuts page exposes rows"
         );
         assert_eq!(
-            presentation.system_pages.get().len(),
-            editor.vm.systems().len()
+            presentation.controllers_pages.get().len(),
+            editor.vm.inputs().len(),
+            "one controllers page per machine"
         );
         let general = editor.vm.general.view.get();
         assert_eq!(

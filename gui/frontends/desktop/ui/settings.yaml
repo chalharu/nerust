@@ -220,21 +220,24 @@ templates:
       padding: 6
       gap: 6
       children:
+        - type: ItemsControl
+          id: fields
+          items: {bind: {path: fields}}
+          viewport: {bind: {path: viewport}}
+          item_template: choice_row
         - type: Repeat
           id: controller_slots
           items: {bind: {path: slots}}
           gap: 6
           item_template: choice_row
+        - type: Label
+          id: keyboard_note
+          text: {bind: {path: keyboard_note, source: External}}
         - type: Repeat
           id: controller_keys
           items: {bind: {path: key_sections, source: External}}
           gap: 6
           item_template: binding_page
-        - type: Repeat
-          id: controller_resets
-          items: {bind: {path: resets}}
-          gap: 6
-          item_template: reset_row
   gamepad_block:
     root:
       type: StackLayout
@@ -263,28 +266,6 @@ templates:
           items: {bind: {path: sections, source: External}}
           gap: 6
           item_template: binding_page
-        - type: Repeat
-          id: pad_resets
-          items: {bind: {path: resets}}
-          gap: 6
-          item_template: reset_row
-  system_page:
-    root:
-      type: StackLayout
-      id: system_fields
-      padding: 6
-      gap: 6
-      children:
-        - type: ItemsControl
-          id: fields
-          items: {bind: {path: fields}}
-          viewport: {bind: {path: viewport}}
-          item_template: choice_row
-        - type: Repeat
-          id: machine_resets
-          items: {bind: {path: resets}}
-          gap: 6
-          item_template: reset_row
 root:
   type: Window
   id: settings_window
@@ -470,18 +451,6 @@ root:
                         id: status_area_follows
                         visible: {bind: {path: status_area_follows, source: External}}
                         text: {bind: {path: labels.follow_note, source: External}}
-          - id: advanced
-            title: {bind: {path: labels.tab_advanced, source: External}}
-            content:
-              type: Scroll
-              id: advanced_scroll
-              content:
-                type: TabItems
-                id: machine_tabs
-                selected: {bind: {path: system_selection, source: External, mode: TwoWay}}
-                items: {bind: {path: system_pages, source: External}}
-                title: {bind: {path: label}}
-                item_template: system_page
       - {type: Label, id: status, text: {bind: {path: status, source: External}}}
       - type: DialogFooter
         id: actions

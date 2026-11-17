@@ -1,5 +1,3 @@
-use nerust_settings_core::i18n::UiText;
-use nerust_settings_core::labels::pad_label;
 use nerust_settings_core::model::input::{DEADZONE_MAX_PERCENT, DEADZONE_STEPS};
 
 use super::{
@@ -105,19 +103,8 @@ impl GamepadViewModel {
 }
 
 fn project_view(state: &super::EditorState) -> GamepadTabView {
-    let i18n = super::state::display_i18n(state);
     let gamepad = &state.draft.shared.input.gamepad;
-    // Port options are identical for every pad: build once, clone per row.
-    let port_choices: Vec<ChoiceView<Option<usize>>> = [
-        (None, i18n.text(UiText::NotAssigned)),
-        (Some(0), i18n.text(UiText::PlayerOne)),
-        (Some(1), i18n.text(UiText::PlayerTwo)),
-    ]
-    .into_iter()
-    .map(|(port, label)| ChoiceView { value: port, label })
-    .collect();
     GamepadTabView {
-        label: i18n.text(UiText::Gamepads),
         deadzone_choices: DEADZONE_STEPS
             .iter()
             .map(|step| ChoiceView {
@@ -130,9 +117,7 @@ fn project_view(state: &super::EditorState) -> GamepadTabView {
                 let port = &gamepad.pad_ports[index];
                 PadPortView {
                     index,
-                    label: pad_label(i18n, index),
                     port: port.slot,
-                    choices: port_choices.clone(),
                     deadzone: port.deadzone_percent,
                     dpad_enabled: port.dpad_enabled,
                 }

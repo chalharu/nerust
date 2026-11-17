@@ -27,7 +27,7 @@ impl EditorState {
     /// Replace the draft wholesale (scoped resets through
     /// [`SettingsViewModel::restore_scope`]). Validation, projections,
     /// and revision advance through the transact path, not here.
-    pub fn set_draft(&mut self, snapshot: SettingsSnapshot) {
+    pub(crate) fn set_draft(&mut self, snapshot: SettingsSnapshot) {
         self.draft = Arc::new(snapshot);
     }
 }
