@@ -1366,15 +1366,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "font-types"
-version = "0.12.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "835ae9d781464a79026cde387f9cbc650c9a4909d7cf7e658b127e3c35d2f35d"
-dependencies = [
- "bytemuck",
-]
-
-[[package]]
 name = "fontconfig-parser"
 version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4212,7 +4203,7 @@ dependencies = [
 [[package]]
 name = "panechord"
 version = "0.1.0-dev"
-source = "git+https://github.com/chalharu/panechord?rev=c1c807ae636ec4b3c89766f150e5a9108af300a5#c1c807ae636ec4b3c89766f150e5a9108af300a5"
+source = "git+https://github.com/chalharu/panechord?rev=e70d69b25744fa8344656417e007dc75ce623809#e70d69b25744fa8344656417e007dc75ce623809"
 dependencies = [
  "panechord-gtk",
  "panechord-macros",
@@ -4224,7 +4215,7 @@ dependencies = [
 [[package]]
 name = "panechord-gtk"
 version = "0.1.0-dev"
-source = "git+https://github.com/chalharu/panechord?rev=c1c807ae636ec4b3c89766f150e5a9108af300a5#c1c807ae636ec4b3c89766f150e5a9108af300a5"
+source = "git+https://github.com/chalharu/panechord?rev=e70d69b25744fa8344656417e007dc75ce623809#e70d69b25744fa8344656417e007dc75ce623809"
 dependencies = [
  "futures",
  "gtk4",
@@ -4239,7 +4230,7 @@ dependencies = [
 [[package]]
 name = "panechord-macos"
 version = "0.1.0-dev"
-source = "git+https://github.com/chalharu/panechord?rev=c1c807ae636ec4b3c89766f150e5a9108af300a5#c1c807ae636ec4b3c89766f150e5a9108af300a5"
+source = "git+https://github.com/chalharu/panechord?rev=e70d69b25744fa8344656417e007dc75ce623809#e70d69b25744fa8344656417e007dc75ce623809"
 dependencies = [
  "futures",
  "objc2 0.6.5",
@@ -4251,7 +4242,7 @@ dependencies = [
 [[package]]
 name = "panechord-macros"
 version = "0.1.0-dev"
-source = "git+https://github.com/chalharu/panechord?rev=c1c807ae636ec4b3c89766f150e5a9108af300a5#c1c807ae636ec4b3c89766f150e5a9108af300a5"
+source = "git+https://github.com/chalharu/panechord?rev=e70d69b25744fa8344656417e007dc75ce623809#e70d69b25744fa8344656417e007dc75ce623809"
 dependencies = [
  "panechord-markup",
  "panechord-runtime",
@@ -4265,7 +4256,7 @@ dependencies = [
 [[package]]
 name = "panechord-markup"
 version = "0.1.0-dev"
-source = "git+https://github.com/chalharu/panechord?rev=c1c807ae636ec4b3c89766f150e5a9108af300a5#c1c807ae636ec4b3c89766f150e5a9108af300a5"
+source = "git+https://github.com/chalharu/panechord?rev=e70d69b25744fa8344656417e007dc75ce623809#e70d69b25744fa8344656417e007dc75ce623809"
 dependencies = [
  "panechord-runtime",
  "schemars",
@@ -4278,7 +4269,7 @@ dependencies = [
 [[package]]
 name = "panechord-native"
 version = "0.1.0-dev"
-source = "git+https://github.com/chalharu/panechord?rev=c1c807ae636ec4b3c89766f150e5a9108af300a5#c1c807ae636ec4b3c89766f150e5a9108af300a5"
+source = "git+https://github.com/chalharu/panechord?rev=e70d69b25744fa8344656417e007dc75ce623809#e70d69b25744fa8344656417e007dc75ce623809"
 dependencies = [
  "panechord-gtk",
  "panechord-macos",
@@ -4288,7 +4279,7 @@ dependencies = [
 [[package]]
 name = "panechord-runtime"
 version = "0.1.0-dev"
-source = "git+https://github.com/chalharu/panechord?rev=c1c807ae636ec4b3c89766f150e5a9108af300a5#c1c807ae636ec4b3c89766f150e5a9108af300a5"
+source = "git+https://github.com/chalharu/panechord?rev=e70d69b25744fa8344656417e007dc75ce623809#e70d69b25744fa8344656417e007dc75ce623809"
 dependencies = [
  "futures",
  "futures-timer",
@@ -4298,7 +4289,7 @@ dependencies = [
 [[package]]
 name = "panechord-tao"
 version = "0.1.0-dev"
-source = "git+https://github.com/chalharu/panechord?rev=c1c807ae636ec4b3c89766f150e5a9108af300a5#c1c807ae636ec4b3c89766f150e5a9108af300a5"
+source = "git+https://github.com/chalharu/panechord?rev=e70d69b25744fa8344656417e007dc75ce623809#e70d69b25744fa8344656417e007dc75ce623809"
 dependencies = [
  "futures",
  "gtk",
@@ -4667,17 +4658,6 @@ dependencies = [
  "bytemuck",
  "core_maths",
  "font-types 0.11.3",
-]
-
-[[package]]
-name = "read-fonts"
-version = "0.41.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "046a7d674daf459825b32f5062056d6882db0d2f5a479fbd76ccfc870ac18709"
-dependencies = [
- "bytemuck",
- "font-types 0.12.7",
- "once_cell",
 ]
 
 [[package]]
@@ -5141,16 +5121,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "skrifa"
-version = "0.44.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "819ab7d62b1d3e72d9d9dea5650bac30424f9111364bb94928dbf5ecad1baa68"
-dependencies = [
- "bytemuck",
- "read-fonts 0.41.0",
-]
-
-[[package]]
 name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5356,7 +5326,7 @@ version = "0.2.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c2499c2d826531388872b2268718aed907a39bd785ab0dcfe57fab26283f92e"
 dependencies = [
- "skrifa 0.44.0",
+ "skrifa 0.40.0",
  "yazi",
  "zeno",
 ]
