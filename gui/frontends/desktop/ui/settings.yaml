@@ -279,11 +279,6 @@ templates:
           gap: 6
           item_template: reset_row
 
-  shortcuts_page:
-    root:
-      type: Label
-      id: shortcuts_page_stub
-      text: {literal: x}
   system_page:
     root:
       type: StackLayout
