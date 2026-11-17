@@ -438,7 +438,12 @@ fn keyboard_toggle(editor: &Rc<Editor>, port: usize) -> Keyed<CheckRow> {
     use nerust_settings_core::model::app_state::{PORT_PLAYER_1, PORT_PLAYER_2};
 
     let vm = &editor.vm;
-    let port_id = if port == 0 { PORT_PLAYER_1 } else { PORT_PLAYER_2 }.to_string();
+    let port_id = if port == 0 {
+        PORT_PLAYER_1
+    } else {
+        PORT_PLAYER_2
+    }
+    .to_string();
     let read_vm = vm.clone();
     let write_vm = vm.clone();
     let write_port = port_id.clone();
