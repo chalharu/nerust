@@ -1,6 +1,6 @@
 mod layout;
 
-use layout::BindingRowCommands;
+use layout::{BindingRowCommands, ResetRowCommands};
 use nerust_gui_runtime::settings::{
     SettingsSnapshot,
     apply::{DirectoryValidationError, validate_directory_path_typed},
@@ -12,18 +12,216 @@ use nerust_gui_viewmodel::settings::{
 };
 use nerust_settings_core::{
     i18n::{I18n, UiText},
-    model::language::AppLanguage,
+    model::{
+        app_state::{DesktopAppState, PORT_PLAYER_1, PORT_PLAYER_2},
+        input::ensure_default_shortcuts,
+        language::AppLanguage,
+        local::HostBackendLocalSettings,
+        shared::DesktopSharedSettings,
+    },
 };
+use nerust_system_traits::factory::CoreFactory;
 use panechord::backend::{View, WeakView};
-use panechord::{Binding, Choice, Command, Executor, Store, Subscription};
+use panechord::{Binding, Choice, Command, Executor, Keyed, Store, Subscription};
 use std::{
     cell::{Cell, RefCell},
     path::Path,
     rc::Rc,
+    sync::Arc,
 };
 
 type Setter<T> = Rc<dyn Fn(T) -> Result<(), ViewModelError>>;
 pub(crate) type Apply = Rc<dyn Fn(SettingsSnapshot) -> Result<(), String>>;
+
+/// One screen scope for the per-page reset buttons. Scopes name L2 pages
+/// (or groups/slots within them), never wire ids: the mapping lives in
+/// `apply_reset_scope` below.
+#[derive(Clone)]
+pub(super) enum ResetScope {
+    GeneralVideo,
+    Audio,
+    RumbleMotion,
+    Saves,
+    All,
+    Player(usize),
+    Pad(usize),
+    Shortcuts,
+    SystemFields(String),
+    SystemKeys(String),
+}
+
+/// Canonical defaults for a reset: stock shared/local/app state plus each
+/// factory's default system settings, with canonical shortcut bindings.
+/// Mirrors the Android reset source so both frontends restore the same.
+fn default_snapshot(factories: &[Arc<dyn CoreFactory>]) -> SettingsSnapshot {
+    let mut shared = DesktopSharedSettings::default();
+    for factory in factories {
+        if let Some(defaults) = factory
+            .as_system_defaults()
+            .and_then(|system_defaults| system_defaults.default_system_settings())
+        {
+            shared.systems.insert(factory.system_id(), defaults);
+        }
+    }
+    ensure_default_shortcuts(&mut shared.input.shortcuts);
+    SettingsSnapshot {
+        shared,
+        local: HostBackendLocalSettings::default(),
+        app_state: DesktopAppState::default(),
+    }
+}
+
+/// Copy one reset scope's backing fields wholesale from the defaults.
+/// Navigation-only scopes do not exist here (every L2 page owns editable
+/// state, so every page carries a reset).
+fn apply_reset_scope(
+    draft: &mut SettingsSnapshot,
+    defaults: &SettingsSnapshot,
+    scope: &ResetScope,
+) {
+    match scope {
+        ResetScope::GeneralVideo => {
+            draft.local.video = defaults.local.video.clone();
+        }
+        ResetScope::Audio => {
+            draft.local.audio = defaults.local.audio.clone();
+        }
+        ResetScope::RumbleMotion => {
+            draft.local.rumble_motion = defaults.local.rumble_motion.clone();
+        }
+        ResetScope::Saves => {
+            draft.shared.persistence.storage_policy = defaults.shared.persistence.storage_policy;
+            draft.shared.persistence.storage_directory =
+                defaults.shared.persistence.storage_directory.clone();
+        }
+        ResetScope::All => {
+            // Window geometry and the last ROM directory are not settings
+            // rows; keep them while everything else returns to defaults.
+            let window_sizes = draft.app_state.window_sizes.clone();
+            let last_successful_rom_directory =
+                draft.app_state.last_successful_rom_directory.clone();
+            *draft = defaults.clone();
+            draft.app_state.window_sizes = window_sizes;
+            draft.app_state.last_successful_rom_directory = last_successful_rom_directory;
+        }
+        ResetScope::Player(port) => {
+            let port_id = if *port == 0 {
+                PORT_PLAYER_1
+            } else {
+                PORT_PLAYER_2
+            };
+            match defaults.app_state.port_devices.get(port_id) {
+                Some(members) => {
+                    draft
+                        .app_state
+                        .port_devices
+                        .insert(port_id.to_string(), members.clone());
+                }
+                None => {
+                    draft.app_state.port_devices.remove(port_id);
+                }
+            }
+            // Pad slots for this port return to the default table: entries
+            // whose default parks elsewhere (or is missing) clear.
+            for (index, entry) in draft.shared.input.gamepad.pad_ports.iter_mut().enumerate() {
+                let slot = defaults
+                    .shared
+                    .input
+                    .gamepad
+                    .pad_ports
+                    .get(index)
+                    .and_then(|pad| pad.slot)
+                    .filter(|slot| *slot == *port);
+                if slot.is_some() || entry.slot == Some(*port) {
+                    entry.slot = slot;
+                }
+            }
+            // Controller slots on this port unbind (absent entry means the
+            // factory default at resolve time).
+            for pairs in draft.app_state.controller_assignments.values_mut() {
+                for (slot_id, controller) in pairs.iter_mut() {
+                    if nerust_input_traits::port_index_for_slot(slot_id.as_str()) == Some(*port) {
+                        *controller = None;
+                    }
+                }
+            }
+        }
+        ResetScope::Pad(pad) => {
+            let (deadzone, dpad) = defaults
+                .shared
+                .input
+                .gamepad
+                .pad_ports
+                .get(*pad)
+                .map(|port| (port.deadzone_percent, port.dpad_enabled))
+                .unwrap_or_else(|| {
+                    let fallback = nerust_settings_core::model::input::PadPort::default();
+                    (fallback.deadzone_percent, fallback.dpad_enabled)
+                });
+            if let Some(entry) = draft.shared.input.gamepad.pad_ports.get_mut(*pad) {
+                entry.deadzone_percent = deadzone;
+                entry.dpad_enabled = dpad;
+            }
+            // Pad mappings belong to this screen; the slot stays (the
+            // Player radio owns it, mirroring the Android pad reset).
+            for settings in draft.shared.input.systems.values_mut() {
+                if let Some(entries) = settings.pad_bindings.get_mut(*pad) {
+                    entries.clear();
+                }
+            }
+        }
+        ResetScope::Shortcuts => {
+            draft.shared.input.shortcuts = defaults.shared.input.shortcuts.clone();
+        }
+        ResetScope::SystemFields(system) => {
+            copy_system_entry(&mut draft.shared.systems, &defaults.shared.systems, system);
+            // Slot assignments return to the sparse default (absent entry
+            // means factory defaults at resolve time).
+            copy_system_entry(
+                &mut draft.app_state.controller_assignments,
+                &defaults.app_state.controller_assignments,
+                system,
+            );
+        }
+        ResetScope::SystemKeys(system) => {
+            // Keys reset clears keyboard overrides back to the sparse
+            // default but keeps per-pad overrides (those belong to the
+            // pad screens, mirroring the Android keys reset).
+            for (key, entry) in draft.shared.input.systems.iter_mut() {
+                if key.to_string() == *system {
+                    entry.keyboard_profiles.clear();
+                }
+            }
+        }
+    }
+}
+
+/// Wholesale per-system entry: the default's value, or absent when the
+/// default has none (unbound slots, cleared bindings).
+fn copy_system_entry<K, V>(
+    map: &mut std::collections::HashMap<K, V>,
+    default: &std::collections::HashMap<K, V>,
+    system: &str,
+) where
+    K: Eq + std::hash::Hash + Clone + std::fmt::Display,
+    V: Clone,
+{
+    let default_pair = default
+        .iter()
+        .find(|(key, _)| key.to_string() == system)
+        .map(|(key, value)| (key.clone(), value.clone()));
+    let stale: Vec<K> = map
+        .keys()
+        .filter(|key| key.to_string() == system)
+        .cloned()
+        .collect();
+    for key in stale {
+        map.remove(&key);
+    }
+    if let Some((key, value)) = default_pair {
+        map.insert(key, value);
+    }
+}
 
 /// Validation issues rendered in the draft language at the call site.
 /// The view model only carries structured kinds; text resolves here
@@ -62,10 +260,18 @@ pub(crate) struct Editor {
     vm: SettingsViewModel,
     executor: Rc<dyn Executor>,
     baseline: Rc<RefCell<SettingsSnapshot>>,
+    /// Canonical defaults for the per-screen reset buttons, built once
+    /// from the installed factories (mirrors the Android reset source).
+    defaults: SettingsSnapshot,
+    /// Live gamepad descriptors at dialog open (enumeration truth for the
+    /// Player radio and the Gamepads page). Empty until the gamepad
+    /// backend connects its first pad; hotplug while open does not refresh.
+    gamepads: Vec<String>,
     closed: Rc<Cell<bool>>,
     status: Store<String>,
     page: Store<String>,
-    input_page: Store<String>,
+    general_page: Store<String>,
+    controllers_page: Store<String>,
     system_page: Store<String>,
     exit: Rc<Cell<ExitChoice>>,
     close_prompt: Store<ExitChoice>,
@@ -85,13 +291,18 @@ impl Editor {
             crate::terminal_language(),
         )
         .map_err(|error| error.to_string())?;
+        let defaults = default_snapshot(&adapter.factories());
+        let gamepads = adapter.gamepad_descriptors();
         Ok(Rc::new(Self {
             vm,
             baseline: Rc::new(RefCell::new(snapshot)),
+            defaults,
+            gamepads,
             closed: Rc::new(Cell::new(false)),
             status: Store::new(String::new(), executor.clone()),
             page: Store::new("general".into(), executor.clone()),
-            input_page: Store::new(String::new(), executor.clone()),
+            general_page: Store::new("app".into(), executor.clone()),
+            controllers_page: Store::new("player-1".into(), executor.clone()),
             system_page: Store::new(String::new(), executor.clone()),
             exit: Rc::new(Cell::new(ExitChoice::Editing)),
             close_prompt: Store::new(ExitChoice::Editing, executor.clone()),
@@ -128,7 +339,8 @@ impl Editor {
         self.vm.capture.cancel_capture();
         self.status.close();
         self.page.close();
-        self.input_page.close();
+        self.general_page.close();
+        self.controllers_page.close();
         self.system_page.close();
         self.close_prompt.close();
     }
@@ -191,7 +403,7 @@ impl Editor {
     /// UI language in the dialog re-renders every bound caption without
     /// reopening. Choice items already localize this way in the viewmodel;
     /// these cover the static YAML literals.
-    fn tr(&self, key: UiText) -> Binding<String> {
+    pub(super) fn tr(&self, key: UiText) -> Binding<String> {
         let general = self.vm.general.clone();
         self.binding(
             general.view.clone(),
@@ -318,6 +530,34 @@ impl Editor {
                 Binding::constant(()),
             )
         });
+        let editor = self.clone();
+        let reset: layout::Reset = Rc::new(move |scope| {
+            let vm = editor.vm.clone();
+            let general = editor.vm.general.clone();
+            let status = editor.status.clone();
+            let closed = editor.closed.clone();
+            let defaults = editor.defaults.clone();
+            editor.status.command(
+                move |_| !closed.get(),
+                move |_, ()| {
+                    let result = vm.restore_scope(&defaults, |draft, defaults| {
+                        apply_reset_scope(draft, defaults, &scope);
+                    });
+                    let message = match &result {
+                        Err(error) => error.to_string(),
+                        Ok(()) => {
+                            let language = general.view.get().language;
+                            match vm.finish() {
+                                Err(validation) => issues_text(language, &validation.issues),
+                                Ok(_) => String::new(),
+                            }
+                        }
+                    };
+                    let _ = status.update(move |status| *status = message);
+                },
+                Binding::constant(()),
+            )
+        });
         Commands {
             cancel,
             accept,
@@ -325,6 +565,7 @@ impl Editor {
             keep,
             capture,
             clear,
+            reset,
         }
     }
 
@@ -372,6 +613,24 @@ impl Editor {
             checked_integer(value, 10.0, 200.0).map(|value| value as u16)
         });
         let language = self.language();
+        let rumble_motion = field!(rumble_motion, motion_enabled, set_motion_enabled);
+        let rumble_enabled = field!(rumble_motion, rumble_enabled, set_rumble_enabled);
+        let rumble_strength = field!(rumble_motion, rumble_strength_percent, set_rumble_strength)
+            .convert(f64::from, |value| {
+                checked_integer(value, 0.0, 100.0).map(|value| value as u8)
+            });
+        let rumble_strength_label = language.clone().zip(&rumble_strength).map(|(lang, value)| {
+            format!(
+                "{}: {value:.0}%",
+                I18n::new(crate::display_language(lang)).text(UiText::RumbleStrength)
+            )
+        });
+        let rumble_target = choices!(
+            rumble_motion,
+            rumble_target,
+            rumble_target_choices,
+            set_rumble_target
+        );
         let Commands {
             cancel,
             accept,
@@ -379,13 +638,204 @@ impl Editor {
             keep,
             capture,
             clear,
+            reset,
         } = commands;
+        let executor = self.executor.clone();
+        let mk_reset =
+            |key: &str, scope: ResetScope, label: Binding<String>| -> Keyed<layout::ResetRow> {
+                Keyed::new(
+                    key.to_string(),
+                    Store::new(
+                        layout::ResetRow {
+                            label,
+                            reset: reset(scope),
+                        },
+                        executor.clone(),
+                    ),
+                )
+            };
+        let mk_choice = |key: &str,
+                         label: Binding<String>,
+                         choice: ChoiceBinding|
+         -> Option<Keyed<layout::ChoiceRow>> {
+            Some(Keyed::new(
+                key.to_string(),
+                Store::new(
+                    layout::ChoiceRow {
+                        label,
+                        choices: choice.items,
+                        selected: choice.selected,
+                        enabled: Binding::constant(true),
+                    },
+                    executor.clone(),
+                ),
+            ))
+        };
+        let mk_check = |key: &str,
+                        label: Binding<String>,
+                        checked: Binding<bool>|
+         -> Option<Keyed<layout::CheckRow>> {
+            Some(Keyed::new(
+                key.to_string(),
+                Store::new(layout::CheckRow { label, checked }, executor.clone()),
+            ))
+        };
+        let reset_label = self.tr(UiText::ResetScreen);
+        let language_choice = choices!(general, language, language_choices, set_language);
+        let storage_choice = choices!(
+            general,
+            storage_policy,
+            storage_policy_choices,
+            set_storage_policy
+        );
+        let directory_visible = self.binding(
+            self.vm.general.view.clone(),
+            |value| value.show_storage_directory,
+            None,
+        );
+        let fullscreen = field!(video, fullscreen_default, set_fullscreen_default);
+        let vsync = field!(video, vsync, set_vsync);
+        let scaling = choices!(video, scaling, scaling_choices, set_scaling);
+        let muted = field!(audio, muted, set_mute);
+        let volume_label = language.clone().zip(&volume).map(|(lang, value)| {
+            format!(
+                "{}: {value:.0}%",
+                I18n::new(crate::display_language(lang)).text(UiText::MasterVolume)
+            )
+        });
+        let latency_label = language.clone().zip(&latency).map(|(lang, value)| {
+            format!(
+                "{}: {value:.0} ms",
+                I18n::new(crate::display_language(lang)).text(UiText::Latency)
+            )
+        });
+        let sample_rate = choices!(audio, sample_rate, sample_rate_choices, set_sample_rate);
+        let saves_reset_label = reset_label
+            .clone()
+            .zip(&self.tr(UiText::SaveStoragePolicy))
+            .map(|(reset, section)| format!("{reset} ({section})"));
+        let general_tabs: Vec<Keyed<layout::GeneralTab>> = ["app", "video", "audio", "rumble"]
+            .into_iter()
+            .map(|key| {
+                let show = |id: &str| key == id;
+                let tab_label = match key {
+                    "app" => self.tr(UiText::SectionApp).get(),
+                    "video" => self.tr(UiText::Video).get(),
+                    "audio" => self.tr(UiText::Audio).get(),
+                    _ => self.tr(UiText::RumbleMotion).get(),
+                };
+                let resets = match key {
+                    "app" => vec![
+                        mk_reset("reset-saves", ResetScope::Saves, saves_reset_label.clone()),
+                        mk_reset("reset-all", ResetScope::All, self.tr(UiText::ResetSettings)),
+                    ],
+                    "video" => vec![mk_reset(
+                        "reset",
+                        ResetScope::GeneralVideo,
+                        reset_label.clone(),
+                    )],
+                    "audio" => vec![mk_reset("reset", ResetScope::Audio, reset_label.clone())],
+                    _ => vec![mk_reset(
+                        "reset",
+                        ResetScope::RumbleMotion,
+                        reset_label.clone(),
+                    )],
+                };
+                Keyed::new(
+                    key.to_string(),
+                    Store::new(
+                        layout::GeneralTab {
+                            label: tab_label,
+                            show_app: show("app"),
+                            show_video: show("video"),
+                            show_audio: show("audio"),
+                            show_rumble: show("rumble"),
+                            language: mk_choice(
+                                "language",
+                                self.tr(UiText::Language),
+                                language_choice.clone(),
+                            ),
+                            storage: mk_choice(
+                                "storage",
+                                self.tr(UiText::SaveStoragePolicy),
+                                storage_choice.clone(),
+                            ),
+                            directory: directory.clone(),
+                            directory_visible: directory_visible.clone(),
+                            fullscreen: mk_check(
+                                "fullscreen",
+                                self.tr(UiText::FullscreenDefault),
+                                fullscreen.clone(),
+                            ),
+                            vsync: mk_check("vsync", self.tr(UiText::Vsync), vsync.clone()),
+                            scaling: mk_choice(
+                                "scaling",
+                                self.tr(UiText::Scaling),
+                                scaling.clone(),
+                            ),
+                            muted: mk_check("muted", self.tr(UiText::Mute), muted.clone()),
+                            volume: volume.clone(),
+                            volume_label: volume_label.clone(),
+                            latency: latency.clone(),
+                            latency_label: latency_label.clone(),
+                            sample_rate: mk_choice(
+                                "sample-rate",
+                                self.tr(UiText::SampleRate),
+                                sample_rate.clone(),
+                            ),
+                            rumble_motion: mk_check(
+                                "rumble-motion",
+                                self.tr(UiText::MotionSensor),
+                                rumble_motion.clone(),
+                            ),
+                            rumble_enabled: mk_check(
+                                "rumble-enabled",
+                                self.tr(UiText::Rumble),
+                                rumble_enabled.clone(),
+                            ),
+                            rumble_strength: rumble_strength.clone(),
+                            rumble_strength_label: rumble_strength_label.clone(),
+                            rumble_target: mk_choice(
+                                "rumble-target",
+                                self.tr(UiText::RumbleTarget),
+                                rumble_target.clone(),
+                            ),
+                            resets,
+                        },
+                        executor.clone(),
+                    ),
+                )
+            })
+            .collect();
         Presentation {
-            input_pages: Binding::constant(layout::inputs(self, capture, clear)),
-            system_pages: Binding::constant(layout::systems(self)),
-            input_selection: self
-                .input_page
+            general_tabs: Binding::constant(general_tabs),
+            general_selection: self
+                .general_page
                 .bind(Clone::clone, Some(|page: &mut String, value| *page = value)),
+            controllers_pages: Binding::constant(layout::controllers_pages(
+                self,
+                &reset,
+                &self.gamepads,
+            )),
+            controllers_selection: self
+                .controllers_page
+                .bind(Clone::clone, Some(|page: &mut String, value| *page = value)),
+            gamepads_blocks: Binding::constant(layout::gamepads_blocks(
+                self,
+                &capture,
+                &clear,
+                &reset,
+                &self.gamepads,
+            )),
+            gamepads_empty_note: self.tr(UiText::DescNoGamepads),
+            gamepads_empty_visible: Binding::constant(self.gamepads.is_empty()),
+            shortcuts_page: layout::shortcuts_page(self, &capture, &clear),
+            shortcuts_resets: Binding::constant(vec![mk_reset(
+                "reset",
+                ResetScope::Shortcuts,
+                self.tr(UiText::ResetScreen),
+            )]),
+            system_pages: Binding::constant(layout::systems(self, &capture, &clear, &reset)),
             system_selection: self
                 .system_page
                 .bind(Clone::clone, Some(|page: &mut String, value| *page = value)),
@@ -397,38 +847,6 @@ impl Editor {
                 |prompt| matches!(prompt, ExitChoice::ConfirmLocal | ExitChoice::ConfirmGlobal),
                 None,
             ),
-            language: choices!(general, language, language_choices, set_language),
-            storage: choices!(
-                general,
-                storage_policy,
-                storage_policy_choices,
-                set_storage_policy
-            ),
-            directory,
-            directory_visible: self.binding(
-                self.vm.general.view.clone(),
-                |value| value.show_storage_directory,
-                None,
-            ),
-            fullscreen: field!(video, fullscreen_default, set_fullscreen_default),
-            vsync: field!(video, vsync, set_vsync),
-            scaling: choices!(video, scaling, scaling_choices, set_scaling),
-            muted: field!(audio, muted, set_mute),
-            volume_label: language.clone().zip(&volume).map(|(lang, value)| {
-                format!(
-                    "{}: {value:.0}%",
-                    I18n::new(crate::display_language(lang)).text(UiText::MasterVolume)
-                )
-            }),
-            volume,
-            latency_label: language.clone().zip(&latency).map(|(lang, value)| {
-                format!(
-                    "{}: {value:.0} ms",
-                    I18n::new(crate::display_language(lang)).text(UiText::Latency)
-                )
-            }),
-            latency,
-            sample_rate: choices!(audio, sample_rate, sample_rate_choices, set_sample_rate),
             info_enabled: field!(notifications, info_enabled, set_info_enabled),
             info_duration: integer_text(field!(
                 notifications,
@@ -494,18 +912,11 @@ impl Editor {
                     None,
                 ),
                 tab_general: self.tr(UiText::General),
-                tab_input: self.tr(UiText::Input),
-                tab_video: self.tr(UiText::Video),
-                tab_audio: self.tr(UiText::Audio),
+                tab_controllers: self.tr(UiText::SectionControllers),
+                tab_gamepads: self.tr(UiText::Gamepads),
+                tab_shortcuts: self.tr(UiText::Shortcuts),
                 tab_notifications: self.tr(UiText::Notifications),
-                tab_system: self.tr(UiText::System),
-                language: self.tr(UiText::Language),
-                storage_policy: self.tr(UiText::SaveStoragePolicy),
-                fullscreen: self.tr(UiText::FullscreenDefault),
-                vsync: self.tr(UiText::Vsync),
-                scaling: self.tr(UiText::Scaling),
-                mute: self.tr(UiText::Mute),
-                sample_rate: self.tr(UiText::SampleRate),
+                tab_advanced: self.tr(UiText::SectionAdvanced),
                 info: self.tr(UiText::NotificationInfo),
                 info_enabled: self.tr(UiText::NotificationEnabled),
                 info_duration: self.tr(UiText::NotificationDuration),
@@ -600,7 +1011,7 @@ struct ChoiceBinding {
     selected: Binding<String>,
 }
 
-/// Footer and input-row commands assembled by `Editor::commands`.
+/// Footer, input-row, and reset commands assembled by `Editor::commands`.
 /// Kept at module scope (items are not allowed inside `impl` blocks).
 /// Cloned into the surface key handler so Return/Escape honor the same
 /// commands as the footer buttons, with capture sessions first.
@@ -612,6 +1023,7 @@ struct Commands {
     keep: Command,
     capture: layout::Capture,
     clear: layout::Capture,
+    reset: layout::Reset,
 }
 
 /// Static YAML captions as language-following bindings. Literals never
@@ -621,18 +1033,11 @@ struct Commands {
 struct Labels {
     title: Binding<String>,
     tab_general: Binding<String>,
-    tab_input: Binding<String>,
-    tab_video: Binding<String>,
-    tab_audio: Binding<String>,
+    tab_controllers: Binding<String>,
+    tab_gamepads: Binding<String>,
+    tab_shortcuts: Binding<String>,
     tab_notifications: Binding<String>,
-    tab_system: Binding<String>,
-    language: Binding<String>,
-    storage_policy: Binding<String>,
-    fullscreen: Binding<String>,
-    vsync: Binding<String>,
-    scaling: Binding<String>,
-    mute: Binding<String>,
-    sample_rate: Binding<String>,
+    tab_advanced: Binding<String>,
     info: Binding<String>,
     info_enabled: Binding<String>,
     info_duration: Binding<String>,
@@ -707,26 +1112,20 @@ fn integer_text(binding: Binding<u32>) -> Binding<String> {
 
 #[derive(Clone)]
 struct Presentation {
-    input_pages: Binding<Vec<panechord::Keyed<layout::InputPage>>>,
+    general_tabs: Binding<Vec<panechord::Keyed<layout::GeneralTab>>>,
+    general_selection: Binding<String>,
+    controllers_pages: Binding<Vec<panechord::Keyed<layout::PlayerPage>>>,
+    controllers_selection: Binding<String>,
+    gamepads_blocks: Binding<Vec<panechord::Keyed<layout::GamepadBlock>>>,
+    gamepads_empty_note: Binding<String>,
+    gamepads_empty_visible: Binding<bool>,
+    shortcuts_page: Binding<Vec<Keyed<layout::BindingPage>>>,
+    shortcuts_resets: Binding<Vec<Keyed<layout::ResetRow>>>,
     system_pages: Binding<Vec<panechord::Keyed<layout::SystemPage>>>,
-    input_selection: Binding<String>,
     system_selection: Binding<String>,
     page: Binding<String>,
     status: Binding<String>,
     confirmation: Binding<bool>,
-    language: ChoiceBinding,
-    storage: ChoiceBinding,
-    directory: Binding<String>,
-    directory_visible: Binding<bool>,
-    fullscreen: Binding<bool>,
-    vsync: Binding<bool>,
-    scaling: ChoiceBinding,
-    muted: Binding<bool>,
-    volume: Binding<f64>,
-    volume_label: Binding<String>,
-    latency: Binding<f64>,
-    latency_label: Binding<String>,
-    sample_rate: ChoiceBinding,
     info_enabled: Binding<bool>,
     info_duration: Binding<String>,
     info_color: ChoiceBinding,
@@ -1224,7 +1623,24 @@ mod tests {
             .audio
             .set_volume(200)
             .expect("transact accepts out-of-range volume");
-        assert!(presentation.muted.set(true));
+        let audio = presentation
+            .general_tabs
+            .get()
+            .into_iter()
+            .find(|tab| tab.key == "audio")
+            .expect("audio tab builds")
+            .model
+            .snapshot();
+        assert!(
+            audio
+                .muted
+                .as_ref()
+                .expect("muted row builds")
+                .model
+                .snapshot()
+                .checked
+                .set(true)
+        );
         assert!(presentation.status.get().contains("Master volume"));
         editor.close();
         assert!(!writer.set(None));
@@ -1232,11 +1648,23 @@ mod tests {
 
     /// Presentation bindings mirror the draft and round-trip writes:
     /// numbers convert, choices reposition, durations parse as text.
+    /// General L2 rows live on their tab entries now; this test reaches
+    /// them through the tab list.
     #[test]
     fn presentation_bindings_mirror_draft_and_round_trip_writes() {
         use crate::session::test_fixture::loaded_adapter;
         use nerust_gui_application::SettingsPort;
         use nerust_settings_core::model::language::AppLanguage;
+        fn general_tab(presentation: &Presentation, key: &str) -> layout::GeneralTab {
+            presentation
+                .general_tabs
+                .get()
+                .into_iter()
+                .find(|tab| tab.key == key)
+                .unwrap_or_else(|| panic!("{key} tab builds"))
+                .model
+                .snapshot()
+        }
         let (adapter, _dir) = loaded_adapter();
         let editor = Editor::new(adapter.settings().clone(), &adapter, Rc::new(TestExecutor))
             .expect("editor builds on real factories");
@@ -1247,31 +1675,102 @@ mod tests {
         assert_eq!(presentation.page.get(), "general");
         assert!(presentation.status.get().is_empty());
         assert!(!presentation.confirmation.get());
+        // General L2 tabs carry every previous general/video/audio row.
+        let app = general_tab(&presentation, "app");
+        let video = general_tab(&presentation, "video");
+        let audio = general_tab(&presentation, "audio");
+        let rumble = general_tab(&presentation, "rumble");
         assert_eq!(
-            presentation.fullscreen.get(),
+            video
+                .fullscreen
+                .as_ref()
+                .expect("fullscreen row builds")
+                .model
+                .snapshot()
+                .checked
+                .get(),
             editor.vm.video.view.get().fullscreen_default
         );
-        assert_eq!(presentation.vsync.get(), editor.vm.video.view.get().vsync);
-        assert_eq!(presentation.muted.get(), editor.vm.audio.view.get().muted);
         assert_eq!(
-            presentation.volume.get(),
+            video
+                .vsync
+                .as_ref()
+                .expect("vsync row builds")
+                .model
+                .snapshot()
+                .checked
+                .get(),
+            editor.vm.video.view.get().vsync
+        );
+        assert_eq!(
+            audio
+                .muted
+                .as_ref()
+                .expect("muted row builds")
+                .model
+                .snapshot()
+                .checked
+                .get(),
+            editor.vm.audio.view.get().muted
+        );
+        assert_eq!(
+            audio.volume.get(),
             f64::from(editor.vm.audio.view.get().volume_percent)
         );
         assert_eq!(
-            presentation.latency.get(),
+            audio.latency.get(),
             f64::from(editor.vm.audio.view.get().latency_ms)
         );
         assert_eq!(
-            presentation.directory.get(),
+            app.directory.get(),
             editor.vm.general.view.get().storage_directory
         );
         assert_eq!(
-            presentation.directory_visible.get(),
+            app.directory_visible.get(),
             editor.vm.general.view.get().show_storage_directory
         );
+        assert!(
+            rumble
+                .rumble_motion
+                .as_ref()
+                .expect("motion row builds")
+                .model
+                .snapshot()
+                .checked
+                .get()
+        );
+        assert!(
+            rumble
+                .rumble_enabled
+                .as_ref()
+                .expect("rumble row builds")
+                .model
+                .snapshot()
+                .checked
+                .get()
+        );
+        assert_eq!(rumble.rumble_strength.get(), 100.0);
         assert_eq!(
-            presentation.input_pages.get().len(),
-            editor.vm.inputs().len() + 2
+            presentation.controllers_pages.get().len(),
+            2,
+            "one player page per global port"
+        );
+        assert!(
+            presentation.gamepads_blocks.get().is_empty(),
+            "no backend pads enumerated in tests"
+        );
+        assert!(
+            !presentation
+                .shortcuts_page
+                .get()
+                .first()
+                .expect("shortcuts page builds")
+                .model
+                .snapshot()
+                .rows
+                .get()
+                .is_empty(),
+            "shortcuts page exposes rows"
         );
         assert_eq!(
             presentation.system_pages.get().len(),
@@ -1279,30 +1778,46 @@ mod tests {
         );
         let general = editor.vm.general.view.get();
         assert_eq!(
-            presentation.language.items.get().len(),
+            app.language
+                .as_ref()
+                .expect("language row builds")
+                .model
+                .snapshot()
+                .choices
+                .get()
+                .len(),
             general.language_choices.len()
         );
         let position = choice_position(&general.language_choices, &general.language)
             .map(|index| index.to_string())
             .unwrap_or_default();
-        assert_eq!(presentation.language.selected.get(), position);
-        assert!(presentation.volume.set(42.0));
+        assert_eq!(
+            app.language
+                .as_ref()
+                .expect("language row builds")
+                .model
+                .snapshot()
+                .selected
+                .get(),
+            position
+        );
+        assert!(audio.volume.set(42.0));
         assert_eq!(editor.vm.audio.view.get().volume_percent, 42);
         let en = I18n::new(AppLanguage::English);
         assert_eq!(
-            presentation.volume_label.get(),
+            audio.volume_label.get(),
             format!(
                 "{}: {:.0}%",
                 en.text(UiText::MasterVolume),
-                presentation.volume.get()
+                audio.volume.get()
             )
         );
         assert_eq!(
-            presentation.latency_label.get(),
+            audio.latency_label.get(),
             format!(
                 "{}: {:.0} ms",
                 en.text(UiText::Latency),
-                presentation.latency.get()
+                audio.latency.get()
             )
         );
         assert_eq!(
@@ -1311,50 +1826,70 @@ mod tests {
         );
         // Subscribing observes the live property; dropping ends the watch.
         let seen = Rc::new(RefCell::new(Vec::new()));
-        let subscription = presentation.volume.subscribe(Rc::new({
+        let subscription = audio.volume.subscribe(Rc::new({
             let seen = seen.clone();
             move |value| seen.borrow_mut().push(value)
         }));
         assert!(!seen.borrow().is_empty());
         drop(subscription);
-        assert!(!presentation.volume.set(150.0));
+        assert!(!audio.volume.set(150.0));
         assert_eq!(editor.vm.audio.view.get().volume_percent, 42);
-        assert!(presentation.latency.set(50.0));
+        assert!(audio.latency.set(50.0));
         assert_eq!(editor.vm.audio.view.get().latency_ms, 50);
-        assert!(!presentation.latency.set(500.0));
+        assert!(!audio.latency.set(500.0));
         assert_eq!(editor.vm.audio.view.get().latency_ms, 50);
         // Directory writes map empty text to the default location.
         let dir =
             std::env::temp_dir().join(format!("nerust-settings-directory-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("directory temp root");
-        assert!(
-            presentation
-                .directory
-                .set(dir.to_string_lossy().into_owned())
-        );
+        assert!(app.directory.set(dir.to_string_lossy().into_owned()));
         assert_eq!(
             editor.vm.general.view.get().storage_directory,
             dir.to_string_lossy()
         );
-        assert!(presentation.directory.set(String::new()));
+        assert!(app.directory.set(String::new()));
         assert!(editor.vm.general.view.get().storage_directory.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
         let japanese = choice_position(&general.language_choices, &AppLanguage::Japanese)
             .map(|index| index.to_string())
             .expect("japanese is a language choice");
-        assert!(presentation.language.selected.set(japanese));
+        assert!(
+            app.language
+                .as_ref()
+                .expect("language row builds")
+                .model
+                .snapshot()
+                .selected
+                .set(japanese)
+        );
         assert_eq!(editor.vm.general.view.get().language, AppLanguage::Japanese);
         let ja = I18n::new(AppLanguage::Japanese);
         assert_eq!(presentation.labels.cancel.get(), ja.text(UiText::Cancel));
-        assert!(!presentation.language.selected.set("999".into()));
-        assert!(!presentation.language.selected.set("bogus".into()));
+        assert!(
+            !app.language
+                .as_ref()
+                .expect("language row builds")
+                .model
+                .snapshot()
+                .selected
+                .set("999".into())
+        );
+        assert!(
+            !app.language
+                .as_ref()
+                .expect("language row builds")
+                .model
+                .snapshot()
+                .selected
+                .set("bogus".into())
+        );
         assert!(presentation.info_duration.set("3000".into()));
         assert_eq!(editor.vm.notifications.view.get().info_duration_ms, 3000);
         assert!(!presentation.info_duration.set("soon".into()));
         assert_eq!(editor.vm.notifications.view.get().info_duration_ms, 3000);
-        assert!(presentation.page.set("audio".into()));
-        assert_eq!(editor.page.with(|page| page.clone()), "audio");
+        assert!(presentation.page.set("controllers".into()));
+        assert_eq!(editor.page.with(|page| page.clone()), "controllers");
     }
 
     /// The YAML command shims hand back the footer commands, so the

@@ -1,7 +1,4 @@
-use nerust_settings_core::{
-    i18n::{I18n, UiText},
-    model::local::RumbleTarget,
-};
+use nerust_settings_core::{i18n::UiText, model::local::RumbleTarget};
 
 use super::{
     dto::{ChoiceView, RumbleMotionView},
@@ -32,34 +29,29 @@ impl RumbleMotionViewModel {
         }
     }
 
-    pub fn set_motion_enabled(
-        &self,
-        enabled: bool,
-    ) -> Result<(), super::editor::ViewModelError> {
+    pub fn set_motion_enabled(&self, enabled: bool) -> Result<(), super::editor::ViewModelError> {
         self.editor.transact(|state| {
             state.draft_mut().local.rumble_motion.motion_enabled = enabled;
             Ok(())
         })
     }
 
-    pub fn set_rumble_enabled(
-        &self,
-        enabled: bool,
-    ) -> Result<(), super::editor::ViewModelError> {
+    pub fn set_rumble_enabled(&self, enabled: bool) -> Result<(), super::editor::ViewModelError> {
         self.editor.transact(|state| {
             state.draft_mut().local.rumble_motion.rumble_enabled = enabled;
             Ok(())
         })
     }
 
-    pub fn set_rumble_strength(
-        &self,
-        percent: u8,
-    ) -> Result<(), super::editor::ViewModelError> {
+    pub fn set_rumble_strength(&self, percent: u8) -> Result<(), super::editor::ViewModelError> {
         self.editor.transact(|state| {
             // Strength is a plain 0-100 percent (unlike the stepped
             // stick deadzone); the slider bounds match validation.
-            state.draft_mut().local.rumble_motion.rumble_strength_percent = percent.min(100);
+            state
+                .draft_mut()
+                .local
+                .rumble_motion
+                .rumble_strength_percent = percent.min(100);
             Ok(())
         })
     }

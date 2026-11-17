@@ -163,8 +163,7 @@ mod tests {
         ] {
             let mut state = DesktopAppState {
                 schema_version: 2,
-                port_devices: serde_json::from_value(devices.clone())
-                    .expect("test set parses"),
+                port_devices: serde_json::from_value(devices.clone()).expect("test set parses"),
                 ..DesktopAppState::default()
             };
             state.migrate_port_devices();

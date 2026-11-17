@@ -134,6 +134,7 @@ fn project_view(state: &super::EditorState) -> GamepadTabView {
                     port: port.slot,
                     choices: port_choices.clone(),
                     deadzone: port.deadzone_percent,
+                    dpad_enabled: port.dpad_enabled,
                 }
             })
             .collect(),

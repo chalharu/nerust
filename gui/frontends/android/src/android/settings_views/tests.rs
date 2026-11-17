@@ -2725,10 +2725,7 @@ fn gamepad_radio_assigns_one_pad_per_player() {
     assert_eq!(row(&cleared, "devices.p2.gamepad").selected, 0);
     // Player summaries follow the radio, not stale slots; the built-in
     // keyboard stays a p2 member by default, so the pad parks alone.
-    assert_eq!(
-        row(&cleared, "player.2.devices").text,
-        "Built-in Keyboard"
-    );
+    assert_eq!(row(&cleared, "player.2.devices").text, "Built-in Keyboard");
 }
 
 #[test]
