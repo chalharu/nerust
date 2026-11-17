@@ -45,7 +45,26 @@ fn probe_binary() -> std::path::PathBuf {
     if dir.file_name().is_some_and(|name| name == "deps") {
         dir.pop();
     }
-    dir.join("examples").join("crash_probe")
+    // Cargo 1.100 changed the integration-test layout: the test executable
+    // now runs from `target/<profile>/build/<pkg>/<hash>/out/` instead of
+    // `target/<profile>/deps/`. Walk up until an ancestor containing
+    // `examples/crash_probe` is found so both layouts work.
+    let file = if cfg!(windows) {
+        "crash_probe.exe"
+    } else {
+        "crash_probe"
+    };
+    let mut ancestor = dir.clone();
+    for _ in 0..8 {
+        let candidate = ancestor.join("examples").join(file);
+        if candidate.is_file() {
+            return candidate;
+        }
+        if !ancestor.pop() {
+            break;
+        }
+    }
+    dir.join("examples").join(file)
 }
 
 #[test]
