@@ -239,6 +239,8 @@ pub enum UiText {
     DescPadReset,
     DescNoGamepads,
     DescPadUnassigned,
+    DescGamepadTab,
+    DescControllersTab,
     AlwaysAvailable,
     Connected,
     Keyboard,
@@ -664,6 +666,14 @@ fn localized_pair(key: UiText) -> (&'static str, &'static str) {
         UiText::DescPadUnassigned => (
             "Choose which player uses this controller in Devices first.",
             "先に「デバイス」で使うプレイヤーを選んでください。",
+        ),
+        UiText::DescGamepadTab => (
+            "Deadzone and button mapping live on the Gamepads tab.",
+            "デッドゾーンやボタン割り当てはゲームパッドタブにあります。",
+        ),
+        UiText::DescControllersTab => (
+            "Choose this controller's player on the Controllers tab first.",
+            "このコントローラーを使うプレイヤーは先にコントローラータブで選んでください。",
         ),
         UiText::AlwaysAvailable => ("Always available", "常に利用可能"),
         UiText::Connected => ("Connected", "接続中"),
@@ -1169,6 +1179,8 @@ mod tests {
             DescPadReset,
             DescNoGamepads,
             DescPadUnassigned,
+            DescGamepadTab,
+            DescControllersTab,
             AlwaysAvailable,
             Connected,
             Keyboard,

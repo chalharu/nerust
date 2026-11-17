@@ -44,6 +44,13 @@ impl SessionAdapter {
         &self.session
     }
 
+    /// Live gamepad descriptors for the settings dialog (enumeration
+    /// truth). Empty until the gamepad backend connects its first pad.
+    /// Snapshot at dialog open; hotplug while open does not refresh.
+    pub(crate) fn gamepad_descriptors(&self) -> Vec<String> {
+        self.session.pad_descriptors().to_vec()
+    }
+
     pub(crate) fn ppu_live_begin(
         &self,
         generation: Option<u64>,

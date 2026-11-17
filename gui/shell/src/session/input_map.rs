@@ -3,8 +3,8 @@
 
 use std::collections::HashMap;
 
-use nerust_input_traits::{BUILTIN_KEYBOARD_MEMBER, Key, port_index_for_slot};
 use nerust_input_traits::UnifiedFieldMap;
+use nerust_input_traits::{BUILTIN_KEYBOARD_MEMBER, Key, port_index_for_slot};
 use nerust_settings_core::model::app_state::{PORT_PLAYER_1, PORT_PLAYER_2, PortDeviceSets};
 use nerust_settings_core::model::input::KeyboardBinding;
 
