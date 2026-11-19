@@ -123,6 +123,63 @@ impl InputSettingsViewModel {
             .collect()
     }
 
+    /// One machine's pad mapping section for one pad, resolved in a
+    /// single pass under one editor borrow: rows scoped to the pad's
+    /// own player (unassigned pads map nothing — `None` keeps the
+    /// machine off the block). The physical hat stays fixed (its switch
+    /// lives with the pad settings), so dpad rows never render here.
+    pub fn pad_sections(&self, pad: usize, slot: Option<usize>) -> Option<BindingSectionView> {
+        let slot = slot?;
+        let view = self.view.get();
+        let current = self.editor.current();
+        let i18n = super::state::display_i18n(&current);
+        let mut rows = Vec::new();
+        for binding in view.sections.iter().flat_map(|section| &section.rows) {
+            if matches!(
+                binding.pad_default,
+                Some(
+                    StandardButton::DpadUp
+                        | StandardButton::DpadDown
+                        | StandardButton::DpadLeft
+                        | StandardButton::DpadRight
+                )
+            ) {
+                continue;
+            }
+            let (Some(attachment), Some(control)) =
+                (binding.target.attachment(), binding.target.control())
+            else {
+                continue;
+            };
+            if binding.port.is_some_and(|port| port != slot) {
+                continue;
+            }
+            let target = CaptureTarget::PadBinding {
+                system: view.system_id.clone_box(),
+                pad,
+                attachment: attachment.to_string(),
+                control: control.to_string(),
+            };
+            let text = match pad_binding_value(&current, &target, binding.pad_default, i18n) {
+                BindingValueView::Unbound(label)
+                | BindingValueView::Bound(label)
+                | BindingValueView::Capturing(label) => label,
+            };
+            rows.push(BindingRowView {
+                target,
+                label: binding.label.clone(),
+                port: Some(slot),
+                value: BindingValueView::Bound(text),
+                pad_default: None,
+            });
+        }
+        drop(current);
+        (!rows.is_empty()).then(|| BindingSectionView {
+            label: view.label.clone(),
+            rows,
+        })
+    }
+
     pub fn set_controller_slot(
         &self,
         slot: AttachmentId,

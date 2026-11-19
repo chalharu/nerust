@@ -177,7 +177,7 @@ fn project_after_snapshot_edit(
     project_fresh(snapshot, deps, capture, Projection { i18n, ..truth })
 }
 
-/// One `set` edit: route by key family (Android-local overlay/cartridge
+/// One `set` edit: route by key family (Android-local overlay/rumble-motion
 /// keys, port device membership, everything else through the view model).
 /// Returns whether the view model holds the mutation (project from it) or
 /// the snapshot was written directly (project fresh).
@@ -539,7 +539,7 @@ fn apply_reset_scope(
         }
         "advanced" => {
             snapshot.local.video.presentation.vsync = default.local.video.presentation.vsync;
-            snapshot.local.cartridge_peripherals = default.local.cartridge_peripherals.clone();
+            snapshot.local.rumble_motion = default.local.rumble_motion.clone();
         }
         "about" | "player.1" | "player.2" | "types.1" | "types.2" => {}
         "audio.detail" => {
@@ -1032,18 +1032,18 @@ fn apply_android_local(
         "controls.overlay_haptics" => {
             local.touch_overlay.haptics = toggle_value(row, command.index)?;
         }
-        "controls.cartridge_motion" => {
-            local.cartridge_peripherals.motion_enabled = toggle_value(row, command.index)?;
+        "controls.rumble_motion" => {
+            local.rumble_motion.motion_enabled = toggle_value(row, command.index)?;
         }
-        "controls.cartridge_rumble" => {
-            local.cartridge_peripherals.rumble_enabled = toggle_value(row, command.index)?;
+        "controls.rumble" => {
+            local.rumble_motion.rumble_enabled = toggle_value(row, command.index)?;
         }
-        "controls.cartridge_rumble_strength" => {
-            local.cartridge_peripherals.rumble_strength_percent =
+        "controls.rumble_strength" => {
+            local.rumble_motion.rumble_strength_percent =
                 range_value(&command.key, command.number)?;
         }
-        "controls.cartridge_rumble_target" => {
-            local.cartridge_peripherals.rumble_target = choice(row, command.index)?;
+        "controls.rumble_target" => {
+            local.rumble_motion.rumble_target = choice(row, command.index)?;
         }
         _ => return Ok(false),
     }

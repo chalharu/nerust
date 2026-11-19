@@ -44,17 +44,20 @@ pub(super) fn load_settings(
             Ok(raw) => {
                 let document = SettingsDocument::from_value_with_known_systems(raw, defaults);
                 match document.clone().into_snapshot() {
-                    Ok(snapshot) => (with_required_system_defaults(snapshot, defaults), document),
+                    Ok(snapshot) => (
+                        migrate_app_state(with_required_system_defaults(snapshot, defaults)),
+                        document,
+                    ),
                     Err(err) => {
                         log::warn!(
                             "settings file {} has corrupt or unknown fields, recovering: {err}",
                             path.display(),
                         );
                         (
-                            with_required_system_defaults(
+                            migrate_app_state(with_required_system_defaults(
                                 recover_snapshot(defaults, document.value()),
                                 defaults,
-                            ),
+                            )),
                             document,
                         )
                     }
@@ -114,6 +117,15 @@ fn settings_from_defaults(defaults: &SettingsSnapshot) -> (SettingsSnapshot, Set
 /// Recover a `SettingsSnapshot` from raw YAML by trying each top-level field
 /// independently.  A corrupt field (e.g. an enum variant from a future version)
 /// is reset to its default while the remaining fields are preserved.
+/// Schema migrations that depend on the loaded values (not just missing
+/// fields): app-state port membership predates routing enforcement, so an
+/// untouched legacy default adopts the new both-ports default here, once,
+/// at the file-load boundary.
+fn migrate_app_state(mut snapshot: SettingsSnapshot) -> SettingsSnapshot {
+    snapshot.app_state.migrate_port_devices();
+    snapshot
+}
+
 fn recover_snapshot(defaults: &SettingsSnapshot, raw: &Value) -> SettingsSnapshot {
     let Value::Map(map) = raw else {
         return defaults.clone();

@@ -1,4 +1,4 @@
-//! PeripheralSync: cartridge peripheral JNI pushes owned by one struct.
+//! PeripheralSync: rumble/motion JNI pushes owned by one struct.
 //! Owns last-pushed config/intensity and the generation dirty flag.
 
 use nerust_gui_shell::session::SessionHandle;
@@ -17,7 +17,7 @@ pub(super) struct PeripheralSync {
     last_accel_bound: Option<bool>,
 }
 
-/// One cartridge-peripheral push: motion, rumble switch, strength, target.
+/// One rumble/motion push: motion, rumble switch, strength, target.
 /// Named fields so a reorder fails to compile here, not silently in Kotlin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PeripheralConfig {
@@ -70,7 +70,7 @@ impl PeripheralSync {
             .accelerometer
             .as_ref()
             .is_some_and(|handle| handle.demand().requested);
-        let settings = &session.settings_snapshot().local.cartridge_peripherals;
+        let settings = &session.settings_snapshot().local.rumble_motion;
         let motion_active = is_resumed && requested && settings.motion_enabled;
         if !motion_active && let Some(accelerometer) = handles.accelerometer.as_ref() {
             accelerometer.clear();
@@ -82,7 +82,7 @@ impl PeripheralSync {
             target: settings.rumble_target,
         };
         if self.config_dirty || self.last_config != Some(config) {
-            configure_cartridge_peripherals(
+            configure_rumble_motion(
                 app,
                 config.motion,
                 config.rumble,
@@ -113,7 +113,7 @@ impl PeripheralSync {
             0
         };
         if self.last_intensity != Some(intensity) {
-            set_cartridge_rumble(app, intensity);
+            set_rumble(app, intensity);
             self.last_intensity = Some(intensity);
         }
         self.config_dirty = false;
@@ -128,8 +128,8 @@ impl PeripheralSync {
             accelerometer.clear();
         }
         bridge::bind_accelerometer(None);
-        configure_cartridge_peripherals(app, false, false, 0, RumbleTarget::Auto);
-        set_cartridge_rumble(app, 0);
+        configure_rumble_motion(app, false, false, 0, RumbleTarget::Auto);
+        set_rumble(app, 0);
         // Settle the cache to all-off so the next suspended sync hits the
         // dirty gate instead of re-pushing zeros every pass.
         self.last_config = Some(PeripheralConfig::all_off());
@@ -139,7 +139,7 @@ impl PeripheralSync {
     }
 }
 
-fn configure_cartridge_peripherals(
+fn configure_rumble_motion(
     app: &AndroidApp,
     motion_enabled: bool,
     rumble_enabled: bool,
@@ -154,13 +154,13 @@ fn configure_cartridge_peripherals(
     .to_string();
     bridge::post_to_activity(
         app,
-        "configure Android cartridge peripherals",
+        "configure Android rumble/motion",
         move |env, activity| {
             let target = env.new_string(&target)?;
             bridge::call_bridge_method(
                 env,
                 &activity,
-                &bridge::methods::CONFIGURE_CARTRIDGE_PERIPHERALS,
+                &bridge::methods::CONFIGURE_RUMBLE_MOTION,
                 &[
                     jni::objects::JValue::Bool(motion_enabled),
                     jni::objects::JValue::Bool(rumble_enabled),
@@ -174,15 +174,15 @@ fn configure_cartridge_peripherals(
     );
 }
 
-fn set_cartridge_rumble(app: &AndroidApp, intensity: u8) {
+fn set_rumble(app: &AndroidApp, intensity: u8) {
     bridge::post_to_activity(
         app,
-        "update Android cartridge rumble",
+        "update Android rumble",
         move |env, activity| {
             bridge::call_bridge_method(
                 env,
                 &activity,
-                &bridge::methods::SET_CARTRIDGE_RUMBLE,
+                &bridge::methods::SET_RUMBLE,
                 &[jni::objects::JValue::Int(i32::from(intensity))],
             )?;
             Ok(())

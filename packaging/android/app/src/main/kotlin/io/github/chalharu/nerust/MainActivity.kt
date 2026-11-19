@@ -733,7 +733,7 @@ class MainActivity :
         chromeManager.performControlHaptic()
     }
 
-    fun configureCartridgePeripherals(
+    fun configureRumbleMotion(
         motionEnabled: Boolean,
         rumbleEnabled: Boolean,
         rumbleStrengthPercent: Int,
@@ -742,7 +742,7 @@ class MainActivity :
         sensorController.configure(motionEnabled, rumbleEnabled, rumbleStrengthPercent, rumbleTarget)
     }
 
-    fun setCartridgeRumble(intensity: Int) {
+    fun setRumble(intensity: Int) {
         sensorController.setIntensity(intensity)
     }
 
