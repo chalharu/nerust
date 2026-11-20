@@ -99,7 +99,7 @@ dependencies {
     val composeBom = platform("androidx.compose:compose-bom:$composeBomVersion")
     val documentFileVersion = "1.1.0"
     val junitVersion = "4.13.2"
-    val lifecycleVersion = "2.11.0"
+    val lifecycleVersion = "2.11.1"
     val savedStateVersion = "1.5.0"
     val androidxTestCoreVersion = "1.7.0"
     val androidxTestRunnerVersion = androidxTestCoreVersion
