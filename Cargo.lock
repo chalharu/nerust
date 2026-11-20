@@ -4212,7 +4212,7 @@ dependencies = [
 [[package]]
 name = "panechord"
 version = "0.1.0-dev"
-source = "git+https://github.com/chalharu/panechord?rev=e70d69b25744fa8344656417e007dc75ce623809#e70d69b25744fa8344656417e007dc75ce623809"
+source = "git+https://github.com/chalharu/panechord?rev=97315b2a2c5b1b036ffd88a44c9597bbc224d39a#97315b2a2c5b1b036ffd88a44c9597bbc224d39a"
 dependencies = [
  "panechord-gtk",
  "panechord-macros",
@@ -4224,7 +4224,7 @@ dependencies = [
 [[package]]
 name = "panechord-gtk"
 version = "0.1.0-dev"
-source = "git+https://github.com/chalharu/panechord?rev=e70d69b25744fa8344656417e007dc75ce623809#e70d69b25744fa8344656417e007dc75ce623809"
+source = "git+https://github.com/chalharu/panechord?rev=97315b2a2c5b1b036ffd88a44c9597bbc224d39a#97315b2a2c5b1b036ffd88a44c9597bbc224d39a"
 dependencies = [
  "futures",
  "gtk4",
@@ -4239,7 +4239,7 @@ dependencies = [
 [[package]]
 name = "panechord-macos"
 version = "0.1.0-dev"
-source = "git+https://github.com/chalharu/panechord?rev=e70d69b25744fa8344656417e007dc75ce623809#e70d69b25744fa8344656417e007dc75ce623809"
+source = "git+https://github.com/chalharu/panechord?rev=97315b2a2c5b1b036ffd88a44c9597bbc224d39a#97315b2a2c5b1b036ffd88a44c9597bbc224d39a"
 dependencies = [
  "futures",
  "objc2 0.6.5",
@@ -4251,7 +4251,7 @@ dependencies = [
 [[package]]
 name = "panechord-macros"
 version = "0.1.0-dev"
-source = "git+https://github.com/chalharu/panechord?rev=e70d69b25744fa8344656417e007dc75ce623809#e70d69b25744fa8344656417e007dc75ce623809"
+source = "git+https://github.com/chalharu/panechord?rev=97315b2a2c5b1b036ffd88a44c9597bbc224d39a#97315b2a2c5b1b036ffd88a44c9597bbc224d39a"
 dependencies = [
  "panechord-markup",
  "panechord-runtime",
@@ -4265,7 +4265,7 @@ dependencies = [
 [[package]]
 name = "panechord-markup"
 version = "0.1.0-dev"
-source = "git+https://github.com/chalharu/panechord?rev=e70d69b25744fa8344656417e007dc75ce623809#e70d69b25744fa8344656417e007dc75ce623809"
+source = "git+https://github.com/chalharu/panechord?rev=97315b2a2c5b1b036ffd88a44c9597bbc224d39a#97315b2a2c5b1b036ffd88a44c9597bbc224d39a"
 dependencies = [
  "panechord-runtime",
  "schemars",
@@ -4278,7 +4278,7 @@ dependencies = [
 [[package]]
 name = "panechord-native"
 version = "0.1.0-dev"
-source = "git+https://github.com/chalharu/panechord?rev=e70d69b25744fa8344656417e007dc75ce623809#e70d69b25744fa8344656417e007dc75ce623809"
+source = "git+https://github.com/chalharu/panechord?rev=97315b2a2c5b1b036ffd88a44c9597bbc224d39a#97315b2a2c5b1b036ffd88a44c9597bbc224d39a"
 dependencies = [
  "panechord-gtk",
  "panechord-macos",
@@ -4288,7 +4288,7 @@ dependencies = [
 [[package]]
 name = "panechord-runtime"
 version = "0.1.0-dev"
-source = "git+https://github.com/chalharu/panechord?rev=e70d69b25744fa8344656417e007dc75ce623809#e70d69b25744fa8344656417e007dc75ce623809"
+source = "git+https://github.com/chalharu/panechord?rev=97315b2a2c5b1b036ffd88a44c9597bbc224d39a#97315b2a2c5b1b036ffd88a44c9597bbc224d39a"
 dependencies = [
  "futures",
  "futures-timer",
@@ -4298,7 +4298,7 @@ dependencies = [
 [[package]]
 name = "panechord-tao"
 version = "0.1.0-dev"
-source = "git+https://github.com/chalharu/panechord?rev=e70d69b25744fa8344656417e007dc75ce623809#e70d69b25744fa8344656417e007dc75ce623809"
+source = "git+https://github.com/chalharu/panechord?rev=97315b2a2c5b1b036ffd88a44c9597bbc224d39a#97315b2a2c5b1b036ffd88a44c9597bbc224d39a"
 dependencies = [
  "futures",
  "gtk",
