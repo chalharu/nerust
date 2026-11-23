@@ -131,6 +131,7 @@ pub(crate) struct Editor {
     page: Store<String>,
     general_page: Store<String>,
     controllers_page: Store<String>,
+    systems_page: Store<String>,
     exit: Rc<Cell<ExitChoice>>,
     close_prompt: Store<ExitChoice>,
 }
@@ -161,6 +162,7 @@ impl Editor {
             page: Store::new("general".into(), executor.clone()),
             general_page: Store::new("app".into(), executor.clone()),
             controllers_page: Store::new(String::new(), executor.clone()),
+            systems_page: Store::new(String::new(), executor.clone()),
             exit: Rc::new(Cell::new(ExitChoice::Editing)),
             close_prompt: Store::new(ExitChoice::Editing, executor.clone()),
             executor,
@@ -198,6 +200,7 @@ impl Editor {
         self.page.close();
         self.general_page.close();
         self.controllers_page.close();
+        self.systems_page.close();
         self.close_prompt.close();
     }
     fn validation_status(&self) {
@@ -660,6 +663,10 @@ impl Editor {
             controllers_selection: self
                 .controllers_page
                 .bind(Clone::clone, Some(|page: &mut String, value| *page = value)),
+            systems_pages: Binding::constant(layout::systems_pages(self)),
+            systems_selection: self
+                .systems_page
+                .bind(Clone::clone, Some(|page: &mut String, value| *page = value)),
             gamepads_blocks: Binding::constant(layout::gamepads_blocks(
                 self,
                 &capture,
@@ -749,6 +756,7 @@ impl Editor {
                 tab_gamepads: self.tr(UiText::Gamepads),
                 tab_shortcuts: self.tr(UiText::Shortcuts),
                 tab_notifications: self.tr(UiText::Notifications),
+                tab_advanced: self.tr(UiText::SectionAdvanced),
                 info: self.tr(UiText::NotificationInfo),
                 info_enabled: self.tr(UiText::NotificationEnabled),
                 info_duration: self.tr(UiText::NotificationDuration),
@@ -869,6 +877,7 @@ struct Labels {
     tab_gamepads: Binding<String>,
     tab_shortcuts: Binding<String>,
     tab_notifications: Binding<String>,
+    tab_advanced: Binding<String>,
     info: Binding<String>,
     info_enabled: Binding<String>,
     info_duration: Binding<String>,
@@ -947,6 +956,8 @@ struct Presentation {
     general_selection: Binding<String>,
     controllers_pages: Binding<Vec<panechord::Keyed<layout::ControllerPage>>>,
     controllers_selection: Binding<String>,
+    systems_pages: Binding<Vec<panechord::Keyed<layout::SystemPage>>>,
+    systems_selection: Binding<String>,
     gamepads_blocks: Binding<Vec<panechord::Keyed<layout::GamepadBlock>>>,
     shortcuts_page: Binding<Vec<Keyed<layout::BindingPage>>>,
     shortcuts_resets: Binding<Vec<Keyed<layout::ResetRow>>>,
@@ -1608,6 +1619,11 @@ mod tests {
             presentation.controllers_pages.get().len(),
             editor.vm.inputs().len(),
             "one controllers page per machine"
+        );
+        assert_eq!(
+            presentation.systems_pages.get().len(),
+            editor.vm.systems().len(),
+            "one system page per machine"
         );
         assert!(
             presentation.gamepads_blocks.get().is_empty(),

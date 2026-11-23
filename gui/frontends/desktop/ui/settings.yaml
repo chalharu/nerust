@@ -220,11 +220,6 @@ templates:
       padding: 6
       gap: 6
       children:
-        - type: ItemsControl
-          id: fields
-          items: {bind: {path: fields}}
-          viewport: {bind: {path: viewport}}
-          item_template: choice_row
         - type: Repeat
           id: controller_slots
           items: {bind: {path: slots}}
@@ -238,6 +233,18 @@ templates:
           items: {bind: {path: key_sections, source: External}}
           gap: 6
           item_template: binding_page
+  system_page:
+    root:
+      type: StackLayout
+      id: system_fields
+      padding: 6
+      gap: 6
+      children:
+        - type: ItemsControl
+          id: fields
+          items: {bind: {path: fields}}
+          viewport: {bind: {path: viewport}}
+          item_template: choice_row
   gamepad_block:
     root:
       type: StackLayout
@@ -294,12 +301,15 @@ root:
           - id: controllers
             title: {bind: {path: labels.tab_controllers, source: External}}
             content:
-              type: TabItems
-              id: controllers_tabs
-              selected: {bind: {path: controllers_selection, source: External, mode: TwoWay}}
-              items: {bind: {path: controllers_pages, source: External}}
-              title: {bind: {path: label}}
-              item_template: controller_page
+              type: Scroll
+              id: controllers_scroll
+              content:
+                type: TabItems
+                id: controllers_tabs
+                selected: {bind: {path: controllers_selection, source: External, mode: TwoWay}}
+                items: {bind: {path: controllers_pages, source: External}}
+                title: {bind: {path: label}}
+                item_template: controller_page
           - id: gamepads
             title: {bind: {path: labels.tab_gamepads, source: External}}
             content:
@@ -451,6 +461,18 @@ root:
                         id: status_area_follows
                         visible: {bind: {path: status_area_follows, source: External}}
                         text: {bind: {path: labels.follow_note, source: External}}
+          - id: advanced
+            title: {bind: {path: labels.tab_advanced, source: External}}
+            content:
+              type: Scroll
+              id: advanced_scroll
+              content:
+                type: TabItems
+                id: machine_tabs
+                selected: {bind: {path: systems_selection, source: External, mode: TwoWay}}
+                items: {bind: {path: systems_pages, source: External}}
+                title: {bind: {path: label}}
+                item_template: system_page
       - {type: Label, id: status, text: {bind: {path: status, source: External}}}
       - type: DialogFooter
         id: actions

@@ -77,20 +77,30 @@ pub(super) struct CheckRow {
     pub checked: Binding<bool>,
 }
 
-/// One per-system controllers page: the machine's own settings
-/// fields, controller-type slots, and keyboard mapping tables. The
-/// built-in keyboard always drives every port (routing enforced at
-/// rebuild), so this page owns no toggle and no port state; the static
-/// note says so. Gamepad-to-player assignment lives on the Gamepads
-/// page, one radio per pad.
+/// One per-system controllers page: controller-type slots and keyboard
+/// mapping tables. The built-in keyboard always drives every port
+/// (routing enforced at rebuild), so this page owns no toggle and no
+/// port state; the static note says so. Gamepad-to-player assignment
+/// lives on the Gamepads page, one radio per pad. The machine's own
+/// settings fields (video filters, mapper variants) live on the
+/// Advanced tab's system pages, never here.
 #[derive(Clone)]
 pub(super) struct ControllerPage {
     pub label: String,
-    pub fields: Vec<Keyed<ChoiceRow>>,
-    pub viewport: Viewport,
     pub slots: Vec<Keyed<ChoiceRow>>,
     pub keyboard_note: Binding<String>,
     pub key_sections: Binding<Vec<Keyed<BindingPage>>>,
+}
+
+/// One per-system settings page for the Advanced tab: the machine's
+/// own settings fields. Key tables live on the Controllers pages and
+/// resets are gone dialog-wide, so fields plus their viewport are all
+/// this page carries.
+#[derive(Clone)]
+pub(super) struct SystemPage {
+    pub label: String,
+    pub fields: Vec<Keyed<ChoiceRow>>,
+    pub viewport: Viewport,
 }
 
 /// One General L2 tab (App | Video | Audio | Rumble & Motion). All four
@@ -358,8 +368,8 @@ fn binding_sections(
     })
 }
 
-/// One per-system controllers page: fields, slots, and keyboard
-/// tables together so each machine lives in exactly one place. Narrow
+/// One per-system controllers page: slots and keyboard tables
+/// together so each machine's inputs live in exactly one place. Narrow
 /// subscriptions (one input view per page) keep unrelated edits —
 /// volume sliders, notifications — from re-cloning every key table.
 pub(super) fn controllers_pages(
@@ -375,13 +385,6 @@ pub(super) fn controllers_pages(
         .map(|input| {
             let value = input.view.get();
             let system_id = value.system_id.to_string();
-            let system = vm
-                .systems()
-                .iter()
-                .find(|system| system.system_id().to_string() == system_id)
-                .expect("system view exists for its own input");
-            let fields = system_field_rows(editor, system);
-            let viewport = viewport(fields.len(), 46.0);
             let slots = slot_rows_for_system(editor, input);
             let key_sections = keyboard_sections(editor, input, capture, clear);
             Keyed::new(
@@ -389,11 +392,37 @@ pub(super) fn controllers_pages(
                 Store::new(
                     ControllerPage {
                         label: value.label.clone(),
-                        fields,
-                        viewport,
                         slots,
                         keyboard_note: note.clone(),
                         key_sections,
+                    },
+                    executor.clone(),
+                ),
+            )
+        })
+        .collect()
+}
+
+/// One per-system settings page for the Advanced tab: the machine's
+/// own settings fields. Narrow subscriptions (one system view per
+/// page) keep unrelated edits from re-cloning every field row.
+pub(super) fn systems_pages(editor: &Rc<Editor>) -> Vec<Keyed<SystemPage>> {
+    let vm = &editor.vm;
+    let executor = editor.executor.clone();
+    vm.systems()
+        .iter()
+        .map(|system| {
+            let value = system.view.get();
+            let system_id = system.system_id().to_string();
+            let fields = system_field_rows(editor, system);
+            let viewport = viewport(fields.len(), 46.0);
+            Keyed::new(
+                system_id,
+                Store::new(
+                    SystemPage {
+                        label: value.label.clone(),
+                        fields,
+                        viewport,
                     },
                     executor.clone(),
                 ),
@@ -1024,13 +1053,13 @@ mod tests {
         assert_eq!(editor.vm.gamepads.view.get().pads[0].deadzone, 10);
     }
 
-    /// Controllers pages are per-system: the machine's own fields,
-    /// controller-type slots, keyboard mapping tables, and the static
-    /// always-on keyboard note. No port state lives here (gamepad
-    /// assignment lives on the Gamepads page) and no page carries
-    /// a reset.
+    /// Controllers pages are per-system: controller-type slots,
+    /// keyboard mapping tables, and the static always-on keyboard
+    /// note. Machine settings fields live on the Advanced tab's system
+    /// pages, never here. No port state lives here (gamepad assignment
+    /// lives on the Gamepads page) and no page carries a reset.
     #[test]
-    fn controllers_pages_list_per_system_fields_slots_and_keys() {
+    fn controllers_pages_list_per_system_slots_and_keys() {
         let (editor, _adapter, _dir) = headless_editor();
         let executor: Rc<dyn panechord::Executor> = Rc::new(TestExecutor);
         let capture = noop_capture(&executor);
@@ -1044,15 +1073,6 @@ mod tests {
         for page in &pages {
             let snapshot = page.model.snapshot();
             assert!(!snapshot.label.is_empty());
-            assert!(!snapshot.fields.is_empty(), "pages carry system fields");
-            assert_eq!(snapshot.viewport.count, snapshot.fields.len().clamp(1, 256));
-            for field in &snapshot.fields {
-                let row = field.model.snapshot();
-                assert!(!row.label.get().is_empty());
-                assert!(!row.choices.get().is_empty());
-                assert!(!row.selected.get().is_empty());
-                assert!(row.enabled.get());
-            }
             assert!(
                 !snapshot.slots.is_empty(),
                 "controllers pages keep their machine slots"
@@ -1102,6 +1122,45 @@ mod tests {
         assert_eq!(slot.selected.get(), other);
         assert!(slot.selected.set(original.clone()));
         assert_eq!(slot.selected.get(), original);
+    }
+
+    /// System pages are per-machine: the machine's own settings
+    /// fields (video filters, mapper variants) with a matching
+    /// viewport. Key tables live on the Controllers pages, never here.
+    #[test]
+    fn systems_pages_carry_machine_fields() {
+        let (editor, _adapter, _dir) = headless_editor();
+        let pages = systems_pages(&editor);
+        assert_eq!(
+            pages.len(),
+            editor.vm.systems().len(),
+            "one system page per machine"
+        );
+        let mut field_total = 0;
+        for page in &pages {
+            let snapshot = page.model.snapshot();
+            assert!(!snapshot.label.is_empty());
+            assert!(
+                !snapshot.fields.is_empty(),
+                "system pages carry machine fields"
+            );
+            assert_eq!(snapshot.viewport.count, snapshot.fields.len().clamp(1, 256));
+            for field in &snapshot.fields {
+                let row = field.model.snapshot();
+                assert!(!row.label.get().is_empty());
+                assert!(!row.choices.get().is_empty());
+                assert!(!row.selected.get().is_empty());
+                assert!(row.enabled.get());
+                field_total += 1;
+            }
+        }
+        let expected_fields: usize = editor
+            .vm
+            .systems()
+            .iter()
+            .map(|system| system.view.get().fields.len())
+            .sum();
+        assert_eq!(field_total, expected_fields, "fields land without loss");
         // Flipping a system field on the view model moves the built selection.
         let (field_label, position) = {
             let registry = editor.vm.systems();
@@ -1138,7 +1197,7 @@ mod tests {
                     .unwrap_or_default(),
             )
         };
-        let selected = controllers_pages(&editor, &capture, &clear)
+        let selected = systems_pages(&editor)
             .iter()
             .flat_map(|page| page.model.snapshot().fields)
             .map(|row| row.model.snapshot())
@@ -1149,12 +1208,13 @@ mod tests {
         assert_eq!(selected, position);
     }
 
-    /// Controllers pages carry fields, slots, and keyboard-only key
-    /// tables; the shortcuts page is one global section. Key tables
+    /// Controllers pages carry slots and keyboard-only key tables;
+    /// machine settings fields live on the Advanced tab's system
+    /// pages. The shortcuts page is one global section. Key tables
     /// never carry the per-pad appendages (those live on the Gamepads
     /// page).
     #[test]
-    fn controllers_pages_carry_fields_slots_and_key_tables() {
+    fn controllers_pages_carry_slots_and_key_tables() {
         let (editor, _adapter, _dir) = headless_editor();
         let executor: Rc<dyn panechord::Executor> = Rc::new(TestExecutor);
         let capture = noop_capture(&executor);
@@ -1165,18 +1225,11 @@ mod tests {
             editor.vm.inputs().len(),
             "one controllers page per machine"
         );
-        // Every machine slot and field lands on its own controllers page.
+        // Every machine slot lands on its own controllers page.
         let mut slot_total = 0;
-        let mut field_total = 0;
         for page in &controllers {
             let snapshot = page.model.snapshot();
             assert!(!snapshot.label.is_empty());
-            for field in &snapshot.fields {
-                let row = field.model.snapshot();
-                assert!(!row.label.get().is_empty());
-                assert!(!row.choices.get().is_empty());
-                field_total += 1;
-            }
             for slot in &snapshot.slots {
                 let row = slot.model.snapshot();
                 assert!(!row.label.get().is_empty());
@@ -1192,13 +1245,6 @@ mod tests {
             .map(|input| input.view.get().slots.len())
             .sum();
         assert_eq!(slot_total, expected_slots, "slots land without loss");
-        let expected_fields: usize = editor
-            .vm
-            .systems()
-            .iter()
-            .map(|system| system.view.get().fields.len())
-            .sum();
-        assert_eq!(field_total, expected_fields, "fields land without loss");
         // Controllers pages keep keyboard-only sections (no pad appendages).
         for page in &controllers {
             let snapshot = page.model.snapshot();
