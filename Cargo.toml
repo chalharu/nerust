@@ -197,7 +197,7 @@ nerust_sound_filter = { path = "sound/filter" }
 nerust_sound_spectrum = { path = "sound/spectrum" }
 nerust_system_traits = { path = "traits/system" }
 nerust_timer = { path = "timer" }
-panechord = { git = "https://github.com/chalharu/panechord", rev = "97315b2a2c5b1b036ffd88a44c9597bbc224d39a" }
+panechord = { git = "https://github.com/chalharu/panechord", rev = "3ade5f12642fd24c75e0bbae6ca22aaf2c383743" }
 png = { version = "=0.18.1" }
 pollster = { version = "=1.0.3" }
 raw-window-handle = { version = "=0.6.2" }
