@@ -4212,7 +4212,7 @@ dependencies = [
 [[package]]
 name = "panechord"
 version = "0.1.0-dev"
-source = "git+https://github.com/chalharu/panechord?rev=97315b2a2c5b1b036ffd88a44c9597bbc224d39a#97315b2a2c5b1b036ffd88a44c9597bbc224d39a"
+source = "git+https://github.com/chalharu/panechord?rev=3ade5f12642fd24c75e0bbae6ca22aaf2c383743#3ade5f12642fd24c75e0bbae6ca22aaf2c383743"
 dependencies = [
  "panechord-gtk",
  "panechord-macros",
@@ -4224,7 +4224,7 @@ dependencies = [
 [[package]]
 name = "panechord-gtk"
 version = "0.1.0-dev"
-source = "git+https://github.com/chalharu/panechord?rev=97315b2a2c5b1b036ffd88a44c9597bbc224d39a#97315b2a2c5b1b036ffd88a44c9597bbc224d39a"
+source = "git+https://github.com/chalharu/panechord?rev=3ade5f12642fd24c75e0bbae6ca22aaf2c383743#3ade5f12642fd24c75e0bbae6ca22aaf2c383743"
 dependencies = [
  "futures",
  "gtk4",
@@ -4239,7 +4239,7 @@ dependencies = [
 [[package]]
 name = "panechord-macos"
 version = "0.1.0-dev"
-source = "git+https://github.com/chalharu/panechord?rev=97315b2a2c5b1b036ffd88a44c9597bbc224d39a#97315b2a2c5b1b036ffd88a44c9597bbc224d39a"
+source = "git+https://github.com/chalharu/panechord?rev=3ade5f12642fd24c75e0bbae6ca22aaf2c383743#3ade5f12642fd24c75e0bbae6ca22aaf2c383743"
 dependencies = [
  "futures",
  "objc2 0.6.5",
@@ -4251,7 +4251,7 @@ dependencies = [
 [[package]]
 name = "panechord-macros"
 version = "0.1.0-dev"
-source = "git+https://github.com/chalharu/panechord?rev=97315b2a2c5b1b036ffd88a44c9597bbc224d39a#97315b2a2c5b1b036ffd88a44c9597bbc224d39a"
+source = "git+https://github.com/chalharu/panechord?rev=3ade5f12642fd24c75e0bbae6ca22aaf2c383743#3ade5f12642fd24c75e0bbae6ca22aaf2c383743"
 dependencies = [
  "panechord-markup",
  "panechord-runtime",
@@ -4265,7 +4265,7 @@ dependencies = [
 [[package]]
 name = "panechord-markup"
 version = "0.1.0-dev"
-source = "git+https://github.com/chalharu/panechord?rev=97315b2a2c5b1b036ffd88a44c9597bbc224d39a#97315b2a2c5b1b036ffd88a44c9597bbc224d39a"
+source = "git+https://github.com/chalharu/panechord?rev=3ade5f12642fd24c75e0bbae6ca22aaf2c383743#3ade5f12642fd24c75e0bbae6ca22aaf2c383743"
 dependencies = [
  "panechord-runtime",
  "schemars",
@@ -4278,7 +4278,7 @@ dependencies = [
 [[package]]
 name = "panechord-native"
 version = "0.1.0-dev"
-source = "git+https://github.com/chalharu/panechord?rev=97315b2a2c5b1b036ffd88a44c9597bbc224d39a#97315b2a2c5b1b036ffd88a44c9597bbc224d39a"
+source = "git+https://github.com/chalharu/panechord?rev=3ade5f12642fd24c75e0bbae6ca22aaf2c383743#3ade5f12642fd24c75e0bbae6ca22aaf2c383743"
 dependencies = [
  "panechord-gtk",
  "panechord-macos",
@@ -4288,7 +4288,7 @@ dependencies = [
 [[package]]
 name = "panechord-runtime"
 version = "0.1.0-dev"
-source = "git+https://github.com/chalharu/panechord?rev=97315b2a2c5b1b036ffd88a44c9597bbc224d39a#97315b2a2c5b1b036ffd88a44c9597bbc224d39a"
+source = "git+https://github.com/chalharu/panechord?rev=3ade5f12642fd24c75e0bbae6ca22aaf2c383743#3ade5f12642fd24c75e0bbae6ca22aaf2c383743"
 dependencies = [
  "futures",
  "futures-timer",
@@ -4298,7 +4298,7 @@ dependencies = [
 [[package]]
 name = "panechord-tao"
 version = "0.1.0-dev"
-source = "git+https://github.com/chalharu/panechord?rev=97315b2a2c5b1b036ffd88a44c9597bbc224d39a#97315b2a2c5b1b036ffd88a44c9597bbc224d39a"
+source = "git+https://github.com/chalharu/panechord?rev=3ade5f12642fd24c75e0bbae6ca22aaf2c383743#3ade5f12642fd24c75e0bbae6ca22aaf2c383743"
 dependencies = [
  "futures",
  "gtk",
@@ -4961,9 +4961,9 @@ dependencies = [
 
 [[package]]
 name = "serde-saphyr"
-version = "2.1.1"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d43fb82d550b07e6f929a58d7d0935182602f48ddead875f5ee313c41c8f07fe"
+checksum = "969cde0349344dbbf58b5f9badbfb8f806db13969364eb8007c057ef687007d9"
 dependencies = [
  "annotate-snippets",
  "base64",
@@ -5441,9 +5441,9 @@ dependencies = [
 
 [[package]]
 name = "tao"
-version = "0.37.2"
+version = "0.37.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d5777b06fe6435126ae8d816eba269e050e1e10d302cf5461e9c49eccabc3548"
+checksum = "02ca9c0ce2a2fd70dc4ef4449ca5e8d30e6fa0db111cd8008594602a06a68371"
 dependencies = [
  "bitflags 2.13.2",
  "block2 0.6.2",
