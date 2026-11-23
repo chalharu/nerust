@@ -11,7 +11,7 @@ use nerust_settings_core::{
     labels::pad_label,
     model::input::DEFAULT_DEADZONE_PERCENT,
 };
-use panechord::{Binding, Choice, Command, Keyed, Store, Viewport};
+use panechord::{Binding, Choice, Command, Keyed, Store};
 use std::{cell::RefCell, rc::Rc};
 
 pub(super) type Capture = Rc<dyn Fn(CaptureTarget) -> Command>;
@@ -93,14 +93,14 @@ pub(super) struct ControllerPage {
 }
 
 /// One per-system settings page for the Advanced tab: the machine's
-/// own settings fields. Key tables live on the Controllers pages and
-/// resets are gone dialog-wide, so fields plus their viewport are all
-/// this page carries.
+/// own settings fields. A plain Repeat matches every other section's
+/// natural row heights (a fixed viewport would widen these rows);
+/// key tables live on the Controllers pages and resets are gone
+/// dialog-wide, so fields are all this page carries.
 #[derive(Clone)]
 pub(super) struct SystemPage {
     pub label: String,
     pub fields: Vec<Keyed<ChoiceRow>>,
-    pub viewport: Viewport,
 }
 
 /// One General L2 tab (App | Video | Audio | Rumble & Motion). All four
@@ -141,14 +141,6 @@ pub(super) struct GamepadBlock {
     pub deadzone: Option<Keyed<ChoiceRow>>,
     pub dpad: Option<Keyed<ChoiceRow>>,
     pub sections: Binding<Vec<Keyed<BindingPage>>>,
-}
-
-fn viewport(length: usize, row_height: f32) -> Viewport {
-    Viewport {
-        count: length.clamp(1, 256),
-        row_height,
-        ..Viewport::default()
-    }
 }
 
 #[cfg(test)]
@@ -415,14 +407,12 @@ pub(super) fn systems_pages(editor: &Rc<Editor>) -> Vec<Keyed<SystemPage>> {
             let value = system.view.get();
             let system_id = system.system_id().to_string();
             let fields = system_field_rows(editor, system);
-            let viewport = viewport(fields.len(), 46.0);
             Keyed::new(
                 system_id,
                 Store::new(
                     SystemPage {
                         label: value.label.clone(),
                         fields,
-                        viewport,
                     },
                     executor.clone(),
                 ),
@@ -912,8 +902,6 @@ mod tests {
                 .get()
                 .is_empty()
         );
-        assert_eq!(viewport(0, 34.0).count, 1);
-        assert_eq!(viewport(300, 34.0).count, 256);
     }
 
     struct TestExecutor;
@@ -1120,8 +1108,8 @@ mod tests {
     }
 
     /// System pages are per-machine: the machine's own settings
-    /// fields (video filters, mapper variants) with a matching
-    /// viewport. Key tables live on the Controllers pages, never here.
+    /// fields (video filters, mapper variants) rendered as plain rows.
+    /// Key tables live on the Controllers pages, never here.
     #[test]
     fn systems_pages_carry_machine_fields() {
         let (editor, _adapter, _dir) = headless_editor();
@@ -1139,7 +1127,6 @@ mod tests {
                 !snapshot.fields.is_empty(),
                 "system pages carry machine fields"
             );
-            assert_eq!(snapshot.viewport.count, snapshot.fields.len().clamp(1, 256));
             for field in &snapshot.fields {
                 let row = field.model.snapshot();
                 assert!(!row.label.get().is_empty());

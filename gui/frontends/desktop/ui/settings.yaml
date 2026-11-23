@@ -240,10 +240,10 @@ templates:
       padding: 6
       gap: 6
       children:
-        - type: ItemsControl
+        - type: Repeat
           id: fields
           items: {bind: {path: fields}}
-          viewport: {bind: {path: viewport}}
+          gap: 6
           item_template: choice_row
   gamepad_block:
     root:
