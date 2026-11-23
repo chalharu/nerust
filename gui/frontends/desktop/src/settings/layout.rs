@@ -436,12 +436,7 @@ pub(super) fn systems_pages(editor: &Rc<Editor>) -> Vec<Keyed<SystemPage>> {
 /// per page; the strings already exist for Android.
 fn keyboard_note_text(general: &GeneralView) -> String {
     use nerust_settings_core::i18n::I18n;
-    let i18n = I18n::new(crate::display_language(general.language));
-    format!(
-        "{} ({})",
-        i18n.text(UiText::BuiltInKeyboard),
-        i18n.text(UiText::AlwaysAvailable)
-    )
+    I18n::new(crate::display_language(general.language)).text(UiText::BuiltInKeyboard)
 }
 
 /// Choice rows for one machine's own settings fields.
