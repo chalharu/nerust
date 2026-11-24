@@ -65,7 +65,7 @@ templates:
     root:
       type: StackLayout
       id: binding_section
-      gap: 6
+      gap: 12
       children:
         - type: Label
           id: binding_section_label
@@ -74,7 +74,7 @@ templates:
         - type: Repeat
           id: bindings
           padding: 6
-          gap: 8
+          gap: 12
           items: {bind: {path: rows, source: External}}
           item_template: binding_row
   general_tab:
@@ -218,12 +218,12 @@ templates:
       type: StackLayout
       id: controller_fields
       padding: 6
-      gap: 6
+      gap: 12
       children:
         - type: Repeat
           id: controller_slots
           items: {bind: {path: slots}}
-          gap: 6
+          gap: 12
           item_template: choice_row
         - type: Label
           id: keyboard_note
@@ -231,26 +231,26 @@ templates:
         - type: Repeat
           id: controller_keys
           items: {bind: {path: key_sections, source: External}}
-          gap: 6
+          gap: 12
           item_template: binding_page
   system_page:
     root:
       type: StackLayout
       id: system_fields
       padding: 6
-      gap: 6
+      gap: 12
       children:
         - type: Repeat
           id: fields
           items: {bind: {path: fields}}
-          gap: 6
+          gap: 12
           item_template: choice_row
   gamepad_block:
     root:
       type: StackLayout
       id: pad_block
       padding: 6
-      gap: 6
+      gap: 12
       children:
         - type: Label
           id: pad_name
@@ -271,7 +271,7 @@ templates:
         - type: Repeat
           id: pad_sections
           items: {bind: {path: sections, source: External}}
-          gap: 6
+          gap: 12
           item_template: binding_page
 root:
   type: Window
@@ -315,7 +315,7 @@ root:
             content:
               type: StackLayout
               id: gamepads_column
-              gap: 6
+              gap: 12
               children:
                 - type: Repeat
                   id: gamepad_blocks
@@ -328,17 +328,17 @@ root:
               type: StackLayout
               id: shortcuts_fields
               padding: 6
-              gap: 6
+              gap: 12
               children:
                 - type: Repeat
                   id: shortcuts_section
                   items: {bind: {path: shortcuts_page, source: External}}
-                  gap: 6
+                  gap: 12
                   item_template: binding_page
                 - type: Repeat
                   id: shortcuts_resets
                   items: {bind: {path: shortcuts_resets, source: External}}
-                  gap: 6
+                  gap: 12
                   item_template: reset_row
           - id: notifications
             title: {bind: {path: labels.tab_notifications, source: External}}
