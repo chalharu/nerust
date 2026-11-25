@@ -1,6 +1,7 @@
 //! Input vocabulary shared by cores, factories, and frontends.
 //! Split by responsibility: `ids`, `topology`, `events`, `devices`, `profile`.
 
+mod backend;
 mod devices;
 mod events;
 mod ids;
@@ -9,6 +10,9 @@ mod profile;
 mod source;
 mod topology;
 
+pub use backend::{
+    Capability, DeviceEvent, FakeSink, FakeSource, PollSource, RumbleSink,
+};
 pub use devices::{
     BUILTIN_KEYBOARD_MEMBER, Controller, ControllerCollection, ControllerHub, FieldEntry,
     GAMEPAD_MEMBER_PREFIX, KEYBOARD_MEMBER_PREFIX, Port, SimplePort, StrobeTarget,
@@ -28,7 +32,10 @@ pub use profile::{
     TypedInputResources, UnifiedFieldMap, abstract_for_attachment, collect_first_wins,
     port_index_for_slot,
 };
-pub use source::{GamepadAxis, PadGuid, SourceButtonId, SourceId, StandardButton, apply_deadzone};
+pub use source::{
+    GamepadAxis, GamepadEvent, GamepadMotion, PadGuid, SourceButtonId, SourceId, StandardButton,
+    apply_deadzone,
+};
 pub use topology::{
     AnalogControlDescriptor, AttachmentSlotDescriptor, ControlDescriptor, DeviceDescriptor,
     DigitalControlDescriptor, InputTopologyDescriptor, PortDescriptor,
