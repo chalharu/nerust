@@ -2,16 +2,74 @@
 //! Owns last-pushed config/intensity and the generation dirty flag.
 
 use nerust_gui_shell::session::SessionHandle;
+use nerust_input_traits::{Capability, RumbleSink};
 use nerust_settings_core::model::local::RumbleTarget;
 use winit::platform::android::activity::AndroidApp;
 
 use super::bridge;
 
+/// Android vibrator output as a shared-contract sink: one logical
+/// output, Kotlin routes to the active controller's vibrator internally.
+/// Intensity is console-global (not per-pad); the device id only
+/// de-duplicates concurrent pads.
+pub(super) struct AndroidRumbleSink {
+    app: AndroidApp,
+    last: Option<(i32, u8)>,
+}
+
+impl AndroidRumbleSink {
+    fn new(app: &AndroidApp) -> Self {
+        Self {
+            app: app.clone(),
+            last: None,
+        }
+    }
+
+    fn reseed(&mut self, app: &AndroidApp) {
+        self.app = app.clone();
+    }
+
+    /// Collapse the dual-motor range to the single handset/controller
+    /// scale. Rounding (not truncation) keeps the u8 round-trip exact,
+    /// so a polled intensity re-pushes the identical byte.
+    fn intensity(low: f32, high: f32) -> u8 {
+        (low.max(high).clamp(0.0, 1.0) * 255.0).round() as u8
+    }
+
+    fn reset(&mut self) {
+        self.last = None;
+    }
+
+    fn is_quiet(&self) -> bool {
+        matches!(self.last, Some((_, 0)))
+    }
+}
+
+impl RumbleSink for AndroidRumbleSink {
+    fn set_rumble(&mut self, device: i32, low: f32, high: f32) {
+        let intensity = Self::intensity(low, high);
+        if self.last == Some((device, intensity)) {
+            return;
+        }
+        self.last = Some((device, intensity));
+        set_rumble(&self.app, intensity);
+    }
+
+    fn capability(&self, _device: i32) -> Capability {
+        // Backend paths exist (vibrator JNI, accelerometer); enablement
+        // stays settings-gated in `PeripheralSync::sync`.
+        Capability {
+            rumble: true,
+            motion: true,
+        }
+    }
+}
+
 /// Last-pushed peripheral state plus a generation dirty flag.
 /// Pushes only on change; suspended all-off state skips `host_peripherals()`.
 pub(super) struct PeripheralSync {
     last_config: Option<PeripheralConfig>,
-    last_intensity: Option<u8>,
+    sink: Option<AndroidRumbleSink>,
     config_dirty: bool,
 }
 
@@ -41,7 +99,7 @@ impl PeripheralSync {
     pub(super) fn new() -> Self {
         Self {
             last_config: None,
-            last_intensity: None,
+            sink: None,
             config_dirty: true,
         }
     }
@@ -58,7 +116,7 @@ impl PeripheralSync {
         if !is_resumed
             && !self.config_dirty
             && self.last_config == Some(PeripheralConfig::all_off())
-            && self.last_intensity == Some(0)
+            && self.sink.as_ref().is_some_and(|sink| sink.is_quiet())
         {
             return;
         }
@@ -87,7 +145,7 @@ impl PeripheralSync {
                 config.target,
             );
             self.last_config = Some(config);
-            self.last_rumble_intensity_reset();
+            self.reset_rumble_push();
         }
 
         let intensity = if is_resumed && settings.rumble_enabled {
@@ -95,15 +153,17 @@ impl PeripheralSync {
         } else {
             0
         };
-        if self.last_intensity != Some(intensity) {
-            set_rumble(app, intensity);
-            self.last_intensity = Some(intensity);
-        }
+        let sink = self.sink.get_or_insert_with(|| AndroidRumbleSink::new(app));
+        sink.reseed(app);
+        let level = intensity as f32 / 255.0;
+        sink.set_rumble(0, level, level);
         self.config_dirty = false;
     }
 
-    fn last_rumble_intensity_reset(&mut self) {
-        self.last_intensity = None;
+    fn reset_rumble_push(&mut self) {
+        if let Some(sink) = self.sink.as_mut() {
+            sink.reset();
+        }
     }
 
     pub(super) fn stop(&mut self, app: &AndroidApp, session: &mut SessionHandle) {
@@ -111,11 +171,13 @@ impl PeripheralSync {
             accelerometer.clear();
         }
         configure_rumble_motion(app, false, false, 0, RumbleTarget::Auto);
-        set_rumble(app, 0);
+        let sink = self.sink.get_or_insert_with(|| AndroidRumbleSink::new(app));
+        sink.reseed(app);
+        sink.reset();
+        sink.set_rumble(0, 0.0, 0.0);
         // Settle the cache to all-off so the next suspended sync hits the
         // dirty gate instead of re-pushing zeros every pass.
         self.last_config = Some(PeripheralConfig::all_off());
-        self.last_intensity = Some(0);
         self.config_dirty = false;
     }
 }
