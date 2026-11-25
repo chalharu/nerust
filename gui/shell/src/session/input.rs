@@ -1,7 +1,9 @@
+use nerust_core_traits::peripheral::AccelerationSample;
 use nerust_core_traits::touch::{TouchControl, TouchControlRole, TouchOverlayModel};
 use nerust_input_traits::{
     AbstractKey, AttachmentId, ControlId, DigitalControlId, DigitalInputEvent, GamepadAxis,
-    InputValue, Key, SourceButtonId, SourceId, StandardButton, apply_deadzone,
+    GamepadEvent, GamepadMotion, InputValue, Key, SourceButtonId, SourceId, StandardButton,
+    apply_deadzone,
 };
 use nerust_settings_core::model::input::{
     DEADZONE_MAX_PERCENT, DEFAULT_DEADZONE_PERCENT, ShortcutAction,
@@ -58,6 +60,54 @@ fn build_touch_overlay(
 }
 
 impl SessionHandle {
+    /// Shared entry for every physical gamepad event, push or polled.
+    /// Backends construct [`GamepadEvent`]; the session resolves identity
+    /// and fans out to the existing button/axis/connect paths, so no
+    /// adapter owns a second dispatch table.
+    pub fn apply_gamepad_event(
+        &mut self,
+        device_id: i32,
+        event: GamepadEvent,
+    ) -> Option<KeyboardShortcut> {
+        match event {
+            GamepadEvent::Connected { descriptor } => {
+                self.note_pad_connected(device_id, &descriptor);
+                None
+            }
+            GamepadEvent::Disconnected => {
+                self.note_pad_disconnected(device_id);
+                None
+            }
+            GamepadEvent::Button { button, pressed } => {
+                let source = self.pad_source_for(device_id);
+                self.handle_source_button(source, SourceButtonId::Pad(button), pressed)
+            }
+            GamepadEvent::Axis { axis, value } => {
+                let source = self.pad_source_for(device_id);
+                self.handle_source_axis(source, axis, value)
+            }
+        }
+    }
+
+    /// Shared entry for controller motion samples. Publishes the planar
+    /// acceleration to the bound cartridge channel (latest sample wins;
+    /// the channel drops non-finite values). Gyro rides along for future
+    /// hidraw producers; the current cartridge path reads accel only.
+    pub fn apply_motion(&self, motion: GamepadMotion) {
+        if let Some(handle) = self.host_peripherals().accelerometer.as_ref() {
+            handle.publish(AccelerationSample::new(motion.accel[0], motion.accel[1]));
+        }
+    }
+
+    /// Console-requested rumble intensity for the frontend sink (0 when no
+    /// cartridge drives rumble). One read so all backends share the rule.
+    pub fn rumble_intensity(&self) -> u8 {
+        self.host_peripherals()
+            .rumble
+            .as_ref()
+            .map_or(0, |handle| handle.snapshot().state.intensity)
+    }
+
     /// Shared press/release tail: the OR/neutral machine resolves updates,
     /// then they apply to the live input in one place.
     fn commit_press(
@@ -1408,6 +1458,160 @@ mod tests {
             "releases unassert"
         );
         session.clear_input();
+    }
+
+    #[test]
+    fn gamepad_event_entry_drives_fields() {
+        // The shared entry must behave exactly like the direct calls:
+        // connect, press, and release through one FakeSource batch.
+        use nerust_input_traits::{
+            ControlId, DeviceEvent, FakeSource, GamepadEvent, PollSource,
+        };
+        use nerust_settings_core::model::input::{
+            PadBinding, PersistedControlId, SystemInputSettings,
+        };
+        let mut session = crate::session::test_util::test_session();
+        session.input.current_assignments = InputAssignments::new(vec![(
+            AttachmentId::new("test.topology.slot"),
+            Some(Rc::new(MockTopologyProfile)),
+        )]);
+        let mut next = session.settings_snapshot().clone();
+        let system = session.active_system_id_box().expect("test system active");
+        let mut system_settings = SystemInputSettings::default();
+        system_settings
+            .pad_bindings
+            .resize_with(1, Default::default);
+        system_settings.pad_bindings[0] = vec![
+            PadBinding::new(
+                "test.topology.slot",
+                PersistedControlId::digital("test.topology.b"),
+                StandardButton::South,
+            ),
+            PadBinding::new(
+                "test.topology.slot",
+                PersistedControlId::digital("test.topology.a"),
+                StandardButton::East,
+            ),
+        ];
+        next.shared.input.systems.insert(system, system_settings);
+        session.apply_settings(next).unwrap();
+        let attachment = AttachmentId::new("test.topology.slot");
+        let mut parts = crate::test_helpers::build_test_core_parts();
+        let _ = parts.field_map.insert(
+            (
+                attachment,
+                ControlId::digital(DigitalControlId::new("test.topology.a")),
+            ),
+            1,
+        );
+        let _ = parts.field_map.insert(
+            (
+                attachment,
+                ControlId::digital(DigitalControlId::new("test.topology.b")),
+            ),
+            2,
+        );
+        let (emu_core, gui_input, field_map, host_peripherals) =
+            crate::emu_core::EmuCore::from_parts(parts);
+        session.emu.runtime = Some(crate::session::ActiveRuntime {
+            core: Box::new(emu_core),
+            input: gui_input,
+            field_map,
+            host_peripherals,
+        });
+        let mut source = FakeSource::new(vec![
+            DeviceEvent {
+                device: 11,
+                event: GamepadEvent::Connected {
+                    descriptor: "test-pad-11".to_string(),
+                },
+            },
+            DeviceEvent {
+                device: 11,
+                event: GamepadEvent::Button {
+                    button: StandardButton::South,
+                    pressed: true,
+                },
+            },
+        ]);
+        for DeviceEvent { device, event } in source.poll() {
+            session.apply_gamepad_event(device, event);
+        }
+        assert_eq!(
+            session.input.press_state.asserted_fields(),
+            vec![2],
+            "South drives control b through the entry"
+        );
+        session.apply_gamepad_event(
+            11,
+            GamepadEvent::Button {
+                button: StandardButton::South,
+                pressed: false,
+            },
+        );
+        session.apply_gamepad_event(
+            11,
+            GamepadEvent::Button {
+                button: StandardButton::East,
+                pressed: true,
+            },
+        );
+        assert_eq!(
+            session.input.press_state.asserted_fields(),
+            vec![1],
+            "East drives control a through the entry"
+        );
+        session.apply_gamepad_event(
+            11,
+            GamepadEvent::Button {
+                button: StandardButton::East,
+                pressed: false,
+            },
+        );
+        assert!(
+            session.input.press_state.asserted_fields().is_empty(),
+            "releases unassert"
+        );
+        session.clear_input();
+    }
+
+    #[test]
+    fn apply_motion_publishes_latest_sample() {
+        use nerust_core_traits::peripheral::{AccelerationSample, accelerometer_channel};
+        use nerust_input_traits::GamepadMotion;
+        let mut session = crate::session::test_util::test_session();
+        let (handle, port) = accelerometer_channel();
+        session
+            .emu
+            .runtime
+            .as_mut()
+            .expect("test runtime")
+            .host_peripherals
+            .accelerometer = Some(handle);
+        session.apply_motion(GamepadMotion {
+            gyro: [0.0; 3],
+            accel: [0.5, -0.25, 0.0],
+        });
+        assert_eq!(
+            port.latest(),
+            Some(AccelerationSample::new(0.5, -0.25)),
+            "planar accel reaches the cartridge channel"
+        );
+        session.apply_motion(GamepadMotion {
+            gyro: [0.0; 3],
+            accel: [f32::NAN, 0.0, 0.0],
+        });
+        assert_eq!(
+            port.latest(),
+            None,
+            "non-finite samples clear the channel instead of poisoning it"
+        );
+    }
+
+    #[test]
+    fn rumble_intensity_zero_without_cartridge() {
+        let session = crate::session::test_util::test_session();
+        assert_eq!(session.rumble_intensity(), 0);
     }
 
     #[test]
