@@ -21,10 +21,12 @@ pub(crate) const ACTION_MOTION: &str = "motion";
 pub(crate) const ACTION_DEVICE_ADDED: &str = "device_added";
 pub(crate) const ACTION_DEVICE_REMOVED: &str = "device_removed";
 pub(crate) const ACTION_TOUCH_GATE: &str = "touch_gate";
+pub(crate) const ACTION_CARTRIDGE_MOTION: &str = "cartridge_motion";
 
 /// Required fields per menu action, from the schema gates.
 /// Dispatch rejects events missing any listed field first.
 pub(crate) const MENU_REQUIRED_FIELDS: &[(&str, &[&str])] = &[
+    ("cartridge_motion", &["accel_x", "accel_y"]),
     ("controller", &["device_id", "key", "pressed"]),
     ("delete_slot", &["slot_id"]),
     ("device_added", &["descriptor", "device_id"]),

@@ -36,7 +36,8 @@
             "motion",
             "device_added",
             "device_removed",
-            "touch_gate"
+            "touch_gate",
+            "cartridge_motion"
           ]
         },
         "device_id": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 },
@@ -71,6 +72,8 @@
         "right_y": { "type": "number", "minimum": -1.0, "maximum": 1.0 },
         "trigger_l": { "type": "number", "minimum": -1.0, "maximum": 1.0 },
         "trigger_r": { "type": "number", "minimum": -1.0, "maximum": 1.0 },
+        "accel_x": { "type": "number", "minimum": -1.0, "maximum": 1.0 },
+        "accel_y": { "type": "number", "minimum": -1.0, "maximum": 1.0 },
         "slot_id": { "type": "integer", "minimum": 0, "maximum": 9223372036854775807 }
       },
       "additionalProperties": false,
@@ -109,6 +112,13 @@
             "required": ["action"]
           },
           "then": { "required": ["pressed"] }
+        },
+        {
+          "if": {
+            "properties": { "action": { "const": "cartridge_motion" } },
+            "required": ["action"]
+          },
+          "then": { "required": ["accel_x", "accel_y"] }
         },
         {
           "if": {

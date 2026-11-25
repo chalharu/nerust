@@ -665,9 +665,17 @@ class MainActivity :
         onMenuAction(action)
     }
 
-    /** Forward the cartridge acceleration sample to the native bridge. */
+    /** Forward the cartridge acceleration sample through the menu lane:
+     * same queue as keys and axes, so the UI thread never touches the
+     * session and sample ordering is preserved. Decoded by the
+     * `cartridge_motion` gate into one motion apply. */
     internal fun forwardCartridgeAcceleration(xG: Float, yG: Float) {
-        onCartridgeAcceleration(xG, yG)
+        sendMenuAction(
+            menuEvent(MenuAction.CARTRIDGE_MOTION) {
+                put("accel_x", xG)
+                put("accel_y", yG)
+            },
+        )
     }
 
     /** Back stack shared with the gamepad-input capture window (each
@@ -1112,11 +1120,6 @@ class MainActivity :
     private external fun onDirectoryPickerResult(uri: String?)
 
     private external fun onActivityDestroyed(userInitiatedExit: Boolean)
-
-    private external fun onCartridgeAcceleration(
-        xG: Float,
-        yG: Float,
-    )
 
     private external fun onSystemInsetsChanged(insets: IntArray)
 

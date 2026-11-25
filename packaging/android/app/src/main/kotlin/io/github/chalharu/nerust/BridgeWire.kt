@@ -24,6 +24,7 @@ internal object MenuAction {
     const val DEVICE_ADDED = "device_added"
     const val DEVICE_REMOVED = "device_removed"
     const val TOUCH_GATE = "touch_gate"
+    const val CARTRIDGE_MOTION = "cartridge_motion"
 }
 
 internal object ControllerKey {
@@ -54,4 +55,6 @@ internal object ControllerAxis {
     const val RIGHT_Y = "right_y"
     const val TRIGGER_L = "trigger_l"
     const val TRIGGER_R = "trigger_r"
+    const val ACCEL_X = "accel_x"
+    const val ACCEL_Y = "accel_y"
 }

@@ -13,8 +13,6 @@ pub(super) struct PeripheralSync {
     last_config: Option<PeripheralConfig>,
     last_intensity: Option<u8>,
     config_dirty: bool,
-    /// Last pushed accelerometer bind state; rebinds only on change.
-    last_accel_bound: Option<bool>,
 }
 
 /// One rumble/motion push: motion, rumble switch, strength, target.
@@ -45,7 +43,6 @@ impl PeripheralSync {
             last_config: None,
             last_intensity: None,
             config_dirty: true,
-            last_accel_bound: None,
         }
     }
 
@@ -92,23 +89,9 @@ impl PeripheralSync {
             self.last_config = Some(config);
             self.last_rumble_intensity_reset();
         }
-        // Rebind the sensor handle only when its source state changes:
-        // ROM reloads re-push through the dirty generation, motion flips
-        // through the bound flag.
-        if self.config_dirty || self.last_accel_bound != Some(motion_active) {
-            bridge::bind_accelerometer(
-                motion_active
-                    .then(|| handles.accelerometer.as_ref().cloned())
-                    .flatten(),
-            );
-            self.last_accel_bound = Some(motion_active);
-        }
 
         let intensity = if is_resumed && settings.rumble_enabled {
-            handles
-                .rumble
-                .as_ref()
-                .map_or(0, |handle| handle.snapshot().state.intensity)
+            session.rumble_intensity()
         } else {
             0
         };
@@ -127,14 +110,12 @@ impl PeripheralSync {
         if let Some(accelerometer) = session.host_peripherals().accelerometer.as_ref() {
             accelerometer.clear();
         }
-        bridge::bind_accelerometer(None);
         configure_rumble_motion(app, false, false, 0, RumbleTarget::Auto);
         set_rumble(app, 0);
         // Settle the cache to all-off so the next suspended sync hits the
         // dirty gate instead of re-pushing zeros every pass.
         self.last_config = Some(PeripheralConfig::all_off());
         self.last_intensity = Some(0);
-        self.last_accel_bound = Some(false);
         self.config_dirty = false;
     }
 }

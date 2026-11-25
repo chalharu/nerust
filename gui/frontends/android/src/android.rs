@@ -72,6 +72,7 @@ use crate::{
     bridge_events::{FrontendEvent, MenuAction},
     error_dialog_controller::{DismissTransition, ShowTransition},
 };
+use nerust_input_traits::GamepadMotion;
 
 pub(super) fn register_main_activity_natives(
     env: &mut jni::Env<'_>,
@@ -112,12 +113,6 @@ pub(super) fn register_main_activity_natives(
                 jni_str!("pushSystemLocale"),
                 jni_str!("(Ljava/lang/String;)V"),
                 settings_bridge::Java_io_github_chalharu_nerust_MainActivity_pushSystemLocale
-                    as *mut c_void,
-            ),
-            jni::NativeMethod::from_raw_parts(
-                jni_str!("onCartridgeAcceleration"),
-                jni_str!("(FF)V"),
-                bridge::Java_io_github_chalharu_nerust_MainActivity_onCartridgeAcceleration
                     as *mut c_void,
             ),
             jni::NativeMethod::from_raw_parts(
@@ -687,6 +682,14 @@ impl AndroidFrontend {
                 }
                 MenuAction::DeviceRemoved { device_id } => {
                     self.core.session.note_pad_disconnected(device_id);
+                }
+                MenuAction::CartridgeMotion { x, y } => {
+                    // Same lane as keys and axes: the UI thread never
+                    // touches the session, and ordering is preserved.
+                    self.core.session.apply_motion(GamepadMotion {
+                        gyro: [0.0; 3],
+                        accel: [x, y, 0.0],
+                    });
                 }
                 MenuAction::CreateSlot => {
                     let _ = self.exec(SessionCommand::CreateSlot);
