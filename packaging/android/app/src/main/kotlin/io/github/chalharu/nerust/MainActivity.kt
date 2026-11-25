@@ -963,6 +963,44 @@ class MainActivity :
         chromeManager.removeDrawerOverlay()
     }
 
+    /** Gamepad lane hooks: the emulator enumerates no pads, so tests drive
+     * the connect/remove menu actions with a fake id and descriptor. The
+     * payload shape matches the production senders exactly, so decoder,
+     * session porting, and shortcut routing are all exercised. */
+    fun dispatchDeviceAddedForTest(deviceId: Int, descriptor: String) {
+        sendMenuAction(
+            menuEvent(MenuAction.DEVICE_ADDED) {
+                put("device_id", deviceId)
+                put("descriptor", descriptor)
+            },
+        )
+    }
+
+    fun dispatchDeviceRemovedForTest(deviceId: Int) {
+        sendMenuAction(
+            menuEvent(MenuAction.DEVICE_REMOVED) {
+                put("device_id", deviceId)
+            },
+        )
+    }
+
+    /** Routing-set seed for motion dispatch tests: onGenericMotionEvent
+     * only diverts ids the OS enumerated, which never happens on the
+     * emulator. Scoped to one fake id per test; remove afterwards. */
+    fun addTestControllerRouteForTest(deviceId: Int) {
+        connectedDeviceIds.add(deviceId)
+    }
+
+    fun removeTestControllerRouteForTest(deviceId: Int) {
+        connectedDeviceIds.remove(deviceId)
+    }
+
+    fun forwardCartridgeAccelerationForTest(xG: Float, yG: Float) {
+        forwardCartridgeAcceleration(xG, yG)
+    }
+
+    fun pausedForTest(): Boolean = isEmulationPaused()
+
     /** Show a DTO-driven Android settings screen. Presents the versioned sections from Rust.
      * Save and dismiss return request-scoped JSON; edits ride synchronous per-row commands. */
     fun showSettingsDialog(payload: String) {
