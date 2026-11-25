@@ -114,10 +114,8 @@ dependencies {
     implementation(composeBom)
     implementation("androidx.activity:activity-compose:$activityComposeVersion")
     // Material 3 Expressive (settings screen redesign): pin the 1.5.0 line
-    // where MaterialExpressiveTheme/MotionScheme.expressive() live. Lift to
-    // stable 1.5.x once the BOM manages it. Re-evaluate at material3 1.5.0
-    // stable: 2026-11-12 offline check showed only 1.4.0 + 1.5.0-rc01 cached,
-    // 1.5.0 stable not resolvable offline (lock still enforces rc01).
+    // where MaterialExpressiveTheme/MotionScheme.expressive() live. Keep the
+    // explicit pin until the BOM manages 1.5.x.
     implementation("androidx.compose.material3:material3:$material3Version")
     // Icons are Material Symbols bundled as vectors (settings + drawer):
     // the deprecated icons library and -extended (thousands of unused
