@@ -279,7 +279,7 @@ class StructureTests(unittest.TestCase):
                 with self.assertRaises(VERIFY.ContractError):
                     self.verify()
         self.source = copy.deepcopy(original)
-        self.source["callbacks"] = [text.replace("x_g: jni::sys::jfloat", "x_g: jni::sys::jlong")
+        self.source["callbacks"] = [text.replace("insets: JIntArray<'_>", "insets: JObject<'_>")
                                     for text in self.source["callbacks"]]
         self.assertNotEqual(self.source["callbacks"], original["callbacks"])
         with self.assertRaises(VERIFY.ContractError):

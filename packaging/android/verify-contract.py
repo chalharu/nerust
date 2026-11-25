@@ -266,9 +266,12 @@ def _decoder_names_ids(definitions, decoder):
             require(json.dumps(member) in decoder or f"ACTION_{member.upper()}" in decoder,
                     f"decoder must name every bridge {enum} id: {member}")
     menu_props = definitions["menu"]["properties"]
+    # Same rule as the generator: only x-motion-axis properties join the
+    # stick batch vocabulary. Other numbers (cartridge accel) are named
+    # by the decoder struct check below, not by the axis parity gate.
     axes = sorted(
         name for name, prop in menu_props.items()
-        if isinstance(prop, dict) and prop.get("type") == "number"
+        if isinstance(prop, dict) and prop.get("x-motion-axis")
     )
     require(axes, "schema must declare motion axes")
     for member in axes:

@@ -55,6 +55,4 @@ internal object ControllerAxis {
     const val RIGHT_Y = "right_y"
     const val TRIGGER_L = "trigger_l"
     const val TRIGGER_R = "trigger_r"
-    const val ACCEL_X = "accel_x"
-    const val ACCEL_Y = "accel_y"
 }
