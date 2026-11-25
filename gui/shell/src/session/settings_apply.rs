@@ -262,6 +262,10 @@ impl SessionHandle {
             .iter()
             .any(|op| matches!(op, AppliedOperation::Runtime(_)));
         let bindings_changed = self.settings.snapshot.shared.input != committed.shared.input;
+        // Port membership gates the keyboard map, so a membership-only
+        // edit must rebind too (no runtime rebuild needed for it).
+        let ports_changed =
+            self.settings.snapshot.app_state.port_devices != committed.app_state.port_devices;
         self.settings.snapshot = committed;
         if derived.assignments_changed
             && let Some(a) = derived.next_assignments
@@ -280,7 +284,7 @@ impl SessionHandle {
             };
             self.bind_settings_persistence(restore);
         }
-        if rebuilt || derived.assignments_changed || bindings_changed {
+        if rebuilt || derived.assignments_changed || bindings_changed || ports_changed {
             self.rebind_input();
         }
         if rebuilt {
@@ -303,8 +307,6 @@ impl SessionHandle {
             input.clear();
         }
         self.rebuild_key_field_map();
-        self.input
-            .rebuild_pad_params(&self.settings.snapshot.shared.input.gamepad);
         // One borrow of the live port for the whole re-assert loop.
         // Keyboards re-assert by key here; pads re-resolve just below
         // through the new assignments (ports may have moved), so both

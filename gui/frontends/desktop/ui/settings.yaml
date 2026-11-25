@@ -17,6 +17,25 @@ templates:
           enabled: {bind: {path: enabled, source: External}}
           items: {bind: {path: choices, source: External}}
           selected: {bind: {path: selected, source: External, mode: TwoWay}}
+  check_row:
+    root:
+      type: StackLayout
+      id: check_row
+      children:
+        - type: CheckBox
+          id: check
+          text: {bind: {path: label, source: External}}
+          checked: {bind: {path: checked, source: External, mode: TwoWay}}
+  reset_row:
+    root:
+      type: StackLayout
+      id: reset_row
+      children:
+        - type: Button
+          id: reset_button
+          style: {horizontal_alignment: End}
+          text: {bind: {path: label, source: External}}
+          command: reset
   binding_row:
     root:
       type: StackLayout
@@ -44,44 +63,216 @@ templates:
           command: clear
   binding_page:
     root:
-      type: Repeat
-      id: bindings
-      padding: 6
-      gap: 8
-      items: {bind: {path: rows, source: External}}
-      item_template: binding_row
-  input_page:
+      type: StackLayout
+      id: binding_section
+      gap: 12
+      children:
+        - type: Label
+          id: binding_section_label
+          style: {text: {role: Subtitle, scale: 1.0}}
+          text: {bind: {path: label, source: External}}
+        - type: Repeat
+          id: bindings
+          padding: 6
+          gap: 12
+          items: {bind: {path: rows, source: External}}
+          item_template: binding_row
+  general_tab:
     root:
       type: StackLayout
-      id: input_fields
+      id: general_fields
       padding: 6
-      gap: 6
+      gap: 12
+      children:
+        - type: StackLayout
+          id: app_group
+          visible: {bind: {path: show_app}}
+          gap: 12
+          children:
+            - type: ContentControl
+              id: language
+              content: {bind: {path: language}}
+              content_template: choice_row
+            - type: ContentControl
+              id: storage
+              content: {bind: {path: storage}}
+              content_template: choice_row
+            - type: TextBox
+              id: storage_directory
+              visible: {bind: {path: directory_visible, source: External}}
+              text: {bind: {path: directory, source: External, mode: TwoWay}}
+            - type: Repeat
+              id: app_resets
+              items: {bind: {path: resets}}
+              gap: 6
+              item_template: reset_row
+        - type: StackLayout
+          id: video_group
+          visible: {bind: {path: show_video}}
+          gap: 12
+          children:
+            - type: ContentControl
+              id: fullscreen
+              content: {bind: {path: fullscreen}}
+              content_template: check_row
+            - type: ContentControl
+              id: vsync
+              content: {bind: {path: vsync}}
+              content_template: check_row
+            - type: ContentControl
+              id: scaling
+              content: {bind: {path: scaling}}
+              content_template: choice_row
+            - type: Repeat
+              id: video_resets
+              items: {bind: {path: resets}}
+              gap: 6
+              item_template: reset_row
+        - type: StackLayout
+          id: audio_group
+          visible: {bind: {path: show_audio}}
+          gap: 12
+          children:
+            - type: ContentControl
+              id: muted
+              content: {bind: {path: muted}}
+              content_template: check_row
+            - type: StackLayout
+              id: volume_row
+              orientation: Horizontal
+              gap: 12
+              children:
+                - type: Label
+                  id: volume_label
+                  style: {placement: {width: 120}}
+                  text: {bind: {path: volume_label, source: External}}
+                - type: Slider
+                  id: volume
+                  value: {bind: {path: volume, source: External, mode: TwoWay}}
+                  min: 0
+                  max: 100
+                  step: 1
+            - type: ContentControl
+              id: sample_rate
+              content: {bind: {path: sample_rate}}
+              content_template: choice_row
+            - type: StackLayout
+              id: latency_row
+              orientation: Horizontal
+              gap: 12
+              children:
+                - type: Label
+                  id: latency_label
+                  style: {placement: {width: 120}}
+                  text: {bind: {path: latency_label, source: External}}
+                - type: Slider
+                  id: latency
+                  value: {bind: {path: latency, source: External, mode: TwoWay}}
+                  min: 10
+                  max: 200
+                  step: 1
+            - type: Repeat
+              id: audio_resets
+              items: {bind: {path: resets}}
+              gap: 6
+              item_template: reset_row
+        - type: StackLayout
+          id: rumble_group
+          visible: {bind: {path: show_rumble}}
+          gap: 12
+          children:
+            - type: ContentControl
+              id: rumble_motion
+              content: {bind: {path: rumble_motion}}
+              content_template: check_row
+            - type: ContentControl
+              id: rumble_enabled
+              content: {bind: {path: rumble_enabled}}
+              content_template: check_row
+            - type: StackLayout
+              id: strength_row
+              orientation: Horizontal
+              gap: 12
+              children:
+                - type: Label
+                  id: strength_label
+                  style: {placement: {width: 120}}
+                  text: {bind: {path: rumble_strength_label, source: External}}
+                - type: Slider
+                  id: strength
+                  value: {bind: {path: rumble_strength, source: External, mode: TwoWay}}
+                  min: 0
+                  max: 100
+                  step: 1
+            - type: ContentControl
+              id: rumble_target
+              content: {bind: {path: rumble_target}}
+              content_template: choice_row
+            - type: Repeat
+              id: rumble_resets
+              items: {bind: {path: resets}}
+              gap: 6
+              item_template: reset_row
+  controller_page:
+    root:
+      type: StackLayout
+      id: controller_fields
+      padding: 6
+      gap: 12
       children:
         - type: Repeat
           id: controller_slots
-          visible: {bind: {path: has_slots}}
           items: {bind: {path: slots}}
-          gap: 6
+          gap: 12
           item_template: choice_row
-        - type: TabItems
-          id: players
-          visible: {bind: {path: show_section_tabs}}
-          selected: {bind: {path: section, mode: TwoWay}}
-          items: {bind: {path: sections, source: External}}
-          title: {bind: {path: label, source: External}}
+        - type: Label
+          id: keyboard_note
+          text: {bind: {path: keyboard_note, source: External}}
+        - type: Repeat
+          id: controller_keys
+          items: {bind: {path: key_sections, source: External}}
+          gap: 12
           item_template: binding_page
-        - type: ContentControl
-          id: single_section
-          content: {bind: {path: single_section}}
-          content_template: binding_page
   system_page:
     root:
-      type: ItemsControl
+      type: StackLayout
       id: system_fields
       padding: 6
-      items: {bind: {path: fields}}
-      viewport: {bind: {path: viewport}}
-      item_template: choice_row
+      gap: 12
+      children:
+        - type: Repeat
+          id: fields
+          items: {bind: {path: fields}}
+          gap: 12
+          item_template: choice_row
+  gamepad_block:
+    root:
+      type: StackLayout
+      id: pad_block
+      padding: 6
+      gap: 12
+      children:
+        - type: Label
+          id: pad_name
+          style: {text: {role: Subtitle, scale: 1.0}}
+          text: {bind: {path: label, source: External}}
+        - type: ContentControl
+          id: assignment
+          content: {bind: {path: assignment}}
+          content_template: choice_row
+        - type: ContentControl
+          id: deadzone
+          content: {bind: {path: deadzone}}
+          content_template: choice_row
+        - type: ContentControl
+          id: dpad
+          content: {bind: {path: dpad}}
+          content_template: choice_row
+        - type: Repeat
+          id: pad_sections
+          items: {bind: {path: sections, source: External}}
+          gap: 12
+          item_template: binding_page
 root:
   type: Window
   id: settings_window
@@ -101,152 +292,54 @@ root:
           - id: general
             title: {bind: {path: labels.tab_general, source: External}}
             content:
-              type: StackLayout
-              id: general_fields
-              gap: 12
-              children:
-                - type: StackLayout
-                  id: language_row
-                  orientation: Horizontal
-                  gap: 12
-                  children:
-                    - type: Label
-                      id: language_label
-                      style: {horizontal_alignment: Start, vertical_alignment: Center}
-                      text: {bind: {path: labels.language, source: External}}
-                    - type: Combo
-                      id: language
-                      style: {horizontal_alignment: Start, vertical_alignment: Center}
-                      items: {bind: {path: language.items, source: External}}
-                      selected: {bind: {path: language.selected, source: External, mode: TwoWay}}
-                - type: StackLayout
-                  id: storage_row
-                  orientation: Horizontal
-                  gap: 12
-                  children:
-                    - type: Label
-                      id: storage_label
-                      style: {horizontal_alignment: Start, vertical_alignment: Center}
-                      text: {bind: {path: labels.storage_policy, source: External}}
-                    - type: Combo
-                      id: storage
-                      style: {horizontal_alignment: Start, vertical_alignment: Center}
-                      items: {bind: {path: storage.items, source: External}}
-                      selected: {bind: {path: storage.selected, source: External, mode: TwoWay}}
-                - type: TextBox
-                  id: storage_directory
-                  visible: {bind: {path: directory_visible, source: External}}
-                  text: {bind: {path: directory, source: External, mode: TwoWay}}
-          - id: input
-            title: {bind: {path: labels.tab_input, source: External}}
+              type: TabItems
+              id: general_tabs
+              selected: {bind: {path: general_selection, source: External, mode: TwoWay}}
+              items: {bind: {path: general_tabs, source: External}}
+              title: {bind: {path: label}}
+              item_template: general_tab
+          - id: controllers
+            title: {bind: {path: labels.tab_controllers, source: External}}
+            content:
+              type: Scroll
+              id: controllers_scroll
+              content:
+                type: TabItems
+                id: controllers_tabs
+                selected: {bind: {path: controllers_selection, source: External, mode: TwoWay}}
+                items: {bind: {path: controllers_pages, source: External}}
+                title: {bind: {path: label}}
+                item_template: controller_page
+          - id: gamepads
+            title: {bind: {path: labels.tab_gamepads, source: External}}
             content:
               type: StackLayout
-              id: input_column
-              gap: 6
-              children:
-                - type: StackLayout
-                  id: input_filter_row
-                  orientation: Horizontal
-                  gap: 12
-                  children:
-                    - type: Label
-                      id: input_filter_label
-                      style: {horizontal_alignment: Start, vertical_alignment: Center}
-                      text: {bind: {path: labels.search_filter, source: External}}
-                    - type: TextBox
-                      id: input_filter
-                      text: {bind: {path: input_filter, source: External, mode: TwoWay}}
-                - type: Scroll
-                  id: input_scroll
-                  content:
-                    type: TabItems
-                    id: input_tabs
-                    selected: {bind: {path: input_selection, source: External, mode: TwoWay}}
-                    items: {bind: {path: input_pages, source: External}}
-                    title: {bind: {path: label}}
-                    item_template: input_page
-          - id: video
-            title: {bind: {path: labels.tab_video, source: External}}
-            content:
-              type: StackLayout
-              id: video_fields
+              id: gamepads_column
               gap: 12
               children:
-                - type: CheckBox
-                  id: fullscreen
-                  text: {bind: {path: labels.fullscreen, source: External}}
-                  checked: {bind: {path: fullscreen, source: External, mode: TwoWay}}
-                - type: CheckBox
-                  id: vsync
-                  text: {bind: {path: labels.vsync, source: External}}
-                  checked: {bind: {path: vsync, source: External, mode: TwoWay}}
-                - type: StackLayout
-                  id: scaling_row
-                  orientation: Horizontal
+                - type: Repeat
+                  id: gamepad_blocks
+                  items: {bind: {path: gamepads_blocks, source: External}}
                   gap: 12
-                  children:
-                    - type: Label
-                      id: scaling_label
-                      style: {placement: {width: 120}}
-                      text: {bind: {path: labels.scaling, source: External}}
-                    - type: Combo
-                      id: scaling
-                      items: {bind: {path: scaling.items, source: External}}
-                      selected: {bind: {path: scaling.selected, source: External, mode: TwoWay}}
-          - id: audio
-            title: {bind: {path: labels.tab_audio, source: External}}
+                  item_template: gamepad_block
+          - id: shortcuts
+            title: {bind: {path: labels.tab_shortcuts, source: External}}
             content:
               type: StackLayout
-              id: audio_fields
+              id: shortcuts_fields
+              padding: 6
               gap: 12
               children:
-                - type: CheckBox
-                  id: mute
-                  text: {bind: {path: labels.mute, source: External}}
-                  checked: {bind: {path: muted, source: External, mode: TwoWay}}
-                - type: StackLayout
-                  id: volume_row
-                  orientation: Horizontal
+                - type: Repeat
+                  id: shortcuts_section
+                  items: {bind: {path: shortcuts_page, source: External}}
                   gap: 12
-                  children:
-                    - type: Label
-                      id: volume_label
-                      style: {placement: {width: 120}}
-                      text: {bind: {path: volume_label, source: External}}
-                    - type: Slider
-                      id: volume
-                      value: {bind: {path: volume, source: External, mode: TwoWay}}
-                      min: 0
-                      max: 100
-                      step: 1
-                - type: StackLayout
-                  id: rate_row
-                  orientation: Horizontal
+                  item_template: binding_page
+                - type: Repeat
+                  id: shortcuts_resets
+                  items: {bind: {path: shortcuts_resets, source: External}}
                   gap: 12
-                  children:
-                    - type: Label
-                      id: rate_label
-                      style: {placement: {width: 120}}
-                      text: {bind: {path: labels.sample_rate, source: External}}
-                    - type: Combo
-                      id: sample_rate
-                      items: {bind: {path: sample_rate.items, source: External}}
-                      selected: {bind: {path: sample_rate.selected, source: External, mode: TwoWay}}
-                - type: StackLayout
-                  id: latency_row
-                  orientation: Horizontal
-                  gap: 12
-                  children:
-                    - type: Label
-                      id: latency_label
-                      style: {placement: {width: 120}}
-                      text: {bind: {path: latency_label, source: External}}
-                    - type: Slider
-                      id: latency
-                      value: {bind: {path: latency, source: External, mode: TwoWay}}
-                      min: 10
-                      max: 200
-                      step: 1
+                  item_template: reset_row
           - id: notifications
             title: {bind: {path: labels.tab_notifications, source: External}}
             content:
@@ -368,16 +461,16 @@ root:
                         id: status_area_follows
                         visible: {bind: {path: status_area_follows, source: External}}
                         text: {bind: {path: labels.follow_note, source: External}}
-          - id: system
-            title: {bind: {path: labels.tab_system, source: External}}
+          - id: advanced
+            title: {bind: {path: labels.tab_advanced, source: External}}
             content:
               type: Scroll
-              id: system_scroll
+              id: advanced_scroll
               content:
                 type: TabItems
-                id: system_tabs
-                selected: {bind: {path: system_selection, source: External, mode: TwoWay}}
-                items: {bind: {path: system_pages, source: External}}
+                id: machine_tabs
+                selected: {bind: {path: systems_selection, source: External, mode: TwoWay}}
+                items: {bind: {path: systems_pages, source: External}}
                 title: {bind: {path: label}}
                 item_template: system_page
       - {type: Label, id: status, text: {bind: {path: status, source: External}}}

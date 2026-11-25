@@ -220,10 +220,10 @@ fn open_payload_covers_core_items() {
         "controls.overlay_scale",
         "controls.overlay_vertical_offset",
         "controls.overlay_haptics",
-        "controls.cartridge_motion",
-        "controls.cartridge_rumble",
-        "controls.cartridge_rumble_strength",
-        "controls.cartridge_rumble_target",
+        "controls.rumble_motion",
+        "controls.rumble",
+        "controls.rumble_strength",
+        "controls.rumble_target",
         "notifications.info_enabled",
         "notifications.warning_enabled",
         "notifications.error_enabled",
@@ -853,7 +853,7 @@ fn start_capture_rejected_without_input_device() {
 #[test]
 fn player_screens_wire_devices_types_and_summaries() {
     let (_snapshot, payload) = test_payload();
-    // Default draft: built-in keyboard drives player 1.
+    // Default draft: built-in keyboard drives every player port.
     for (player_id, devices_id, types_id) in [
         ("player.1", "devices.p1", "types.1"),
         ("player.2", "devices.p2", "types.2"),
@@ -986,7 +986,9 @@ fn devices_screen_lists_keyboards_with_membership_switches() {
 fn device_toggle_flips_port_membership() {
     let (mut snapshot, _) = test_payload();
     let mut keyboards = test_keyboards();
-    // USB keyboard joins player 2: switch on.
+    // USB keyboard joins player 2: switch on. The built-in keyboard
+    // drives every port by default, so the summary keeps it first and
+    // counts the joiner.
     let on = apply(
         &mut snapshot,
         &mut None,
@@ -1009,9 +1011,10 @@ fn device_toggle_flips_port_membership() {
             .is_some_and(|set| set.iter().any(|member| member == "kbd:usb-1")),
         "membership persists in the draft"
     );
-    assert!(
-        row(&on, "player.2.devices").text.contains("USB Keyboard"),
-        "devices summary follows membership"
+    assert_eq!(
+        row(&on, "player.2.devices").text,
+        "Built-in Keyboard +1",
+        "devices summary keeps the default first and counts the joiner"
     );
     // And leaves again: switch off prunes the member id.
     let off = apply(
@@ -2283,8 +2286,8 @@ fn bare_rows_are_reviewed_allowlist() {
         "controllers.player.1",
         "controllers.player.2",
         "general.language",
-        "controls.cartridge_rumble_strength",
-        "controls.cartridge_rumble_target",
+        "controls.rumble_strength",
+        "controls.rumble_target",
         "controls.overlay_haptics",
         "controls.overlay_opacity",
         "controls.overlay_scale",
@@ -2720,8 +2723,9 @@ fn gamepad_radio_assigns_one_pad_per_player() {
     let cleared = set_with_pads(&mut snapshot, &pads, "devices.p2.gamepad", 0, 0);
     assert_eq!(snapshot.shared.input.gamepad.pad_ports[0].slot, None);
     assert_eq!(row(&cleared, "devices.p2.gamepad").selected, 0);
-    // Player summaries follow the radio, not stale slots.
-    assert_eq!(row(&cleared, "player.2.devices").text, "Not assigned");
+    // Player summaries follow the radio, not stale slots; the built-in
+    // keyboard stays a p2 member by default, so the pad parks alone.
+    assert_eq!(row(&cleared, "player.2.devices").text, "Built-in Keyboard");
 }
 
 #[test]

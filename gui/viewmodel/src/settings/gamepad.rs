@@ -1,5 +1,3 @@
-use nerust_settings_core::i18n::UiText;
-use nerust_settings_core::labels::pad_label;
 use nerust_settings_core::model::input::{DEADZONE_MAX_PERCENT, DEADZONE_STEPS};
 
 use super::{
@@ -40,20 +38,31 @@ impl GamepadViewModel {
         pad: usize,
         percent: u8,
     ) -> Result<(), super::editor::ViewModelError> {
-        self.update_pad(pad, |port_state| {
-            port_state.deadzone_percent = percent.min(DEADZONE_MAX_PERCENT);
+        self.update_pad(pad, |ports, pad| {
+            ports[pad].deadzone_percent = percent.min(DEADZONE_MAX_PERCENT);
         })
     }
 
-    /// Port for one connection-order pad (`None` parks it). Pads past the
-    /// table never reach here (their rows do not exist), so the guard is
-    /// defense against a tampered caller, not a normal path.
+    /// Port for one connection-order pad (`None` parks it). Assigning a
+    /// port clears the same port on every other pad (exclusive assign:
+    /// one player, one pad), mirroring the Android radio semantics.
+    /// Pads past the table never reach here (their rows do not exist),
+    /// so the guard is defense against a tampered caller, not a normal path.
     pub fn set_pad_port(
         &self,
         pad: usize,
         port: Option<usize>,
     ) -> Result<(), super::editor::ViewModelError> {
-        self.update_pad(pad, |port_state| port_state.slot = port)
+        self.update_pad(pad, |ports, pad| {
+            if let Some(port) = port {
+                for (index, other) in ports.iter_mut().enumerate() {
+                    if index != pad && other.slot == Some(port) {
+                        other.slot = None;
+                    }
+                }
+            }
+            ports[pad].slot = port;
+        })
     }
 
     /// Physical dpad enable for one pad: `false` parks the hat (sticks
@@ -64,18 +73,20 @@ impl GamepadViewModel {
         pad: usize,
         enabled: bool,
     ) -> Result<(), super::editor::ViewModelError> {
-        self.update_pad(pad, |port_state| {
-            port_state.dpad_enabled = enabled;
+        self.update_pad(pad, |ports, pad| {
+            ports[pad].dpad_enabled = enabled;
         })
     }
 
     /// One write to a pad's port state; open tables grow on demand so
     /// a newly connected pad is configurable the moment its screen
     /// exists. Both setters share the growth so neither duplicates it.
+    /// The closure sees the whole table plus its own index, so port
+    /// assignment can clear same-port rivals.
     fn update_pad(
         &self,
         pad: usize,
-        update: impl FnOnce(&mut nerust_settings_core::model::input::PadPort),
+        update: impl FnOnce(&mut Vec<nerust_settings_core::model::input::PadPort>, usize),
     ) -> Result<(), super::editor::ViewModelError> {
         self.editor.transact(|state| {
             let ports = &mut state.draft_mut().shared.input.gamepad.pad_ports;
@@ -85,26 +96,15 @@ impl GamepadViewModel {
                     nerust_settings_core::model::input::PadPort::default,
                 );
             }
-            update(&mut ports[pad]);
+            update(ports, pad);
             Ok(())
         })
     }
 }
 
 fn project_view(state: &super::EditorState) -> GamepadTabView {
-    let i18n = super::state::display_i18n(state);
     let gamepad = &state.draft.shared.input.gamepad;
-    // Port options are identical for every pad: build once, clone per row.
-    let port_choices: Vec<ChoiceView<Option<usize>>> = [
-        (None, i18n.text(UiText::NotAssigned)),
-        (Some(0), i18n.text(UiText::PlayerOne)),
-        (Some(1), i18n.text(UiText::PlayerTwo)),
-    ]
-    .into_iter()
-    .map(|(port, label)| ChoiceView { value: port, label })
-    .collect();
     GamepadTabView {
-        label: i18n.text(UiText::Gamepads),
         deadzone_choices: DEADZONE_STEPS
             .iter()
             .map(|step| ChoiceView {
@@ -117,10 +117,9 @@ fn project_view(state: &super::EditorState) -> GamepadTabView {
                 let port = &gamepad.pad_ports[index];
                 PadPortView {
                     index,
-                    label: pad_label(i18n, index),
                     port: port.slot,
-                    choices: port_choices.clone(),
                     deadzone: port.deadzone_percent,
+                    dpad_enabled: port.dpad_enabled,
                 }
             })
             .collect(),
@@ -162,5 +161,23 @@ mod tests {
         assert_eq!(vm.gamepads.view.get().pads[9].port, Some(0));
         vm.gamepads.set_deadzone(9, 10).unwrap();
         assert_eq!(vm.gamepads.view.get().pads[9].deadzone, 10);
+    }
+
+    #[test]
+    fn set_pad_port_clears_same_port_rivals() {
+        let vm = test_vm();
+        // Default fixture parks pads 0 and 1 on players 1 and 2.
+        assert_eq!(vm.gamepads.view.get().pads[0].port, Some(0));
+        assert_eq!(vm.gamepads.view.get().pads[1].port, Some(1));
+        // Taking player 1 with pad 1 parks pad 0: one player, one pad.
+        vm.gamepads.set_pad_port(1, Some(0)).unwrap();
+        let view = vm.gamepads.view.get();
+        assert_eq!(view.pads[1].port, Some(0));
+        assert_eq!(view.pads[0].port, None);
+        // Parking never clears rivals.
+        vm.gamepads.set_pad_port(1, None).unwrap();
+        let view = vm.gamepads.view.get();
+        assert_eq!(view.pads[1].port, None);
+        assert_eq!(view.pads[0].port, None);
     }
 }

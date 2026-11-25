@@ -3,7 +3,9 @@ use nerust_input_traits::{AttachmentId, StandardButton};
 use nerust_settings_core::editor::CaptureTarget;
 use nerust_settings_core::model::{
     language::AppLanguage,
-    local::{NotificationAreaMode, NotificationColor, NotificationPosition, ScalingMode},
+    local::{
+        NotificationAreaMode, NotificationColor, NotificationPosition, RumbleTarget, ScalingMode,
+    },
     shared::StoragePolicy,
 };
 use nerust_system_traits::factory::descriptor::{SystemSettingsChoiceId, SystemSettingsFieldId};
@@ -191,23 +193,38 @@ pub struct InputConflictView {
 // ── Gamepads ─────────────────────────────────────────────────────────
 
 /// Per-pad gamepads screen: each connection-order pad carries its own
-/// deadzone plus its player port. Labels and steps stay tab-level
-/// (identical for every pad); values ride the pad rows.
+/// deadzone, D-pad switch, and player port. Steps stay tab-level
+/// (identical for every pad); values ride the pad rows. Row labels and
+/// port options are built by the frontend (the only reader), so the
+/// view carries no per-pad strings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GamepadTabView {
-    pub label: String,
     pub deadzone_choices: Vec<ChoiceView<u8>>,
     pub pads: Vec<PadPortView>,
 }
 
-/// One connection-order pad: player port and its own stick deadzone.
+/// One connection-order pad: player port, its own stick deadzone, and
+/// the physical D-pad switch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PadPortView {
     pub index: usize,
-    pub label: String,
     pub port: Option<usize>,
-    pub choices: Vec<ChoiceView<Option<usize>>>,
     pub deadzone: u8,
+    pub dpad_enabled: bool,
+}
+
+// ── Rumble & Motion ────────────────────────────────────────────────
+
+/// Rumble & Motion tab: motion sensor enable, rumble switch, strength,
+/// and output target. Values persist ahead of the gamepad backend and
+/// apply once it connects.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RumbleMotionView {
+    pub motion_enabled: bool,
+    pub rumble_enabled: bool,
+    pub rumble_strength_percent: u8,
+    pub rumble_target: RumbleTarget,
+    pub rumble_target_choices: Vec<ChoiceView<RumbleTarget>>,
 }
 
 // ── Capture ──────────────────────────────────────────────────────────
