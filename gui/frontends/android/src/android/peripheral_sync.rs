@@ -10,11 +10,10 @@ use super::bridge;
 
 /// Android vibrator output as a shared-contract sink: one logical
 /// output, Kotlin routes to the active controller's vibrator internally.
-/// Intensity is console-global (not per-pad); the device id only
-/// de-duplicates concurrent pads.
+/// Intensity is console-global (not per-pad); concurrent pads share it.
 pub(super) struct AndroidRumbleSink {
     app: AndroidApp,
-    last: Option<(i32, u8)>,
+    last: Option<u8>,
 }
 
 impl AndroidRumbleSink {
@@ -41,17 +40,17 @@ impl AndroidRumbleSink {
     }
 
     fn is_quiet(&self) -> bool {
-        matches!(self.last, Some((_, 0)))
+        matches!(self.last, Some(0))
     }
 }
 
 impl RumbleSink for AndroidRumbleSink {
-    fn set_rumble(&mut self, device: i32, low: f32, high: f32) {
+    fn set_rumble(&mut self, _device: i32, low: f32, high: f32) {
         let intensity = Self::intensity(low, high);
-        if self.last == Some((device, intensity)) {
+        if self.last == Some(intensity) {
             return;
         }
-        self.last = Some((device, intensity));
+        self.last = Some(intensity);
         set_rumble(&self.app, intensity);
     }
 

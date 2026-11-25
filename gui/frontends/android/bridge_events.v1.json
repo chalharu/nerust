@@ -72,8 +72,8 @@
         "right_y": { "type": "number", "minimum": -1.0, "maximum": 1.0 , "x-motion-axis": true },
         "trigger_l": { "type": "number", "minimum": -1.0, "maximum": 1.0 , "x-motion-axis": true },
         "trigger_r": { "type": "number", "minimum": -1.0, "maximum": 1.0 , "x-motion-axis": true },
-        "accel_x": { "type": "number", "minimum": -1.0, "maximum": 1.0 },
-        "accel_y": { "type": "number", "minimum": -1.0, "maximum": 1.0 },
+        "accel_x": { "type": "number", "minimum": -8.0, "maximum": 8.0 },
+        "accel_y": { "type": "number", "minimum": -8.0, "maximum": 8.0 },
         "slot_id": { "type": "integer", "minimum": 0, "maximum": 9223372036854775807 }
       },
       "additionalProperties": false,

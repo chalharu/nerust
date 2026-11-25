@@ -139,6 +139,10 @@ class SensorController(
             sensorManager.unregisterListener(this)
             sensorRegistered = false
             activity.forwardCartridgeAcceleration(0f, 0f)
+            // Drop the quantize cache: the next registration's first
+            // sample must cross even if the device never moved.
+            lastAccelX = Float.NaN
+            lastAccelY = Float.NaN
         }
     }
 

@@ -72,7 +72,7 @@ use crate::{
     bridge_events::{FrontendEvent, MenuAction},
     error_dialog_controller::{DismissTransition, ShowTransition},
 };
-use nerust_input_traits::GamepadMotion;
+use nerust_input_traits::{GamepadEvent, GamepadMotion};
 
 pub(super) fn register_main_activity_natives(
     env: &mut jni::Env<'_>,
@@ -667,7 +667,11 @@ impl AndroidFrontend {
                     device_id,
                     descriptor,
                 } => {
-                    self.core.session.note_pad_connected(device_id, &descriptor);
+                    // Same single entry as buttons and axes: identity
+                    // resolves in the session, not at this edge.
+                    self.core
+                        .session
+                        .apply_gamepad_event(device_id, GamepadEvent::Connected { descriptor });
                     // Mirror the session order into the vault and re-sort
                     // the display list: a scan that raced ahead of this
                     // event stays sorted by the last mirror until now.
@@ -681,7 +685,9 @@ impl AndroidFrontend {
                     });
                 }
                 MenuAction::DeviceRemoved { device_id } => {
-                    self.core.session.note_pad_disconnected(device_id);
+                    self.core
+                        .session
+                        .apply_gamepad_event(device_id, GamepadEvent::Disconnected);
                 }
                 MenuAction::CartridgeMotion { x, y } => {
                     // Same lane as keys and axes: the UI thread never
