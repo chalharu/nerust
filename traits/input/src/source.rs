@@ -11,7 +11,8 @@ use super::key::Key;
 )]
 #[cfg_attr(test, derive(strum::EnumIter))]
 #[serde(rename_all = "snake_case")]
-pub enum StandardButton {    South,
+pub enum StandardButton {
+    South,
     East,
     West,
     North,
@@ -153,10 +154,18 @@ pub struct PadGuid(pub [u8; 16]);
 /// serde lacks `alloc`, and `Connected` carries an owned descriptor).
 #[derive(Debug, Clone, PartialEq)]
 pub enum GamepadEvent {
-    Connected { descriptor: String },
+    Connected {
+        descriptor: String,
+    },
     Disconnected,
-    Button { button: StandardButton, pressed: bool },
-    Axis { axis: GamepadAxis, value: f32 },
+    Button {
+        button: StandardButton,
+        pressed: bool,
+    },
+    Axis {
+        axis: GamepadAxis,
+        value: f32,
+    },
 }
 
 /// Controller motion sample: gyroscope and accelerometer, SI units

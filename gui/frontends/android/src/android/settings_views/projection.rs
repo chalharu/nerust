@@ -19,8 +19,8 @@ use super::pads::build_pad_sections;
 use super::vm::{VmDeps, build_vm};
 use super::wire::{
     CaptureSlot, CaptureWire, GamepadInfo, KeyboardInfo, PLAYER_PORTS, RowWire, SectionWire,
-    ViewPayload, binding_key, button_row, capture_row, choice_row, encode_target, group_row,
-    header_row, info_row, number_row, player_id, player_label, toggle_row,
+    ViewPayload, button_row, capture_row, choice_row, encode_target, group_row, header_row,
+    info_row, number_row, player_id, player_label, target_row_key, toggle_row,
 };
 use crate::bridge_contract::SETTINGS_SCHEMA_VERSION;
 use nerust_settings_core::i18n::I18n;
@@ -754,7 +754,7 @@ fn shortcuts_section(
         rows.push(header_row(i18n.text(UiText::Keyboard)));
         for (label, target, capture) in &actions {
             rows.push(capture_row(
-                &format!("controls.{}.kbd", binding_key(capture)),
+                &format!("controls.{}.kbd", target_row_key(capture)),
                 label.clone(),
                 String::new(),
                 shortcut_binding_text(snapshot, capture, i18n, false),
@@ -775,7 +775,7 @@ fn shortcuts_section(
         )));
         for (label, target, capture) in &actions {
             rows.push(capture_row(
-                &format!("controls.{}.pad", binding_key(capture)),
+                &format!("controls.{}.pad", target_row_key(capture)),
                 label.clone(),
                 String::new(),
                 shortcut_binding_text(snapshot, capture, i18n, true),

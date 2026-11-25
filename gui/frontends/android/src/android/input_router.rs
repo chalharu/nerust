@@ -58,10 +58,7 @@ impl InputRouter {
         // in the session, so no adapter owns a private pressed set. The
         // shortcut return drives session actions (pause, slots); dropping
         // it would strand pad-mapped shortcuts while gameplay still fires.
-        session.apply_gamepad_event(
-            device_id,
-            GamepadEvent::Button { button, pressed },
-        )
+        session.apply_gamepad_event(device_id, GamepadEvent::Button { button, pressed })
     }
 
     pub(super) fn apply_physical_controller_axis(

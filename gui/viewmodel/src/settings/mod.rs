@@ -32,6 +32,7 @@ pub use validation::{ValidationIssue, ValidationIssueKind, ValidationScope, Vali
 
 pub use audio::AudioSettingsViewModel;
 pub use capture::CaptureViewModel;
+pub use capture::prompt_for;
 pub use gamepad::GamepadViewModel;
 pub use general::GeneralSettingsViewModel;
 pub use input::InputSettingsViewModel;

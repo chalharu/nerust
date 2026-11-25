@@ -203,8 +203,33 @@ fn apply_set_command(
         return Ok(false);
     }
     if is_gamepad_radio_key(&command.key) {
-        apply_gamepad_radio_command(snapshot, sections, command)?;
-        return Ok(false);
+        // Single writer with the desktop VM: the radio speaks ranks, the
+        // view model owns the growth and the exclusive assign.
+        let row = find_row(sections, &command.key)?;
+        if row.kind != RowKind::Choice {
+            return Err(format!("{}: not a gamepad radio row", command.key));
+        }
+        let port = command
+            .key
+            .split('.')
+            .nth(1)
+            .ok_or_else(|| format!("malformed device key: {}", command.key))?;
+        let Some(port_index) = PLAYER_PORTS.iter().position(|known| *known == port) else {
+            return Err(format!("unknown port: {port}"));
+        };
+        let pad: Option<usize> = choice(row, command.index)?;
+        match pad {
+            Some(pad) => vm
+                .gamepads
+                .set_pad_port(pad, Some(port_index))
+                .map_err(|error| error.to_string())?,
+            None => vm
+                .gamepads
+                .clear_port(port_index)
+                .map_err(|error| error.to_string())?,
+        };
+        sync_snapshot_from_vm(snapshot, vm, i18n);
+        return Ok(true);
     }
     if is_device_key(&command.key) {
         apply_device_command(snapshot, sections, command)?;
@@ -272,9 +297,9 @@ fn apply_capture_command(
             vm.capture
                 .start_capture(target.clone())
                 .map_err(|error| error.to_string())?;
-            // Prompt policy lives at this edge (it holds the vault device
-            // truth); the view model only tracks the pending target.
-            let prompt = truth.i18n.text(super::capture::capture_prompt(
+            // Single prompt home (viewmodel): the edge supplies vault
+            // device truth; the view model only tracks the pending target.
+            let prompt = truth.i18n.text(nerust_gui_viewmodel::settings::prompt_for(
                 &target,
                 !truth.keyboards.is_empty(),
                 !truth.gamepads.is_empty(),
@@ -363,66 +388,12 @@ fn apply_device_truth_command(
 
 /// Gamepad radio rows: `devices.<port>.gamepad` choices. Values are the
 /// connection-order pad indices (`None` parks every pad on this port).
-/// One player drives one pad: picking a pad parks its mates on this port
-/// and pulls it off any other port, so validation never trips.
+/// One player drives one pad; the view model owns the exclusive assign.
 fn is_gamepad_radio_key(key: &str) -> bool {
     key.strip_suffix(".gamepad").is_some_and(|head| {
         head.strip_prefix("devices.")
             .is_some_and(|port| PLAYER_PORTS.contains(&port))
     })
-}
-
-fn apply_gamepad_radio_command(
-    snapshot: &mut SettingsSnapshot,
-    sections: &[SectionWire],
-    command: &WireCommand,
-) -> Result<(), String> {
-    let row = find_row(sections, &command.key)?;
-    if row.kind != RowKind::Choice {
-        return Err(format!("{}: not a gamepad radio row", command.key));
-    }
-    let port = command
-        .key
-        .split('.')
-        .nth(1)
-        .ok_or_else(|| format!("malformed device key: {}", command.key))?;
-    let Some(port_index) = PLAYER_PORTS.iter().position(|known| *known == port) else {
-        return Err(format!("unknown port: {port}"));
-    };
-    let pad: Option<usize> = choice(row, command.index)?;
-    if let Some(pad) = pad {
-        // Open tables: choosing a pad beyond the settings materializes
-        // its row, so a newly connected pad is assignable immediately.
-        if snapshot.shared.input.gamepad.pad_ports.len() <= pad {
-            snapshot
-                .shared
-                .input
-                .gamepad
-                .pad_ports
-                .resize_with(pad + 1, Default::default);
-        }
-        for (index, entry) in snapshot
-            .shared
-            .input
-            .gamepad
-            .pad_ports
-            .iter_mut()
-            .enumerate()
-        {
-            if index == pad {
-                entry.slot = Some(port_index);
-            } else if entry.slot == Some(port_index) {
-                entry.slot = None;
-            }
-        }
-    } else {
-        for entry in snapshot.shared.input.gamepad.pad_ports.iter_mut() {
-            if entry.slot == Some(port_index) {
-                entry.slot = None;
-            }
-        }
-    }
-    Ok(())
 }
 
 /// Device-membership rows: `devices.<port>.<member>` toggles. The member

@@ -118,6 +118,28 @@ impl CaptureViewModel {
     }
 }
 
+/// Prompt copy for one capture target: pad rows name what a press can
+/// claim, game rows with no keyboard connected name the dpad twin,
+/// everything else keeps the shared prompt. Pure over presence flags so
+/// both the viewmodel and the Android edge share one home; the viewmodel
+/// projection keeps the shared prompt until presence plumbing arrives.
+pub fn prompt_for(
+    target: &CaptureTarget,
+    keyboards_present: bool,
+    gamepads_present: bool,
+) -> UiText {
+    if matches!(target, CaptureTarget::PadBinding { .. }) {
+        UiText::CapturePromptPad
+    } else if matches!(target, CaptureTarget::Binding { .. })
+        && !keyboards_present
+        && gamepads_present
+    {
+        UiText::CapturePromptDpadOnly
+    } else {
+        UiText::CapturePrompt
+    }
+}
+
 fn project_view(state: &super::EditorState) -> CaptureStateView {
     let i18n = super::state::display_i18n(state);
     CaptureStateView {
@@ -165,6 +187,34 @@ mod tests {
         vm.capture.cancel_capture();
         let view = vm.capture.view.get();
         assert!(view.target.is_none());
+    }
+
+    #[test]
+    fn prompt_for_names_pad_and_dpad_cases() {
+        use crate::settings::test_support::TestSystemId;
+
+        use super::{UiText, prompt_for};
+        let pad = CaptureTarget::PadBinding {
+            system: Box::new(TestSystemId),
+            pad: 0,
+            attachment: "a".to_string(),
+            control: "b".to_string(),
+        };
+        assert_eq!(prompt_for(&pad, false, false), UiText::CapturePromptPad);
+        assert_eq!(prompt_for(&pad, true, true), UiText::CapturePromptPad);
+        let game = CaptureTarget::Binding {
+            system: Box::new(TestSystemId),
+            attachment: "a".to_string(),
+            control: "b".to_string(),
+        };
+        assert_eq!(
+            prompt_for(&game, false, true),
+            UiText::CapturePromptDpadOnly
+        );
+        assert_eq!(prompt_for(&game, true, true), UiText::CapturePrompt);
+        assert_eq!(prompt_for(&game, false, false), UiText::CapturePrompt);
+        let shortcut = CaptureTarget::Shortcut(ShortcutAction::TogglePause);
+        assert_eq!(prompt_for(&shortcut, false, true), UiText::CapturePrompt);
     }
 
     #[test]

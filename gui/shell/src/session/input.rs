@@ -1464,9 +1464,7 @@ mod tests {
     fn gamepad_event_entry_drives_fields() {
         // The shared entry must behave exactly like the direct calls:
         // connect, press, and release through one FakeSource batch.
-        use nerust_input_traits::{
-            ControlId, DeviceEvent, FakeSource, GamepadEvent, PollSource,
-        };
+        use nerust_input_traits::{ControlId, DeviceEvent, FakeSource, GamepadEvent, PollSource};
         use nerust_settings_core::model::input::{
             PadBinding, PersistedControlId, SystemInputSettings,
         };
