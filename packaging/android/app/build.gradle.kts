@@ -94,7 +94,7 @@ kotlin {
 }
 
 dependencies {
-    val composeBomVersion = "2026.09.00"
+    val composeBomVersion = "2026.11.01"
     val material3Version = "1.5.0"
     val composeBom = platform("androidx.compose:compose-bom:$composeBomVersion")
     val documentFileVersion = "1.1.0"
