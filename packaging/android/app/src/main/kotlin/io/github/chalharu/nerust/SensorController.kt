@@ -146,10 +146,10 @@ class SensorController(
         }
     }
 
-    /** Last forwarded acceleration, quantized to 0.01g: motion events
-     * fire at sensor rate and the bridge is JNI per sample, so
-     * sub-quantum repeats never cross. Rust treats small deltas as-is;
-     * this gate only saves crossings. */
+    /** Last forwarded acceleration, quantized to 0.01g and clamped to the
+     * schema accel range: motion events fire at sensor rate and the bridge
+     * is JNI per sample, so sub-quantum repeats never cross. Rust treats
+     * small deltas as-is; this gate only saves crossings. */
     private var lastAccelX = Float.NaN
     private var lastAccelY = Float.NaN
 
@@ -162,8 +162,8 @@ class SensorController(
                 event.values[1],
                 activity.windowManager.defaultDisplay.rotation,
             )
-        val qx = (sample[0] * 100).toInt() / 100f
-        val qy = (sample[1] * 100).toInt() / 100f
+        val qx = ((sample[0] * 100).toInt() / 100f).coerceIn(-8f, 8f)
+        val qy = ((sample[1] * 100).toInt() / 100f).coerceIn(-8f, 8f)
         if (qx == lastAccelX && qy == lastAccelY) return
         lastAccelX = qx
         lastAccelY = qy

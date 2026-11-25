@@ -58,9 +58,9 @@ pub(crate) enum FrontendEvent {
 }
 
 use crate::bridge_contract::{
-    ACTION_CARTRIDGE_MOTION, ACTION_CONTROLLER, ACTION_CREATE_SLOT, ACTION_DELETE_SLOT,
-    ACTION_DEVICE_ADDED, ACTION_DEVICE_REMOVED, ACTION_EXIT, ACTION_LOAD_STATE, ACTION_MOTION,
-    ACTION_OPEN_ROM, ACTION_OPEN_SETTINGS, ACTION_ORIENTATION_CHANGED, ACTION_RESET,
+    ACCEL_VALUE_BOUNDS, ACTION_CARTRIDGE_MOTION, ACTION_CONTROLLER, ACTION_CREATE_SLOT,
+    ACTION_DELETE_SLOT, ACTION_DEVICE_ADDED, ACTION_DEVICE_REMOVED, ACTION_EXIT, ACTION_LOAD_STATE,
+    ACTION_MOTION, ACTION_OPEN_ROM, ACTION_OPEN_SETTINGS, ACTION_ORIENTATION_CHANGED, ACTION_RESET,
     ACTION_SAVE_STATE, ACTION_SELECT_SLOT, ACTION_TOGGLE_PAUSE, ACTION_TOUCH_GATE, ACTION_UNLOAD,
     ANALOG_VALUE_BOUNDS, BRIDGE_EVENT_VERSION, INTEGER_FIELD_BOUNDS, MENU_REQUIRED_FIELDS,
 };
@@ -329,6 +329,18 @@ fn check_menu_shape(action: &str, event: &MenuEvent) -> Option<()> {
             return None;
         }
     }
+    // Same global rule for the cartridge accelerometer: shakes exceed
+    // the stick range, so it carries its own schema range (the producer
+    // clamps to it); out-of-range samples fail loud like bad axes.
+    for (name, value) in [("accel_x", event.accel_x), ("accel_y", event.accel_y)]
+        .into_iter()
+        .filter_map(|(name, value)| value.map(|value| (name, value)))
+    {
+        if !(ACCEL_VALUE_BOUNDS.0..=ACCEL_VALUE_BOUNDS.1).contains(&value) {
+            log::warn!("ignoring {action} bridge event with out-of-range {name}={value}");
+            return None;
+        }
+    }
     Some(())
 }
 
@@ -464,9 +476,8 @@ fn decode_json_menu_action(event: &MenuEvent) -> Option<FrontendEvent> {
         return Some(FrontendEvent::MenuBatch(batch));
     }
     if action == ACTION_CARTRIDGE_MOTION {
-        // Presence pre-checked by the schema table; finite check keeps
-        // the channel free of NaN/inf (the Kotlin gate quantizes, never
-        // clamps, so shakes may exceed the stick range).
+        // Presence and range pre-checked by the schema table and the
+        // shape gate; finite check keeps the channel free of NaN/inf.
         let (Some(x), Some(y)) = (event.accel_x, event.accel_y) else {
             return None;
         };

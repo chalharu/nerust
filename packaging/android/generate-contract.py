@@ -205,6 +205,11 @@ def _rust_tables(schema, menu):
         if field_type(prop) == "integer" and "minimum" in prop
     )
     value_prop = menu["left_x"]
+    require(
+        (menu["accel_x"]["minimum"], menu["accel_x"]["maximum"])
+        == (menu["accel_y"]["minimum"], menu["accel_y"]["maximum"]),
+        "cartridge accel axes must share one range",
+    )
     lines = [
         "",
         "/// Required fields per menu action, from the schema gates.",
@@ -230,6 +235,10 @@ def _rust_tables(schema, menu):
         "",
         "/// Inclusive analog axis range, from the schema.",
         f'pub(crate) const ANALOG_VALUE_BOUNDS: (f32, f32) = ({float(value_prop["minimum"])}, {float(value_prop["maximum"])});',
+        "",
+        "/// Inclusive cartridge-accelerometer range, from the schema.",
+        "/// Separate from the stick range: shakes exceed stick bounds.",
+        f'pub(crate) const ACCEL_VALUE_BOUNDS: (f32, f32) = ({float(menu["accel_x"]["minimum"])}, {float(menu["accel_x"]["maximum"])});',
     ])
     return lines
 

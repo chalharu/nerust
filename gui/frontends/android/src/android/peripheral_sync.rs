@@ -115,7 +115,7 @@ impl PeripheralSync {
         if !is_resumed
             && !self.config_dirty
             && self.last_config == Some(PeripheralConfig::all_off())
-            && self.sink.as_ref().is_some_and(|sink| sink.is_quiet())
+            && self.sink.as_ref().is_some_and(AndroidRumbleSink::is_quiet)
         {
             return;
         }

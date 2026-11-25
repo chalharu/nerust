@@ -45,3 +45,7 @@ pub(crate) const INTEGER_FIELD_BOUNDS: &[(&str, i64, i64)] = &[
 
 /// Inclusive analog axis range, from the schema.
 pub(crate) const ANALOG_VALUE_BOUNDS: (f32, f32) = (-1.0, 1.0);
+
+/// Inclusive cartridge-accelerometer range, from the schema.
+/// Separate from the stick range: shakes exceed stick bounds.
+pub(crate) const ACCEL_VALUE_BOUNDS: (f32, f32) = (-8.0, 8.0);
