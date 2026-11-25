@@ -23,7 +23,14 @@ val keystoreKeyPassword = envOrNull("ANDROID_KEY_PASSWORD")
 
 android {
     namespace = "io.github.chalharu.nerust"
-    compileSdk = 37
+    // Compose 1.13.0 (BOM 2026.11.01) requires compileSdk 37.1 (minor API
+    // level): plain `compileSdk = 37` counts as 37.0 and fails AAR metadata
+    // checks. targetSdk/minSdk are independent and stay as-is.
+    compileSdk {
+        version = release(37) {
+            minorApiLevel = 1
+        }
+    }
 
     defaultConfig {
         applicationId = "io.github.chalharu.nerust"
@@ -94,7 +101,7 @@ kotlin {
 }
 
 dependencies {
-    val composeBomVersion = "2026.09.00"
+    val composeBomVersion = "2026.11.01"
     val material3Version = "1.5.0"
     val composeBom = platform("androidx.compose:compose-bom:$composeBomVersion")
     val documentFileVersion = "1.1.0"
