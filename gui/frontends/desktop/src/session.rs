@@ -25,11 +25,11 @@ pub struct SessionAdapter {
     /// Frame-polled gilrs source (evdev / WGI / IOHID behind one
     /// vocabulary). `None` is absent-or-unavailable; polls stay empty.
     gamepads: Option<crate::gamepad::GilrsPoller>,
-    /// Rumble sink and motion producer for the peripheral tick. Both are
-    /// null until device-specific drivers land (evdev-FF, hidraw IMU);
-    /// the sync below stays live so drivers plug in without loop changes.
-    rumble_sink: crate::gamepad::NullRumbleSink,
-    motion_source: crate::gamepad::NullMotionSource,
+    /// Rumble sink and motion producer for the peripheral tick. macOS
+    /// motion is live (GameController profile); rumble is honest absence
+    /// everywhere until per-device HID output drivers land.
+    rumble_sink: Box<dyn nerust_input_traits::RumbleSink>,
+    motion_source: Box<dyn nerust_input_traits::MotionSource>,
     /// Last intensity forwarded to the sink; edge-send only.
     rumble_sent: u8,
 }
@@ -191,8 +191,8 @@ impl SessionAdapter {
             audio,
             osd: nerust_gui_shell::session::osd::OsdManager::new(),
             gamepads: None,
-            rumble_sink: crate::gamepad::NullRumbleSink,
-            motion_source: crate::gamepad::NullMotionSource,
+            rumble_sink: crate::gamepad::rumble_sink(),
+            motion_source: crate::gamepad::motion_source(),
             rumble_sent: 0,
         })
     }
@@ -222,13 +222,13 @@ impl SessionAdapter {
                 self.session.apply_gamepad_event(event.device, event.event)
             });
         }
-        crate::gamepad::drain_motion(&mut self.motion_source, |motion| {
+        crate::gamepad::drain_motion(&mut *self.motion_source, |motion| {
             self.session.apply_motion(motion);
         });
         self.rumble_sent = crate::gamepad::sync_rumble(
             self.session.rumble_intensity(),
             self.rumble_sent,
-            &mut self.rumble_sink,
+            &mut *self.rumble_sink,
             0,
         );
         if !(self.loaded() && !self.metrics().paused) {

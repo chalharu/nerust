@@ -36,6 +36,9 @@ use nerust_input_traits::{
     RumbleSink, StandardButton,
 };
 
+#[cfg(target_os = "macos")]
+mod macos_motion;
+
 /// gilrs button to shared position button. `C`/`Z` are pre-standard extras
 /// with no shared counterpart and `Unknown` stays silent instead of
 /// guessing; both ride nowhere.
@@ -160,6 +163,22 @@ impl PollSource for GilrsPoller {
     }
 }
 
+/// Platform motion producer: GameController profile on macOS, honest
+/// absence everywhere else until the raw-HID reader lands.
+pub(crate) fn motion_source() -> Box<dyn MotionSource> {
+    #[cfg(target_os = "macos")]
+    return Box::new(macos_motion::GcMotionSource);
+    #[cfg(not(target_os = "macos"))]
+    return Box::new(NullMotionSource);
+}
+
+/// Platform rumble sink: honest absence on every OS for now. macOS has no
+/// official path at all; Linux/Windows drivers plug in here (P3) without
+/// loop changes.
+pub(crate) fn rumble_sink() -> Box<dyn RumbleSink> {
+    Box::new(NullRumbleSink)
+}
+
 /// Poll-to-session fan-in shared by every desktop reader: drain the batch,
 /// apply each event through the single session entry, and collect the
 /// shortcut edges for the keyboard-identical tail. Generic over the source
@@ -172,11 +191,13 @@ pub(crate) fn drain<C>(
     source.poll().into_iter().filter_map(apply).collect()
 }
 
-/// Null rumble sink: honest absence. gilrs reports no force feedback on
-/// macOS (`is_ff_supported` is a hard `false`; `set_ff_state` is an empty
-/// stub), so there is nothing to drive yet. The seam exists so a future
-/// evdev-FF driver plugs in here and the frame loop needs no change;
-/// `capability` tells settings UI the truth in the meantime.
+/// Null rumble sink: honest absence. There is no official macOS rumble
+/// path (haptic engine creation is iOS/tvOS-only; gilrs reports
+/// `is_ff_supported() == false` with an empty `set_ff_state` stub), and
+/// no evdev-FF driver is wired yet on Linux, so there is nothing to drive.
+/// The seam exists so a future per-device HID output driver plugs in here
+/// and the frame loop needs no change; `capability` tells settings UI the
+/// truth in the meantime.
 #[derive(Debug, Default)]
 pub(crate) struct NullRumbleSink;
 
@@ -190,9 +211,10 @@ impl RumbleSink for NullRumbleSink {
     }
 }
 
-/// Null motion source: gilrs exposes no IMU on any OS, so the desktop has
-/// no sample producer until the raw-HID Switch reader (P2'') lands. The
-/// poll-to-apply seam below stays live and is pinned by scripted fakes.
+/// Null motion source: used where no IMU producer exists. gilrs exposes
+/// no IMU on any OS; macOS overrides this constructor with the
+/// GameController motion profile, and the raw-HID Switch reader (P2'')
+/// will do the same on Linux.
 #[derive(Debug, Default)]
 pub(crate) struct NullMotionSource;
 
@@ -204,7 +226,7 @@ impl MotionSource for NullMotionSource {
 
 /// Latest-sample motion fan-in: at most one sample crosses per frame,
 /// matching the session's latest-wins channel (no queue, no backlog).
-pub(crate) fn drain_motion(source: &mut impl MotionSource, mut apply: impl FnMut(GamepadMotion)) {
+pub(crate) fn drain_motion(source: &mut dyn MotionSource, mut apply: impl FnMut(GamepadMotion)) {
     if let Some(motion) = source.poll_motion() {
         apply(motion);
     }
@@ -218,7 +240,7 @@ pub(crate) fn drain_motion(source: &mut impl MotionSource, mut apply: impl FnMut
 pub(crate) fn sync_rumble(
     intensity: u8,
     last_sent: u8,
-    sink: &mut impl RumbleSink,
+    sink: &mut dyn RumbleSink,
     device: i32,
 ) -> u8 {
     if intensity == last_sent {
