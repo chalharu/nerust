@@ -31,7 +31,10 @@
 //!   would double-feed the session.
 
 use gilrs::{Axis as GilrsAxis, Button as GilrsButton, EventType as GilrsEventType, Gilrs};
-use nerust_input_traits::{DeviceEvent, GamepadAxis, GamepadEvent, PollSource, StandardButton};
+use nerust_input_traits::{
+    Capability, DeviceEvent, GamepadAxis, GamepadEvent, GamepadMotion, MotionSource, PollSource,
+    RumbleSink, StandardButton,
+};
 
 /// gilrs button to shared position button. `C`/`Z` are pre-standard extras
 /// with no shared counterpart and `Unknown` stays silent instead of
@@ -169,10 +172,69 @@ pub(crate) fn drain<C>(
     source.poll().into_iter().filter_map(apply).collect()
 }
 
+/// Null rumble sink: honest absence. gilrs reports no force feedback on
+/// macOS (`is_ff_supported` is a hard `false`; `set_ff_state` is an empty
+/// stub), so there is nothing to drive yet. The seam exists so a future
+/// evdev-FF driver plugs in here and the frame loop needs no change;
+/// `capability` tells settings UI the truth in the meantime.
+#[derive(Debug, Default)]
+pub(crate) struct NullRumbleSink;
+
+impl RumbleSink for NullRumbleSink {
+    fn set_rumble(&mut self, _device: i32, _low: f32, _high: f32) {}
+    fn capability(&self, _device: i32) -> Capability {
+        Capability {
+            rumble: false,
+            motion: false,
+        }
+    }
+}
+
+/// Null motion source: gilrs exposes no IMU on any OS, so the desktop has
+/// no sample producer until the raw-HID Switch reader (P2'') lands. The
+/// poll-to-apply seam below stays live and is pinned by scripted fakes.
+#[derive(Debug, Default)]
+pub(crate) struct NullMotionSource;
+
+impl MotionSource for NullMotionSource {
+    fn poll_motion(&mut self) -> Option<GamepadMotion> {
+        None
+    }
+}
+
+/// Latest-sample motion fan-in: at most one sample crosses per frame,
+/// matching the session's latest-wins channel (no queue, no backlog).
+pub(crate) fn drain_motion(source: &mut impl MotionSource, mut apply: impl FnMut(GamepadMotion)) {
+    if let Some(motion) = source.poll_motion() {
+        apply(motion);
+    }
+}
+
+/// Console-global rumble fan-out with edge semantics: collapse the 0-255
+/// intensity to one level for the single-sink backend and only call down
+/// on change, mirroring button edges. Returns the new sent level.
+/// Per-pad addressing arrives with multi-pad FF drivers (P3), which keep
+/// this shape and vary `device`.
+pub(crate) fn sync_rumble(
+    intensity: u8,
+    last_sent: u8,
+    sink: &mut impl RumbleSink,
+    device: i32,
+) -> u8 {
+    if intensity == last_sent {
+        return last_sent;
+    }
+    let level = f32::from(intensity) / 255.0;
+    sink.set_rumble(device, level, level);
+    intensity
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nerust_input_traits::{FakeSource, GamepadEvent, StandardButton};
+    use nerust_input_traits::{
+        FakeMotionSource, FakeSink, FakeSource, GamepadEvent, StandardButton,
+    };
 
     #[test]
     fn drain_preserves_poll_order_and_collects_cuts() {
@@ -262,5 +324,48 @@ mod tests {
         for (axis, expected) in mapped {
             assert_eq!(map_axis(axis), expected, "{axis:?}");
         }
+    }
+
+    #[test]
+    fn sync_rumble_sends_console_global_level_on_edges_only() {
+        let mut sink = FakeSink::default();
+        // Parked at zero: no call, no motor traffic per frame.
+        assert_eq!(sync_rumble(0, 0, &mut sink, 0), 0);
+        assert!(sink.calls.is_empty());
+        // Rising edge collapses FULL to one level on the single sink.
+        assert_eq!(sync_rumble(255, 0, &mut sink, 0), 255);
+        assert_eq!(sink.calls, vec![(0, 1.0, 1.0)]);
+        // Held level repeats silently.
+        assert_eq!(sync_rumble(255, 255, &mut sink, 0), 255);
+        assert_eq!(sink.calls.len(), 1);
+        // Unload/fall lands back at zero exactly once.
+        assert_eq!(sync_rumble(0, 255, &mut sink, 0), 0);
+        assert_eq!(sink.calls.len(), 2);
+        assert_eq!(sink.calls[1], (0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn drain_motion_forwards_latest_sample_only() {
+        let sample = GamepadMotion {
+            gyro: [0.0; 3],
+            accel: [1.0, 0.0, 0.0],
+        };
+        let mut source = FakeMotionSource::new(vec![sample]);
+        let mut seen = Vec::new();
+        drain_motion(&mut source, |motion| seen.push(motion));
+        assert_eq!(seen, vec![sample]);
+        let mut seen = Vec::new();
+        drain_motion(&mut source, |motion| seen.push(motion));
+        assert!(seen.is_empty(), "no sample, no apply");
+    }
+
+    #[test]
+    fn null_backends_report_absence_honestly() {
+        let mut sink = NullRumbleSink;
+        sink.set_rumble(0, 1.0, 1.0);
+        assert!(!sink.capability(0).rumble);
+        assert!(!sink.capability(0).motion);
+        let mut motion = NullMotionSource;
+        assert_eq!(motion.poll_motion(), None);
     }
 }

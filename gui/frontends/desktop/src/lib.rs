@@ -608,9 +608,9 @@ impl MainHost {
         nerust_gui_application::ApplicationState,
         Result<Option<panechord::ImageFrame>, String>,
     ) {
-        // Pad edges land before the frame advance: same tick, same
-        // shortcut tail.
-        self.poll_gamepads();
+        // Peripheral edges land before the frame advance: same tick,
+        // same shortcut tail.
+        self.poll_peripherals();
         let mut app = self.application.borrow_mut();
         let profile = app.session().render_profile();
         let vsync = app.settings().local.video.presentation.vsync;
@@ -684,17 +684,18 @@ impl MainHost {
         }
     }
 
-    /// Desktop pad frame: drain gilrs through the session entry and route
-    /// shortcut edges through the keyboard-identical tail (pause toggle,
-    /// session actions, fullscreen, debugger). Notice text surfaces the
-    /// same way a key binding failure does.
-    fn poll_gamepads(&self) {
+    /// Desktop peripheral frame: drain pads, motion, and rumble through
+    /// the session entries and route shortcut edges through the
+    /// keyboard-identical tail (pause toggle, session actions,
+    /// fullscreen, debugger). Notice text surfaces the same way a key
+    /// binding failure does.
+    fn poll_peripherals(&self) {
         let cuts = {
             let mut app = self.application.borrow_mut();
             if app.state().closed {
                 return;
             }
-            app.session_mut().poll_gamepads()
+            app.session_mut().poll_peripherals()
         };
         for cut in cuts {
             let mut app = self.application.borrow_mut();

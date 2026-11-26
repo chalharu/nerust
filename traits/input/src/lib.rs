@@ -10,7 +10,10 @@ mod profile;
 mod source;
 mod topology;
 
-pub use backend::{Capability, DeviceEvent, FakeSink, FakeSource, PollSource, RumbleSink};
+pub use backend::{
+    Capability, DeviceEvent, FakeMotionSource, FakeSink, FakeSource, MotionSource, PollSource,
+    RumbleSink,
+};
 pub use devices::{
     BUILTIN_KEYBOARD_MEMBER, Controller, ControllerCollection, ControllerHub, FieldEntry,
     GAMEPAD_MEMBER_PREFIX, KEYBOARD_MEMBER_PREFIX, Port, SimplePort, StrobeTarget,

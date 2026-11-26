@@ -25,6 +25,13 @@ pub struct SessionAdapter {
     /// Frame-polled gilrs source (evdev / WGI / IOHID behind one
     /// vocabulary). `None` is absent-or-unavailable; polls stay empty.
     gamepads: Option<crate::gamepad::GilrsPoller>,
+    /// Rumble sink and motion producer for the peripheral tick. Both are
+    /// null until device-specific drivers land (evdev-FF, hidraw IMU);
+    /// the sync below stays live so drivers plug in without loop changes.
+    rumble_sink: crate::gamepad::NullRumbleSink,
+    motion_source: crate::gamepad::NullMotionSource,
+    /// Last intensity forwarded to the sink; edge-send only.
+    rumble_sent: u8,
 }
 
 impl SessionAdapter {
@@ -184,6 +191,9 @@ impl SessionAdapter {
             audio,
             osd: nerust_gui_shell::session::osd::OsdManager::new(),
             gamepads: None,
+            rumble_sink: crate::gamepad::NullRumbleSink,
+            motion_source: crate::gamepad::NullMotionSource,
+            rumble_sent: 0,
         })
     }
 
@@ -195,12 +205,14 @@ impl SessionAdapter {
         self.session.tick_metrics().frame_counter
     }
 
-    /// One frame of pad input: lazily attach gilrs, drain the batch through
-    /// the single session entry, and return shortcut edges for the
-    /// keyboard-identical tail in the frame loop. Mirrors `key_event`'s
-    /// enable rule (`loaded && !paused`, hold folds into paused): fields
-    /// clear when disabled, shortcuts still return.
-    pub(crate) fn poll_gamepads(&mut self) -> Vec<KeyboardShortcut> {
+    /// One frame of peripherals: pad batch, at most one motion sample,
+    /// and the console-global rumble level, all through the single session
+    /// entries. Returns shortcut edges for the keyboard-identical tail.
+    /// Mirrors `key_event`'s enable rule (`loaded && !paused`, hold folds
+    /// into paused): fields clear when disabled, shortcuts still return.
+    /// Rumble/motion ride the same tick so future drivers (evdev-FF,
+    /// hidraw IMU) only swap the source/sink fields, never this loop.
+    pub(crate) fn poll_peripherals(&mut self) -> Vec<KeyboardShortcut> {
         if self.gamepads.is_none() {
             self.gamepads = crate::gamepad::GilrsPoller::new();
         }
@@ -210,6 +222,15 @@ impl SessionAdapter {
                 self.session.apply_gamepad_event(event.device, event.event)
             });
         }
+        crate::gamepad::drain_motion(&mut self.motion_source, |motion| {
+            self.session.apply_motion(motion);
+        });
+        self.rumble_sent = crate::gamepad::sync_rumble(
+            self.session.rumble_intensity(),
+            self.rumble_sent,
+            &mut self.rumble_sink,
+            0,
+        );
         if !(self.loaded() && !self.metrics().paused) {
             self.session.clear_input();
         }
