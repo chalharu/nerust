@@ -15,40 +15,40 @@ import android.view.View
  * the `internal` members directly.
  */
 
-fun MainActivity.lastLoadedSystemForTest(): String? = lastLoadedSystem
+internal fun MainActivity.lastLoadedSystemForTest(): String? = lastLoadedSystem
 
-fun MainActivity.loadRomUriForTest(uri: String) {
+internal fun MainActivity.loadRomUriForTest(uri: String) {
     lastLoadedSystem = null
     Log.i("Nerust", "loadRomUriForTest: submitting URI $uri")
     onFilePickerResult(uri)
 }
 
-fun MainActivity.dispatchMenuActionForTest(action: String) {
+internal fun MainActivity.dispatchMenuActionForTest(action: String) {
     chromeManager.dispatchMenuAction(action)
 }
 
-fun MainActivity.openDrawerForTest() {
+internal fun MainActivity.openDrawerForTest() {
     chromeManager.showDrawerOverlay()
 }
 
-fun MainActivity.dismissComposeDialogForTest() {
+internal fun MainActivity.dismissComposeDialogForTest() {
     SettingsActivity.currentActivity()?.finishForReplacement()
         ?: dialogManager.dismissForTest()
 }
 
-fun MainActivity.resetChromeStateForTest() {
+internal fun MainActivity.resetChromeStateForTest() {
     SettingsActivity.currentActivity()?.finish()
     dialogManager.resetForTest()
     chromeManager.removeDrawerOverlay()
 }
 
-fun MainActivity.floatingDpadStateForTest(): FloatArray? = chromeManager.floatingDpadStateForTest()
+internal fun MainActivity.floatingDpadStateForTest(): FloatArray? = chromeManager.floatingDpadStateForTest()
 
-fun MainActivity.controlsZoneCountForTest(): Int = chromeManager.controlsZoneCountForTest()
+internal fun MainActivity.controlsZoneCountForTest(): Int = chromeManager.controlsZoneCountForTest()
 
-fun MainActivity.drawerScrollMaxForTest(): Int? = chromeManager.drawerScrollMaxForTest()
+internal fun MainActivity.drawerScrollMaxForTest(): Int? = chromeManager.drawerScrollMaxForTest()
 
-fun MainActivity.isChromeViewShowingForTest(tag: String): Boolean =
+internal fun MainActivity.isChromeViewShowingForTest(tag: String): Boolean =
     chromeManager.isViewShowingForTest(tag) ?: when (tag) {
         SETTINGS_SCREEN_TAG -> {
             val settings = SettingsActivity.currentActivity()
@@ -60,7 +60,7 @@ fun MainActivity.isChromeViewShowingForTest(tag: String): Boolean =
         }
     }
 
-fun MainActivity.findChromeViewForTest(tag: String): View? =
+internal fun MainActivity.findChromeViewForTest(tag: String): View? =
     chromeManager.findViewForTest(tag) ?: when (tag) {
         SETTINGS_SCREEN_TAG -> {
             SettingsActivity.currentActivity()?.window?.decorView
@@ -71,7 +71,7 @@ fun MainActivity.findChromeViewForTest(tag: String): View? =
         }
     }
 
-fun MainActivity.chromeDebugStateForTest(tag: String): String =
+internal fun MainActivity.chromeDebugStateForTest(tag: String): String =
     "tag=$tag, destroyed=$isDestroyed, finishing=$isFinishing, decor=${window.decorView.debugViewState()}, " +
         chromeManager.debugStateForTest() + dialogManager.debugState() +
         ", settings=${SettingsActivity.currentActivity()?.isFinishing}" +
@@ -81,7 +81,7 @@ fun MainActivity.chromeDebugStateForTest(tag: String): String =
  * the connect/remove menu actions with a fake id and descriptor. The
  * payload shape matches the production senders exactly, so decoder,
  * session porting, and shortcut routing are all exercised. */
-fun MainActivity.dispatchDeviceAddedForTest(deviceId: Int, descriptor: String) {
+internal fun MainActivity.dispatchDeviceAddedForTest(deviceId: Int, descriptor: String) {
     sendMenuAction(
         menuEvent(MenuAction.DEVICE_ADDED) {
             put("device_id", deviceId)
@@ -90,7 +90,7 @@ fun MainActivity.dispatchDeviceAddedForTest(deviceId: Int, descriptor: String) {
     )
 }
 
-fun MainActivity.dispatchDeviceRemovedForTest(deviceId: Int) {
+internal fun MainActivity.dispatchDeviceRemovedForTest(deviceId: Int) {
     sendMenuAction(
         menuEvent(MenuAction.DEVICE_REMOVED) {
             put("device_id", deviceId)
@@ -101,19 +101,19 @@ fun MainActivity.dispatchDeviceRemovedForTest(deviceId: Int) {
 /** Routing-set seed for motion dispatch tests: onGenericMotionEvent
  * only diverts ids the OS enumerated, which never happens on the
  * emulator. Scoped to one fake id per test; remove afterwards. */
-fun MainActivity.addTestControllerRouteForTest(deviceId: Int) {
+internal fun MainActivity.addTestControllerRouteForTest(deviceId: Int) {
     connectedDeviceIds.add(deviceId)
 }
 
-fun MainActivity.removeTestControllerRouteForTest(deviceId: Int) {
+internal fun MainActivity.removeTestControllerRouteForTest(deviceId: Int) {
     connectedDeviceIds.remove(deviceId)
 }
 
-fun MainActivity.Companion.createRomPickerIntentForTest(): Intent = createRomPickerIntent()
+internal fun MainActivity.Companion.createRomPickerIntentForTest(): Intent = createRomPickerIntent()
 
-fun MainActivity.Companion.createDirectoryPickerIntentForTest(): Intent = createDirectoryPickerIntent()
+internal fun MainActivity.Companion.createDirectoryPickerIntentForTest(): Intent = createDirectoryPickerIntent()
 
-fun MainActivity.Companion.currentActivity(): MainActivity? =
+internal fun MainActivity.Companion.currentActivity(): MainActivity? =
     activeActivity?.takeUnless { it.isDestroyed || it.isFinishing }
 
 private fun View?.isShownInWindowForTest(): Boolean =

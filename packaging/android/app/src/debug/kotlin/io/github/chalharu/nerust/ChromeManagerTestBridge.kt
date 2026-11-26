@@ -6,16 +6,16 @@ import android.view.View
  * none of this ships in release. All reads observe production state; no
  * method mutates behavior or branches on test. */
 
-fun ChromeManager.floatingDpadStateForTest(): FloatArray? =
+internal fun ChromeManager.floatingDpadStateForTest(): FloatArray? =
     (controlsOverlayView as? ControlsOverlayView)?.floatingDpadStateForTest()
 
 /** Pushed touch-zone count: 0 while unloaded or hidden. Unload assertions use this. */
-fun ChromeManager.controlsZoneCountForTest(): Int = controlsPushedZones.size
+internal fun ChromeManager.controlsZoneCountForTest(): Int = controlsPushedZones.size
 
 /** Drawer sheet scroll range in pixels, null while the drawer is closed. */
-fun ChromeManager.drawerScrollMaxForTest(): Int? = drawerScrollState?.maxValue
+internal fun ChromeManager.drawerScrollMaxForTest(): Int? = drawerScrollState?.maxValue
 
-fun ChromeManager.isViewShowingForTest(tag: String): Boolean? =
+internal fun ChromeManager.isViewShowingForTest(tag: String): Boolean? =
     when (tag) {
         CONTROLS_OVERLAY_TAG -> {
             controlsOverlayPopup?.isShowing == true &&
@@ -40,7 +40,7 @@ fun ChromeManager.isViewShowingForTest(tag: String): Boolean? =
         else -> null
     }
 
-fun ChromeManager.findViewForTest(tag: String): View? =
+internal fun ChromeManager.findViewForTest(tag: String): View? =
     when (tag) {
         CONTROLS_OVERLAY_TAG -> controlsOverlayView
         DRAWER_COMPOSE_TAG -> drawerComposeView
@@ -50,7 +50,7 @@ fun ChromeManager.findViewForTest(tag: String): View? =
         else -> null
     }
 
-fun ChromeManager.debugStateForTest(): String =
+internal fun ChromeManager.debugStateForTest(): String =
     "chromeAttachEnabled=$chromeAttachEnabled, attachAttempts=$chromeAttachAttempts, attachGiveUps=$chromeAttachGiveUps, " +
         "controlsPopup=${controlsOverlayPopup.debugPopupState()}, controlsView=${controlsOverlayView.debugViewState()}, " +
         "drawerPopup=${drawerChromePopup.debugPopupState()}, drawerHandle=${drawerEdgeHandleView.debugViewState()}, " +
