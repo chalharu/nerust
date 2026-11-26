@@ -98,10 +98,10 @@ class ChromeManager(private val activity: MainActivity) {
             pushTouchGate()
             scheduleChromeAttach()
         }
-    private var chromeAttachAttempts = 0
+    internal var chromeAttachAttempts = 0
     var chromeAttachEnabled = false
-    private var controlsOverlayPopup: PopupWindow? = null
-    private var controlsOverlayView: View? = null
+    internal var controlsOverlayPopup: PopupWindow? = null
+    internal var controlsOverlayView: View? = null
     private var controllerOverlayHiddenUntil = 0L
     private var controlsVisibility = "auto"
     // Last pushed touch-response gate; dedupes so transitions only cross
@@ -121,21 +121,21 @@ class ChromeManager(private val activity: MainActivity) {
     private var gamepadInputView: GamepadInputCaptureView? = null
     private var controlsOpacityPercent = 65
     private var controlsHaptics = true
-    private var controlsPushedZones: List<PushedOverlayZone> = emptyList()
+    internal var controlsPushedZones: List<PushedOverlayZone> = emptyList()
     private var controlsPushedJoystick: PushedJoystick? = null
-    private var drawerChromePopup: PopupWindow? = null
-    private var drawerEdgeHandleView: View? = null
-    private var drawerShowing = false
-    private var drawerFullScreenPopup: PopupWindow? = null
-    private var drawerOverlayView: View? = null
-    private var drawerComposeView: View? = null
-    private var drawerScrollState: ScrollState? = null
-    private var fpsOverlayView: TextView? = null
-    private var fpsOverlayPopup: PopupWindow? = null
-    private var fpsValue: Float = 0f
+    internal var drawerChromePopup: PopupWindow? = null
+    internal var drawerEdgeHandleView: View? = null
+    internal var drawerShowing = false
+    internal var drawerFullScreenPopup: PopupWindow? = null
+    internal var drawerOverlayView: View? = null
+    internal var drawerComposeView: View? = null
+    internal var drawerScrollState: ScrollState? = null
+    internal var fpsOverlayView: TextView? = null
+    internal var fpsOverlayPopup: PopupWindow? = null
+    internal var fpsValue: Float = 0f
     private var lastFpsDecisecond: Int = Int.MIN_VALUE
-    private var fpsVisible: Boolean = false
-    var lastDrawerStateForTest = "not requested"
+    internal var fpsVisible: Boolean = false
+    var lastDrawerState = "not requested"
         private set
     var chromeAttachGiveUps = 0
         private set
@@ -170,14 +170,6 @@ class ChromeManager(private val activity: MainActivity) {
         removePendingChromeAttachCallbacks()
         dismissChromePopups()
     }
-
-    /** Test probe: true while any chrome popup is still showing. */
-    fun hasLiveChromeForTest(): Boolean =
-        controlsOverlayPopup?.isShowing == true ||
-            drawerChromePopup?.isShowing == true ||
-            drawerFullScreenPopup?.isShowing == true ||
-            fpsOverlayPopup?.isShowing == true ||
-            gamepadInputPopup?.isShowing == true
 
     fun onConfigurationChanged() {
         controlsOverlayPopup?.dismiss()
@@ -265,15 +257,6 @@ class ChromeManager(private val activity: MainActivity) {
         )
     }
 
-    fun floatingDpadStateForTest(): FloatArray? =
-        (controlsOverlayView as? ControlsOverlayView)?.floatingDpadStateForTest()
-
-    /** Pushed touch-zone count: 0 while unloaded or hidden. Unload assertions use this. */
-    fun controlsZoneCountForTest(): Int = controlsPushedZones.size
-
-    /** Drawer sheet scroll range in pixels, null while the drawer is closed. */
-    fun drawerScrollMaxForTest(): Int? = drawerScrollState?.maxValue
-
     fun updateFpsOverlay(fps: Float, visible: Boolean) {
         if (Log.isLoggable(TAG, Log.DEBUG)) {
             Log.d(TAG, "updateFpsOverlay: fps=$fps visible=$visible")
@@ -291,17 +274,17 @@ class ChromeManager(private val activity: MainActivity) {
     fun showDrawerOverlay() {
         val anchor =
             popupAnchor() ?: run {
-                lastDrawerStateForTest =
+                lastDrawerState =
                     "anchor unavailable: decor=${activity.window.decorView.debugViewState()}"
                 Log.w(TAG, "showDrawerOverlay: anchor unavailable decor=${activity.window.decorView.debugViewState()}")
                 return
             }
         if (drawerShowing) {
-            lastDrawerStateForTest = "already showing"
+            lastDrawerState = "already showing"
             Log.i(TAG, "showDrawerOverlay: already showing")
             return
         }
-        lastDrawerStateForTest = "creating"
+        lastDrawerState = "creating"
         Log.i(TAG, "showDrawerOverlay: creating")
 
         // Pause truth once per open (vault, published after every session
@@ -386,9 +369,9 @@ class ChromeManager(private val activity: MainActivity) {
         } else {
             clearDrawerWindowReferences()
         }
-        lastDrawerStateForTest =
+        lastDrawerState =
             "showInDrawerPopup=$shown, popup=${fullScreenPopup.debugPopupState()}, overlay=${overlay.debugViewState()}"
-        Log.i(TAG, "showDrawerOverlay: shown=$shown state=$lastDrawerStateForTest")
+        Log.i(TAG, "showDrawerOverlay: shown=$shown state=$lastDrawerState")
     }
 
     fun removeDrawerOverlay(): Boolean {
@@ -494,50 +477,6 @@ class ChromeManager(private val activity: MainActivity) {
         gamepadInputView = null
         activity.window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
     }
-
-    fun isViewShowingForTest(tag: String): Boolean? =
-        when (tag) {
-            CONTROLS_OVERLAY_TAG -> {
-                controlsOverlayPopup?.isShowing == true &&
-                    controlsOverlayView.isShownInWindowForTest()
-            }
-            DRAWER_COMPOSE_TAG -> {
-                drawerShowing && drawerFullScreenPopup?.isShowing == true &&
-                    drawerComposeView.isShownInWindowForTest()
-            }
-            DRAWER_EDGE_HANDLE_TAG -> {
-                !drawerShowing && drawerChromePopup?.isShowing == true &&
-                    drawerEdgeHandleView.isShownInWindowForTest()
-            }
-            DRAWER_OVERLAY_TAG -> {
-                drawerShowing && drawerFullScreenPopup?.isShowing == true &&
-                    drawerOverlayView.isShownInWindowForTest()
-            }
-            FPS_OVERLAY_TAG -> {
-                fpsOverlayPopup?.isShowing == true &&
-                    fpsOverlayView.isShownInWindowForTest()
-            }
-            else -> null
-        }
-
-    fun findViewForTest(tag: String): View? =
-        when (tag) {
-            CONTROLS_OVERLAY_TAG -> controlsOverlayView
-            DRAWER_COMPOSE_TAG -> drawerComposeView
-            DRAWER_EDGE_HANDLE_TAG -> drawerEdgeHandleView
-            DRAWER_OVERLAY_TAG -> drawerOverlayView
-            FPS_OVERLAY_TAG -> fpsOverlayView
-            else -> null
-        }
-
-    fun debugStateForTest(): String =
-        "chromeAttachEnabled=$chromeAttachEnabled, attachAttempts=$chromeAttachAttempts, attachGiveUps=$chromeAttachGiveUps, " +
-            "controlsPopup=${controlsOverlayPopup.debugPopupState()}, controlsView=${controlsOverlayView.debugViewState()}, " +
-            "drawerPopup=${drawerChromePopup.debugPopupState()}, drawerHandle=${drawerEdgeHandleView.debugViewState()}, " +
-            "drawerShowing=$drawerShowing, drawerFullScreenPopup=${drawerFullScreenPopup.debugPopupState()}, " +
-            "drawerOverlay=${drawerOverlayView.debugViewState()}, drawerCompose=${drawerComposeView.debugViewState()}, " +
-            "lastDrawer=$lastDrawerStateForTest, fpsVisible=$fpsVisible, fpsValue=$fpsValue, " +
-            "fpsPopup=${fpsOverlayPopup.debugPopupState()}, fpsView=${fpsOverlayView.debugViewState()}"
 
     fun scheduleChromeAttach() {
         if (!chromeAttachEnabled || activity.isFinishing || activity.isDestroyed) {
@@ -867,17 +806,14 @@ class ChromeManager(private val activity: MainActivity) {
         ).joinToString("\n")
     }
 
-    private fun View?.isShownInWindowForTest(): Boolean =
-        this != null && visibility == View.VISIBLE && isAttachedToWindow && windowToken != null
-
-    private fun View?.debugViewState(): String =
+    internal fun View?.debugViewState(): String =
         if (this == null) {
             "null"
         } else {
             "visibility=$visibility, attached=$isAttachedToWindow, token=${windowToken != null}, shown=$isShown"
         }
 
-    private fun PopupWindow?.debugPopupState(): String = if (this == null) "null" else "showing=$isShowing"
+    internal fun PopupWindow?.debugPopupState(): String = if (this == null) "null" else "showing=$isShowing"
 
     companion object {
         private const val TAG = "Nerust"

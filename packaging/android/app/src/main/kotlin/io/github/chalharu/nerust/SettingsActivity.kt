@@ -184,7 +184,7 @@ class SettingsActivity :
 
     override fun onResume() {
         super.onResume()
-        activeActivityForTest = this
+        activeActivity = this
         (getSystemService(INPUT_SERVICE) as InputManager).registerInputDeviceListener(this, null)
         pushDeviceTruth()
     }
@@ -196,7 +196,7 @@ class SettingsActivity :
 
     override fun onDestroy() {
         // Listener balance lives in onResume/onPause; nothing to release here.
-        if (this == activeActivityForTest) activeActivityForTest = null
+        if (this == activeActivity) activeActivity = null
         super.onDestroy()
     }
 
@@ -492,7 +492,7 @@ class SettingsActivity :
         private const val TRIGGER_CAPTURE_PRESS = 0.5f
 
         @Volatile
-        private var activeActivityForTest: SettingsActivity? = null
+        internal var activeActivity: SettingsActivity? = null
 
         fun createIntent(
             context: Context,
@@ -508,7 +508,7 @@ class SettingsActivity :
                 putExtra(EXTRA_ORIENTATION, orientation)
             }
 
-        fun currentActivityForTest(): SettingsActivity? =
-            activeActivityForTest?.takeUnless { it.isDestroyed || it.isFinishing }
+        fun currentActivity(): SettingsActivity? =
+            activeActivity?.takeUnless { it.isDestroyed || it.isFinishing }
     }
 }

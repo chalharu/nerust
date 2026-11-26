@@ -219,7 +219,7 @@ class MainActivityE2eTest {
 
         assertTrue(
             "SettingsActivity should start after requesting it",
-            waitUntil(DIALOG_TIMEOUT_MS) { SettingsActivity.currentActivityForTest() != null },
+            waitUntil(DIALOG_TIMEOUT_MS) { SettingsActivity.currentActivity() != null },
         )
 
         runOnActivityThread(activity) {
@@ -229,7 +229,7 @@ class MainActivityE2eTest {
                 }
             assertTrue(
                 "Settings should run in its own activity",
-                SettingsActivity.currentActivityForTest() != null,
+                SettingsActivity.currentActivity() != null,
             )
             assertEquals(
                 "Settings\nVideo Filter: LCD\nTouch Overlay: On",
@@ -243,7 +243,7 @@ class MainActivityE2eTest {
         }
         assertTrue(
             "SettingsActivity should finish after dismissal",
-            waitUntil(DIALOG_TIMEOUT_MS) { SettingsActivity.currentActivityForTest() == null },
+            waitUntil(DIALOG_TIMEOUT_MS) { SettingsActivity.currentActivity() == null },
         )
 
         runOnActivityThread(activity) {
@@ -255,14 +255,14 @@ class MainActivityE2eTest {
         }
         assertTrue(
             "SettingsActivity should start after dispatching open_settings",
-            waitUntil(DIALOG_TIMEOUT_MS) { SettingsActivity.currentActivityForTest() != null },
+            waitUntil(DIALOG_TIMEOUT_MS) { SettingsActivity.currentActivity() != null },
         )
         runOnActivityThread(activity) {
             activity.resetChromeStateForTest()
         }
         assertTrue(
             "SettingsActivity should finish after reset",
-            waitUntil(DIALOG_TIMEOUT_MS) { SettingsActivity.currentActivityForTest() == null },
+            waitUntil(DIALOG_TIMEOUT_MS) { SettingsActivity.currentActivity() == null },
         )
 
         runOnActivityThread(activity) {
@@ -270,7 +270,7 @@ class MainActivityE2eTest {
         }
         assertTrue(
             "MainActivity should suspend before process restart",
-            waitUntil(DIALOG_TIMEOUT_MS) { MainActivity.currentActivityForTest() == null },
+            waitUntil(DIALOG_TIMEOUT_MS) { MainActivity.currentActivity() == null },
         )
         SystemClock.sleep(LIFECYCLE_SAVE_DELAY_MS)
     }
@@ -581,10 +581,10 @@ class MainActivityE2eTest {
         context.startActivity(launchIntent)
         val activity =
             waitUntilValue(STARTUP_TIMEOUT_MS) {
-                MainActivity.currentActivityForTest()
+                MainActivity.currentActivity()
             }
         if (activity == null) {
-            val current = MainActivity.currentActivityForTest()
+            val current = MainActivity.currentActivity()
             if (current != null) {
                 fail("MainActivity relaunch did not restore the drawer handle; ${safeChromeDebugState(current, DRAWER_EDGE_HANDLE_TAG)}")
             }

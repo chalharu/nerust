@@ -39,19 +39,9 @@ class DialogManager(private val activity: MainActivity) {
 
     fun rootViewForTag(tag: String): View? = rootView.takeIf { this.tag == tag }
 
-    fun dismissForTest() {
-        dismiss(notifyDismiss = false)
-    }
-
     /** Stop/destroy path: release the window like any other show failure. */
     fun dismissForStop() {
         dismiss(notifyDismiss = true)
-    }
-
-    fun resetForTest() {
-        // Test teardown never acks the Rust gate: firing here would resolve
-        // a dialog the test never dismissed.
-        dismiss(notifyDismiss = false)
     }
 
     fun debugState(): String =
@@ -135,18 +125,18 @@ class DialogManager(private val activity: MainActivity) {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
             )
-            activity.lastDialogStateForTest = "showing $dialogTag"
+            activity.lastDialogState = "showing $dialogTag"
             Log.i(TAG, "showComposeDialog: showing $dialogTag succeeded")
         } catch (error: WindowManager.BadTokenException) {
             dialog.setOnDismissListener(null)
             clearReferences()
-            activity.lastDialogStateForTest = "show failed for $dialogTag: bad token"
+            activity.lastDialogState = "show failed for $dialogTag: bad token"
             Log.w(TAG, "showComposeDialog: failed for $dialogTag with bad token", error)
             onDismiss()
         } catch (error: IllegalStateException) {
             dialog.setOnDismissListener(null)
             clearReferences()
-            activity.lastDialogStateForTest = "show failed for $dialogTag: illegal state"
+            activity.lastDialogState = "show failed for $dialogTag: illegal state"
             Log.w(TAG, "showComposeDialog: failed for $dialogTag with illegal state", error)
             onDismiss()
         } catch (error: RuntimeException) {
@@ -154,7 +144,7 @@ class DialogManager(private val activity: MainActivity) {
             // gate like any other show failure so Rust never wedges.
             dialog.setOnDismissListener(null)
             clearReferences()
-            activity.lastDialogStateForTest = "show failed for $dialogTag: runtime"
+            activity.lastDialogState = "show failed for $dialogTag: runtime"
             Log.w(TAG, "showComposeDialog: failed for $dialogTag with runtime error", error)
             onDismiss()
         }

@@ -35,6 +35,13 @@ def sources():
     callsites = (activity + "\n"
                  + (GEN.KOTLIN / "ChromeManager.kt").read_text() + "\n"
                  + (GEN.KOTLIN / "BridgeContract.kt").read_text())
+    # Test lane hooks live in the debug source set (never shipped); their
+    # menuEvent payloads stay under the same producer gate as the senders.
+    debug_bridge = GEN.ROOT / "packaging/android/app/src/debug"
+    if debug_bridge.is_dir():
+        callsites += "\n" + "\n".join(
+            path.read_text() for path in sorted(debug_bridge.rglob("*.kt"))
+        )
     return {
         "decoder": (src / "bridge_events.rs").read_text(),
         "generated": (src / "bridge_contract.rs").read_text(),
