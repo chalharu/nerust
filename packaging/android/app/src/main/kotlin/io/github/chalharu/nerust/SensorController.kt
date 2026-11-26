@@ -11,6 +11,7 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import android.view.InputDevice
 import android.view.Surface as AndroidSurface
+import kotlin.math.roundToInt
 
 internal fun screenRelativeAcceleration(
     x: Float,
@@ -37,7 +38,7 @@ internal fun screenRelativeAcceleration(
  * truncation) keeps positive and negative tilts symmetric. Pure math,
  * JVM-tested. */
 internal fun quantizeAcceleration(value: Float): Float =
-    (kotlin.math.roundToInt(value * 100) / 100f).coerceIn(-CARTRIDGE_ACCEL_MAX_G, CARTRIDGE_ACCEL_MAX_G)
+    ((value * 100).roundToInt() / 100f).coerceIn(-CARTRIDGE_ACCEL_MAX_G, CARTRIDGE_ACCEL_MAX_G)
 
 /** Cartridge motion sensor + rumble routing. Owns registration and vibrator selection. */
 class SensorController(
