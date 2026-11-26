@@ -1,6 +1,7 @@
 package io.github.chalharu.nerust
 
 import android.content.Intent
+import android.util.Log
 import android.view.View
 
 /** Instrumentation-test entry points for [MainActivity]. Debug source set

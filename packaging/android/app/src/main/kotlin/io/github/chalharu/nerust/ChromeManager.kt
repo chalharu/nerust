@@ -806,15 +806,6 @@ class ChromeManager(private val activity: MainActivity) {
         ).joinToString("\n")
     }
 
-    internal fun View?.debugViewState(): String =
-        if (this == null) {
-            "null"
-        } else {
-            "visibility=$visibility, attached=$isAttachedToWindow, token=${windowToken != null}, shown=$isShown"
-        }
-
-    internal fun PopupWindow?.debugPopupState(): String = if (this == null) "null" else "showing=$isShowing"
-
     companion object {
         private const val TAG = "Nerust"
         private const val DRAWER_EDGE_HANDLE_WIDTH_DP = 24
@@ -914,3 +905,14 @@ private fun DrawerActionItem(
         modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
     )
 }
+
+/** Shared view-debug formatter for logs and test debug state. Top level
+ * (not a member) so the debug source set resolves it without a receiver. */
+internal fun View?.debugViewState(): String =
+    if (this == null) {
+        "null"
+    } else {
+        "visibility=$visibility, attached=$isAttachedToWindow, token=${windowToken != null}, shown=$isShown"
+    }
+
+internal fun PopupWindow?.debugPopupState(): String = if (this == null) "null" else "showing=$isShowing"
