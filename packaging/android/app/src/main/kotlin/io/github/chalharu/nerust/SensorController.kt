@@ -31,6 +31,11 @@ internal fun screenRelativeAcceleration(
     )
 }
 
+/** Quantize one acceleration sample to 0.01g and clamp to the schema
+ * accel range: motion events fire at sensor rate and the bridge is JNI
+ * per sample, so sub-quantum repeats never cross. Pure math, JVM-tested. */
+internal fun quantizeAcceleration(value: Float): Float = ((value * 100).toInt() / 100f).coerceIn(-8f, 8f)
+
 /** Cartridge motion sensor + rumble routing. Owns registration and vibrator selection. */
 class SensorController(
     private val activity: MainActivity,
@@ -162,8 +167,8 @@ class SensorController(
                 event.values[1],
                 activity.windowManager.defaultDisplay.rotation,
             )
-        val qx = ((sample[0] * 100).toInt() / 100f).coerceIn(-8f, 8f)
-        val qy = ((sample[1] * 100).toInt() / 100f).coerceIn(-8f, 8f)
+        val qx = quantizeAcceleration(sample[0])
+        val qy = quantizeAcceleration(sample[1])
         if (qx == lastAccelX && qy == lastAccelY) return
         lastAccelX = qx
         lastAccelY = qy
