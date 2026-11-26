@@ -1,5 +1,7 @@
 mod debugger;
 mod error;
+#[cfg(any(target_os = "macos", test))]
+mod gamepad;
 mod history;
 mod ppu;
 mod render;
@@ -607,6 +609,10 @@ impl MainHost {
         nerust_gui_application::ApplicationState,
         Result<Option<panechord::ImageFrame>, String>,
     ) {
+        // Pad edges land before the frame advance, like the retired poll
+        // below the old capture path: same tick, same shortcut tail.
+        #[cfg(target_os = "macos")]
+        self.poll_gamepads();
         let mut app = self.application.borrow_mut();
         let profile = app.session().render_profile();
         let vsync = app.settings().local.video.presentation.vsync;
@@ -677,6 +683,46 @@ impl MainHost {
                     }
                 }
             });
+        }
+    }
+
+    /// macOS pad frame: drain gilrs through the session entry and route
+    /// shortcut edges through the keyboard-identical tail (pause toggle,
+    /// session actions, fullscreen, debugger). Notice text surfaces the
+    /// same way a key binding failure does.
+    #[cfg(target_os = "macos")]
+    fn poll_gamepads(&self) {
+        let cuts = {
+            let mut app = self.application.borrow_mut();
+            if app.state().closed {
+                return;
+            }
+            app.session_mut().poll_gamepads()
+        };
+        for cut in cuts {
+            let mut app = self.application.borrow_mut();
+            let result = match cut {
+                KeyboardShortcut::Session(ShortcutAction::TogglePause) => {
+                    app.toggle_pause();
+                    Ok(())
+                }
+                KeyboardShortcut::Session(action) => SessionAdapter::session_action(action)
+                    .map_or(Ok(()), |action| app.execute(action).map(|_| ())),
+                KeyboardShortcut::ToggleFullscreen => {
+                    self.renderer.borrow().toggle_fullscreen();
+                    Ok(())
+                }
+                KeyboardShortcut::OpenDebugger => {
+                    drop(app);
+                    let dispatch = self.actions.borrow().clone();
+                    if let Some(dispatch) = dispatch {
+                        dispatch(view::Intent::Debugger);
+                    }
+                    continue;
+                }
+            };
+            drop(app);
+            let _ = self.model.update(move |model| model.notice = result.err());
         }
     }
 
