@@ -20,10 +20,8 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
-import org.junit.FixMethodOrder
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.junit.runners.MethodSorters
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -31,7 +29,6 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 
 @RunWith(AndroidJUnit4::class)
-@FixMethodOrder(MethodSorters.NAME_ASCENDING)
 class MainActivityE2eTest {
     @Test
     fun runtimeMeetsMinimumSupportedApi() {
@@ -40,7 +37,7 @@ class MainActivityE2eTest {
 
     @Test
     fun romPickerIntentUsesSafPersistableReadAccess() {
-        val intent = MainActivity.createRomPickerIntentForTest()
+        val intent = createRomPickerIntent()
 
         assertEquals(Intent.ACTION_OPEN_DOCUMENT, intent.action)
         assertEquals("*/*", intent.type)
@@ -56,7 +53,7 @@ class MainActivityE2eTest {
 
     @Test
     fun directoryPickerIntentUsesPersistableReadWriteAccess() {
-        val intent = MainActivity.createDirectoryPickerIntentForTest()
+        val intent = createDirectoryPickerIntent()
 
         assertEquals(Intent.ACTION_OPEN_DOCUMENT_TREE, intent.action)
         assertTrue(
@@ -461,14 +458,9 @@ class MainActivityE2eTest {
     @Test(timeout = TEST_TIMEOUT_MS)
     fun gamepadButtonKeysDivertThroughDispatch() {
         val activity = launchActivity()
-        val now = SystemClock.uptimeMillis()
-        val source = InputDevice.SOURCE_GAMEPAD
-        val down =
-            KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BUTTON_A, 0, 0, E2E_PAD_ID, 0, 0, source)
-        val up =
-            KeyEvent(now, now, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BUTTON_A, 0, 0, E2E_PAD_ID, 0, 0, source)
-        val unmapped =
-            KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BUTTON_Z, 0, 0, E2E_PAD_ID, 0, 0, source)
+        val down = gamepadKey(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BUTTON_A)
+        val up = gamepadKey(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BUTTON_A)
+        val unmapped = gamepadKey(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BUTTON_Z)
         assertTrue("gamepad A press should divert to the session", dispatchKeyOnActivityThread(activity, down))
         assertTrue("gamepad A release should divert to the session", dispatchKeyOnActivityThread(activity, up))
         assertFalse(
@@ -503,13 +495,11 @@ class MainActivityE2eTest {
             waitUntil(DIALOG_TIMEOUT_MS) { activity.isEmulationPaused() },
         )
         // Removal parks the pad in Rust while Kotlin still diverts on the
-        // gamepad source: the press must cross the lane yet fire nothing.
+        // gamepad source. Positive proof: resume first, then press — a
+        // still-connected pad would toggle back to paused.
         runOnActivityThread(activity) {
             activity.dispatchDeviceRemovedForTest(E2E_PAD_ID)
         }
-        pressGuideButton(activity)
-        SystemClock.sleep(PAUSE_SETTLE_MS)
-        assertTrue("removed pad must not drive shortcuts", activity.isEmulationPaused())
         runOnActivityThread(activity) {
             activity.dispatchMenuActionForTest(MenuAction.TOGGLE_PAUSE)
         }
@@ -517,6 +507,9 @@ class MainActivityE2eTest {
             "cleanup should resume emulation",
             waitUntil(DIALOG_TIMEOUT_MS) { !activity.isEmulationPaused() },
         )
+        pressGuideButton(activity)
+        SystemClock.sleep(PAUSE_SETTLE_MS)
+        assertFalse("removed pad must not drive shortcuts", activity.isEmulationPaused())
     }
 
     @Test(timeout = TEST_TIMEOUT_MS)
@@ -675,14 +668,26 @@ class MainActivityE2eTest {
         }
 
     private fun pressGuideButton(activity: MainActivity) {
-        val now = SystemClock.uptimeMillis()
-        val source = InputDevice.SOURCE_GAMEPAD
-        val down =
-            KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BUTTON_MODE, 0, 0, E2E_PAD_ID, 0, 0, source)
-        val up =
-            KeyEvent(now, now, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BUTTON_MODE, 0, 0, E2E_PAD_ID, 0, 0, source)
+        val down = gamepadKey(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BUTTON_MODE)
+        val up = gamepadKey(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BUTTON_MODE)
         assertTrue("Guide press should divert to the session", dispatchKeyOnActivityThread(activity, down))
         assertTrue("Guide release should divert to the session", dispatchKeyOnActivityThread(activity, up))
+    }
+
+    private fun gamepadKey(action: Int, keyCode: Int): KeyEvent {
+        val now = SystemClock.uptimeMillis()
+        return KeyEvent(
+            now,
+            now,
+            action,
+            keyCode,
+            0,
+            0,
+            E2E_PAD_ID,
+            0,
+            0,
+            InputDevice.SOURCE_GAMEPAD,
+        )
     }
 
     private fun dispatchKeyOnActivityThread(activity: MainActivity, event: KeyEvent): Boolean {

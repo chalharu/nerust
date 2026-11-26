@@ -16,6 +16,12 @@ import android.view.View
 
 internal fun MainActivity.lastLoadedSystemForTest(): String? = lastLoadedSystem
 
+internal fun MainActivity.loadRomUriForTest(uri: String) {
+    lastLoadedSystem = null
+    Log.i("Nerust", "loadRomUriForTest: submitting URI $uri")
+    loadRomUri(uri)
+}
+
 internal fun MainActivity.dispatchMenuActionForTest(action: String) {
     chromeManager.dispatchMenuAction(action)
 }
@@ -26,7 +32,7 @@ internal fun MainActivity.openDrawerForTest() {
 
 internal fun MainActivity.dismissComposeDialogForTest() {
     SettingsActivity.currentActivity()?.finishForReplacement()
-        ?: dialogManager.dismissForTest()
+        ?: dialogManager.resetForTest()
 }
 
 internal fun MainActivity.resetChromeStateForTest() {
@@ -73,7 +79,9 @@ internal fun MainActivity.chromeDebugStateForTest(tag: String): String =
 /** Gamepad lane hooks: the emulator enumerates no pads, so tests drive
  * the connect/remove menu actions with a fake id and descriptor. The
  * payload shape matches the production senders exactly, so decoder,
- * session porting, and shortcut routing are all exercised. */
+ * session porting, and shortcut routing are all exercised. The Kotlin
+ * divert set is untouched: covering it needs the motion test's route
+ * seed below. */
 internal fun MainActivity.dispatchDeviceAddedForTest(deviceId: Int, descriptor: String) {
     sendMenuAction(
         menuEvent(MenuAction.DEVICE_ADDED) {
@@ -102,12 +110,5 @@ internal fun MainActivity.removeTestControllerRouteForTest(deviceId: Int) {
     connectedDeviceIds.remove(deviceId)
 }
 
-internal fun MainActivity.Companion.createRomPickerIntentForTest(): Intent = createRomPickerIntent()
-
-internal fun MainActivity.Companion.createDirectoryPickerIntentForTest(): Intent = createDirectoryPickerIntent()
-
 internal fun MainActivity.Companion.currentActivity(): MainActivity? =
     activeActivity?.takeUnless { it.isDestroyed || it.isFinishing }
-
-private fun View?.isShownInWindowForTest(): Boolean =
-    this != null && visibility == View.VISIBLE && isAttachedToWindow && windowToken != null

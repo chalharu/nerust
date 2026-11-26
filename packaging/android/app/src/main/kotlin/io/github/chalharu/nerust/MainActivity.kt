@@ -869,9 +869,11 @@ class MainActivity :
     /** Test-only ROM loader. Stays in main (not the debug bridge): it calls
      * the private JNI entry below, whose JVM name must not gain the
      * `internal` module suffix or registration lookup breaks. */
-    fun loadRomUriForTest(uri: String) {
-        lastLoadedSystem = null
-        Log.i(TAG, "loadRomUriForTest: submitting URI $uri")
+    /// Test-only ROM load: calls the private JNI entry below, whose JVM
+    /// name must not gain the `internal` module suffix or registration
+    /// lookup breaks. Kept minimal (no Test suffix drift): the debug
+    /// bridge owns the test-facing wrapper.
+    internal fun loadRomUri(uri: String) {
         onFilePickerResult(uri)
     }
 
@@ -968,13 +970,6 @@ class MainActivity :
             view.setViewTreeViewModelStoreOwner(this)
         }
     }
-
-    internal fun View?.debugViewState(): String =
-        if (this == null) {
-            "null"
-        } else {
-            "visibility=$visibility, attached=$isAttachedToWindow, token=${windowToken != null}, shown=$isShown"
-        }
 
     private external fun pushSystemLocale(tag: String)
 

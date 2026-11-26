@@ -40,7 +40,7 @@ def sources():
     debug_bridge = GEN.ROOT / "packaging/android/app/src/debug"
     if debug_bridge.is_dir():
         callsites += "\n" + "\n".join(
-            path.read_text() for path in sorted(debug_bridge.rglob("*.kt"))
+            path.read_text() for path in sorted(debug_bridge.rglob("*TestBridge.kt"))
         )
     return {
         "decoder": (src / "bridge_events.rs").read_text(),

@@ -21,6 +21,9 @@ pub trait PollSource {
 
 /// Rumble output sink, one per backend. Intensity is normalized 0.0-1.0
 /// per motor; backends without a motor report it via [`Capability`].
+/// Single-sink backends (one console-global vibrator) collapse the
+/// motors and may ignore `device`; per-pad backends address each device
+/// independently.
 pub trait RumbleSink {
     fn set_rumble(&mut self, device: i32, low: f32, high: f32);
     fn capability(&self, device: i32) -> Capability;

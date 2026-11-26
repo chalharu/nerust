@@ -210,6 +210,10 @@ def _rust_tables(schema, menu):
         == (menu["accel_y"]["minimum"], menu["accel_y"]["maximum"]),
         "cartridge accel axes must share one range",
     )
+    require(
+        menu["accel_x"]["minimum"] == -menu["accel_x"]["maximum"],
+        "cartridge accel range must be symmetric for the Kotlin clamp",
+    )
     lines = [
         "",
         "/// Required fields per menu action, from the schema gates.",
@@ -268,7 +272,10 @@ def outputs(schema):
           f"internal const val BRIDGE_EVENT_VERSION = {version}",
           f"internal const val SETTINGS_SCHEMA_VERSION = {settings}",
           f"internal const val SAF_CHUNK_BYTES = {chunk}",
-          f"internal const val SAF_SUMMARY_BYTES = {summary}"]
+          f"internal const val SAF_SUMMARY_BYTES = {summary}",
+          # Cartridge accel range for the Kotlin quantize clamp: single
+          # source is the schema (Rust const derives from the same bounds).
+          f"internal const val CARTRIDGE_ACCEL_MAX_G = {float(menu['accel_x']['maximum'])}f"]
     for obj, names in [("MenuAction", actions), ("ControllerKey", keys), ("ControllerAxis", axes)]:
         kt += ["", f"internal object {obj} {{"]
         kt += [f'    const val {name.upper()} = "{name}"' for name in names]

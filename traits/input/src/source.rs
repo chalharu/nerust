@@ -170,7 +170,8 @@ pub enum GamepadEvent {
 
 /// Controller motion sample: gyroscope and accelerometer, SI units
 /// (rad/s, g). Producers fill what their hardware exposes; unexposed
-/// axes stay zero. The session keeps the latest sample only.
+/// axes stay zero, which means unknown, never measured stillness.
+/// The session keeps the latest sample only.
 /// No serde, same reason as [`GamepadEvent`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GamepadMotion {

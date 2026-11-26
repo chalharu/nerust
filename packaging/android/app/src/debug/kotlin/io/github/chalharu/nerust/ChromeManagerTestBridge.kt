@@ -59,5 +59,5 @@ internal fun ChromeManager.debugStateForTest(): String =
         "lastDrawer=$lastDrawerState, fpsVisible=$fpsVisible, fpsValue=$fpsValue, " +
         "fpsPopup=${fpsOverlayPopup.debugPopupState()}, fpsView=${fpsOverlayView.debugViewState()}"
 
-private fun View?.isShownInWindowForTest(): Boolean =
+internal fun View?.isShownInWindowForTest(): Boolean =
     this != null && visibility == View.VISIBLE && isAttachedToWindow && windowToken != null

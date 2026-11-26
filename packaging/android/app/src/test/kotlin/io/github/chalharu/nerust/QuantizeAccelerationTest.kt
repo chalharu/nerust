@@ -7,9 +7,10 @@ import org.junit.Test
  * as the clamp. JVM-runnable: pure float math, no framework calls. */
 class QuantizeAccelerationTest {
     @Test
-    fun quantumStepsTruncate() {
+    fun quantumStepsRound() {
         assertEquals(0.5f, quantizeAcceleration(0.5f), 0.0f)
-        assertEquals(0.56f, quantizeAcceleration(0.567f), 1e-6f)
+        assertEquals(0.57f, quantizeAcceleration(0.567f), 1e-6f)
+        assertEquals(-0.57f, quantizeAcceleration(-0.567f), 1e-6f)
         assertEquals(-0.25f, quantizeAcceleration(-0.25f), 0.0f)
         assertEquals(0.0f, quantizeAcceleration(0.004f), 0.0f)
     }

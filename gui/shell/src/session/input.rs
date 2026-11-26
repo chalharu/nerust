@@ -221,6 +221,9 @@ impl SessionHandle {
     /// and a reconnect can never skew a pad onto another pad's settings.
     pub fn note_pad_connected(&mut self, device_id: i32, descriptor: &str) {
         if descriptor.is_empty() || device_id < 0 {
+            // Fail loud: the Kotlin edge already warns on null descriptors,
+            // so reaching here means a hostile or drifting producer.
+            log::warn!("ignoring pad connect with empty descriptor or negative id {device_id}");
             return;
         }
         let guid = super::PadTopology::guid_for_descriptor(descriptor);

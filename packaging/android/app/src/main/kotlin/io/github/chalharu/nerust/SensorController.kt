@@ -33,8 +33,11 @@ internal fun screenRelativeAcceleration(
 
 /** Quantize one acceleration sample to 0.01g and clamp to the schema
  * accel range: motion events fire at sensor rate and the bridge is JNI
- * per sample, so sub-quantum repeats never cross. Pure math, JVM-tested. */
-internal fun quantizeAcceleration(value: Float): Float = ((value * 100).toInt() / 100f).coerceIn(-8f, 8f)
+ * per sample, so sub-quantum repeats never cross. Rounding (not
+ * truncation) keeps positive and negative tilts symmetric. Pure math,
+ * JVM-tested. */
+internal fun quantizeAcceleration(value: Float): Float =
+    (kotlin.math.roundToInt(value * 100) / 100f).coerceIn(-CARTRIDGE_ACCEL_MAX_G, CARTRIDGE_ACCEL_MAX_G)
 
 /** Cartridge motion sensor + rumble routing. Owns registration and vibrator selection. */
 class SensorController(
