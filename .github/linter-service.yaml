@@ -9,6 +9,7 @@ linters:
       - libcubeb-dev
       - libepoxy-dev
       - libgtk-4-dev
+      - libudev-dev
   cargo-coupling:
     min_grade: C
   cargo-symbol-length:
