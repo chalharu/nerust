@@ -536,6 +536,28 @@ class MainActivityE2eTest {
     }
 
     @Test(timeout = TEST_TIMEOUT_MS)
+    fun cartridgeMotionConfigReachesKotlin() {
+        val activity = launchActivity()
+        runOnActivityThread(activity) {
+            activity.loadRomUriForTest(TestRomProvider.MBC7_ROM_URI.toString())
+        }
+        assertTrue(
+            "MBC7 document URI should be detected and loaded",
+            waitUntil(STARTUP_TIMEOUT_MS) { activity.lastLoadedSystemForTest() == "gbc" },
+        )
+        // Full configure hop: MBC7 ROM arms the accelerometer demand in
+        // Rust, the session sync forwards it over JNI, and Kotlin enables
+        // motion plus rumble. The motion sample flow itself needs a real
+        // sensor; MBC7 latch coverage stays in gbc_core host tests.
+        val config =
+            waitUntilValue(DIALOG_TIMEOUT_MS) {
+                activity.rumbleMotionConfigForTest().takeIf { it.first }
+            }
+        requireNotNull(config) { "MBC7 load should enable motion in Kotlin" }
+        assertTrue("rumble stays enabled from settings", config.second)
+    }
+
+    @Test(timeout = TEST_TIMEOUT_MS)
     fun cartridgeAccelerationLaneForwardsSamples() {
         val activity = launchActivity()
         // Wiring guard: quantize+clamp in Kotlin, menu lane, Rust apply.

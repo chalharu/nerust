@@ -71,7 +71,7 @@ class MainActivity :
     private val store = ViewModelStore()
     private val controllerPressed = mutableMapOf<Int, MutableSet<String>>()
     private val controllerAxes = mutableMapOf<Int, MutableMap<String, Float>>()
-    private val sensorController = SensorController(this)
+    internal val sensorController = SensorController(this)
     internal val chromeManager = ChromeManager(this)
     internal val dialogManager = DialogManager(this)
     private val safRepository = SafRepository(this)

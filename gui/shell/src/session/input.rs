@@ -1616,6 +1616,27 @@ mod tests {
     }
 
     #[test]
+    fn rumble_intensity_reflects_cartridge_motor() {
+        // Channel-to-session read: the cartridge half is pinned by
+        // `mbc5_rumble_tracks_frame_pause_resume_and_unload` in gbc_core;
+        // this pins the session half (port publish reaches the read).
+        use nerust_core_traits::peripheral::{RumbleState, rumble_channel};
+        let mut session = crate::session::test_util::test_session();
+        let (handle, port) = rumble_channel();
+        port.publish(RumbleState::FULL);
+        session
+            .emu
+            .runtime
+            .as_mut()
+            .expect("test runtime")
+            .host_peripherals
+            .rumble = Some(handle);
+        assert_eq!(session.rumble_intensity(), 255);
+        port.publish(RumbleState::OFF);
+        assert_eq!(session.rumble_intensity(), 0);
+    }
+
+    #[test]
     fn stale_disconnect_keeps_live_pad_on_its_rank() {
         // Android-side twin: pad A (rank 0) disconnects, pad B connects
         // (rank 1). The settings write lands on pad_bindings[1] and the

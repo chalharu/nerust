@@ -111,5 +111,8 @@ internal fun MainActivity.removeTestControllerRouteForTest(deviceId: Int) {
     connectedDeviceIds.remove(deviceId)
 }
 
+internal fun MainActivity.rumbleMotionConfigForTest(): Pair<Boolean, Boolean> =
+    sensorController.run { motionEnabled to rumbleEnabled }
+
 internal fun MainActivity.Companion.currentActivity(): MainActivity? =
     activeActivity?.takeUnless { it.isDestroyed || it.isFinishing }

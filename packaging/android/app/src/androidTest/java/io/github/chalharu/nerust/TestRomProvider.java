@@ -18,6 +18,8 @@ public final class TestRomProvider extends ContentProvider {
     private static final int TEST_ROM_SIZE = 0x8000;
     public static final Uri ROM_URI =
             Uri.parse("content://io.github.chalharu.nerust.testrom/phase15-test.gbc");
+    public static final Uri MBC7_ROM_URI =
+            Uri.parse("content://io.github.chalharu.nerust.testrom/mbc7-motion-test.gbc");
 
     @Override
     public boolean onCreate() {
@@ -42,7 +44,7 @@ public final class TestRomProvider extends ContentProvider {
         Object[] values = new Object[columns.length];
         for (int index = 0; index < columns.length; index++) {
             if (OpenableColumns.DISPLAY_NAME.equals(columns[index])) {
-                values[index] = "phase15-test.gbc";
+                values[index] = fileNameFor(uri);
             } else if (OpenableColumns.SIZE.equals(columns[index])) {
                 values[index] = TEST_ROM_SIZE;
             }
@@ -58,9 +60,9 @@ public final class TestRomProvider extends ContentProvider {
         if (context == null) {
             throw new FileNotFoundException("Test provider is not attached");
         }
-        File file = new File(context.getCacheDir(), "phase15-test.gbc");
+        File file = new File(context.getCacheDir(), fileNameFor(uri));
         try (FileOutputStream output = new FileOutputStream(file)) {
-            output.write(minimalGbcRom());
+            output.write(minimalGbcRom(uri));
         } catch (IOException error) {
             FileNotFoundException failure = new FileNotFoundException("Could not create test ROM");
             failure.initCause(error);
@@ -82,6 +84,28 @@ public final class TestRomProvider extends ContentProvider {
     @Override
     public int update(Uri uri, ContentValues values, String selection, String[] selectionArgs) {
         return 0;
+    }
+
+    private byte[] minimalGbcRom(Uri uri) {
+        byte[] rom = minimalGbcRom();
+        if (MBC7_ROM_URI.equals(uri)) {
+            // Motion demand is cartridge-typed: MBC7 (0x22) arms the
+            // accelerometer request, so the configure hop is observable.
+            rom[0x0147] = 0x22;
+            int checksum = 0;
+            for (int index = 0x0134; index <= 0x014C; index++) {
+                checksum = (checksum - (rom[index] & 0xFF) - 1) & 0xFF;
+            }
+            rom[0x014D] = (byte) checksum;
+        }
+        return rom;
+    }
+
+    private static String fileNameFor(Uri uri) {
+        if (MBC7_ROM_URI.equals(uri)) {
+            return "mbc7-motion-test.gbc";
+        }
+        return "phase15-test.gbc";
     }
 
     private byte[] minimalGbcRom() {

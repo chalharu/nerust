@@ -48,9 +48,9 @@ class SensorController(
     private var accelerometer: Sensor? = null
     var activityResumed = false
     var windowHasFocus = false
-    var motionEnabled = false
+    @Volatile var motionEnabled = false
     private var sensorRegistered = false
-    var rumbleEnabled = false
+    @Volatile var rumbleEnabled = false
     var rumbleStrengthPercent = 100
     var rumbleTarget = "auto"
     var rumbleIntensity = 0
