@@ -866,6 +866,15 @@ class MainActivity :
         lastLoadedSystem = systemId
     }
 
+    /** Test-only ROM loader. Stays in main (not the debug bridge): it calls
+     * the private JNI entry below, whose JVM name must not gain the
+     * `internal` module suffix or registration lookup breaks. */
+    fun loadRomUriForTest(uri: String) {
+        lastLoadedSystem = null
+        Log.i(TAG, "loadRomUriForTest: submitting URI $uri")
+        onFilePickerResult(uri)
+    }
+
     /** Show a DTO-driven Android settings screen. Presents the versioned sections from Rust.
      * Save and dismiss return request-scoped JSON; edits ride synchronous per-row commands. */
     fun showSettingsDialog(payload: String) {
@@ -1011,7 +1020,7 @@ class MainActivity :
         }
     }
 
-    internal external fun onFilePickerResult(uri: String?)
+    private external fun onFilePickerResult(uri: String?)
 
     private external fun onMenuAction(action: String)
 

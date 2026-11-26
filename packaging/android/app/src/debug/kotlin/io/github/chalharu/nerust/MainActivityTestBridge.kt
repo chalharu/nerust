@@ -1,7 +1,6 @@
 package io.github.chalharu.nerust
 
 import android.content.Intent
-import android.util.Log
 import android.view.View
 
 /** Instrumentation-test entry points for [MainActivity]. Debug source set
@@ -16,12 +15,6 @@ import android.view.View
  */
 
 internal fun MainActivity.lastLoadedSystemForTest(): String? = lastLoadedSystem
-
-internal fun MainActivity.loadRomUriForTest(uri: String) {
-    lastLoadedSystem = null
-    Log.i("Nerust", "loadRomUriForTest: submitting URI $uri")
-    onFilePickerResult(uri)
-}
 
 internal fun MainActivity.dispatchMenuActionForTest(action: String) {
     chromeManager.dispatchMenuAction(action)
