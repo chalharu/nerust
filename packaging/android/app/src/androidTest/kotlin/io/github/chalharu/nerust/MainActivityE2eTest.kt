@@ -488,11 +488,11 @@ class MainActivityE2eTest {
             waitUntil(STARTUP_TIMEOUT_MS) { activity.lastLoadedSystemForTest() == "gbc" },
         )
         runOnActivityThread(activity) {
-            if (activity.pausedForTest()) activity.dispatchMenuActionForTest(MenuAction.TOGGLE_PAUSE)
+            if (activity.isEmulationPaused()) activity.dispatchMenuActionForTest(MenuAction.TOGGLE_PAUSE)
         }
         assertTrue(
             "emulation should start running",
-            waitUntil(DIALOG_TIMEOUT_MS) { !activity.pausedForTest() },
+            waitUntil(DIALOG_TIMEOUT_MS) { !activity.isEmulationPaused() },
         )
         runOnActivityThread(activity) {
             activity.dispatchDeviceAddedForTest(E2E_PAD_ID, E2E_PAD_DESCRIPTOR)
@@ -500,7 +500,7 @@ class MainActivityE2eTest {
         pressGuideButton(activity)
         assertTrue(
             "Guide press should pause through the pad shortcut",
-            waitUntil(DIALOG_TIMEOUT_MS) { activity.pausedForTest() },
+            waitUntil(DIALOG_TIMEOUT_MS) { activity.isEmulationPaused() },
         )
         // Removal parks the pad in Rust while Kotlin still diverts on the
         // gamepad source: the press must cross the lane yet fire nothing.
@@ -509,13 +509,13 @@ class MainActivityE2eTest {
         }
         pressGuideButton(activity)
         SystemClock.sleep(PAUSE_SETTLE_MS)
-        assertTrue("removed pad must not drive shortcuts", activity.pausedForTest())
+        assertTrue("removed pad must not drive shortcuts", activity.isEmulationPaused())
         runOnActivityThread(activity) {
             activity.dispatchMenuActionForTest(MenuAction.TOGGLE_PAUSE)
         }
         assertTrue(
             "cleanup should resume emulation",
-            waitUntil(DIALOG_TIMEOUT_MS) { !activity.pausedForTest() },
+            waitUntil(DIALOG_TIMEOUT_MS) { !activity.isEmulationPaused() },
         )
     }
 
@@ -550,9 +550,9 @@ class MainActivityE2eTest {
         // samples must all cross without crashing; observable cartridge
         // effects stay with the MBC7 host tests and real-device smoke.
         runOnActivityThread(activity) {
-            activity.forwardCartridgeAccelerationForTest(0.5f, -0.25f)
-            activity.forwardCartridgeAccelerationForTest(9.5f, -9.5f)
-            activity.forwardCartridgeAccelerationForTest(0.0f, 0.0f)
+            activity.forwardCartridgeAcceleration(0.5f, -0.25f)
+            activity.forwardCartridgeAcceleration(9.5f, -9.5f)
+            activity.forwardCartridgeAcceleration(0.0f, 0.0f)
         }
     }
 

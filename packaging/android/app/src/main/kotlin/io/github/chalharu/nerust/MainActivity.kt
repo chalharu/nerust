@@ -995,12 +995,6 @@ class MainActivity :
         connectedDeviceIds.remove(deviceId)
     }
 
-    fun forwardCartridgeAccelerationForTest(xG: Float, yG: Float) {
-        forwardCartridgeAcceleration(xG, yG)
-    }
-
-    fun pausedForTest(): Boolean = isEmulationPaused()
-
     /** Show a DTO-driven Android settings screen. Presents the versioned sections from Rust.
      * Save and dismiss return request-scoped JSON; edits ride synchronous per-row commands. */
     fun showSettingsDialog(payload: String) {
