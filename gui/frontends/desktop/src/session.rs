@@ -22,9 +22,8 @@ pub struct SessionAdapter {
     pressed_keys: HashSet<nerust_input_traits::Key>,
     audio: Arc<AudioBackendRegistry>,
     osd: nerust_gui_shell::session::osd::OsdManager,
-    /// Frame-polled gilrs source (macOS-only until the Linux backend
-    /// lands). `None` is absent-or-unavailable; polls stay empty.
-    #[cfg(target_os = "macos")]
+    /// Frame-polled gilrs source (evdev / WGI / IOHID behind one
+    /// vocabulary). `None` is absent-or-unavailable; polls stay empty.
     gamepads: Option<crate::gamepad::GilrsPoller>,
 }
 
@@ -184,7 +183,6 @@ impl SessionAdapter {
             pressed_keys: HashSet::new(),
             audio,
             osd: nerust_gui_shell::session::osd::OsdManager::new(),
-            #[cfg(target_os = "macos")]
             gamepads: None,
         })
     }
@@ -202,7 +200,6 @@ impl SessionAdapter {
     /// keyboard-identical tail in the frame loop. Mirrors `key_event`'s
     /// enable rule (`loaded && !paused`, hold folds into paused): fields
     /// clear when disabled, shortcuts still return.
-    #[cfg(target_os = "macos")]
     pub(crate) fn poll_gamepads(&mut self) -> Vec<KeyboardShortcut> {
         if self.gamepads.is_none() {
             self.gamepads = crate::gamepad::GilrsPoller::new();

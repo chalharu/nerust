@@ -1,24 +1,28 @@
 //! Desktop gilrs reader: HID polls in, shared pad events out.
 //!
-//! macOS-first (P2'): gilrs is a macOS-only dependency so Linux builds stay
-//! free of its libudev system requirement until the Linux backend (P2'')
-//! lands. `cargo deny` graphs the Linux target, so the macOS-only edge adds
-//! no deny churn now; the Linux phase re-runs deny with the system dep.
-//! Default gilrs features stay on: disabling them trips a gilrs-core
-//! unconditional `compile_error!`, and WGI is exactly what the later
-//! Windows phase wants.
+//! Cross-platform by construction: gilrs abstracts evdev (Linux), WGI
+//! (Windows), and IOHID (macOS) behind one event vocabulary, so this layer
+//! carries no `target_os` gates. The only platform-specific remainder is
+//! the Switch hidraw reader (Linux-only, P2''), which stays separate.
 //!
-//! Input-only phase: macOS reports no force feedback and ships no motion
-//! producer, so there is no `RumbleSink` here yet. Rumble output and motion
-//! producers are P3; the session read side (`rumble_intensity`) and the
-//! motion entry (`apply_motion`) already exist for them.
+//! Linux link note: building needs the libudev system package
+//! (`libudev-dev`); runtime device access (`/dev/input/event*`) is a P2''
+//! packaging follow-up alongside the hidraw reader. Default gilrs features
+//! stay on: disabling them trips a gilrs-core unconditional
+//! `compile_error!`, and WGI is exactly what Windows uses.
+//!
+//! Input-only phase: no force-feedback sink ships yet (macOS reports none;
+//! Linux/Windows FF producers are P3), and no motion producer ships yet.
+//! Rumble output and motion producers are P3; the session read side
+//! (`rumble_intensity`) and the motion entry (`apply_motion`) already exist
+//! for them.
 //!
 //! Conventions (review-pinned):
 //! - Matches over gilrs `Button`/`Axis` are exhaustive with no wildcard arm,
-//!   so a gilrs upgrade that adds a variant fails the macOS build loudly
-//!   instead of silently parking the new input. `EventType` is
-//!   `#[non_exhaustive]`, so its match ends with an explicit drop arm: new
-//!   event kinds park as ignored until deliberately handled.
+//!   so a gilrs upgrade that adds a variant fails the build loudly instead
+//!   of silently parking the new input. `EventType` is `#[non_exhaustive]`,
+//!   so its match ends with an explicit drop arm: new event kinds park as
+//!   ignored until deliberately handled.
 //! - The session owns deadzone, trigger edge, stick substitution, and repeat
 //!   suppression. gilrs runs with its stock filters (conditional dpad
 //!   synthesis plus jitter pre-clean); this layer never re-normalizes.
@@ -26,17 +30,12 @@
 //!   (natively, or via gilrs' conditional axis synthesis), and driving both
 //!   would double-feed the session.
 
-use nerust_input_traits::{DeviceEvent, PollSource};
-
-#[cfg(target_os = "macos")]
 use gilrs::{Axis as GilrsAxis, Button as GilrsButton, EventType as GilrsEventType, Gilrs};
-#[cfg(target_os = "macos")]
-use nerust_input_traits::{GamepadAxis, GamepadEvent, StandardButton};
+use nerust_input_traits::{DeviceEvent, GamepadAxis, GamepadEvent, PollSource, StandardButton};
 
 /// gilrs button to shared position button. `C`/`Z` are pre-standard extras
 /// with no shared counterpart and `Unknown` stays silent instead of
 /// guessing; both ride nowhere.
-#[cfg(target_os = "macos")]
 pub(crate) fn map_button(button: GilrsButton) -> Option<StandardButton> {
     match button {
         GilrsButton::South => Some(StandardButton::South),
@@ -65,7 +64,6 @@ pub(crate) fn map_button(button: GilrsButton) -> Option<StandardButton> {
 
 /// gilrs axis to shared axis. Dpad axes are dropped (buttons carry them);
 /// `Unknown` stays silent.
-#[cfg(target_os = "macos")]
 pub(crate) fn map_axis(axis: GilrsAxis) -> Option<GamepadAxis> {
     match axis {
         GilrsAxis::LeftStickX => Some(GamepadAxis::LeftStickX),
@@ -79,15 +77,13 @@ pub(crate) fn map_axis(axis: GilrsAxis) -> Option<GamepadAxis> {
 }
 
 /// Frame-polled gilrs source. The UI frame loop owns the single instance
-/// and drains it once per tick (thread-free, like the retired IOHID
-/// reader); the dedicated reader thread arrives with the Linux hidraw
-/// reader in P2'', which needs background polling while suspended.
-#[cfg(target_os = "macos")]
+/// and drains it once per tick (thread-free); the dedicated reader thread
+/// arrives with the Linux hidraw reader in P2'', which needs background
+/// polling while suspended.
 pub(crate) struct GilrsPoller {
     gilrs: Gilrs,
 }
 
-#[cfg(target_os = "macos")]
 impl GilrsPoller {
     /// `None` parks the backend as absent: every later poll stays empty
     /// instead of retrying noisily. Connect a pad and restart to pick it up.
@@ -149,7 +145,6 @@ impl GilrsPoller {
     }
 }
 
-#[cfg(target_os = "macos")]
 impl PollSource for GilrsPoller {
     fn poll(&mut self) -> Vec<DeviceEvent> {
         let mut out = Vec::new();
@@ -219,8 +214,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_os = "macos")]
-    fn mac_button_map_covers_every_variant() {
+    fn button_map_covers_every_variant() {
         // Exhaustive by construction (no wildcard in map_button); this pins
         // the intended target of each variant instead of just its presence.
         use GilrsButton as B;
@@ -252,8 +246,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_os = "macos")]
-    fn mac_axis_map_covers_every_variant() {
+    fn axis_map_covers_every_variant() {
         use GilrsAxis as A;
         let mapped = [
             (A::LeftStickX, Some(GamepadAxis::LeftStickX)),

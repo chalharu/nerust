@@ -1,6 +1,5 @@
 mod debugger;
 mod error;
-#[cfg(any(target_os = "macos", test))]
 mod gamepad;
 mod history;
 mod ppu;
@@ -609,9 +608,8 @@ impl MainHost {
         nerust_gui_application::ApplicationState,
         Result<Option<panechord::ImageFrame>, String>,
     ) {
-        // Pad edges land before the frame advance, like the retired poll
-        // below the old capture path: same tick, same shortcut tail.
-        #[cfg(target_os = "macos")]
+        // Pad edges land before the frame advance: same tick, same
+        // shortcut tail.
         self.poll_gamepads();
         let mut app = self.application.borrow_mut();
         let profile = app.session().render_profile();
@@ -686,11 +684,10 @@ impl MainHost {
         }
     }
 
-    /// macOS pad frame: drain gilrs through the session entry and route
+    /// Desktop pad frame: drain gilrs through the session entry and route
     /// shortcut edges through the keyboard-identical tail (pause toggle,
     /// session actions, fullscreen, debugger). Notice text surfaces the
     /// same way a key binding failure does.
-    #[cfg(target_os = "macos")]
     fn poll_gamepads(&self) {
         let cuts = {
             let mut app = self.application.borrow_mut();
