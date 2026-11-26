@@ -21,10 +21,12 @@ pub(crate) const ACTION_MOTION: &str = "motion";
 pub(crate) const ACTION_DEVICE_ADDED: &str = "device_added";
 pub(crate) const ACTION_DEVICE_REMOVED: &str = "device_removed";
 pub(crate) const ACTION_TOUCH_GATE: &str = "touch_gate";
+pub(crate) const ACTION_CARTRIDGE_MOTION: &str = "cartridge_motion";
 
 /// Required fields per menu action, from the schema gates.
 /// Dispatch rejects events missing any listed field first.
 pub(crate) const MENU_REQUIRED_FIELDS: &[(&str, &[&str])] = &[
+    ("cartridge_motion", &["accel_x", "accel_y"]),
     ("controller", &["device_id", "key", "pressed"]),
     ("delete_slot", &["slot_id"]),
     ("device_added", &["descriptor", "device_id"]),
@@ -43,3 +45,7 @@ pub(crate) const INTEGER_FIELD_BOUNDS: &[(&str, i64, i64)] = &[
 
 /// Inclusive analog axis range, from the schema.
 pub(crate) const ANALOG_VALUE_BOUNDS: (f32, f32) = (-1.0, 1.0);
+
+/// Inclusive cartridge-accelerometer range, from the schema.
+/// Separate from the stick range: shakes exceed stick bounds.
+pub(crate) const ACCEL_VALUE_BOUNDS: (f32, f32) = (-8.0, 8.0);

@@ -7,26 +7,28 @@ import android.content.res.Configuration
 import android.os.Build
 import android.os.SystemClock
 import android.util.Log
+import android.view.InputDevice
+import android.view.KeyEvent
+import android.view.MotionEvent
 import androidx.test.core.app.ApplicationProvider
 import org.json.JSONArray
 import org.json.JSONObject
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
-import org.junit.FixMethodOrder
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.junit.runners.MethodSorters
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 
 @RunWith(AndroidJUnit4::class)
-@FixMethodOrder(MethodSorters.NAME_ASCENDING)
 class MainActivityE2eTest {
     @Test
     fun runtimeMeetsMinimumSupportedApi() {
@@ -35,7 +37,7 @@ class MainActivityE2eTest {
 
     @Test
     fun romPickerIntentUsesSafPersistableReadAccess() {
-        val intent = MainActivity.createRomPickerIntentForTest()
+        val intent = createRomPickerIntent()
 
         assertEquals(Intent.ACTION_OPEN_DOCUMENT, intent.action)
         assertEquals("*/*", intent.type)
@@ -51,7 +53,7 @@ class MainActivityE2eTest {
 
     @Test
     fun directoryPickerIntentUsesPersistableReadWriteAccess() {
-        val intent = MainActivity.createDirectoryPickerIntentForTest()
+        val intent = createDirectoryPickerIntent()
 
         assertEquals(Intent.ACTION_OPEN_DOCUMENT_TREE, intent.action)
         assertTrue(
@@ -214,7 +216,7 @@ class MainActivityE2eTest {
 
         assertTrue(
             "SettingsActivity should start after requesting it",
-            waitUntil(DIALOG_TIMEOUT_MS) { SettingsActivity.currentActivityForTest() != null },
+            waitUntil(DIALOG_TIMEOUT_MS) { SettingsActivity.currentActivity() != null },
         )
 
         runOnActivityThread(activity) {
@@ -224,7 +226,7 @@ class MainActivityE2eTest {
                 }
             assertTrue(
                 "Settings should run in its own activity",
-                SettingsActivity.currentActivityForTest() != null,
+                SettingsActivity.currentActivity() != null,
             )
             assertEquals(
                 "Settings\nVideo Filter: LCD\nTouch Overlay: On",
@@ -238,7 +240,7 @@ class MainActivityE2eTest {
         }
         assertTrue(
             "SettingsActivity should finish after dismissal",
-            waitUntil(DIALOG_TIMEOUT_MS) { SettingsActivity.currentActivityForTest() == null },
+            waitUntil(DIALOG_TIMEOUT_MS) { SettingsActivity.currentActivity() == null },
         )
 
         runOnActivityThread(activity) {
@@ -250,14 +252,14 @@ class MainActivityE2eTest {
         }
         assertTrue(
             "SettingsActivity should start after dispatching open_settings",
-            waitUntil(DIALOG_TIMEOUT_MS) { SettingsActivity.currentActivityForTest() != null },
+            waitUntil(DIALOG_TIMEOUT_MS) { SettingsActivity.currentActivity() != null },
         )
         runOnActivityThread(activity) {
             activity.resetChromeStateForTest()
         }
         assertTrue(
             "SettingsActivity should finish after reset",
-            waitUntil(DIALOG_TIMEOUT_MS) { SettingsActivity.currentActivityForTest() == null },
+            waitUntil(DIALOG_TIMEOUT_MS) { SettingsActivity.currentActivity() == null },
         )
 
         runOnActivityThread(activity) {
@@ -265,7 +267,7 @@ class MainActivityE2eTest {
         }
         assertTrue(
             "MainActivity should suspend before process restart",
-            waitUntil(DIALOG_TIMEOUT_MS) { MainActivity.currentActivityForTest() == null },
+            waitUntil(DIALOG_TIMEOUT_MS) { MainActivity.currentActivity() == null },
         )
         SystemClock.sleep(LIFECYCLE_SAVE_DELAY_MS)
     }
@@ -453,6 +455,122 @@ class MainActivityE2eTest {
         }
     }
 
+    @Test(timeout = TEST_TIMEOUT_MS)
+    fun gamepadButtonKeysDivertThroughDispatch() {
+        val activity = launchActivity()
+        val down = gamepadKey(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BUTTON_A)
+        val up = gamepadKey(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BUTTON_A)
+        val unmapped = gamepadKey(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BUTTON_Z)
+        assertTrue("gamepad A press should divert to the session", dispatchKeyOnActivityThread(activity, down))
+        assertTrue("gamepad A release should divert to the session", dispatchKeyOnActivityThread(activity, up))
+        assertFalse(
+            "unmapped gamepad key should fall through to the platform",
+            dispatchKeyOnActivityThread(activity, unmapped),
+        )
+    }
+
+    @Test(timeout = TEST_TIMEOUT_MS)
+    fun gamepadGuideButtonTogglesPauseEndToEnd() {
+        val activity = launchActivity()
+        runOnActivityThread(activity) {
+            activity.loadRomUriForTest(TestRomProvider.ROM_URI.toString())
+        }
+        assertTrue(
+            "GBC document URI should be detected and loaded",
+            waitUntil(STARTUP_TIMEOUT_MS) { activity.lastLoadedSystemForTest() == "gbc" },
+        )
+        runOnActivityThread(activity) {
+            if (activity.isEmulationPaused()) activity.dispatchMenuActionForTest(MenuAction.TOGGLE_PAUSE)
+        }
+        assertTrue(
+            "emulation should start running",
+            waitUntil(DIALOG_TIMEOUT_MS) { !activity.isEmulationPaused() },
+        )
+        runOnActivityThread(activity) {
+            activity.dispatchDeviceAddedForTest(E2E_PAD_ID, E2E_PAD_DESCRIPTOR)
+        }
+        pressGuideButton(activity)
+        assertTrue(
+            "Guide press should pause through the pad shortcut",
+            waitUntil(DIALOG_TIMEOUT_MS) { activity.isEmulationPaused() },
+        )
+        // Removal parks the pad in Rust while Kotlin still diverts on the
+        // gamepad source. Positive proof: resume first, then press — a
+        // still-connected pad would toggle back to paused.
+        runOnActivityThread(activity) {
+            activity.dispatchDeviceRemovedForTest(E2E_PAD_ID)
+        }
+        runOnActivityThread(activity) {
+            activity.dispatchMenuActionForTest(MenuAction.TOGGLE_PAUSE)
+        }
+        assertTrue(
+            "cleanup should resume emulation",
+            waitUntil(DIALOG_TIMEOUT_MS) { !activity.isEmulationPaused() },
+        )
+        pressGuideButton(activity)
+        SystemClock.sleep(PAUSE_SETTLE_MS)
+        assertFalse("removed pad must not drive shortcuts", activity.isEmulationPaused())
+    }
+
+    @Test(timeout = TEST_TIMEOUT_MS)
+    fun gamepadMotionBatchDivertsThroughDispatch() {
+        val activity = launchActivity()
+        runOnActivityThread(activity) {
+            activity.addTestControllerRouteForTest(E2E_PAD_ID)
+        }
+        try {
+            val motion = joystickMove(E2E_PAD_ID, MotionEvent.AXIS_X, 0.8f)
+            try {
+                assertTrue(
+                    "joystick motion should divert to the session",
+                    dispatchMotionOnActivityThread(activity, motion),
+                )
+            } finally {
+                motion.recycle()
+            }
+        } finally {
+            runOnActivityThread(activity) {
+                activity.removeTestControllerRouteForTest(E2E_PAD_ID)
+            }
+        }
+    }
+
+    @Test(timeout = TEST_TIMEOUT_MS)
+    fun cartridgeMotionConfigReachesKotlin() {
+        val activity = launchActivity()
+        runOnActivityThread(activity) {
+            activity.loadRomUriForTest(TestRomProvider.MBC7_ROM_URI.toString())
+        }
+        assertTrue(
+            "MBC7 document URI should be detected and loaded",
+            waitUntil(STARTUP_TIMEOUT_MS) { activity.lastLoadedSystemForTest() == "gbc" },
+        )
+        // Full configure hop: MBC7 ROM arms the accelerometer demand in
+        // Rust, the session sync forwards it over JNI, and Kotlin enables
+        // motion plus rumble. The motion sample flow itself needs a real
+        // sensor; MBC7 latch coverage stays in gbc_core host tests.
+        val config =
+            waitUntilValue(DIALOG_TIMEOUT_MS) {
+                activity.rumbleMotionConfigForTest().takeIf { it.first }
+            }
+        requireNotNull(config) { "MBC7 load should enable motion in Kotlin" }
+        assertTrue("rumble stays enabled from settings", config.second)
+    }
+
+    @Test(timeout = TEST_TIMEOUT_MS)
+    fun cartridgeAccelerationLaneForwardsSamples() {
+        val activity = launchActivity()
+        // Wiring guard: quantize+clamp in Kotlin, menu lane, Rust apply.
+        // In-range, over-range (clamped to the schema range), and zero
+        // samples must all cross without crashing; observable cartridge
+        // effects stay with the MBC7 host tests and real-device smoke.
+        runOnActivityThread(activity) {
+            activity.forwardCartridgeAcceleration(0.5f, -0.25f)
+            activity.forwardCartridgeAcceleration(9.5f, -9.5f)
+            activity.forwardCartridgeAcceleration(0.0f, 0.0f)
+        }
+    }
+
     /** Watchdog for a stuck shutdown: dumps every thread while the test still runs.
      * Destroy is expected within seconds. A linger without destroy — or a
      * destroy that never completes — names the blocker, so always dump:
@@ -478,10 +596,10 @@ class MainActivityE2eTest {
         context.startActivity(launchIntent)
         val activity =
             waitUntilValue(STARTUP_TIMEOUT_MS) {
-                MainActivity.currentActivityForTest()
+                MainActivity.currentActivity()
             }
         if (activity == null) {
-            val current = MainActivity.currentActivityForTest()
+            val current = MainActivity.currentActivity()
             if (current != null) {
                 fail("MainActivity relaunch did not restore the drawer handle; ${safeChromeDebugState(current, DRAWER_EDGE_HANDLE_TAG)}")
             }
@@ -571,6 +689,78 @@ class MainActivityE2eTest {
             "debug unavailable: ${error.message ?: error::class.java.simpleName}"
         }
 
+    private fun pressGuideButton(activity: MainActivity) {
+        val down = gamepadKey(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BUTTON_MODE)
+        val up = gamepadKey(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BUTTON_MODE)
+        assertTrue("Guide press should divert to the session", dispatchKeyOnActivityThread(activity, down))
+        assertTrue("Guide release should divert to the session", dispatchKeyOnActivityThread(activity, up))
+    }
+
+    private fun gamepadKey(action: Int, keyCode: Int): KeyEvent {
+        val now = SystemClock.uptimeMillis()
+        return KeyEvent(
+            now,
+            now,
+            action,
+            keyCode,
+            0,
+            0,
+            E2E_PAD_ID,
+            0,
+            0,
+            InputDevice.SOURCE_GAMEPAD,
+        )
+    }
+
+    private fun dispatchKeyOnActivityThread(activity: MainActivity, event: KeyEvent): Boolean {
+        val result = AtomicBoolean(false)
+        runOnActivityThread(activity) {
+            result.set(activity.dispatchKeyEvent(event))
+        }
+        return result.get()
+    }
+
+    private fun dispatchMotionOnActivityThread(activity: MainActivity, event: MotionEvent): Boolean {
+        val result = AtomicBoolean(false)
+        runOnActivityThread(activity) {
+            result.set(activity.onGenericMotionEvent(event))
+        }
+        return result.get()
+    }
+
+    private fun joystickMove(deviceId: Int, axis: Int, value: Float): MotionEvent {
+        val properties =
+            arrayOf(
+                MotionEvent.PointerProperties().apply {
+                    id = 0
+                    toolType = MotionEvent.TOOL_TYPE_FINGER
+                },
+            )
+        val coords =
+            arrayOf(
+                MotionEvent.PointerCoords().apply {
+                    setAxisValue(axis, value)
+                },
+            )
+        val now = SystemClock.uptimeMillis()
+        return MotionEvent.obtain(
+            now,
+            now,
+            MotionEvent.ACTION_MOVE,
+            1,
+            properties,
+            coords,
+            0,
+            0,
+            1f,
+            1f,
+            deviceId,
+            0,
+            InputDevice.SOURCE_JOYSTICK or InputDevice.SOURCE_GAMEPAD,
+            0,
+        )
+    }
+
     private fun runOnActivityThread(activity: MainActivity, action: () -> Unit) {
         val completion = CountDownLatch(1)
         val failure = AtomicReference<Throwable?>()
@@ -621,6 +811,9 @@ class MainActivityE2eTest {
 
     private companion object {
         const val DIALOG_TIMEOUT_MS = 5_000L
+        const val E2E_PAD_DESCRIPTOR = "e2e-test-pad"
+        const val E2E_PAD_ID = 4242
+        const val PAUSE_SETTLE_MS = 2_000L
         const val DRAWER_COMPOSE_TAG = "nerust-drawer-compose"
         const val DRAWER_EDGE_HANDLE_TAG = "nerust-drawer-edge-handle"
         const val DRAWER_OVERLAY_TAG = "nerust-drawer-overlay"

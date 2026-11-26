@@ -62,8 +62,12 @@ def _require_const_value(prop, kind):
 
 
 def _require_prop(prop):
-    """Single property rule this codegen supports."""
-    require(set(prop) <= {"type", "const", "enum", "minimum", "maximum"})
+    """Single property rule this codegen supports. `x-motion-axis` marks
+    stick/trigger batch members; other number properties (cartridge
+    accel) ride different actions and stay out of the stick vocabulary."""
+    require(set(prop) <= {"type", "const", "enum", "minimum", "maximum", "x-motion-axis"})
+    if "x-motion-axis" in prop:
+        require(isinstance(prop["x-motion-axis"], bool))
     kind = field_type(prop)
     require(kind in {"integer", "string", "boolean", "number"})
     if kind == "integer" and "const" not in prop:
@@ -201,6 +205,15 @@ def _rust_tables(schema, menu):
         if field_type(prop) == "integer" and "minimum" in prop
     )
     value_prop = menu["left_x"]
+    require(
+        (menu["accel_x"]["minimum"], menu["accel_x"]["maximum"])
+        == (menu["accel_y"]["minimum"], menu["accel_y"]["maximum"]),
+        "cartridge accel axes must share one range",
+    )
+    require(
+        menu["accel_x"]["minimum"] == -menu["accel_x"]["maximum"],
+        "cartridge accel range must be symmetric for the Kotlin clamp",
+    )
     lines = [
         "",
         "/// Required fields per menu action, from the schema gates.",
@@ -226,6 +239,10 @@ def _rust_tables(schema, menu):
         "",
         "/// Inclusive analog axis range, from the schema.",
         f'pub(crate) const ANALOG_VALUE_BOUNDS: (f32, f32) = ({float(value_prop["minimum"])}, {float(value_prop["maximum"])});',
+        "",
+        "/// Inclusive cartridge-accelerometer range, from the schema.",
+        "/// Separate from the stick range: shakes exceed stick bounds.",
+        f'pub(crate) const ACCEL_VALUE_BOUNDS: (f32, f32) = ({float(menu["accel_x"]["minimum"])}, {float(menu["accel_x"]["maximum"])});',
     ])
     return lines
 
@@ -242,9 +259,10 @@ def outputs(schema):
     summary = schema["x-saf-summary-bytes"]
     require(all(type(number) is int and 0 < number < 2**31 for number in (version, settings, chunk, summary)))
     actions, keys = menu["action"]["enum"], menu["key"]["enum"]
-    # Motion axes ride as optional per-axis number properties (one batched
-    # event per motion callback); the property names are the wire ids.
-    axes = [name for name, prop in menu.items() if field_type(prop) == "number"]
+    # Motion axes are the stick/trigger number properties only: other
+    # numbers (e.g. cartridge accel) ride different actions and must not
+    # join the stick batch vocabulary. Marked explicitly in the schema.
+    axes = [name for name, prop in menu.items() if prop.get("x-motion-axis")]
     _require_wire_ids(menu, actions, keys, axes)
     rs = _rust_header(version, settings, chunk, summary)
     rs.extend(f'pub(crate) const ACTION_{action.upper()}: &str = "{action}";' for action in actions)
@@ -254,7 +272,10 @@ def outputs(schema):
           f"internal const val BRIDGE_EVENT_VERSION = {version}",
           f"internal const val SETTINGS_SCHEMA_VERSION = {settings}",
           f"internal const val SAF_CHUNK_BYTES = {chunk}",
-          f"internal const val SAF_SUMMARY_BYTES = {summary}"]
+          f"internal const val SAF_SUMMARY_BYTES = {summary}",
+          # Cartridge accel range for the Kotlin quantize clamp: single
+          # source is the schema (Rust const derives from the same bounds).
+          f"internal const val CARTRIDGE_ACCEL_MAX_G = {float(menu['accel_x']['maximum'])}f"]
     for obj, names in [("MenuAction", actions), ("ControllerKey", keys), ("ControllerAxis", axes)]:
         kt += ["", f"internal object {obj} {{"]
         kt += [f'    const val {name.upper()} = "{name}"' for name in names]

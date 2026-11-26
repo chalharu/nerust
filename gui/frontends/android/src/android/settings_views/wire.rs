@@ -215,7 +215,7 @@ pub(super) fn player_label(index: usize, i18n: I18n) -> String {
 /// 1-based pad). Shortcuts return above, so both accessors hold here.
 /// Action names use the serialized (snake_case) form, never `Debug`,
 /// so row keys stay stable across refactors.
-pub(super) fn binding_key(target: &CaptureTarget) -> String {
+pub(super) fn target_row_key(target: &CaptureTarget) -> String {
     if let Some(action) = target.action() {
         use nerust_settings_core::model::input::ShortcutAction as A;
         let name = match action {

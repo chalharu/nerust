@@ -37,6 +37,10 @@ pub(crate) enum MenuAction {
     TouchGate {
         respond: bool,
     },
+    CartridgeMotion {
+        x: f32,
+        y: f32,
+    },
     Unload,
 }
 
@@ -54,11 +58,11 @@ pub(crate) enum FrontendEvent {
 }
 
 use crate::bridge_contract::{
-    ACTION_CONTROLLER, ACTION_CREATE_SLOT, ACTION_DELETE_SLOT, ACTION_DEVICE_ADDED,
-    ACTION_DEVICE_REMOVED, ACTION_EXIT, ACTION_LOAD_STATE, ACTION_MOTION, ACTION_OPEN_ROM,
-    ACTION_OPEN_SETTINGS, ACTION_ORIENTATION_CHANGED, ACTION_RESET, ACTION_SAVE_STATE,
-    ACTION_SELECT_SLOT, ACTION_TOGGLE_PAUSE, ACTION_TOUCH_GATE, ACTION_UNLOAD, ANALOG_VALUE_BOUNDS,
-    BRIDGE_EVENT_VERSION, INTEGER_FIELD_BOUNDS, MENU_REQUIRED_FIELDS,
+    ACCEL_VALUE_BOUNDS, ACTION_CARTRIDGE_MOTION, ACTION_CONTROLLER, ACTION_CREATE_SLOT,
+    ACTION_DELETE_SLOT, ACTION_DEVICE_ADDED, ACTION_DEVICE_REMOVED, ACTION_EXIT, ACTION_LOAD_STATE,
+    ACTION_MOTION, ACTION_OPEN_ROM, ACTION_OPEN_SETTINGS, ACTION_ORIENTATION_CHANGED, ACTION_RESET,
+    ACTION_SAVE_STATE, ACTION_SELECT_SLOT, ACTION_TOGGLE_PAUSE, ACTION_TOUCH_GATE, ACTION_UNLOAD,
+    ANALOG_VALUE_BOUNDS, BRIDGE_EVENT_VERSION, INTEGER_FIELD_BOUNDS, MENU_REQUIRED_FIELDS,
 };
 
 /// Typed controller-key mapping, checked against the shared JSON schema.
@@ -159,6 +163,10 @@ struct MenuEvent {
     trigger_l: Option<f32>,
     #[serde(default, deserialize_with = "de_opt_null_reject")]
     trigger_r: Option<f32>,
+    #[serde(default, deserialize_with = "de_opt_null_reject")]
+    accel_x: Option<f32>,
+    #[serde(default, deserialize_with = "de_opt_null_reject")]
+    accel_y: Option<f32>,
     #[serde(default, deserialize_with = "de_opt_integral")]
     slot_id: Option<i64>,
 }
@@ -321,6 +329,18 @@ fn check_menu_shape(action: &str, event: &MenuEvent) -> Option<()> {
             return None;
         }
     }
+    // Same global rule for the cartridge accelerometer: shakes exceed
+    // the stick range, so it carries its own schema range (the producer
+    // clamps to it); out-of-range samples fail loud like bad axes.
+    for (name, value) in [("accel_x", event.accel_x), ("accel_y", event.accel_y)]
+        .into_iter()
+        .filter_map(|(name, value)| value.map(|value| (name, value)))
+    {
+        if !(ACCEL_VALUE_BOUNDS.0..=ACCEL_VALUE_BOUNDS.1).contains(&value) {
+            log::warn!("ignoring {action} bridge event with out-of-range {name}={value}");
+            return None;
+        }
+    }
     Some(())
 }
 
@@ -335,6 +355,8 @@ impl MenuEvent {
             "pressed" => self.pressed.is_some(),
             "descriptor" => self.descriptor.is_some(),
             "slot_id" => self.slot_id.is_some(),
+            "accel_x" => self.accel_x.is_some(),
+            "accel_y" => self.accel_y.is_some(),
             _ => false,
         }
     }
@@ -453,6 +475,18 @@ fn decode_json_menu_action(event: &MenuEvent) -> Option<FrontendEvent> {
         }
         return Some(FrontendEvent::MenuBatch(batch));
     }
+    if action == ACTION_CARTRIDGE_MOTION {
+        // Presence and range pre-checked by the schema table and the
+        // shape gate; finite check keeps the channel free of NaN/inf.
+        let (Some(x), Some(y)) = (event.accel_x, event.accel_y) else {
+            return None;
+        };
+        if !x.is_finite() || !y.is_finite() {
+            log::warn!("ignoring cartridge motion with non-finite sample");
+            return None;
+        }
+        return Some(FrontendEvent::Menu(MenuAction::CartridgeMotion { x, y }));
+    }
     if action == ACTION_DEVICE_ADDED {
         let (Some(device_id), Some(descriptor)) = (event.device_id, descriptor) else {
             return None;
@@ -517,11 +551,11 @@ pub(crate) fn decode_frontend_event(raw: &str) -> Option<FrontendEvent> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ACTION_CREATE_SLOT, ACTION_DELETE_SLOT, ACTION_DEVICE_ADDED, ACTION_DEVICE_REMOVED,
-        ACTION_EXIT, ACTION_LOAD_STATE, ACTION_MOTION, ACTION_OPEN_ROM, ACTION_OPEN_SETTINGS,
-        ACTION_ORIENTATION_CHANGED, ACTION_RESET, ACTION_SAVE_STATE, ACTION_SELECT_SLOT,
-        ACTION_TOGGLE_PAUSE, ACTION_TOUCH_GATE, ACTION_UNLOAD, FrontendEvent, MenuAction,
-        decode_frontend_event,
+        ACTION_CARTRIDGE_MOTION, ACTION_CREATE_SLOT, ACTION_DELETE_SLOT, ACTION_DEVICE_ADDED,
+        ACTION_DEVICE_REMOVED, ACTION_EXIT, ACTION_LOAD_STATE, ACTION_MOTION, ACTION_OPEN_ROM,
+        ACTION_OPEN_SETTINGS, ACTION_ORIENTATION_CHANGED, ACTION_RESET, ACTION_SAVE_STATE,
+        ACTION_SELECT_SLOT, ACTION_TOGGLE_PAUSE, ACTION_TOUCH_GATE, ACTION_UNLOAD, FrontendEvent,
+        MenuAction, decode_frontend_event,
     };
     use crate::bridge_contract::BRIDGE_EVENT_VERSION;
 
@@ -728,10 +762,11 @@ mod tests {
             .collect();
         assert_eq!(
             names.len(),
-            17,
+            18,
             "new actions must also be handled by the decoder"
         );
         for action in [
+            ACTION_CARTRIDGE_MOTION,
             ACTION_MOTION,
             ACTION_CREATE_SLOT,
             ACTION_DELETE_SLOT,
@@ -783,6 +818,31 @@ mod tests {
                 r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"device_added","device_id":7,"descriptor":""}}"#
             ),
             format!(r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"device_removed"}}"#),
+        ] {
+            assert_eq!(decode_frontend_event(&raw), None);
+        }
+    }
+
+    /// Cartridge motion carries planar acceleration; missing or
+    /// non-finite samples fail loud instead of poisoning the channel.
+    #[test]
+    fn cartridge_motion_decodes_accel_pair() {
+        assert_eq!(
+            decode_frontend_event(&format!(
+                r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"cartridge_motion","accel_x":0.5,"accel_y":-0.25}}"#
+            )),
+            Some(FrontendEvent::Menu(MenuAction::CartridgeMotion {
+                x: 0.5,
+                y: -0.25
+            }))
+        );
+        for raw in [
+            format!(
+                r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"cartridge_motion","accel_x":0.5}}"#
+            ),
+            format!(
+                r#"{{"v":{BRIDGE_EVENT_VERSION},"type":"menu","action":"cartridge_motion","accel_x":0.5,"accel_y":null}}"#
+            ),
         ] {
             assert_eq!(decode_frontend_event(&raw), None);
         }

@@ -15,6 +15,41 @@ internal fun isControllerSource(source: Int): Boolean =
     source and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
         source and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
 
+/** Controller keycode to bridge key, or null to leave to platform. */
+internal fun controllerKeyFor(keyCode: Int): String? =
+    when (keyCode) {
+        KeyEvent.KEYCODE_BUTTON_A -> ControllerKey.BUTTON1
+        KeyEvent.KEYCODE_BUTTON_B -> ControllerKey.BUTTON2
+        KeyEvent.KEYCODE_BUTTON_X -> ControllerKey.BUTTON3
+        KeyEvent.KEYCODE_BUTTON_Y -> ControllerKey.BUTTON4
+        KeyEvent.KEYCODE_BUTTON_L1 -> ControllerKey.BUTTON5
+        KeyEvent.KEYCODE_BUTTON_R1 -> ControllerKey.BUTTON6
+        KeyEvent.KEYCODE_BUTTON_L2 -> ControllerKey.BUTTON7
+        KeyEvent.KEYCODE_BUTTON_R2 -> ControllerKey.BUTTON8
+        // The digital mirror for axis-less pads never reaches here:
+        // mirrorDigitalTrigger consumes those keys into the motion
+        // batch above. Keys arriving here drive the trigger buttons
+        // (bindings, shortcuts) while the motion axes keep driving
+        // the analog store plus shoulder doubling; the session
+        // pressed set dedups the dual delivery into one press.
+        KeyEvent.KEYCODE_BUTTON_MODE -> ControllerKey.GUIDE
+        KeyEvent.KEYCODE_BUTTON_THUMBL -> ControllerKey.L3
+        KeyEvent.KEYCODE_BUTTON_THUMBR -> ControllerKey.R3
+        // Capture/share (Switch capture, Xbox share, PS create):
+        // one position button like the rest, so capture, gameplay
+        // overrides, and shortcuts all resolve through the same path.
+        // `BUTTON_Z` is intentionally not mapped here: it is the
+        // Z-labeled / upper-row third button, not capture.
+        KeyEvent.KEYCODE_BUTTON_C -> ControllerKey.CAPTURE
+        KeyEvent.KEYCODE_BUTTON_START -> ControllerKey.START
+        KeyEvent.KEYCODE_BUTTON_SELECT -> ControllerKey.SELECT
+        KeyEvent.KEYCODE_DPAD_UP -> ControllerKey.UP
+        KeyEvent.KEYCODE_DPAD_DOWN -> ControllerKey.DOWN
+        KeyEvent.KEYCODE_DPAD_LEFT -> ControllerKey.LEFT
+        KeyEvent.KEYCODE_DPAD_RIGHT -> ControllerKey.RIGHT
+        else -> null
+    }
+
 /** One-device verdict for the Auto gate. A counted device must expose the
  * joystick class with a gamepad source or a non-alphabetic keyboard
  * (proven uinput-fpc filter, libgdx #5007), carry a gamepad button,

@@ -47,11 +47,11 @@ internal class ControlsOverlayView(
             color = Color.argb((220 * opacity).toInt(), 255, 255, 255)
             style = Paint.Style.FILL
         }
-    private var floatingDpadActive = false
-    private var floatingDpadCenterX = 0f
-    private var floatingDpadCenterY = 0f
-    private var floatingDpadKnobX = 0f
-    private var floatingDpadKnobY = 0f
+    internal var floatingDpadActive = false
+    internal var floatingDpadCenterX = 0f
+    internal var floatingDpadCenterY = 0f
+    internal var floatingDpadKnobX = 0f
+    internal var floatingDpadKnobY = 0f
 
     fun updateFloatingDpad(
         active: Boolean,
@@ -67,15 +67,6 @@ internal class ControlsOverlayView(
         floatingDpadKnobY = knobY
         invalidate()
     }
-
-    fun floatingDpadStateForTest(): FloatArray =
-        floatArrayOf(
-            if (floatingDpadActive) 1f else 0f,
-            floatingDpadCenterX,
-            floatingDpadCenterY,
-            floatingDpadKnobX,
-            floatingDpadKnobY,
-        )
 
     fun setPushedZones(zones: List<PushedOverlayZone>) {
         pushedZones = zones

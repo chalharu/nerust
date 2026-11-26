@@ -11,6 +11,7 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import android.view.InputDevice
 import android.view.Surface as AndroidSurface
+import kotlin.math.roundToInt
 
 internal fun screenRelativeAcceleration(
     x: Float,
@@ -31,6 +32,14 @@ internal fun screenRelativeAcceleration(
     )
 }
 
+/** Quantize one acceleration sample to 0.01g and clamp to the schema
+ * accel range: motion events fire at sensor rate and the bridge is JNI
+ * per sample, so sub-quantum repeats never cross. Rounding (not
+ * truncation) keeps positive and negative tilts symmetric. Pure math,
+ * JVM-tested. */
+internal fun quantizeAcceleration(value: Float): Float =
+    ((value * 100).roundToInt() / 100f).coerceIn(-CARTRIDGE_ACCEL_MAX_G, CARTRIDGE_ACCEL_MAX_G)
+
 /** Cartridge motion sensor + rumble routing. Owns registration and vibrator selection. */
 class SensorController(
     private val activity: MainActivity,
@@ -39,9 +48,9 @@ class SensorController(
     private var accelerometer: Sensor? = null
     var activityResumed = false
     var windowHasFocus = false
-    var motionEnabled = false
+    @Volatile var motionEnabled = false
     private var sensorRegistered = false
-    var rumbleEnabled = false
+    @Volatile var rumbleEnabled = false
     var rumbleStrengthPercent = 100
     var rumbleTarget = "auto"
     var rumbleIntensity = 0
@@ -139,13 +148,17 @@ class SensorController(
             sensorManager.unregisterListener(this)
             sensorRegistered = false
             activity.forwardCartridgeAcceleration(0f, 0f)
+            // Drop the quantize cache: the next registration's first
+            // sample must cross even if the device never moved.
+            lastAccelX = Float.NaN
+            lastAccelY = Float.NaN
         }
     }
 
-    /** Last forwarded acceleration, quantized to 0.01g: motion events
-     * fire at sensor rate and the bridge is JNI per sample, so
-     * sub-quantum repeats never cross. Rust treats small deltas as-is;
-     * this gate only saves crossings. */
+    /** Last forwarded acceleration, quantized to 0.01g and clamped to the
+     * schema accel range: motion events fire at sensor rate and the bridge
+     * is JNI per sample, so sub-quantum repeats never cross. Rust treats
+     * small deltas as-is; this gate only saves crossings. */
     private var lastAccelX = Float.NaN
     private var lastAccelY = Float.NaN
 
@@ -158,8 +171,8 @@ class SensorController(
                 event.values[1],
                 activity.windowManager.defaultDisplay.rotation,
             )
-        val qx = (sample[0] * 100).toInt() / 100f
-        val qy = (sample[1] * 100).toInt() / 100f
+        val qx = quantizeAcceleration(sample[0])
+        val qy = quantizeAcceleration(sample[1])
         if (qx == lastAccelX && qy == lastAccelY) return
         lastAccelX = qx
         lastAccelY = qy

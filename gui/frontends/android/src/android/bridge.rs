@@ -8,7 +8,6 @@ use std::{
 
 use jni::objects::{JIntArray, JObject};
 use jni::refs::Global;
-use nerust_core_traits::peripheral::{AccelerationSample, AccelerometerInputHandle};
 use nerust_persistence::model::StateSlotSummary;
 use nerust_settings_core::model::language::AppLanguage;
 use winit::{event_loop::EventLoopProxy, platform::android::activity::AndroidApp};
@@ -275,21 +274,6 @@ static SETTINGS: Mutex<SettingsSlot> = Mutex::new(SettingsSlot::empty());
 /// Monotonic insets generation: readers skip the lock when unchanged.
 static INSETS_VERSION: AtomicU64 = AtomicU64::new(0);
 
-/// Accelerometer leaf lock: read-mostly, so sensor pushes take a read lock
-/// and never contend with the vault. Never take the vault while holding it.
-static ACCEL_HANDLE: std::sync::RwLock<Option<AccelerometerInputHandle>> =
-    std::sync::RwLock::new(None);
-
-fn read_accel() -> Option<AccelerometerInputHandle> {
-    ACCEL_HANDLE
-        .read()
-        .unwrap_or_else(|poison| {
-            log::error!("accelerometer handle lock poisoned; recovering state");
-            poison.into_inner()
-        })
-        .clone()
-}
-
 pub(super) fn with_queue<T>(operation: impl FnOnce(&mut AndroidBridgeState) -> T) -> T {
     crate::reentrancy::with_lock(&QUEUE, operation)
 }
@@ -325,14 +309,6 @@ pub(super) fn clear_queues() {
 
 pub(super) fn reset_transient() {
     clear_queues();
-    bind_accelerometer(None);
-}
-
-pub(super) fn bind_accelerometer(handle: Option<AccelerometerInputHandle>) {
-    *ACCEL_HANDLE.write().unwrap_or_else(|poison| {
-        log::error!("accelerometer handle lock poisoned; recovering state");
-        poison.into_inner()
-    }) = handle;
 }
 
 /// User-initiated exit (back finish, menu Exit): arms process exit for
@@ -498,18 +474,6 @@ pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onActivityDes
         state.user_exit_requested |= user_initiated;
     });
     wake();
-}
-
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_io_github_chalharu_nerust_MainActivity_onCartridgeAcceleration(
-    _env: jni::EnvUnowned<'_>,
-    _activity: jni::objects::JObject<'_>,
-    x_g: jni::sys::jfloat,
-    y_g: jni::sys::jfloat,
-) {
-    if let Some(handle) = read_accel() {
-        handle.publish(AccelerationSample::new(x_g, y_g));
-    }
 }
 
 /// UI-thread push for the insets cache, called on every layout pass.

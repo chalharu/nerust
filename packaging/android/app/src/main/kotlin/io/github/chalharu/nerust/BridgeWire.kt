@@ -5,6 +5,7 @@ internal const val BRIDGE_EVENT_VERSION = 1
 internal const val SETTINGS_SCHEMA_VERSION = 2
 internal const val SAF_CHUNK_BYTES = 65536
 internal const val SAF_SUMMARY_BYTES = 65536
+internal const val CARTRIDGE_ACCEL_MAX_G = 8.0f
 
 internal object MenuAction {
     const val EXIT = "exit"
@@ -24,6 +25,7 @@ internal object MenuAction {
     const val DEVICE_ADDED = "device_added"
     const val DEVICE_REMOVED = "device_removed"
     const val TOUCH_GATE = "touch_gate"
+    const val CARTRIDGE_MOTION = "cartridge_motion"
 }
 
 internal object ControllerKey {

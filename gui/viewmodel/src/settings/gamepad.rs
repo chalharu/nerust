@@ -65,6 +65,19 @@ impl GamepadViewModel {
         })
     }
 
+    /// Park every pad holding one port (the radio `None` choice).
+    /// Same exclusive-assign rule as [`Self::set_pad_port`], port-wide.
+    pub fn clear_port(&self, port: usize) -> Result<(), super::editor::ViewModelError> {
+        self.editor.transact(|state| {
+            for entry in state.draft_mut().shared.input.gamepad.pad_ports.iter_mut() {
+                if entry.slot == Some(port) {
+                    entry.slot = None;
+                }
+            }
+            Ok(())
+        })
+    }
+
     /// Physical dpad enable for one pad: `false` parks the hat (sticks
     /// still drive through their substitutes), `true` restores it.
     /// Same guard as the port setter.

@@ -32,7 +32,7 @@ import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import org.json.JSONException
 import org.json.JSONObject
 
-private const val SETTINGS_SCREEN_TAG = "nerust-settings-screen"
+internal const val SETTINGS_SCREEN_TAG = "nerust-settings-screen"
 private const val ERROR_DIALOG_TAG = "nerust-error-dialog"
 
 internal fun screenOrientationRequest(value: Int): Int? =
@@ -44,14 +44,14 @@ internal fun screenOrientationRequest(value: Int): Int? =
     }
 
 
-private fun createRomPickerIntent(): Intent =
+internal fun createRomPickerIntent(): Intent =
     Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
         addCategory(Intent.CATEGORY_OPENABLE)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
         type = "*/*"
     }
 
-private fun createDirectoryPickerIntent(): Intent =
+internal fun createDirectoryPickerIntent(): Intent =
     Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
         addFlags(
             Intent.FLAG_GRANT_READ_URI_PERMISSION or
@@ -71,13 +71,13 @@ class MainActivity :
     private val store = ViewModelStore()
     private val controllerPressed = mutableMapOf<Int, MutableSet<String>>()
     private val controllerAxes = mutableMapOf<Int, MutableMap<String, Float>>()
-    private val sensorController = SensorController(this)
-    private val chromeManager = ChromeManager(this)
-    private val dialogManager = DialogManager(this)
+    internal val sensorController = SensorController(this)
+    internal val chromeManager = ChromeManager(this)
+    internal val dialogManager = DialogManager(this)
     private val safRepository = SafRepository(this)
     // Test-only dialog probe: release builds skip the write so the
     // production show path pays one branch and keeps no test state.
-    internal var lastDialogStateForTest = "not requested"
+    internal var lastDialogState = "not requested"
         set(value) {
             if (BuildConfig.DEBUG) field = value
         }
@@ -86,7 +86,7 @@ class MainActivity :
     // Observed only: the listener refreshes and pushes this cache, so the render thread reads only.
     @Volatile private var cachedSafeInsetsPx: IntArray = intArrayOf(0, 0, 0, 0)
 
-    @Volatile private var lastLoadedSystemForTest: String? = null
+    @Volatile internal var lastLoadedSystem: String? = null
 
     /** Last presence scan: identical hotplug/resume bursts skip the apply. */
     @Volatile private var lastPresenceTruth: DeviceTruth? = null
@@ -95,7 +95,7 @@ class MainActivity :
      * connect, dropping the first key (the gate reads the scan). Listener
      * callbacks and dispatch share the main thread, so a plain set updated
      * here never skews against routing. */
-    private var connectedDeviceIds = mutableSetOf<Int>()
+    internal var connectedDeviceIds = mutableSetOf<Int>()
 
     /** Trigger axes present per device (L/R pair): `device.getMotionRange`
      * crosses Binder on the L2/R2 key path, so probe once per device
@@ -161,7 +161,7 @@ class MainActivity :
         super.onResume()
         Log.i(TAG, "onResume")
         pushSystemLocaleToVault()
-        activeActivityForTest = this
+        activeActivity = this
         chromeManager.onResume()
         sensorController.onResume()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
@@ -270,41 +270,6 @@ class MainActivity :
         }
         return false
     }
-
-    /** Controller keycode to bridge key, or null to leave to platform. */
-    private fun controllerKeyFor(keyCode: Int): String? =
-        when (keyCode) {
-            KeyEvent.KEYCODE_BUTTON_A -> ControllerKey.BUTTON1
-            KeyEvent.KEYCODE_BUTTON_B -> ControllerKey.BUTTON2
-            KeyEvent.KEYCODE_BUTTON_X -> ControllerKey.BUTTON3
-            KeyEvent.KEYCODE_BUTTON_Y -> ControllerKey.BUTTON4
-            KeyEvent.KEYCODE_BUTTON_L1 -> ControllerKey.BUTTON5
-            KeyEvent.KEYCODE_BUTTON_R1 -> ControllerKey.BUTTON6
-            KeyEvent.KEYCODE_BUTTON_L2 -> ControllerKey.BUTTON7
-            KeyEvent.KEYCODE_BUTTON_R2 -> ControllerKey.BUTTON8
-            // The digital mirror for axis-less pads never reaches here:
-            // mirrorDigitalTrigger consumes those keys into the motion
-            // batch above. Keys arriving here drive the trigger buttons
-            // (bindings, shortcuts) while the motion axes keep driving
-            // the analog store plus shoulder doubling; the session
-            // pressed set dedups the dual delivery into one press.
-            KeyEvent.KEYCODE_BUTTON_MODE -> ControllerKey.GUIDE
-            KeyEvent.KEYCODE_BUTTON_THUMBL -> ControllerKey.L3
-            KeyEvent.KEYCODE_BUTTON_THUMBR -> ControllerKey.R3
-            // Capture/share/create (Switch capture, Xbox share, PS create):
-            // one position button like the rest, so capture, gameplay
-            // overrides, and shortcuts all resolve through the same path.
-            // `BUTTON_Z` is intentionally not mapped here: it is the
-            // Z-labeled / upper-row third button, not capture.
-            KeyEvent.KEYCODE_BUTTON_C -> ControllerKey.CAPTURE
-            KeyEvent.KEYCODE_BUTTON_START -> ControllerKey.START
-            KeyEvent.KEYCODE_BUTTON_SELECT -> ControllerKey.SELECT
-            KeyEvent.KEYCODE_DPAD_UP -> ControllerKey.UP
-            KeyEvent.KEYCODE_DPAD_DOWN -> ControllerKey.DOWN
-            KeyEvent.KEYCODE_DPAD_LEFT -> ControllerKey.LEFT
-            KeyEvent.KEYCODE_DPAD_RIGHT -> ControllerKey.RIGHT
-            else -> null
-        }
 
     override fun onGenericMotionEvent(event: MotionEvent): Boolean {
         if (event.source and InputDevice.SOURCE_JOYSTICK != InputDevice.SOURCE_JOYSTICK) {
@@ -611,8 +576,8 @@ class MainActivity :
         // must not flip the overlay/capture gate while paused. The resume
         // scan re-converges.
         presenceEpoch++
-        if (activeActivityForTest === this) {
-            activeActivityForTest = null
+        if (activeActivity === this) {
+            activeActivity = null
         }
         Log.i(TAG, "onPause")
         chromeManager.onPause()
@@ -638,13 +603,13 @@ class MainActivity :
     }
 
     override fun onDestroy() {
-        if (activeActivityForTest === this) {
-            activeActivityForTest = null
+        if (activeActivity === this) {
+            activeActivity = null
         }
         Log.i(
             TAG,
             "onDestroy: isFinishing=$isFinishing isDestroyed=$isDestroyed " +
-                "lastDrawerState=${chromeManager.lastDrawerStateForTest} lastDialogState=$lastDialogStateForTest",
+                "lastDrawerState=${chromeManager.lastDrawerState} lastDialogState=$lastDialogState",
         )
         chromeManager.onDestroy()
         dialogManager.dismissForStop()
@@ -665,9 +630,17 @@ class MainActivity :
         onMenuAction(action)
     }
 
-    /** Forward the cartridge acceleration sample to the native bridge. */
+    /** Forward the cartridge acceleration sample through the menu lane:
+     * same queue as keys and axes, so the UI thread never touches the
+     * session and sample ordering is preserved. Decoded by the
+     * `cartridge_motion` gate into one motion apply. */
     internal fun forwardCartridgeAcceleration(xG: Float, yG: Float) {
-        onCartridgeAcceleration(xG, yG)
+        sendMenuAction(
+            menuEvent(MenuAction.CARTRIDGE_MOTION) {
+                put("accel_x", xG)
+                put("accel_y", yG)
+            },
+        )
     }
 
     /** Back stack shared with the gamepad-input capture window (each
@@ -755,12 +728,6 @@ class MainActivity :
     ) {
         chromeManager.updateFloatingDpad(active, centerX, centerY, knobX, knobY)
     }
-
-    fun floatingDpadStateForTest(): FloatArray? = chromeManager.floatingDpadStateForTest()
-
-    fun controlsZoneCountForTest(): Int = chromeManager.controlsZoneCountForTest()
-
-    fun drawerScrollMaxForTest(): Int? = chromeManager.drawerScrollMaxForTest()
 
     /** Cached root-window safe insets in physical pixels: [top, right, bottom, left].
      * Read by Rust without JNI; refreshed on the UI thread, so the render thread never blocks. */
@@ -895,64 +862,19 @@ class MainActivity :
         }
     }
 
-    fun isChromeViewShowingForTest(tag: String): Boolean =
-        chromeManager.isViewShowingForTest(tag) ?: when (tag) {
-            SETTINGS_SCREEN_TAG -> {
-                val settings = SettingsActivity.currentActivityForTest()
-                settings != null && !settings.isFinishing && !settings.isDestroyed
-            }
-
-            else -> {
-                window.decorView.findViewWithTag<View>(tag).isShownInWindowForTest()
-            }
-        }
-
-    fun findChromeViewForTest(tag: String): View? =
-        chromeManager.findViewForTest(tag) ?: when (tag) {
-            SETTINGS_SCREEN_TAG -> {
-                SettingsActivity.currentActivityForTest()?.window?.decorView
-            }
-
-            else -> {
-                window.decorView.findViewWithTag(tag)
-            }
-        }
-
-    fun chromeDebugStateForTest(tag: String): String =
-        "tag=$tag, destroyed=$isDestroyed, finishing=$isFinishing, decor=${window.decorView.debugViewState()}, " +
-            chromeManager.debugStateForTest() + dialogManager.debugState() +
-            ", settings=${SettingsActivity.currentActivityForTest()?.isFinishing}" +
-            ", lastDialog=$lastDialogStateForTest"
-
-    fun dispatchMenuActionForTest(action: String) {
-        chromeManager.dispatchMenuAction(action)
-    }
-
-    fun loadRomUriForTest(uri: String) {
-        lastLoadedSystemForTest = null
-        Log.i(TAG, "loadRomUriForTest: submitting URI $uri")
-        onFilePickerResult(uri)
-    }
-
-    fun lastLoadedSystemForTest(): String? = lastLoadedSystemForTest
-
     fun notifyRomLoaded(systemId: String) {
-        lastLoadedSystemForTest = systemId
+        lastLoadedSystem = systemId
     }
 
-    fun openDrawerForTest() {
-        chromeManager.showDrawerOverlay()
-    }
-
-    fun dismissComposeDialogForTest() {
-        SettingsActivity.currentActivityForTest()?.finishForReplacement()
-            ?: dialogManager.dismissForTest()
-    }
-
-    fun resetChromeStateForTest() {
-        SettingsActivity.currentActivityForTest()?.finish()
-        dialogManager.resetForTest()
-        chromeManager.removeDrawerOverlay()
+    /** Test-only ROM loader. Stays in main (not the debug bridge): it calls
+     * the private JNI entry below, whose JVM name must not gain the
+     * `internal` module suffix or registration lookup breaks. */
+    /// Test-only ROM load: calls the private JNI entry below, whose JVM
+    /// name must not gain the `internal` module suffix or registration
+    /// lookup breaks. Kept minimal (no Test suffix drift): the debug
+    /// bridge owns the test-facing wrapper.
+    internal fun loadRomUri(uri: String) {
+        onFilePickerResult(uri)
     }
 
     /** Show a DTO-driven Android settings screen. Presents the versioned sections from Rust.
@@ -1024,7 +946,7 @@ class MainActivity :
      * A showing settings screen finishes with its own dismissal result so
      * Rust resolves it before the error shows. */
     fun showErrorDialog(requestId: Long, message: String) {
-        SettingsActivity.currentActivityForTest()?.finishForReplacement()
+        SettingsActivity.currentActivity()?.finishForReplacement()
         // Malformed payloads carry no gate: dismiss runs no callback so a
         // -1 id never wedges the Rust dialog gate.
         val onDismiss: () -> Unit =
@@ -1048,16 +970,6 @@ class MainActivity :
             view.setViewTreeViewModelStoreOwner(this)
         }
     }
-
-    private fun View?.isShownInWindowForTest(): Boolean =
-        this != null && visibility == View.VISIBLE && isAttachedToWindow && windowToken != null
-
-    private fun View?.debugViewState(): String =
-        if (this == null) {
-            "null"
-        } else {
-            "visibility=$visibility, attached=$isAttachedToWindow, token=${windowToken != null}, shown=$isShown"
-        }
 
     private external fun pushSystemLocale(tag: String)
 
@@ -1113,11 +1025,6 @@ class MainActivity :
 
     private external fun onActivityDestroyed(userInitiatedExit: Boolean)
 
-    private external fun onCartridgeAcceleration(
-        xG: Float,
-        yG: Float,
-    )
-
     private external fun onSystemInsetsChanged(insets: IntArray)
 
     companion object {
@@ -1157,13 +1064,8 @@ class MainActivity :
         private const val DIRECTORY_PICKER_REQUEST_CODE = 0x4E46
 
         @Volatile
-        private var activeActivityForTest: MainActivity? = null
+        internal var activeActivity: MainActivity? = null
 
-        fun createRomPickerIntentForTest(): Intent = createRomPickerIntent()
-
-        fun createDirectoryPickerIntentForTest(): Intent = createDirectoryPickerIntent()
-
-        fun currentActivityForTest(): MainActivity? = activeActivityForTest?.takeUnless { it.isDestroyed || it.isFinishing }
     }
 }
 

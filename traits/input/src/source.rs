@@ -147,6 +147,38 @@ impl SourceId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct PadGuid(pub [u8; 16]);
 
+/// One physical gamepad event, backend-agnostic. Poll readers (gilrs,
+/// hidraw) and push edges (Android JNI) construct the same enum, so the
+/// session owns exactly one entry point per direction.
+/// No serde: session-internal events, never wire DTOs (the workspace
+/// serde lacks `alloc`, and `Connected` carries an owned descriptor).
+#[derive(Debug, Clone, PartialEq)]
+pub enum GamepadEvent {
+    Connected {
+        descriptor: String,
+    },
+    Disconnected,
+    Button {
+        button: StandardButton,
+        pressed: bool,
+    },
+    Axis {
+        axis: GamepadAxis,
+        value: f32,
+    },
+}
+
+/// Controller motion sample: gyroscope and accelerometer, SI units
+/// (rad/s, g). Producers fill what their hardware exposes; unexposed
+/// axes stay zero, which means unknown, never measured stillness.
+/// The session keeps the latest sample only.
+/// No serde, same reason as [`GamepadEvent`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GamepadMotion {
+    pub gyro: [f32; 3],
+    pub accel: [f32; 3],
+}
+
 #[cfg(test)]
 mod tests {
     use strum::IntoEnumIterator as _;

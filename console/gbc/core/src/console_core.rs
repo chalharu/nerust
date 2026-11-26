@@ -715,6 +715,46 @@ mod tests {
     }
 
     #[test]
+    fn executed_rumble_rom_reaches_virtual_sink() {
+        use nerust_input_traits::{FakeSink, RumbleSink};
+
+        // Forged MBC5-rumble ROM whose entry code turns the motor on:
+        // LD A,0x08 / LD (0x4000),A latches the MBC5 rumble bit, then spins.
+        // Proves game code (not a test bus.write) drives the whole chain.
+        let mut rom = mapper_rom(0x1C);
+        rom[0x0100] = 0x00; // NOP
+        rom[0x0101] = 0xC3; // JP 0x0150
+        rom[0x0102] = 0x50;
+        rom[0x0103] = 0x01;
+        rom[0x0150] = 0x3E; // LD A,0x08
+        rom[0x0151] = 0x08;
+        rom[0x0152] = 0xEA; // LD (0x4000),A
+        rom[0x0153] = 0x00;
+        rom[0x0154] = 0x40;
+        rom[0x0155] = 0x18; // JR -2
+        rom[0x0156] = 0xFE;
+        let (rumble_handle, rumble_port) = rumble_channel();
+        let (_, accelerometer_port) = accelerometer_channel();
+        let mut core = GbcConsoleCore::with_peripherals(input(), accelerometer_port, rumble_port);
+        core.load(&rom, &config()).unwrap();
+        let mut frame = FrameBuffer::with_capacity(160, 144, PixelFormat::Rgba);
+        core.render_frame(&mut frame, &mut Vec::new()).unwrap();
+        assert_eq!(
+            rumble_handle.snapshot().state,
+            RumbleState::FULL,
+            "executed motor bit must publish FULL"
+        );
+
+        // Virtual gamepad sink, fed exactly like the frontend sync does:
+        // console-global intensity collapsed to one level.
+        let intensity = rumble_handle.snapshot().state.intensity;
+        let level = intensity as f32 / 255.0;
+        let mut sink = FakeSink::default();
+        sink.set_rumble(0, level, level);
+        assert_eq!(sink.calls, vec![(0, 1.0, 1.0)]);
+    }
+
+    #[test]
     fn gbc_control_can_be_boxed_and_rejects_in_order() {
         let mut console = GbcConsoleCore::new_empty(input());
         console.load(&rom(), &config()).expect("test ROM loads");

@@ -2,7 +2,7 @@
 //! State lives in trackers; every JNI push routes through [`ChromePort`].
 
 use nerust_gui_shell::session::{KeyboardShortcut, SessionHandle};
-use nerust_input_traits::{GamepadAxis, SourceButtonId, StandardButton};
+use nerust_input_traits::{GamepadAxis, GamepadEvent, StandardButton};
 use winit::{event::Touch, platform::android::activity::AndroidApp};
 
 use super::{chrome_port, touch_layout::ProfileTouchOverlay, touch_tracker::TouchTracker};
@@ -58,8 +58,7 @@ impl InputRouter {
         // in the session, so no adapter owns a private pressed set. The
         // shortcut return drives session actions (pause, slots); dropping
         // it would strand pad-mapped shortcuts while gameplay still fires.
-        let source = session.pad_source_for(device_id);
-        session.handle_source_button(source, SourceButtonId::Pad(button), pressed)
+        session.apply_gamepad_event(device_id, GamepadEvent::Button { button, pressed })
     }
 
     pub(super) fn apply_physical_controller_axis(
@@ -71,8 +70,7 @@ impl InputRouter {
     ) -> Option<KeyboardShortcut> {
         // Same source identity as buttons: one pad, one order index.
         // Trigger edges can fire shortcuts, like button presses.
-        let source = session.pad_source_for(device_id);
-        session.handle_source_axis(source, axis, value)
+        session.apply_gamepad_event(device_id, GamepadEvent::Axis { axis, value })
     }
 
     /// Rebuild the hit-zone overlay for the current window size and push it to Kotlin.

@@ -35,6 +35,13 @@ def sources():
     callsites = (activity + "\n"
                  + (GEN.KOTLIN / "ChromeManager.kt").read_text() + "\n"
                  + (GEN.KOTLIN / "BridgeContract.kt").read_text())
+    # Test lane hooks live in the debug source set (never shipped); their
+    # menuEvent payloads stay under the same producer gate as the senders.
+    debug_bridge = GEN.ROOT / "packaging/android/app/src/debug"
+    if debug_bridge.is_dir():
+        callsites += "\n" + "\n".join(
+            path.read_text() for path in sorted(debug_bridge.rglob("*TestBridge.kt"))
+        )
     return {
         "decoder": (src / "bridge_events.rs").read_text(),
         "generated": (src / "bridge_contract.rs").read_text(),
@@ -266,9 +273,12 @@ def _decoder_names_ids(definitions, decoder):
             require(json.dumps(member) in decoder or f"ACTION_{member.upper()}" in decoder,
                     f"decoder must name every bridge {enum} id: {member}")
     menu_props = definitions["menu"]["properties"]
+    # Same rule as the generator: only x-motion-axis properties join the
+    # stick batch vocabulary. Other numbers (cartridge accel) are named
+    # by the decoder struct check below, not by the axis parity gate.
     axes = sorted(
         name for name, prop in menu_props.items()
-        if isinstance(prop, dict) and prop.get("type") == "number"
+        if isinstance(prop, dict) and prop.get("x-motion-axis")
     )
     require(axes, "schema must declare motion axes")
     for member in axes:
@@ -332,6 +342,13 @@ def validate_decoder_tables(definitions, decoder, generated):
     left = definitions["menu"]["properties"]["left_x"]
     require((float(match.group(1)), float(match.group(2))) == (left["minimum"], left["maximum"]),
             "generated analog range differs from schema")
+    match = re.search(r'ACCEL_VALUE_BOUNDS[^=]*=\s*\(\s*([-\d.eE+]+)\s*,\s*([-\d.eE+]+)\s*\)', generated)
+    require(match, "generated accel range is missing")
+    accel = definitions["menu"]["properties"]["accel_x"]
+    require((float(match.group(1)), float(match.group(2))) == (accel["minimum"], accel["maximum"]),
+            "generated accel range differs from schema")
+    require("ACCEL_VALUE_BOUNDS" in decoder,
+            "decoder must enforce the cartridge accel range")
 
 
 def _producer_puts(body):

@@ -10,9 +10,9 @@ use nerust_input_traits::{BUILTIN_KEYBOARD_MEMBER, member_is_gamepad, member_is_
 use nerust_settings_core::i18n::UiText;
 
 use super::wire::{
-    GamepadInfo, KeyboardInfo, PLAYER_PORTS, RowWire, SectionWire, bare_member, binding_key,
-    button_row, capture_open, capture_row, choice_row, devices_id, encode_target, group_row,
-    header_row, info_row, live_for_rank, player_id, player_label, toggle_row, types_id,
+    GamepadInfo, KeyboardInfo, PLAYER_PORTS, RowWire, SectionWire, bare_member, button_row,
+    capture_open, capture_row, choice_row, devices_id, encode_target, group_row, header_row,
+    info_row, live_for_rank, player_id, player_label, target_row_key, toggle_row, types_id,
 };
 use nerust_settings_core::i18n::I18n;
 
@@ -504,7 +504,7 @@ pub(super) fn build_keys_sections(
                             &format!(
                                 "keys.{}.binding.{}",
                                 view.system_id,
-                                binding_key(&binding.target)
+                                target_row_key(&binding.target)
                             ),
                             binding.label.clone(),
                             String::new(),
