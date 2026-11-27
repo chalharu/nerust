@@ -267,18 +267,26 @@ pub(crate) fn drain_motion(source: &mut dyn MotionSource, mut apply: impl FnMut(
     }
 }
 
-/// Console-global rumble fan-out with edge semantics: collapse the 0-255
-/// intensity to one level for the single-sink backend and only call down
-/// on change, mirroring button edges. Returns the new sent level.
-/// The sink address is fixed at 0 (single-sink collapse, Android-identical);
-/// per-pad addressing changes the call, not this shape.
-pub(crate) fn sync_rumble(intensity: u8, last_sent: u8, sink: &mut dyn RumbleSink) -> u8 {
-    if intensity == last_sent {
-        return last_sent;
+/// Console-global rumble edge tracker: collapses the 0-255 intensity to
+/// one level for the single-sink backend and only calls down on change,
+/// mirroring button edges. Owns the last sent level, so sessions never
+/// thread edge state through return values. The sink address is fixed at
+/// 0 (single-sink collapse, Android-identical); per-pad addressing changes
+/// the call, not this shape.
+#[derive(Debug, Default)]
+pub(crate) struct RumbleEdge {
+    last_sent: u8,
+}
+
+impl RumbleEdge {
+    pub(crate) fn sync(&mut self, intensity: u8, sink: &mut dyn RumbleSink) {
+        if intensity == self.last_sent {
+            return;
+        }
+        let level = f32::from(intensity) / 255.0;
+        sink.set_rumble(0, level, level);
+        self.last_sent = intensity;
     }
-    let level = f32::from(intensity) / 255.0;
-    sink.set_rumble(0, level, level);
-    intensity
 }
 
 #[cfg(test)]
@@ -379,21 +387,21 @@ mod tests {
     }
 
     #[test]
-    fn sync_rumble_sends_console_global_level_on_edges_only() {
+    fn rumble_edge_sends_console_global_level_on_edges_only() {
+        let mut edge = RumbleEdge::default();
         let mut sink = FakeSink::default();
         // Parked at zero: no call, no motor traffic per frame.
-        assert_eq!(sync_rumble(0, 0, &mut sink), 0);
+        edge.sync(0, &mut sink);
         assert!(sink.calls.is_empty());
         // Rising edge collapses FULL to one level on the single sink.
-        assert_eq!(sync_rumble(255, 0, &mut sink), 255);
+        edge.sync(255, &mut sink);
         assert_eq!(sink.calls, vec![(0, 1.0, 1.0)]);
         // Held level repeats silently.
-        assert_eq!(sync_rumble(255, 255, &mut sink), 255);
+        edge.sync(255, &mut sink);
         assert_eq!(sink.calls.len(), 1);
         // Unload/fall lands back at zero exactly once.
-        assert_eq!(sync_rumble(0, 255, &mut sink), 0);
-        assert_eq!(sink.calls.len(), 2);
-        assert_eq!(sink.calls[1], (0, 0.0, 0.0));
+        edge.sync(0, &mut sink);
+        assert_eq!(sink.calls, vec![(0, 1.0, 1.0), (0, 0.0, 0.0)]);
     }
 
     #[test]

@@ -31,8 +31,8 @@ pub struct SessionAdapter {
     /// other platforms report honest absence until their drivers land.
     rumble_sink: Box<dyn nerust_input_traits::RumbleSink>,
     motion_source: Box<dyn nerust_input_traits::MotionSource>,
-    /// Last intensity forwarded to the sink; edge-send only.
-    rumble_sent: u8,
+    /// Edge state for the console-global rumble fan-out.
+    rumble_edge: gamepad::RumbleEdge,
 }
 
 impl SessionAdapter {
@@ -194,7 +194,7 @@ impl SessionAdapter {
             gamepads: gamepad::GilrsSlot::Unprobed,
             rumble_sink: gamepad::rumble_sink(),
             motion_source: gamepad::motion_source(),
-            rumble_sent: 0,
+            rumble_edge: gamepad::RumbleEdge::default(),
         })
     }
 
@@ -223,11 +223,8 @@ impl SessionAdapter {
         gamepad::drain_motion(&mut *self.motion_source, |motion| {
             self.session.apply_motion(motion);
         });
-        self.rumble_sent = gamepad::sync_rumble(
-            self.session.rumble_intensity(),
-            self.rumble_sent,
-            &mut *self.rumble_sink,
-        );
+        self.rumble_edge
+            .sync(self.session.rumble_intensity(), &mut *self.rumble_sink);
         if !(self.loaded() && !self.metrics().paused) {
             self.session.clear_input();
         }
