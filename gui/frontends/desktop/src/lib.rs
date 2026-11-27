@@ -516,31 +516,9 @@ impl MainHost {
                 let Some(key) = SessionAdapter::key(key) else {
                     return;
                 };
-                let result = match app.key_event(key, *pressed) {
-                    Some(KeyboardShortcut::Session(ShortcutAction::TogglePause)) => {
-                        app.toggle_pause();
-                        Ok(())
-                    }
-                    Some(KeyboardShortcut::Session(action)) => {
-                        SessionAdapter::session_action(action)
-                            .map_or(Ok(()), |action| app.execute(action).map(|_| ()))
-                    }
-                    Some(KeyboardShortcut::ToggleFullscreen) => {
-                        self.renderer.borrow().toggle_fullscreen();
-                        Ok(())
-                    }
-                    Some(KeyboardShortcut::OpenDebugger) => {
-                        drop(app);
-                        let dispatch = self.actions.borrow().clone();
-                        if let Some(dispatch) = dispatch {
-                            dispatch(view::Intent::Debugger);
-                        }
-                        return;
-                    }
-                    None => return,
-                };
+                let cut = app.key_event(key, *pressed);
                 drop(app);
-                let _ = self.model.update(move |model| model.notice = result.err());
+                self.route_cut(cut);
             }
             _ => {}
         }
@@ -685,10 +663,8 @@ impl MainHost {
     }
 
     /// Desktop peripheral frame: drain pads, motion, and rumble through
-    /// the session entries and route shortcut edges through the
-    /// keyboard-identical tail (pause toggle, session actions,
-    /// fullscreen, debugger). Notice text surfaces the same way a key
-    /// binding failure does.
+    /// the session entries; shortcut edges ride the keyboard-identical
+    /// tail below.
     fn poll_peripherals(&self) {
         let cuts = {
             let mut app = self.application.borrow_mut();
@@ -698,30 +674,41 @@ impl MainHost {
             app.session_mut().poll_peripherals()
         };
         for cut in cuts {
-            let mut app = self.application.borrow_mut();
-            let result = match cut {
-                KeyboardShortcut::Session(ShortcutAction::TogglePause) => {
-                    app.toggle_pause();
-                    Ok(())
-                }
-                KeyboardShortcut::Session(action) => SessionAdapter::session_action(action)
-                    .map_or(Ok(()), |action| app.execute(action).map(|_| ())),
-                KeyboardShortcut::ToggleFullscreen => {
-                    self.renderer.borrow().toggle_fullscreen();
-                    Ok(())
-                }
-                KeyboardShortcut::OpenDebugger => {
-                    drop(app);
-                    let dispatch = self.actions.borrow().clone();
-                    if let Some(dispatch) = dispatch {
-                        dispatch(view::Intent::Debugger);
-                    }
-                    continue;
-                }
-            };
-            drop(app);
-            let _ = self.model.update(move |model| model.notice = result.err());
+            self.route_cut(Some(cut));
         }
+    }
+
+    /// Shared shortcut tail for keyboard edges and pad edges: pause toggle,
+    /// session actions, fullscreen, debugger. `None` (no edge) does nothing;
+    /// notice text surfaces the same way a key binding failure does.
+    fn route_cut(&self, cut: Option<KeyboardShortcut>) {
+        let cut = match cut {
+            Some(cut) => cut,
+            None => return,
+        };
+        let mut app = self.application.borrow_mut();
+        let result = match cut {
+            KeyboardShortcut::Session(ShortcutAction::TogglePause) => {
+                app.toggle_pause();
+                Ok(())
+            }
+            KeyboardShortcut::Session(action) => SessionAdapter::session_action(action)
+                .map_or(Ok(()), |action| app.execute(action).map(|_| ())),
+            KeyboardShortcut::ToggleFullscreen => {
+                self.renderer.borrow().toggle_fullscreen();
+                Ok(())
+            }
+            KeyboardShortcut::OpenDebugger => {
+                drop(app);
+                let dispatch = self.actions.borrow().clone();
+                if let Some(dispatch) = dispatch {
+                    dispatch(view::Intent::Debugger);
+                }
+                return;
+            }
+        };
+        drop(app);
+        let _ = self.model.update(move |model| model.notice = result.err());
     }
 
     fn poll_history(&self) {

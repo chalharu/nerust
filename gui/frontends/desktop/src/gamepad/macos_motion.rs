@@ -11,21 +11,15 @@
 //! - Sensors that need it are activated on first sight
 //!   (`sensorsRequireManualActivation`); activation persists on the
 //!   controller, so later polls only read.
-//! - Haptics are deliberately absent here: engine creation
-//!   (`createEngineWithLocality:`) is iOS/tvOS/visionOS-only, so macOS has
-//!   no official rumble path. Rumble stays on the honest null sink until a
-//!   per-device HID output driver exists.
 //! - Mapping mirrors the Android sensor: total acceleration (gravity plus
 //!   user, the same signal `TYPE_ACCELEROMETER` delivers), planar x/y kept,
-//!   clamped to the cartridge range. In-process transport needs no 0.01g
-//!   quantization; the session keeps latest-wins.
+//!   clamped to the shared cartridge range. In-process transport needs no
+//!   0.01g quantization; the session keeps latest-wins.
+//!
+//! Rumble lives next door in `macos_rumble` (same framework, haptics side).
 
-use nerust_input_traits::{GamepadMotion, MotionSource};
+use nerust_input_traits::{CARTRIDGE_ACCEL_MAX_G, GamepadMotion, MotionSource};
 use objc2_game_controller::{GCController, GCMotion};
-
-/// Cartridge acceleration bound, g. Mirrors the Android bridge contract;
-/// MBC7 latches saturate beyond it, so producers clamp, never the session.
-const ACCEL_MAX_G: f32 = 8.0;
 
 /// GameController motion profile drained once per frame. Stateless: every
 /// poll re-reads the controller list, so hotplug needs no bookkeeping.
@@ -90,5 +84,5 @@ impl MotionSource for GcMotionSource {
 }
 
 fn clamp_g(value: f64) -> f32 {
-    (value as f32).clamp(-ACCEL_MAX_G, ACCEL_MAX_G)
+    (value as f32).clamp(-CARTRIDGE_ACCEL_MAX_G, CARTRIDGE_ACCEL_MAX_G)
 }

@@ -22,8 +22,9 @@ pub trait PollSource {
 /// Motion sample source, at most one IMU frame per poll. The session keeps
 /// the latest sample only, so producers never queue: return `None` when no
 /// new sample arrived since the last poll. gilrs exposes no IMU on any OS,
-/// so desktop motion producers are raw-HID readers (Switch hidraw on
-/// Linux); Android feeds its sensor through the menu lane instead.
+/// so desktop motion producers are platform readers (GameController
+/// profile on macOS, raw-HID readers elsewhere); Android feeds its sensor
+/// through the menu lane instead.
 pub trait MotionSource {
     fn poll_motion(&mut self) -> Option<GamepadMotion>;
 }
@@ -71,6 +72,7 @@ pub struct FakeSink {
     pub calls: Vec<(i32, f32, f32)>,
     pub capability: Option<Capability>,
 }
+
 impl RumbleSink for FakeSink {
     fn set_rumble(&mut self, device: i32, low: f32, high: f32) {
         self.calls.push((device, low, high));

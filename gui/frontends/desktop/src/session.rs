@@ -1,5 +1,6 @@
 use std::{collections::HashSet, path::Path, sync::Arc};
 
+use crate::gamepad;
 use nerust_core_traits::{audio::AudioBackendRegistry, identity::SystemId};
 use nerust_gui_application::{
     EmulationPort, FramePort, HistoryPort, KeyboardPort, MediaPort, SessionAction,
@@ -22,12 +23,12 @@ pub struct SessionAdapter {
     pressed_keys: HashSet<nerust_input_traits::Key>,
     audio: Arc<AudioBackendRegistry>,
     osd: nerust_gui_shell::session::osd::OsdManager,
-    /// Frame-polled gilrs source (evdev / WGI / IOHID behind one
-    /// vocabulary). `None` is absent-or-unavailable; polls stay empty.
-    gamepads: Option<crate::gamepad::GilrsPoller>,
+    /// Frame-polled gilrs slot (evdev / WGI / IOHID behind one
+    /// vocabulary). Probes once, then stays live or stays parked.
+    gamepads: gamepad::GilrsSlot,
     /// Rumble sink and motion producer for the peripheral tick. macOS
-    /// motion is live (GameController profile); rumble is honest absence
-    /// everywhere until per-device HID output drivers land.
+    /// motion and rumble are live (GameController profile + haptics);
+    /// other platforms report honest absence until their drivers land.
     rumble_sink: Box<dyn nerust_input_traits::RumbleSink>,
     motion_source: Box<dyn nerust_input_traits::MotionSource>,
     /// Last intensity forwarded to the sink; edge-send only.
@@ -190,9 +191,9 @@ impl SessionAdapter {
             pressed_keys: HashSet::new(),
             audio,
             osd: nerust_gui_shell::session::osd::OsdManager::new(),
-            gamepads: None,
-            rumble_sink: crate::gamepad::rumble_sink(),
-            motion_source: crate::gamepad::motion_source(),
+            gamepads: gamepad::GilrsSlot::Unprobed,
+            rumble_sink: gamepad::rumble_sink(),
+            motion_source: gamepad::motion_source(),
             rumble_sent: 0,
         })
     }
@@ -210,26 +211,22 @@ impl SessionAdapter {
     /// entries. Returns shortcut edges for the keyboard-identical tail.
     /// Mirrors `key_event`'s enable rule (`loaded && !paused`, hold folds
     /// into paused): fields clear when disabled, shortcuts still return.
-    /// Rumble/motion ride the same tick so future drivers (evdev-FF,
-    /// hidraw IMU) only swap the source/sink fields, never this loop.
+    /// Rumble/motion ride the same tick so future drivers only swap the
+    /// source/sink constructors, never this loop.
     pub(crate) fn poll_peripherals(&mut self) -> Vec<KeyboardShortcut> {
-        if self.gamepads.is_none() {
-            self.gamepads = crate::gamepad::GilrsPoller::new();
-        }
         let mut cuts = Vec::new();
-        if let Some(poller) = self.gamepads.as_mut() {
-            cuts = crate::gamepad::drain(poller, |event| {
+        if let Some(poller) = self.gamepads.poller() {
+            cuts = gamepad::drain(poller, |event| {
                 self.session.apply_gamepad_event(event.device, event.event)
             });
         }
-        crate::gamepad::drain_motion(&mut *self.motion_source, |motion| {
+        gamepad::drain_motion(&mut *self.motion_source, |motion| {
             self.session.apply_motion(motion);
         });
-        self.rumble_sent = crate::gamepad::sync_rumble(
+        self.rumble_sent = gamepad::sync_rumble(
             self.session.rumble_intensity(),
             self.rumble_sent,
             &mut *self.rumble_sink,
-            0,
         );
         if !(self.loaded() && !self.metrics().paused) {
             self.session.clear_input();

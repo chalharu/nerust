@@ -179,6 +179,11 @@ pub struct GamepadMotion {
     pub accel: [f32; 3],
 }
 
+/// Cartridge acceleration bound, g. Producers clamp to it; the session
+/// never does (single home for the desktop bound; the Android bridge
+/// enforces the same value from its generated contract).
+pub const CARTRIDGE_ACCEL_MAX_G: f32 = 8.0;
+
 #[cfg(test)]
 mod tests {
     use strum::IntoEnumIterator as _;

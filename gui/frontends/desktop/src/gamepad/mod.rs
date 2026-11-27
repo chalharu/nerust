@@ -31,10 +31,14 @@
 //!   (natively, or via gilrs' conditional axis synthesis), and driving both
 //!   would double-feed the session.
 
-use gilrs::{Axis as GilrsAxis, Button as GilrsButton, EventType as GilrsEventType, Gilrs};
+use gilrs::{
+    Axis as GilrsAxis, Button as GilrsButton, EventType as GilrsEventType, GamepadId, Gilrs,
+};
+#[cfg(not(target_os = "macos"))]
+use nerust_input_traits::Capability;
 use nerust_input_traits::{
-    Capability, DeviceEvent, GamepadAxis, GamepadEvent, GamepadMotion, MotionSource, PollSource,
-    RumbleSink, StandardButton,
+    DeviceEvent, GamepadAxis, GamepadEvent, GamepadMotion, MotionSource, PollSource, RumbleSink,
+    StandardButton,
 };
 
 #[cfg(target_os = "macos")]
@@ -86,11 +90,35 @@ pub(crate) fn map_axis(axis: GilrsAxis) -> Option<GamepadAxis> {
 }
 
 /// Frame-polled gilrs source. The UI frame loop owns the single instance
-/// and drains it once per tick (thread-free); the dedicated reader thread
-/// arrives with the Linux hidraw reader in P2'', which needs background
-/// polling while suspended.
+/// and drains it once per tick (thread-free). The dedicated reader thread
+/// arrives with a future Linux reader that needs background polling while
+/// suspended.
 pub(crate) struct GilrsPoller {
     gilrs: Gilrs,
+}
+
+/// Gilrs attachment slot: probe once, then stay live or stay parked.
+/// Retrying a failed backend init every frame would spam failing syscalls
+/// and one log line per tick on machines with no readable pad.
+pub(crate) enum GilrsSlot {
+    Unprobed,
+    Live(Box<GilrsPoller>),
+    Dead,
+}
+
+impl GilrsSlot {
+    pub(crate) fn poller(&mut self) -> Option<&mut GilrsPoller> {
+        if matches!(self, Self::Unprobed) {
+            *self = match GilrsPoller::new() {
+                Some(poller) => Self::Live(Box::new(poller)),
+                None => Self::Dead,
+            };
+        }
+        match self {
+            Self::Live(poller) => Some(poller),
+            Self::Unprobed | Self::Dead => None,
+        }
+    }
 }
 
 impl GilrsPoller {
@@ -106,7 +134,7 @@ impl GilrsPoller {
         }
     }
 
-    fn convert(&self, id: gilrs::GamepadId, event: GilrsEventType) -> Option<DeviceEvent> {
+    fn convert(&self, id: GamepadId, event: GilrsEventType) -> Option<DeviceEvent> {
         let device = usize::from(id) as i32;
         let event = match event {
             GilrsEventType::Connected => GamepadEvent::Connected {
@@ -187,11 +215,9 @@ pub(crate) fn rumble_sink() -> Box<dyn RumbleSink> {
 
 /// Poll-to-session fan-in shared by every desktop reader: drain the batch,
 /// apply each event through the single session entry, and collect the
-/// shortcut edges for the keyboard-identical tail. Generic over the source
-/// so host tests pin it with `FakeSource` on every target, including ones
-/// where gilrs never compiles.
+/// shortcut edges for the keyboard-identical tail.
 pub(crate) fn drain<C>(
-    source: &mut impl PollSource,
+    source: &mut dyn PollSource,
     apply: impl FnMut(DeviceEvent) -> Option<C>,
 ) -> Vec<C> {
     source.poll().into_iter().filter_map(apply).collect()
@@ -201,10 +227,13 @@ pub(crate) fn drain<C>(
 /// yet (Linux/Windows await per-device HID output drivers). macOS drives
 /// the real thing through GameController haptics; this seam stays for the
 /// platforms still waiting, and `capability` tells settings UI the truth
-/// in the meantime.
+/// in the meantime. macOS-only exclusion: the real sink makes this dead
+/// code there, and dead platform code rots.
+#[cfg(not(target_os = "macos"))]
 #[derive(Debug, Default)]
 pub(crate) struct NullRumbleSink;
 
+#[cfg(not(target_os = "macos"))]
 impl RumbleSink for NullRumbleSink {
     fn set_rumble(&mut self, _device: i32, _low: f32, _high: f32) {}
     fn capability(&self, _device: i32) -> Capability {
@@ -218,10 +247,12 @@ impl RumbleSink for NullRumbleSink {
 /// Null motion source: used where no IMU producer exists. gilrs exposes
 /// no IMU on any OS; macOS overrides this constructor with the
 /// GameController motion profile, and the raw-HID Switch reader (P2'')
-/// will do the same on Linux.
+/// will do the same on Linux. Same macOS-only exclusion as above.
+#[cfg(not(target_os = "macos"))]
 #[derive(Debug, Default)]
 pub(crate) struct NullMotionSource;
 
+#[cfg(not(target_os = "macos"))]
 impl MotionSource for NullMotionSource {
     fn poll_motion(&mut self) -> Option<GamepadMotion> {
         None
@@ -239,19 +270,14 @@ pub(crate) fn drain_motion(source: &mut dyn MotionSource, mut apply: impl FnMut(
 /// Console-global rumble fan-out with edge semantics: collapse the 0-255
 /// intensity to one level for the single-sink backend and only call down
 /// on change, mirroring button edges. Returns the new sent level.
-/// Per-pad addressing arrives with multi-pad FF drivers (P3), which keep
-/// this shape and vary `device`.
-pub(crate) fn sync_rumble(
-    intensity: u8,
-    last_sent: u8,
-    sink: &mut dyn RumbleSink,
-    device: i32,
-) -> u8 {
+/// The sink address is fixed at 0 (single-sink collapse, Android-identical);
+/// per-pad addressing changes the call, not this shape.
+pub(crate) fn sync_rumble(intensity: u8, last_sent: u8, sink: &mut dyn RumbleSink) -> u8 {
     if intensity == last_sent {
         return last_sent;
     }
     let level = f32::from(intensity) / 255.0;
-    sink.set_rumble(device, level, level);
+    sink.set_rumble(0, level, level);
     intensity
 }
 
@@ -356,16 +382,16 @@ mod tests {
     fn sync_rumble_sends_console_global_level_on_edges_only() {
         let mut sink = FakeSink::default();
         // Parked at zero: no call, no motor traffic per frame.
-        assert_eq!(sync_rumble(0, 0, &mut sink, 0), 0);
+        assert_eq!(sync_rumble(0, 0, &mut sink), 0);
         assert!(sink.calls.is_empty());
         // Rising edge collapses FULL to one level on the single sink.
-        assert_eq!(sync_rumble(255, 0, &mut sink, 0), 255);
+        assert_eq!(sync_rumble(255, 0, &mut sink), 255);
         assert_eq!(sink.calls, vec![(0, 1.0, 1.0)]);
         // Held level repeats silently.
-        assert_eq!(sync_rumble(255, 255, &mut sink, 0), 255);
+        assert_eq!(sync_rumble(255, 255, &mut sink), 255);
         assert_eq!(sink.calls.len(), 1);
         // Unload/fall lands back at zero exactly once.
-        assert_eq!(sync_rumble(0, 255, &mut sink, 0), 0);
+        assert_eq!(sync_rumble(0, 255, &mut sink), 0);
         assert_eq!(sink.calls.len(), 2);
         assert_eq!(sink.calls[1], (0, 0.0, 0.0));
     }
@@ -386,6 +412,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "macos"))]
     fn null_backends_report_absence_honestly() {
         let mut sink = NullRumbleSink;
         sink.set_rumble(0, 1.0, 1.0);

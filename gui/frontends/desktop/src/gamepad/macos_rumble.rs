@@ -24,7 +24,9 @@ use objc2_core_haptics::{
     CHHapticPatternPlayer, CHHapticTimeImmediate,
 };
 use objc2_foundation::NSArray;
-use objc2_game_controller::{GCController, GCHapticDurationInfinite, GCHapticsLocalityDefault};
+use objc2_game_controller::{
+    GCController, GCDeviceHaptics, GCHapticDurationInfinite, GCHapticsLocalityDefault,
+};
 
 use nerust_input_traits::{Capability, RumbleSink};
 
@@ -41,10 +43,13 @@ struct LiveEngine {
 #[derive(Default)]
 pub(crate) struct GcRumbleSink {
     engine: Option<LiveEngine>,
+    /// One-shot notice when the game rumbles with no haptics hardware.
+    /// Edges can recur every moment; the log must not.
+    warned_absent: bool,
 }
 
 impl GcRumbleSink {
-    fn controller_haptics() -> Option<Retained<objc2_game_controller::GCDeviceHaptics>> {
+    fn controller_haptics() -> Option<Retained<GCDeviceHaptics>> {
         // SAFETY: snapshot getter; the retained array outlives this scope
         // and each controller is only read, never stored.
         unsafe {
@@ -143,7 +148,8 @@ impl RumbleSink for GcRumbleSink {
         }
         if self.engine.is_none() {
             self.engine = Self::start_engine();
-            if self.engine.is_none() {
+            if self.engine.is_none() && !self.warned_absent {
+                self.warned_absent = true;
                 log::warn!("gamepad haptics unavailable; rumble parked until next edge");
             }
         }
