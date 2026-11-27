@@ -44,6 +44,8 @@ use nerust_input_traits::{
 };
 
 #[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
 mod macos_motion;
 #[cfg(target_os = "macos")]
 mod macos_rumble;

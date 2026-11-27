@@ -24,9 +24,7 @@ use objc2_core_haptics::{
     CHHapticPatternPlayer, CHHapticTimeImmediate,
 };
 use objc2_foundation::NSArray;
-use objc2_game_controller::{
-    GCController, GCDeviceHaptics, GCHapticDurationInfinite, GCHapticsLocalityDefault,
-};
+use objc2_game_controller::{GCDeviceHaptics, GCHapticDurationInfinite, GCHapticsLocalityDefault};
 
 use nerust_input_traits::{Capability, RumbleSink};
 
@@ -50,21 +48,8 @@ pub(crate) struct GcRumbleSink {
 
 impl GcRumbleSink {
     fn controller_haptics() -> Option<Retained<GCDeviceHaptics>> {
-        // SAFETY: snapshot getter; the retained array outlives this scope
-        // and each controller is only read, never stored.
-        unsafe {
-            let controllers = GCController::controllers();
-            let count = controllers.count();
-            let mut index = 0;
-            while index < count {
-                let controller = controllers.objectAtIndex(index);
-                if let Some(haptics) = controller.haptics() {
-                    return Some(haptics);
-                }
-                index += 1;
-            }
-            None
-        }
+        // SAFETY: read-only profile getter on a live controller.
+        super::macos::first_controller(|controller| unsafe { controller.haptics() })
     }
 
     fn start_engine() -> Option<LiveEngine> {

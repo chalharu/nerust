@@ -12,6 +12,7 @@ use nerust_gui_shell::{
     registry::SystemRegistry,
     session::{KeyboardShortcut, SessionHandle, access::PauseControl, commands::SessionCommand},
 };
+use nerust_input_traits::{MotionSource, RumbleSink};
 use nerust_render_traits::{FrameBuffer, VideoRenderProfile};
 use nerust_system_traits::factory::load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest};
 
@@ -29,8 +30,8 @@ pub struct SessionAdapter {
     /// Rumble sink and motion producer for the peripheral tick. macOS
     /// motion and rumble are live (GameController profile + haptics);
     /// other platforms report honest absence until their drivers land.
-    rumble_sink: Box<dyn nerust_input_traits::RumbleSink>,
-    motion_source: Box<dyn nerust_input_traits::MotionSource>,
+    rumble_sink: Box<dyn RumbleSink>,
+    motion_source: Box<dyn MotionSource>,
     /// Edge state for the console-global rumble fan-out.
     rumble_edge: gamepad::RumbleEdge,
 }
@@ -225,7 +226,7 @@ impl SessionAdapter {
         });
         self.rumble_edge
             .sync(self.session.rumble_intensity(), &mut *self.rumble_sink);
-        if !(self.loaded() && !self.metrics().paused) {
+        if !self.loaded() || self.metrics().paused {
             self.session.clear_input();
         }
         cuts

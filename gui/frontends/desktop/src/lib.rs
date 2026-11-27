@@ -682,9 +682,8 @@ impl MainHost {
     /// session actions, fullscreen, debugger. `None` (no edge) does nothing;
     /// notice text surfaces the same way a key binding failure does.
     fn route_cut(&self, cut: Option<KeyboardShortcut>) {
-        let cut = match cut {
-            Some(cut) => cut,
-            None => return,
+        let Some(cut) = cut else {
+            return;
         };
         let mut app = self.application.borrow_mut();
         let result = match cut {

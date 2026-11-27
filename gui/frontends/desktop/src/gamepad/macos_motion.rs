@@ -19,7 +19,7 @@
 //! Rumble lives next door in `macos_rumble` (same framework, haptics side).
 
 use nerust_input_traits::{GamepadMotion, MotionSource};
-use objc2_game_controller::{GCController, GCMotion};
+use objc2_game_controller::GCMotion;
 
 use super::motion_sample;
 
@@ -54,23 +54,10 @@ impl GcMotionSource {
     }
 
     fn sample() -> Option<GamepadMotion> {
-        // SAFETY: snapshot getter; the retained array outlives this scope
-        // and each controller is only read, never stored.
-        unsafe {
-            let controllers = GCController::controllers();
-            let count = controllers.count();
-            let mut index = 0;
-            while index < count {
-                let controller = controllers.objectAtIndex(index);
-                if let Some(motion) = controller.motion()
-                    && let Some(sample) = Self::sample_motion(&motion)
-                {
-                    return Some(sample);
-                }
-                index += 1;
-            }
-            None
-        }
+        super::macos::first_controller(|controller| {
+            // SAFETY: read-only profile getter on a live controller.
+            unsafe { controller.motion() }.and_then(|motion| Self::sample_motion(&motion))
+        })
     }
 }
 
