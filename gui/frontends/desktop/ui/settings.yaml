@@ -313,15 +313,15 @@ root:
           - id: gamepads
             title: {bind: {path: labels.tab_gamepads, source: External}}
             content:
-              type: StackLayout
-              id: gamepads_column
-              gap: 12
-              children:
-                - type: Repeat
-                  id: gamepad_blocks
-                  items: {bind: {path: gamepads_blocks, source: External}}
-                  gap: 12
-                  item_template: gamepad_block
+              type: Scroll
+              id: gamepads_scroll
+              content:
+                type: TabItems
+                id: gamepads_tabs
+                selected: {bind: {path: gamepads_selection, source: External, mode: TwoWay}}
+                items: {bind: {path: gamepads_blocks, source: External}}
+                title: {bind: {path: tab_label}}
+                item_template: gamepad_block
           - id: shortcuts
             title: {bind: {path: labels.tab_shortcuts, source: External}}
             content:

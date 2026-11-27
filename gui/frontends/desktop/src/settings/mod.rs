@@ -11,6 +11,7 @@ use nerust_gui_viewmodel::settings::{
     dto::{ChoiceView, choice_position},
 };
 use nerust_settings_core::{
+    editor::CaptureTarget,
     i18n::{I18n, UiText},
     model::{
         app_state::DesktopAppState, input::ensure_default_shortcuts, language::AppLanguage,
@@ -132,6 +133,7 @@ pub(crate) struct Editor {
     general_page: Store<String>,
     controllers_page: Store<String>,
     systems_page: Store<String>,
+    gamepads_page: Store<String>,
     exit: Rc<Cell<ExitChoice>>,
     close_prompt: Store<ExitChoice>,
 }
@@ -163,6 +165,7 @@ impl Editor {
             general_page: Store::new("app".into(), executor.clone()),
             controllers_page: Store::new(String::new(), executor.clone()),
             systems_page: Store::new(String::new(), executor.clone()),
+            gamepads_page: Store::new(String::new(), executor.clone()),
             exit: Rc::new(Cell::new(ExitChoice::Editing)),
             close_prompt: Store::new(ExitChoice::Editing, executor.clone()),
             executor,
@@ -193,6 +196,23 @@ impl Editor {
                 .update(|prompt| *prompt = ExitChoice::Editing);
         }
     }
+
+    /// Pad capture is armed while a pad binding row waits for a press.
+    /// The frame loop polls the live gamepad for exactly this case;
+    /// keyboard rows keep their key-event path.
+    pub(crate) fn pad_capture_armed(&self) -> bool {
+        matches!(
+            self.vm.capture.view.get().target,
+            Some(CaptureTarget::PadBinding { .. })
+        )
+    }
+
+    /// Complete an armed pad capture with the first pressed button, then
+    /// revalidate so the row leaves its capturing state in one tick.
+    pub(crate) fn apply_captured_pad(&self, button: nerust_input_traits::StandardButton) {
+        self.vm.capture.apply_captured_pad(button);
+        self.validation_status();
+    }
     pub(crate) fn close(&self) {
         self.closed.set(true);
         self.vm.capture.cancel_capture();
@@ -201,6 +221,7 @@ impl Editor {
         self.general_page.close();
         self.controllers_page.close();
         self.systems_page.close();
+        self.gamepads_page.close();
         self.close_prompt.close();
     }
     fn validation_status(&self) {
@@ -673,6 +694,9 @@ impl Editor {
                 &clear,
                 self.pad_count,
             )),
+            gamepads_selection: self
+                .gamepads_page
+                .bind(Clone::clone, Some(|page: &mut String, value| *page = value)),
             shortcuts_page: layout::shortcuts_page(self, &capture, &clear),
             shortcuts_resets: Binding::constant(vec![mk_reset(
                 "reset",
@@ -959,6 +983,7 @@ struct Presentation {
     systems_pages: Binding<Vec<panechord::Keyed<layout::SystemPage>>>,
     systems_selection: Binding<String>,
     gamepads_blocks: Binding<Vec<panechord::Keyed<layout::GamepadBlock>>>,
+    gamepads_selection: Binding<String>,
     shortcuts_page: Binding<Vec<Keyed<layout::BindingPage>>>,
     shortcuts_resets: Binding<Vec<Keyed<layout::ResetRow>>>,
     page: Binding<String>,

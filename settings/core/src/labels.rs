@@ -15,11 +15,14 @@ use crate::{
 /// position-to-glyph table. Positions are the binding identity
 /// (vendors transpose caps); this table only names what is printed.
 fn pad_button_plain(button: StandardButton) -> &'static str {
+    // Nintendo diamond (the emulated platforms): A right, B bottom,
+    // X top, Y left. No position suffix: the letters already name the
+    // layout, and a second naming only confuses.
     match button {
-        StandardButton::South => "A",
-        StandardButton::East => "B",
-        StandardButton::West => "X",
-        StandardButton::North => "Y",
+        StandardButton::South => "B",
+        StandardButton::East => "A",
+        StandardButton::West => "Y",
+        StandardButton::North => "X",
         StandardButton::Back => "Back",
         StandardButton::Guide => "Guide",
         StandardButton::Start => "Start",
@@ -37,19 +40,8 @@ fn pad_button_plain(button: StandardButton) -> &'static str {
     }
 }
 
-pub fn pad_button_label(i18n: I18n, button: StandardButton) -> String {
-    use StandardButton as Pad;
-    let position = match button {
-        Pad::South => Some(UiText::PosBottom),
-        Pad::East => Some(UiText::PosRight),
-        Pad::West => Some(UiText::PosLeft),
-        Pad::North => Some(UiText::PosTop),
-        _ => None,
-    };
-    match position {
-        Some(place) => format!("{} ({})", pad_button_plain(button), i18n.text(place)),
-        None => pad_button_plain(button).to_string(),
-    }
+pub fn pad_button_label(_i18n: I18n, button: StandardButton) -> String {
+    pad_button_plain(button).to_string()
 }
 
 /// Player/device-row summary: "Not assigned" when empty, otherwise
@@ -104,11 +96,13 @@ mod tests {
     }
 
     #[test]
-    fn pad_buttons_pair_cap_with_plain_position() {
+    fn pad_buttons_use_nintendo_diamond_names() {
         use StandardButton as Pad;
-        assert_eq!(pad_button_label(en(), Pad::South), "A (bottom)");
-        assert_eq!(pad_button_label(ja(), Pad::South), "A (下)");
-        assert_eq!(pad_button_label(en(), Pad::North), "Y (top)");
+        assert_eq!(pad_button_label(en(), Pad::South), "B");
+        assert_eq!(pad_button_label(ja(), Pad::South), "B");
+        assert_eq!(pad_button_label(en(), Pad::East), "A");
+        assert_eq!(pad_button_label(en(), Pad::West), "Y");
+        assert_eq!(pad_button_label(en(), Pad::North), "X");
         assert_eq!(pad_button_label(en(), Pad::Guide), "Guide");
         assert_eq!(pad_button_label(ja(), Pad::LeftShoulder), "LB");
     }

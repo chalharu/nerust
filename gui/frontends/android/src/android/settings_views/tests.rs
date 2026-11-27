@@ -3201,7 +3201,7 @@ fn pad_mapping_capture_lands_override_from_own_pad() {
         .flat_map(|section| &section.rows)
         .find(|row| row.key == key)
         .expect("mapping row persists");
-    assert_eq!(row.text, "A (bottom)", "face buttons show cap and position");
+    assert_eq!(row.text, "B", "face buttons show the Nintendo cap");
     let _ = out;
 }
 
@@ -3496,7 +3496,7 @@ fn pad_mapping_conflict_surfaces_once_through_issues() {
     }
     let out = second_out.expect("second capture projects");
     assert!(
-        out.issues.iter().any(|issue| issue.contains('A')),
+        out.issues.iter().any(|issue| issue.contains('B')),
         "issue names the double-mapped button: {:?}",
         out.issues
     );
@@ -3565,7 +3565,7 @@ fn double_mapping_surfaces_issue_in_the_capture_payload() {
         "conflict surfaces immediately, not only at save"
     );
     assert!(
-        out.issues.iter().any(|issue| issue.contains('A')),
+        out.issues.iter().any(|issue| issue.contains('B')),
         "issue names the double-mapped button: {:?}",
         out.issues
     );
@@ -4351,14 +4351,8 @@ fn pad_rows_show_cap_prints_not_positions() {
     let (snapshot, _) = test_payload();
     let payload = pad_payload(&snapshot, &two_pads());
     for (key, want) in [
-        (
-            "pad.1.nes.nes.attachment.player1.nes.control.a",
-            "A (bottom)",
-        ),
-        (
-            "pad.1.nes.nes.attachment.player1.nes.control.b",
-            "B (right)",
-        ),
+        ("pad.1.nes.nes.attachment.player1.nes.control.a", "B"),
+        ("pad.1.nes.nes.attachment.player1.nes.control.b", "A"),
         (
             "pad.1.nes.nes.attachment.player1.nes.control.select",
             "Back",

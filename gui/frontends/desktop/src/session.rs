@@ -12,7 +12,7 @@ use nerust_gui_shell::{
     registry::SystemRegistry,
     session::{KeyboardShortcut, SessionHandle, access::PauseControl, commands::SessionCommand},
 };
-use nerust_input_traits::{MotionSource, RumbleSink};
+use nerust_input_traits::{GamepadEvent, MotionSource, PollSource, RumbleSink, StandardButton};
 use nerust_render_traits::{FrameBuffer, VideoRenderProfile};
 use nerust_system_traits::factory::load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest};
 
@@ -230,6 +230,26 @@ impl SessionAdapter {
             self.session.clear_input();
         }
         cuts
+    }
+
+    /// First pressed pad button since the last drain, for settings
+    /// capture. Only button press edges complete a capture; axes and
+    /// disconnects never do. Drains through the shared slot, and the
+    /// capture poll runs before the gameplay poll each tick, so a
+    /// pressed button lands in capture instead of being cleared as
+    /// gameplay input while the dialog holds the pause.
+    pub(crate) fn poll_capture_button(&mut self) -> Option<StandardButton> {
+        let poller = self.gamepads.poller()?;
+        poller
+            .poll()
+            .into_iter()
+            .find_map(|event| match event.event {
+                GamepadEvent::Button {
+                    button,
+                    pressed: true,
+                } => Some(button),
+                _ => None,
+            })
     }
 
     pub fn factories(&self) -> &[Arc<dyn nerust_system_traits::factory::CoreFactory>] {

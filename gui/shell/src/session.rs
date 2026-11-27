@@ -212,7 +212,7 @@ struct PadTopology {
     /// Absolute attachments (like keyboard bindings): an explicit entry
     /// wins over the pad's player-slot routing.
     /// Sized at every rebind to cover the live order and the settings
-    /// tables; missing rows read as defaults (no overrides, deadzone 8,
+    /// tables; missing rows read as defaults (no overrides, deadzone 10,
     /// hat on), so a pad that outgrows the last rebind still plays.
     binding_map: Vec<HashMap<StandardButton, PadOverride>>,
 
@@ -445,7 +445,7 @@ impl InputDept {
         gamepad: &nerust_settings_core::model::input::GamepadSettings,
     ) {
         // Same width rule as the binding map; missing rows read as
-        // defaults (deadzone 8, hat on), so late connects still play.
+        // defaults (deadzone 10, hat on), so late connects still play.
         let width = self
             .pads
             .order

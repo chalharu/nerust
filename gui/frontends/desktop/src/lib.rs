@@ -83,6 +83,7 @@ struct MainHost {
     weak_view: panechord::backend::WeakView,
     picker_active: Rc<Cell<bool>>,
     settings_window: Rc<RefCell<Option<panechord::backend::WeakView>>>,
+    settings_editor: Rc<RefCell<Option<Rc<settings::Editor>>>>,
     history_window: Rc<RefCell<Option<panechord::backend::WeakView>>>,
     history_updates: Rc<RefCell<Option<Rc<history::Pane>>>>,
     debugger_window: Rc<RefCell<Option<panechord::backend::WeakView>>>,
@@ -415,8 +416,10 @@ impl MainHost {
         ));
         let released = self.application.clone();
         let closed = editor.clone();
+        let settings_editor = self.settings_editor.clone();
         view.on_close(Rc::new(move || {
             closed.close();
+            settings_editor.replace(None);
             if let Some(lease) = lease.borrow_mut().take() {
                 released.borrow_mut().release_pause(lease);
             }
@@ -425,6 +428,7 @@ impl MainHost {
         let close = weak.clone();
         let confirm = editor.clone();
         let cancel = editor.clone();
+        self.settings_editor.replace(Some(editor.clone()));
         if let Err(error) = self.host.register_view_with_hooks(
             &self.session,
             "settings",
@@ -444,6 +448,7 @@ impl MainHost {
             },
         ) {
             view.close();
+            self.settings_editor.replace(None);
             let _ = self.model.update(move |model| model.notice = Some(error));
             return false;
         }
@@ -587,7 +592,9 @@ impl MainHost {
         Result<Option<panechord::ImageFrame>, String>,
     ) {
         // Peripheral edges land before the frame advance: same tick,
-        // same shortcut tail.
+        // same shortcut tail. The capture poll runs first so a press
+        // during capture never leaks into gameplay input.
+        self.poll_pad_capture();
         self.poll_peripherals();
         let mut app = self.application.borrow_mut();
         let profile = app.session().render_profile();
@@ -659,6 +666,25 @@ impl MainHost {
                     }
                 }
             });
+        }
+    }
+
+    /// Pad capture poll: while a pad binding row waits for a press, drain
+    /// the first pressed button into the armed capture target. Runs before
+    /// the gameplay poll each tick so the edge lands in capture instead of
+    /// being cleared as gameplay input while the dialog holds the pause.
+    /// No-ops without an open dialog or an armed target.
+    fn poll_pad_capture(&self) {
+        let editor = match self.settings_editor.borrow().clone() {
+            Some(editor) => editor,
+            None => return,
+        };
+        if !editor.pad_capture_armed() {
+            return;
+        }
+        let mut app = self.application.borrow_mut();
+        if let Some(button) = app.session_mut().poll_capture_button() {
+            editor.apply_captured_pad(button);
         }
     }
 
@@ -970,6 +996,7 @@ pub fn run(
             weak_view: view.downgrade(),
             picker_active: Rc::new(Cell::new(false)),
             settings_window: Rc::new(RefCell::new(None)),
+            settings_editor: Rc::new(RefCell::new(None)),
             history_window: Rc::new(RefCell::new(None)),
             history_updates: Rc::new(RefCell::new(None)),
             debugger_window: Rc::new(RefCell::new(None)),

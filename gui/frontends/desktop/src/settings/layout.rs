@@ -137,6 +137,10 @@ pub(super) struct GeneralTab {
 #[derive(Clone)]
 pub(super) struct GamepadBlock {
     pub label: Binding<String>,
+    /// Open-frozen tab title, mirroring ControllerPage.label: per-pad tabs
+    /// match the controllers tab mechanics exactly, so the title binding
+    /// resolves the same way. The live `label` above still heads the page.
+    pub tab_label: String,
     pub assignment: Option<Keyed<ChoiceRow>>,
     pub deadzone: Option<Keyed<ChoiceRow>>,
     pub dpad: Option<Keyed<ChoiceRow>>,
@@ -609,6 +613,10 @@ pub(super) fn gamepads_blocks(
                 move |general| pad_label(I18n::new(crate::display_language(general.language)), pad),
                 None,
             );
+            let tab_label = pad_label(
+                I18n::new(crate::display_language(vm.general.view.get().language)),
+                pad,
+            );
             let assignment = pad_assignment_radio(editor, pad);
             let deadzone = pad_deadzone_row(editor, pad);
             let dpad = pad_dpad_row(editor, pad);
@@ -618,6 +626,7 @@ pub(super) fn gamepads_blocks(
                 Store::new(
                     GamepadBlock {
                         label,
+                        tab_label,
                         assignment: Some(assignment),
                         deadzone: Some(deadzone),
                         dpad: Some(dpad),
@@ -633,7 +642,9 @@ pub(super) fn gamepads_blocks(
 /// Player assignment radio for one enumerated pad: Not assigned plus
 /// Player 1/2. Writes through the settings table with rival clearing
 /// (assigning here parks rivals on the other port, mirroring the old
-/// player-page radio).
+/// player-page radio). The setter lives on the source binding (not in
+/// the id convert): convert-only writes leave a read-only binding whose
+/// sets the UI silently drops.
 fn pad_assignment_radio(editor: &Rc<Editor>, pad: usize) -> Keyed<ChoiceRow> {
     let vm = &editor.vm;
     let items: Binding<Vec<ChoiceView<Option<usize>>>> = editor.binding(
@@ -657,12 +668,15 @@ fn pad_assignment_radio(editor: &Rc<Editor>, pad: usize) -> Keyed<ChoiceRow> {
         },
         None,
     );
+    let gamepads_write = vm.gamepads.clone();
     let selected: Binding<Option<usize>> = editor.binding(
         vm.gamepads.view.clone(),
         move |gamepads| gamepads.pads.get(pad).and_then(|row| row.port),
-        None,
+        Some(
+            Rc::new(move |port: Option<usize>| gamepads_write.set_pad_port(pad, port))
+                as Rc<dyn Fn(Option<usize>) -> Result<(), ViewModelError>>,
+        ),
     );
-    let gamepads_write = vm.gamepads.clone();
     let selected_string: Binding<String> = selected.convert(
         move |value| {
             value
@@ -671,15 +685,9 @@ fn pad_assignment_radio(editor: &Rc<Editor>, pad: usize) -> Keyed<ChoiceRow> {
         },
         move |id: String| -> Result<Option<usize>, String> {
             if id == "none" {
-                gamepads_write
-                    .set_pad_port(pad, None)
-                    .map(|_| None)
-                    .map_err(|error| error.to_string())
+                Ok(None)
             } else if let Ok(port) = id.parse::<usize>() {
-                gamepads_write
-                    .set_pad_port(pad, Some(port))
-                    .map(|_| Some(port))
-                    .map_err(|error| error.to_string())
+                Ok(Some(port))
             } else {
                 // Ids come from our own items list; unreachable.
                 Ok(None)
@@ -1034,6 +1042,45 @@ mod tests {
             .snapshot();
         assert!(zone.selected.set("2".to_string()));
         assert_eq!(editor.vm.gamepads.view.get().pads[0].deadzone, 10);
+    }
+
+    /// Assignment radio roundtrip through the actual ChoiceRow store:
+    /// writing the choice id ("1" for player 2) must land in settings
+    /// and park same-port rivals, exactly as the UI drives it.
+    #[test]
+    fn gamepad_assignment_radio_write_reaches_settings() {
+        let (editor, _adapter, _dir) = headless_editor();
+        let executor: Rc<dyn panechord::Executor> = Rc::new(TestExecutor);
+        let capture = noop_capture(&executor);
+        let clear = noop_capture(&executor);
+        let blocks = gamepads_blocks(&editor, &capture, &clear, TEST_PAD_COUNT);
+        let radio = blocks[0]
+            .model
+            .snapshot()
+            .assignment
+            .as_ref()
+            .expect("assignment radio builds")
+            .model
+            .snapshot();
+        assert!(radio.selected.set("1".to_string()));
+        assert_eq!(editor.vm.gamepads.view.get().pads[0].port, Some(1));
+        assert_eq!(editor.vm.gamepads.view.get().pads[1].port, None);
+        let selected: Vec<String> = gamepads_blocks(&editor, &capture, &clear, TEST_PAD_COUNT)
+            .iter()
+            .map(|block| {
+                block
+                    .model
+                    .snapshot()
+                    .assignment
+                    .as_ref()
+                    .expect("assignment radio builds")
+                    .model
+                    .snapshot()
+                    .selected
+                    .get()
+            })
+            .collect();
+        assert_eq!(selected, vec!["1".to_string(), "none".to_string()]);
     }
 
     /// Controllers pages are per-system: controller-type slots,
