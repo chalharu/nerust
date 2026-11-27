@@ -91,15 +91,16 @@ pub(super) fn build_vm(
     resolved.shared.general.language = i18n.language();
     // Session-order button layouts for validation messages, resolved from
     // live USB vendors: conflict names match the caps on the pad itself.
-    let width = pad_order.len();
-    let mut pad_layouts = vec![nerust_input_traits::PadLayout::Xbox; width];
-    for (rank, layout) in pad_layouts.iter_mut().enumerate() {
-        let vendor = gamepads
-            .iter()
-            .find(|info| super::wire::bare_member(&info.member) == pad_order[rank])
-            .and_then(|info| info.vendor_id);
-        *layout = nerust_input_traits::PadLayout::for_vendor(vendor);
-    }
+    let vendors: Vec<Option<u16>> = pad_order
+        .iter()
+        .map(|want| {
+            gamepads
+                .iter()
+                .find(|info| super::wire::bare_member(&info.member) == *want)
+                .and_then(|info| info.vendor_id)
+        })
+        .collect();
+    let pad_layouts = nerust_input_traits::PadLayout::for_vendors(&vendors);
     SettingsViewModel::new(
         resolved,
         deps.factories.clone(),

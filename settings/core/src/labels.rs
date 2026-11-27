@@ -11,46 +11,47 @@ use crate::{
     model::language::AppLanguage,
 };
 
-/// Plain cap print for one pad button: the single home for the
+/// Cap print for one pad button: the single home for the
 /// position-to-glyph table. Positions are the binding identity
 /// (vendors transpose caps); this table only names what is printed.
-fn pad_button_plain(button: StandardButton, layout: PadLayout) -> &'static str {
+pub fn pad_cap(button: StandardButton, layout: PadLayout) -> &'static str {
     use StandardButton as Pad;
-    match (button, layout) {
-        // Sony symbols are printed on the pad; language-independent.
-        (Pad::South, PadLayout::Sony) => "×",
-        (Pad::East, PadLayout::Sony) => "○",
-        (Pad::West, PadLayout::Sony) => "□",
-        (Pad::North, PadLayout::Sony) => "△",
-        // Nintendo diamond (the emulated platforms): B bottom, A right.
-        (Pad::South, PadLayout::Nintendo) => "B",
-        (Pad::East, PadLayout::Nintendo) => "A",
-        (Pad::West, PadLayout::Nintendo) => "Y",
-        (Pad::North, PadLayout::Nintendo) => "X",
-        // Xbox diamond and the fallback for unknown vendors.
-        (Pad::South, PadLayout::Xbox) => "A",
-        (Pad::East, PadLayout::Xbox) => "B",
-        (Pad::West, PadLayout::Xbox) => "X",
-        (Pad::North, PadLayout::Xbox) => "Y",
-        (Pad::Back, _) => "Back",
-        (Pad::Guide, _) => "Guide",
-        (Pad::Start, _) => "Start",
-        (Pad::Capture, _) => "Capture",
-        (Pad::LeftStick, _) => "L3",
-        (Pad::RightStick, _) => "R3",
-        (Pad::LeftShoulder, _) => "LB",
-        (Pad::RightShoulder, _) => "RB",
-        (Pad::LeftTrigger, _) => "LT",
-        (Pad::RightTrigger, _) => "RT",
-        (Pad::DpadUp, _) => "D-pad up",
-        (Pad::DpadDown, _) => "D-pad down",
-        (Pad::DpadLeft, _) => "D-pad left",
-        (Pad::DpadRight, _) => "D-pad right",
+    match button {
+        Pad::South => match layout {
+            PadLayout::Sony => "×",
+            PadLayout::Nintendo => "B",
+            PadLayout::Xbox => "A",
+        },
+        Pad::East => match layout {
+            PadLayout::Sony => "○",
+            PadLayout::Nintendo => "A",
+            PadLayout::Xbox => "B",
+        },
+        Pad::West => match layout {
+            PadLayout::Sony => "□",
+            PadLayout::Nintendo => "Y",
+            PadLayout::Xbox => "X",
+        },
+        Pad::North => match layout {
+            PadLayout::Sony => "△",
+            PadLayout::Nintendo => "X",
+            PadLayout::Xbox => "Y",
+        },
+        Pad::Back => "Back",
+        Pad::Guide => "Guide",
+        Pad::Start => "Start",
+        Pad::Capture => "Capture",
+        Pad::LeftStick => "L3",
+        Pad::RightStick => "R3",
+        Pad::LeftShoulder => "LB",
+        Pad::RightShoulder => "RB",
+        Pad::LeftTrigger => "LT",
+        Pad::RightTrigger => "RT",
+        Pad::DpadUp => "D-pad up",
+        Pad::DpadDown => "D-pad down",
+        Pad::DpadLeft => "D-pad left",
+        Pad::DpadRight => "D-pad right",
     }
-}
-
-pub fn pad_button_label(_i18n: I18n, button: StandardButton, layout: PadLayout) -> String {
-    pad_button_plain(button, layout).to_string()
 }
 
 /// Player/device-row summary: "Not assigned" when empty, otherwise
@@ -108,28 +109,28 @@ mod tests {
     fn pad_buttons_follow_vendor_layout() {
         use StandardButton as Pad;
         use nerust_input_traits::PadLayout as Layout;
-        assert_eq!(pad_button_label(en(), Pad::South, Layout::Sony), "×");
-        assert_eq!(pad_button_label(en(), Pad::East, Layout::Sony), "○");
-        assert_eq!(pad_button_label(ja(), Pad::South, Layout::Sony), "×");
-        assert_eq!(pad_button_label(en(), Pad::South, Layout::Nintendo), "B");
-        assert_eq!(pad_button_label(en(), Pad::East, Layout::Nintendo), "A");
-        assert_eq!(pad_button_label(ja(), Pad::East, Layout::Nintendo), "A");
-        assert_eq!(pad_button_label(en(), Pad::South, Layout::Xbox), "A");
-        assert_eq!(pad_button_label(en(), Pad::East, Layout::Xbox), "B");
-        assert_eq!(pad_button_label(en(), Pad::Guide, Layout::Sony), "Guide");
-        assert_eq!(
-            pad_button_label(ja(), Pad::LeftShoulder, Layout::Nintendo),
-            "LB"
-        );
+        assert_eq!(pad_cap(Pad::South, Layout::Sony), "×");
+        assert_eq!(pad_cap(Pad::East, Layout::Sony), "○");
+        assert_eq!(pad_cap(Pad::South, Layout::Nintendo), "B");
+        assert_eq!(pad_cap(Pad::East, Layout::Nintendo), "A");
+        assert_eq!(pad_cap(Pad::South, Layout::Xbox), "A");
+        assert_eq!(pad_cap(Pad::East, Layout::Xbox), "B");
+        assert_eq!(pad_cap(Pad::Guide, Layout::Sony), "Guide");
+        assert_eq!(pad_cap(Pad::LeftShoulder, Layout::Nintendo), "LB");
     }
 
     #[test]
     fn layout_for_vendor_pins_sony_nintendo_and_fallback() {
         use nerust_input_traits::PadLayout as Layout;
-        assert_eq!(Layout::for_vendor(Some(0x054C)), Layout::Sony);
-        assert_eq!(Layout::for_vendor(Some(0x057E)), Layout::Nintendo);
+        use nerust_input_traits::{NINTENDO_VENDOR_ID, SONY_VENDOR_ID};
+        assert_eq!(Layout::for_vendor(Some(SONY_VENDOR_ID)), Layout::Sony);
+        assert_eq!(
+            Layout::for_vendor(Some(NINTENDO_VENDOR_ID)),
+            Layout::Nintendo
+        );
         assert_eq!(Layout::for_vendor(Some(0x045E)), Layout::Xbox);
         assert_eq!(Layout::for_vendor(None), Layout::Xbox);
+        assert_eq!(Layout::default(), Layout::Xbox);
     }
 
     #[test]

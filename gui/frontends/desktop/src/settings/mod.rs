@@ -148,10 +148,7 @@ impl Editor {
         executor: Rc<dyn Executor>,
     ) -> Result<Rc<Self>, String> {
         let pad_vendors = adapter.pad_vendors();
-        let pad_layouts: Vec<nerust_input_traits::PadLayout> = pad_vendors
-            .iter()
-            .map(|vendor| nerust_input_traits::PadLayout::for_vendor(*vendor))
-            .collect();
+        let pad_layouts = nerust_input_traits::PadLayout::for_vendors(&pad_vendors);
         let vm = SettingsViewModel::new(
             snapshot.clone(),
             adapter.factories().to_vec(),

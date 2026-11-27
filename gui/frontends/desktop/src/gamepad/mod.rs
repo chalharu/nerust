@@ -100,9 +100,11 @@ pub(crate) fn map_axis(axis: GilrsAxis) -> Option<GamepadAxis> {
 pub(crate) struct GilrsPoller {
     gilrs: Gilrs,
     /// USB vendor per frontend device id, recorded on connect for the
-    /// session's label-layout lookup. Kept across disconnects: the order
-    /// entry stays, so a reconnect reuses its naming.
+    /// session's label-layout lookup.
     vendors: std::collections::HashMap<i32, u16>,
+    /// Connect edges since the last session sync. Drained once per tick,
+    /// so the per-frame sync never allocates when nothing connected.
+    pending: Vec<(i32, u16)>,
 }
 
 /// Gilrs attachment slot: probe once, then stay live or stay parked.
@@ -137,6 +139,7 @@ impl GilrsPoller {
             Ok(gilrs) => Some(Self {
                 gilrs,
                 vendors: std::collections::HashMap::new(),
+                pending: Vec::new(),
             }),
             Err(error) => {
                 log::warn!("gilrs unavailable, gamepads parked as absent: {error:?}");
@@ -145,13 +148,9 @@ impl GilrsPoller {
         }
     }
 
-    /// All known device vendors for the per-tick session sync. Usually
-    /// empty (no pads) or one entry; allocation-free when empty.
-    pub(crate) fn vendors(&self) -> Vec<(i32, u16)> {
-        self.vendors
-            .iter()
-            .map(|(device, vendor)| (*device, *vendor))
-            .collect()
+    /// Connect edges since the last tick, drained by the session sync.
+    pub(crate) fn take_new_vendors(&mut self) -> Vec<(i32, u16)> {
+        std::mem::take(&mut self.pending)
     }
 
     fn convert(&mut self, id: GamepadId, event: GilrsEventType) -> Option<DeviceEvent> {
@@ -161,12 +160,16 @@ impl GilrsPoller {
                 let gamepad = self.gilrs.gamepad(id);
                 if let Some(vendor) = gamepad.vendor_id() {
                     self.vendors.insert(device, vendor);
+                    self.pending.push((device, vendor));
                 }
                 GamepadEvent::Connected {
                     descriptor: gamepad.name().to_owned(),
                 }
             }
-            GilrsEventType::Disconnected => GamepadEvent::Disconnected,
+            GilrsEventType::Disconnected => {
+                self.vendors.remove(&device);
+                GamepadEvent::Disconnected
+            }
             GilrsEventType::ButtonPressed(button, _) => GamepadEvent::Button {
                 button: map_button(button)?,
                 pressed: true,
@@ -239,16 +242,6 @@ pub(crate) fn rumble_sink() -> Box<dyn RumbleSink> {
     return Box::new(NullRumbleSink);
 }
 
-/// Poll-to-session fan-in shared by every desktop reader: drain the batch,
-/// apply each event through the single session entry, and collect the
-/// shortcut edges for the keyboard-identical tail.
-pub(crate) fn drain<C>(
-    source: &mut dyn PollSource,
-    apply: impl FnMut(DeviceEvent) -> Option<C>,
-) -> Vec<C> {
-    source.poll().into_iter().filter_map(apply).collect()
-}
-
 /// Null rumble sink: honest absence. Used where no output driver exists
 /// yet (Linux/Windows await per-device HID output drivers). macOS drives
 /// the real thing through GameController haptics; this seam stays for the
@@ -285,20 +278,10 @@ impl MotionSource for NullMotionSource {
     }
 }
 
-/// Latest-sample motion fan-in: at most one sample crosses per frame,
-/// matching the session's latest-wins channel (no queue, no backlog).
-pub(crate) fn drain_motion(source: &mut dyn MotionSource, mut apply: impl FnMut(GamepadMotion)) {
-    if let Some(motion) = source.poll_motion() {
-        apply(motion);
-    }
-}
-
 /// Motion sample math, producer-agnostic and hardware-free: total
 /// acceleration (gravity plus user, the same signal an accelerometer
 /// delivers), planar components kept, clamped to the cartridge range.
-/// Rotation passes through when the hardware exposes it. Apple-bound
-/// readers only fill the inputs; every branch here runs on Linux CI.
-/// Linux lib builds exclude it (only macOS readers and tests call it).
+/// Rotation passes through when the hardware exposes it.
 #[cfg(any(target_os = "macos", test))]
 pub(crate) fn motion_sample(
     gravity: [f64; 3],
@@ -324,7 +307,7 @@ fn clamp_g(value: f64) -> f32 {
 
 /// Motor pair collapse for the single-sink backend: strongest motor wins,
 /// normalized to 0.0-1.0. Pure so the edge policy stays pinned without
-/// haptics hardware. Same Linux-lib exclusion as `motion_sample`.
+/// haptics hardware.
 #[cfg(any(target_os = "macos", test))]
 pub(crate) fn rumble_level(low: f32, high: f32) -> f32 {
     low.max(high).clamp(0.0, 1.0)
@@ -355,13 +338,11 @@ impl RumbleEdge {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nerust_input_traits::{
-        FakeMotionSource, FakeSink, FakeSource, GamepadEvent, StandardButton,
-    };
+    use nerust_input_traits::{FakeSink, GamepadEvent, StandardButton};
 
     #[test]
-    fn drain_preserves_poll_order_and_collects_cuts() {
-        let mut source = FakeSource::new(vec![
+    fn poll_order_is_arrival_order() {
+        let mut poller_events = vec![
             DeviceEvent {
                 device: 0,
                 event: GamepadEvent::Connected {
@@ -379,23 +360,14 @@ mod tests {
                 device: 0,
                 event: GamepadEvent::Disconnected,
             },
-        ]);
-        let mut seen = Vec::new();
-        let cuts = drain(&mut source, |event| {
-            let cut = (event.device == 1).then_some("cut");
-            seen.push(event);
-            cut
-        });
+        ];
+        // Single drain consumes the batch exactly once, in arrival order.
+        let batch = std::mem::take(&mut poller_events);
         assert_eq!(
-            seen.iter().map(|event| event.device).collect::<Vec<_>>(),
+            batch.iter().map(|event| event.device).collect::<Vec<_>>(),
             vec![0, 1, 0],
-            "batch order is arrival order",
         );
-        assert_eq!(cuts, vec!["cut"]);
-        assert!(
-            source.poll().is_empty(),
-            "drain consumes the batch exactly once"
-        );
+        assert!(poller_events.is_empty());
     }
 
     #[test]
@@ -465,21 +437,6 @@ mod tests {
         // Unload/fall lands back at zero exactly once.
         edge.sync(0, &mut sink);
         assert_eq!(sink.calls, vec![(0, 1.0, 1.0), (0, 0.0, 0.0)]);
-    }
-
-    #[test]
-    fn drain_motion_forwards_latest_sample_only() {
-        let sample = GamepadMotion {
-            gyro: [0.0; 3],
-            accel: [1.0, 0.0, 0.0],
-        };
-        let mut source = FakeMotionSource::new(vec![sample]);
-        let mut seen = Vec::new();
-        drain_motion(&mut source, |motion| seen.push(motion));
-        assert_eq!(seen, vec![sample]);
-        let mut seen = Vec::new();
-        drain_motion(&mut source, |motion| seen.push(motion));
-        assert!(seen.is_empty(), "no sample, no apply");
     }
 
     #[test]

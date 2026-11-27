@@ -592,9 +592,7 @@ impl MainHost {
         Result<Option<panechord::ImageFrame>, String>,
     ) {
         // Peripheral edges land before the frame advance: same tick,
-        // same shortcut tail. The capture poll runs first so a press
-        // during capture never leaks into gameplay input.
-        self.poll_pad_capture();
+        // same shortcut tail.
         self.poll_peripherals();
         let mut app = self.application.borrow_mut();
         let profile = app.session().render_profile();
@@ -669,36 +667,26 @@ impl MainHost {
         }
     }
 
-    /// Pad capture poll: while a pad binding row waits for a press, drain
-    /// the first pressed button into the armed capture target. Runs before
-    /// the gameplay poll each tick so the edge lands in capture instead of
-    /// being cleared as gameplay input while the dialog holds the pause.
-    /// No-ops without an open dialog or an armed target.
-    fn poll_pad_capture(&self) {
-        let editor = match self.settings_editor.borrow().clone() {
-            Some(editor) => editor,
-            None => return,
-        };
-        if !editor.pad_capture_armed() {
-            return;
-        }
-        let mut app = self.application.borrow_mut();
-        if let Some(button) = app.session_mut().poll_capture_button() {
-            editor.apply_captured_pad(button);
-        }
-    }
-
-    /// Desktop peripheral frame: drain pads, motion, and rumble through
-    /// the session entries; shortcut edges ride the keyboard-identical
-    /// tail below.
+    /// Desktop peripheral frame: one poll feeds capture, pads, motion,
+    /// and rumble; shortcut edges ride the keyboard-identical tail.
     fn poll_peripherals(&self) {
-        let cuts = {
+        let armed = self
+            .settings_editor
+            .borrow()
+            .clone()
+            .is_some_and(|editor| editor.pad_capture_armed());
+        let (captured, cuts) = {
             let mut app = self.application.borrow_mut();
             if app.state().closed {
                 return;
             }
-            app.session_mut().poll_peripherals()
+            app.session_mut().poll_peripherals(armed)
         };
+        if let Some(button) = captured
+            && let Some(editor) = self.settings_editor.borrow().clone()
+        {
+            editor.apply_captured_pad(button);
+        }
         for cut in cuts {
             self.route_cut(Some(cut));
         }

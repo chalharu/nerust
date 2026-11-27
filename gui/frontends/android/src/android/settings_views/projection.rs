@@ -817,11 +817,8 @@ fn shortcut_binding_text(
         // Shared pad column: any connected pad can fire these rows, so no
         // single pad owns the cap — the default diamond names it.
         nerust_settings_core::editor::current_pad_binding(snapshot, target).map(|button| {
-            nerust_settings_core::labels::pad_button_label(
-                i18n,
-                button,
-                nerust_input_traits::PadLayout::Xbox,
-            )
+            nerust_settings_core::labels::pad_cap(button, nerust_input_traits::PadLayout::default())
+                .to_string()
         })
     } else {
         nerust_settings_core::editor::current_binding_key(snapshot, target)

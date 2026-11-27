@@ -133,16 +133,18 @@ impl RumbleSink for GcRumbleSink {
         }
         if self.engine.is_none() {
             self.engine = Self::start_engine();
-            if self.engine.is_none() && !self.warned_absent {
+            if self.engine.is_some() {
+                self.warned_absent = false;
+            } else if !self.warned_absent {
                 self.warned_absent = true;
                 log::warn!("gamepad haptics unavailable; rumble parked until next edge");
             }
         }
+        self.stop_player();
         let player = match self.engine.as_ref() {
             Some(live) => Self::play(&live.engine, level),
             None => return,
         };
-        self.stop_player();
         match player {
             Some(player) => {
                 if let Some(live) = self.engine.as_mut() {

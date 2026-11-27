@@ -34,8 +34,8 @@ pub use profile::{
     port_index_for_slot,
 };
 pub use source::{
-    CARTRIDGE_ACCEL_MAX_G, GamepadAxis, GamepadEvent, GamepadMotion, PadGuid, PadLayout,
-    SourceButtonId, SourceId, StandardButton, apply_deadzone,
+    CARTRIDGE_ACCEL_MAX_G, GamepadAxis, GamepadEvent, GamepadMotion, NINTENDO_VENDOR_ID, PadGuid,
+    PadLayout, SONY_VENDOR_ID, SourceButtonId, SourceId, StandardButton, apply_deadzone,
 };
 pub use topology::{
     AnalogControlDescriptor, AttachmentSlotDescriptor, ControlDescriptor, DeviceDescriptor,

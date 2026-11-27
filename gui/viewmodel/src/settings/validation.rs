@@ -114,7 +114,7 @@ impl ValidationIssueKind {
             } => {
                 format!(
                     "{}: {}",
-                    nerust_settings_core::labels::pad_button_label(i18n, *button, *layout),
+                    nerust_settings_core::labels::pad_cap(*button, *layout),
                     labels.join(", ")
                 )
             }

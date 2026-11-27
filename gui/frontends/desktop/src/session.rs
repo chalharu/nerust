@@ -214,54 +214,47 @@ impl SessionAdapter {
         self.session.tick_metrics().frame_counter
     }
 
-    /// One frame of peripherals: pad batch, at most one motion sample,
-    /// and the console-global rumble level, all through the single session
-    /// entries. Returns shortcut edges for the keyboard-identical tail.
-    /// Mirrors `key_event`'s enable rule (`loaded && !paused`, hold folds
-    /// into paused): fields clear when disabled, shortcuts still return.
-    /// Rumble/motion ride the same tick so future drivers only swap the
-    /// source/sink constructors, never this loop.
-    pub(crate) fn poll_peripherals(&mut self) -> Vec<KeyboardShortcut> {
+    /// One frame of peripherals, polled exactly once: pad batch, at most
+    /// one motion sample, and the console-global rumble level. When
+    /// `capture_armed` the first pressed button is peeled off for the
+    /// settings dialog and never reaches gameplay; every other event in
+    /// the same batch still does, so hotplug/axis edges are never lost
+    /// during capture. Returns the capture button plus shortcut edges
+    /// for the keyboard-identical tail.
+    pub(crate) fn poll_peripherals(
+        &mut self,
+        capture_armed: bool,
+    ) -> (Option<StandardButton>, Vec<KeyboardShortcut>) {
+        let mut captured = None;
         let mut cuts = Vec::new();
         if let Some(poller) = self.gamepads.poller() {
-            cuts = gamepad::drain(poller, |event| {
-                self.session.apply_gamepad_event(event.device, event.event)
-            });
-            // Vendor truth rides the same tick: connect registered the
-            // device id above, so every known pad resolves by now.
-            for (device, vendor) in poller.vendors() {
+            for event in poller.poll() {
+                if capture_armed
+                    && captured.is_none()
+                    && matches!(event.event, GamepadEvent::Button { pressed: true, .. })
+                {
+                    if let GamepadEvent::Button { button, .. } = event.event {
+                        captured = Some(button);
+                    }
+                    continue;
+                }
+                if let Some(cut) = self.session.apply_gamepad_event(event.device, event.event) {
+                    cuts.push(cut);
+                }
+            }
+            for (device, vendor) in poller.take_new_vendors() {
                 self.session.note_pad_vendor(device, vendor);
             }
         }
-        gamepad::drain_motion(&mut *self.motion_source, |motion| {
+        if let Some(motion) = self.motion_source.poll_motion() {
             self.session.apply_motion(motion);
-        });
+        }
         self.rumble_edge
             .sync(self.session.rumble_intensity(), &mut *self.rumble_sink);
         if !self.loaded() || self.metrics().paused {
             self.session.clear_input();
         }
-        cuts
-    }
-
-    /// First pressed pad button since the last drain, for settings
-    /// capture. Only button press edges complete a capture; axes and
-    /// disconnects never do. Drains through the shared slot, and the
-    /// capture poll runs before the gameplay poll each tick, so a
-    /// pressed button lands in capture instead of being cleared as
-    /// gameplay input while the dialog holds the pause.
-    pub(crate) fn poll_capture_button(&mut self) -> Option<StandardButton> {
-        let poller = self.gamepads.poller()?;
-        poller
-            .poll()
-            .into_iter()
-            .find_map(|event| match event.event {
-                GamepadEvent::Button {
-                    button,
-                    pressed: true,
-                } => Some(button),
-                _ => None,
-            })
+        (captured, cuts)
     }
 
     pub fn factories(&self) -> &[Arc<dyn nerust_system_traits::factory::CoreFactory>] {
