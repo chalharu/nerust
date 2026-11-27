@@ -1,10 +1,10 @@
 
-FROM rust:1.100.0-slim@sha256:6f14b2b4b278ec0d50aa1d69541c304ce0f95e0f6268487aa9924af1c2e9aebe AS builder
+FROM rust:1.100.0-slim@sha256:3b199fd6db7d709274df56565b8f4003f9e30d7bfcff9d53148c86053b7855e2 AS builder
 RUN cargo install cargo-llvm-cov --locked --version=0.8.7 \
     && cargo install cargo-nextest --locked --version=0.9.143 \
     --no-default-features --features=default-no-update
 
-FROM rust:1.100.0-slim@sha256:6f14b2b4b278ec0d50aa1d69541c304ce0f95e0f6268487aa9924af1c2e9aebe
+FROM rust:1.100.0-slim@sha256:3b199fd6db7d709274df56565b8f4003f9e30d7bfcff9d53148c86053b7855e2
 
 # hadolint ignore=DL3002
 USER 0
