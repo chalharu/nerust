@@ -141,7 +141,7 @@ impl GcRumbleSink {
 
 impl RumbleSink for GcRumbleSink {
     fn set_rumble(&mut self, _device: i32, low: f32, high: f32) {
-        let level = low.max(high).clamp(0.0, 1.0);
+        let level = super::rumble_level(low, high);
         if level <= 0.0 {
             self.stop_player();
             return;

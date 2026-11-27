@@ -18,8 +18,10 @@
 //!
 //! Rumble lives next door in `macos_rumble` (same framework, haptics side).
 
-use nerust_input_traits::{CARTRIDGE_ACCEL_MAX_G, GamepadMotion, MotionSource};
+use nerust_input_traits::{GamepadMotion, MotionSource};
 use objc2_game_controller::{GCController, GCMotion};
+
+use super::motion_sample;
 
 /// GameController motion profile drained once per frame. Stateless: every
 /// poll re-reads the controller list, so hotplug needs no bookkeeping.
@@ -39,20 +41,15 @@ impl GcMotionSource {
             }
             let gravity = motion.gravity();
             let user = motion.userAcceleration();
-            let gyro = if motion.hasRotationRate() {
+            let rotation = motion.hasRotationRate().then(|| {
                 let rate = motion.rotationRate();
-                [rate.x as f32, rate.y as f32, rate.z as f32]
-            } else {
-                [0.0; 3]
-            };
-            Some(GamepadMotion {
-                gyro,
-                accel: [
-                    clamp_g(gravity.x + user.x),
-                    clamp_g(gravity.y + user.y),
-                    clamp_g(gravity.z + user.z),
-                ],
-            })
+                [rate.x, rate.y, rate.z]
+            });
+            Some(motion_sample(
+                [gravity.x, gravity.y, gravity.z],
+                [user.x, user.y, user.z],
+                rotation,
+            ))
         }
     }
 
@@ -81,8 +78,4 @@ impl MotionSource for GcMotionSource {
     fn poll_motion(&mut self) -> Option<GamepadMotion> {
         Self::sample()
     }
-}
-
-fn clamp_g(value: f64) -> f32 {
-    (value as f32).clamp(-CARTRIDGE_ACCEL_MAX_G, CARTRIDGE_ACCEL_MAX_G)
 }

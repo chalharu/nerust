@@ -34,6 +34,8 @@
 use gilrs::{
     Axis as GilrsAxis, Button as GilrsButton, EventType as GilrsEventType, GamepadId, Gilrs,
 };
+#[cfg(any(target_os = "macos", test))]
+use nerust_input_traits::CARTRIDGE_ACCEL_MAX_G;
 #[cfg(not(target_os = "macos"))]
 use nerust_input_traits::Capability;
 use nerust_input_traits::{
@@ -267,6 +269,43 @@ pub(crate) fn drain_motion(source: &mut dyn MotionSource, mut apply: impl FnMut(
     }
 }
 
+/// Motion sample math, producer-agnostic and hardware-free: total
+/// acceleration (gravity plus user, the same signal an accelerometer
+/// delivers), planar components kept, clamped to the cartridge range.
+/// Rotation passes through when the hardware exposes it. Apple-bound
+/// readers only fill the inputs; every branch here runs on Linux CI.
+/// Linux lib builds exclude it (only macOS readers and tests call it).
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn motion_sample(
+    gravity: [f64; 3],
+    user: [f64; 3],
+    rotation: Option<[f64; 3]>,
+) -> GamepadMotion {
+    GamepadMotion {
+        gyro: rotation
+            .map(|rate| rate.map(|axis| axis as f32))
+            .unwrap_or([0.0; 3]),
+        accel: [
+            clamp_g(gravity[0] + user[0]),
+            clamp_g(gravity[1] + user[1]),
+            clamp_g(gravity[2] + user[2]),
+        ],
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn clamp_g(value: f64) -> f32 {
+    (value as f32).clamp(-CARTRIDGE_ACCEL_MAX_G, CARTRIDGE_ACCEL_MAX_G)
+}
+
+/// Motor pair collapse for the single-sink backend: strongest motor wins,
+/// normalized to 0.0-1.0. Pure so the edge policy stays pinned without
+/// haptics hardware. Same Linux-lib exclusion as `motion_sample`.
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn rumble_level(low: f32, high: f32) -> f32 {
+    low.max(high).clamp(0.0, 1.0)
+}
+
 /// Console-global rumble edge tracker: collapses the 0-255 intensity to
 /// one level for the single-sink backend and only calls down on change,
 /// mirroring button edges. Owns the last sent level, so sessions never
@@ -428,5 +467,25 @@ mod tests {
         assert!(!sink.capability(0).motion);
         let mut motion = NullMotionSource;
         assert_eq!(motion.poll_motion(), None);
+    }
+
+    #[test]
+    fn motion_sample_sums_clamps_and_carries_gyro() {
+        // Flat pad under a rightward push: total acceleration is the sum.
+        let sample = motion_sample([0.0, 0.0, -1.0], [0.5, 0.0, 0.0], None);
+        assert_eq!(sample.accel, [0.5, 0.0, -1.0]);
+        assert_eq!(sample.gyro, [0.0; 3], "unexposed axes stay unknown");
+        // MBC7 latches saturate: producers clamp, never the session.
+        let sample = motion_sample([100.0, -100.0, 0.0], [0.0, 0.0, 0.0], Some([1.0, 2.0, 3.0]));
+        assert_eq!(sample.accel, [8.0, -8.0, 0.0]);
+        assert_eq!(sample.gyro, [1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn rumble_level_collapses_to_strongest_motor() {
+        assert_eq!(rumble_level(0.0, 1.0), 1.0);
+        assert_eq!(rumble_level(0.5, 0.25), 0.5);
+        assert_eq!(rumble_level(-1.0, 2.0), 1.0, "out-of-range inputs clamp");
+        assert_eq!(rumble_level(0.0, 0.0), 0.0);
     }
 }
