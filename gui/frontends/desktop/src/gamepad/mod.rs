@@ -11,11 +11,12 @@
 //! stay on: disabling them trips a gilrs-core unconditional
 //! `compile_error!`, and WGI is exactly what Windows uses.
 //!
-//! Input-only phase: no force-feedback sink ships yet (macOS reports none;
-//! Linux/Windows FF producers are P3), and no motion producer ships yet.
-//! Rumble output and motion producers are P3; the session read side
-//! (`rumble_intensity`) and the motion entry (`apply_motion`) already exist
-//! for them.
+//! Input-plus-peripherals phase: pads ride gilrs everywhere; macOS motion
+//! rides the GameController profile and macOS rumble rides GameController
+//! haptics (both official, macOS 11+). Linux/Windows output drivers and
+//! the raw-HID Switch IMU reader plug into the same seams later; the
+//! session read side (`rumble_intensity`) and the motion entry
+//! (`apply_motion`) already exist for them.
 //!
 //! Conventions (review-pinned):
 //! - Matches over gilrs `Button`/`Axis` are exhaustive with no wildcard arm,
@@ -38,6 +39,8 @@ use nerust_input_traits::{
 
 #[cfg(target_os = "macos")]
 mod macos_motion;
+#[cfg(target_os = "macos")]
+mod macos_rumble;
 
 /// gilrs button to shared position button. `C`/`Z` are pre-standard extras
 /// with no shared counterpart and `Unknown` stays silent instead of
@@ -172,11 +175,14 @@ pub(crate) fn motion_source() -> Box<dyn MotionSource> {
     return Box::new(NullMotionSource);
 }
 
-/// Platform rumble sink: honest absence on every OS for now. macOS has no
-/// official path at all; Linux/Windows drivers plug in here (P3) without
-/// loop changes.
+/// Platform rumble sink: GameController haptics on macOS (official
+/// CoreHaptics path, macOS 11+); honest absence everywhere else until
+/// per-device HID output drivers land.
 pub(crate) fn rumble_sink() -> Box<dyn RumbleSink> {
-    Box::new(NullRumbleSink)
+    #[cfg(target_os = "macos")]
+    return Box::new(macos_rumble::GcRumbleSink::default());
+    #[cfg(not(target_os = "macos"))]
+    return Box::new(NullRumbleSink);
 }
 
 /// Poll-to-session fan-in shared by every desktop reader: drain the batch,
@@ -191,13 +197,11 @@ pub(crate) fn drain<C>(
     source.poll().into_iter().filter_map(apply).collect()
 }
 
-/// Null rumble sink: honest absence. There is no official macOS rumble
-/// path (haptic engine creation is iOS/tvOS-only; gilrs reports
-/// `is_ff_supported() == false` with an empty `set_ff_state` stub), and
-/// no evdev-FF driver is wired yet on Linux, so there is nothing to drive.
-/// The seam exists so a future per-device HID output driver plugs in here
-/// and the frame loop needs no change; `capability` tells settings UI the
-/// truth in the meantime.
+/// Null rumble sink: honest absence. Used where no output driver exists
+/// yet (Linux/Windows await per-device HID output drivers). macOS drives
+/// the real thing through GameController haptics; this seam stays for the
+/// platforms still waiting, and `capability` tells settings UI the truth
+/// in the meantime.
 #[derive(Debug, Default)]
 pub(crate) struct NullRumbleSink;
 

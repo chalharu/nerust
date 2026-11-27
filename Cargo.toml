@@ -198,6 +198,8 @@ nerust_sound_filter = { path = "sound/filter" }
 nerust_sound_spectrum = { path = "sound/spectrum" }
 nerust_system_traits = { path = "traits/system" }
 nerust_timer = { path = "timer" }
+objc2 = { version = "=0.6.5" }
+objc2-core-haptics = { version = "=0.3.2" }
 objc2-foundation = { version = "=0.3.2" }
 objc2-game-controller = { version = "=0.3.2" }
 panechord = { git = "https://github.com/chalharu/panechord", rev = "a30ff1846534c3c0ca4485ecf11479f682cb2252" }
