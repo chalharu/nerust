@@ -194,7 +194,7 @@ fn overlay_always_roundtrip_through_finish() {
     let (mut snapshot, _) = test_payload();
     let next = set(&mut snapshot, "controls.overlay_visibility", 0, 0);
     assert_eq!(row(&next, "controls.overlay_visibility").selected, 0);
-    match finish_snapshot(&snapshot, None) {
+    match finish_snapshot(&snapshot, None, &[], &[]) {
         Ok(done) => assert_eq!(
             done.local.touch_overlay.visibility,
             TouchOverlayVisibility::Always
@@ -782,6 +782,7 @@ fn gamepad_alone_reopens_capture() {
     let gamepads = vec![GamepadInfo {
         member: "pad:desc-1".to_string(),
         name: "Pad".to_string(),
+        vendor_id: None,
     }];
     let (_snapshot, payload) = with_test_deps(|| {
         let snapshot = default_snapshot();
@@ -1181,6 +1182,7 @@ fn test_gamepads() -> Vec<GamepadInfo> {
     vec![GamepadInfo {
         member: "pad:wireless-1".to_string(),
         name: "Wireless Controller".to_string(),
+        vendor_id: None,
     }]
 }
 
@@ -1578,6 +1580,8 @@ fn pad_capture_lands_on_shortcut_rows() {
             &snapshot,
             &test_deps(),
             sys_display(AppLanguage::SystemDefault),
+            &[],
+            &[],
         )
         .expect("vm builds");
         let keyboards = test_keyboards();
@@ -1653,6 +1657,8 @@ fn pad_press_on_game_row_leaves_capture_pending() {
             &snapshot,
             &test_deps(),
             sys_display(AppLanguage::SystemDefault),
+            &[],
+            &[],
         )
         .expect("vm builds");
         let keyboards = test_keyboards();
@@ -1720,6 +1726,8 @@ fn first_shortcut_capture_key(snapshot: &SettingsSnapshot) -> String {
             snapshot,
             &test_deps(),
             sys_display(AppLanguage::SystemDefault),
+            &[],
+            &[],
         )
         .expect("vm builds");
         let keyboards = test_keyboards();
@@ -1889,6 +1897,8 @@ fn analog_trigger_motion_ignores_noise_and_game_rows() {
             &snapshot,
             &test_deps(),
             sys_display(AppLanguage::SystemDefault),
+            &[],
+            &[],
         )
         .expect("vm builds");
         let keyboards = test_keyboards();
@@ -2022,6 +2032,8 @@ fn capture_round_trips_through_hardware_keys() {
             &snapshot,
             &test_deps(),
             sys_display(AppLanguage::SystemDefault),
+            &[],
+            &[],
         )
         .expect("vm builds");
         let keyboards = test_keyboards();
@@ -2122,6 +2134,8 @@ fn clear_binding_unbinds_without_keyboard() {
             &snapshot,
             &test_deps(),
             sys_display(AppLanguage::SystemDefault),
+            &[],
+            &[],
         )
         .expect("vm builds");
         let keyboards = test_keyboards();
@@ -2161,6 +2175,8 @@ fn number_rows_advertise_vm_accepted_bounds() {
             &snapshot,
             &test_deps(),
             sys_display(AppLanguage::SystemDefault),
+            &[],
+            &[],
         )
         .expect("vm builds");
         let keyboards = test_keyboards();
@@ -2206,6 +2222,8 @@ fn empty_slots_surface_live_issues() {
             &snapshot,
             &test_deps(),
             sys_display(AppLanguage::SystemDefault),
+            &[],
+            &[],
         )
         .expect("vm builds");
         draft_issues(&vm, sys_display(AppLanguage::SystemDefault))
@@ -2216,8 +2234,14 @@ fn empty_slots_surface_live_issues() {
     );
     // Japanese resolves the same kind through the localized template.
     let japanese = with_test_deps(|| {
-        let vm = build_vm(&snapshot, &test_deps(), sys_display(AppLanguage::Japanese))
-            .expect("vm builds");
+        let vm = build_vm(
+            &snapshot,
+            &test_deps(),
+            sys_display(AppLanguage::Japanese),
+            &[],
+            &[],
+        )
+        .expect("vm builds");
         draft_issues(&vm, sys_display(AppLanguage::Japanese))
     });
     assert!(
@@ -2429,14 +2453,17 @@ fn pad_screen_sets_deadzone_triggers_and_resets() {
         GamepadInfo {
             member: "pad:a".to_string(),
             name: "Pad A".to_string(),
+            vendor_id: Some(0x057E),
         },
         GamepadInfo {
             member: "pad:b".to_string(),
             name: "Pad B".to_string(),
+            vendor_id: Some(0x057E),
         },
         GamepadInfo {
             member: "pad:c".to_string(),
             name: "Pad C".to_string(),
+            vendor_id: Some(0x057E),
         },
     ];
     // Per-pad deadzone starts at the default.
@@ -2525,14 +2552,18 @@ fn order_of(pads: &[GamepadInfo]) -> Vec<String> {
 }
 
 fn two_pads() -> Vec<GamepadInfo> {
+    // Nintendo test pads: the shared helpers pin Nintendo caps, and
+    // per-layout coverage lives in the dedicated layout tests.
     vec![
         GamepadInfo {
             member: "pad:a".to_string(),
             name: "Pad A".to_string(),
+            vendor_id: Some(0x057E),
         },
         GamepadInfo {
             member: "pad:b".to_string(),
             name: "Pad B".to_string(),
+            vendor_id: Some(0x057E),
         },
     ]
 }
@@ -2582,10 +2613,12 @@ fn device_truth_sorts_vault_into_session_order() {
         GamepadInfo {
             member: "pad:b".to_string(),
             name: "Pad B".to_string(),
+            vendor_id: None,
         },
         GamepadInfo {
             member: "pad:a".to_string(),
             name: "Pad A".to_string(),
+            vendor_id: None,
         },
     ];
     let mut order = vec!["a".to_string(), "b".to_string()];
@@ -2598,10 +2631,12 @@ fn device_truth_sorts_vault_into_session_order() {
         GamepadInfo {
             member: "pad:c".to_string(),
             name: "Pad C".to_string(),
+            vendor_id: None,
         },
         GamepadInfo {
             member: "pad:a".to_string(),
             name: "Pad A".to_string(),
+            vendor_id: None,
         },
     ];
     let gamepads = ingest_truth(&pads, &mut order);
@@ -2619,10 +2654,12 @@ fn device_truth_appends_unseen_pads_to_order() {
         GamepadInfo {
             member: "pad:a".to_string(),
             name: "Pad A".to_string(),
+            vendor_id: None,
         },
         GamepadInfo {
             member: "pad:c".to_string(),
             name: "Pad C".to_string(),
+            vendor_id: None,
         },
     ];
     let (mut snapshot, _) = test_payload();
@@ -2680,6 +2717,7 @@ fn over_table_pads_have_no_screens_or_links() {
         .map(|n| GamepadInfo {
             member: format!("pad:p{n}"),
             name: format!("Pad {n}"),
+            vendor_id: None,
         })
         .collect();
     let payload = pad_payload(&test_payload().0, &pads);
@@ -3014,6 +3052,7 @@ fn stale_disconnect_keeps_live_pad_on_its_rank() {
     let live = vec![GamepadInfo {
         member: "pad:live-b".to_string(),
         name: "Pad B".to_string(),
+        vendor_id: None,
     }];
     let order = vec!["stale-a".to_string(), "live-b".to_string()];
     let payload = pad_payload_ordered(&snapshot, &live, &order);
@@ -4143,9 +4182,9 @@ fn finish_rejects_conflicting_bindings() {
     with_test_deps(|| {
         let mut snapshot = default_snapshot();
         snapshot.local.audio.master_volume_percent = 100;
-        assert!(finish_snapshot(&snapshot, None).is_ok());
+        assert!(finish_snapshot(&snapshot, None, &[], &[]).is_ok());
         snapshot.local.audio.latency_ms = 5;
-        assert!(finish_snapshot(&snapshot, None).is_err());
+        assert!(finish_snapshot(&snapshot, None, &[], &[]).is_err());
     });
 }
 
@@ -4359,6 +4398,39 @@ fn pad_rows_show_cap_prints_not_positions() {
         ),
     ] {
         assert_eq!(row(&payload, key).text, *want, "{key} shows its cap");
+    }
+}
+
+#[test]
+fn pad_rows_show_vendor_caps_per_pad() {
+    // Same control, three vendors: Sony symbols, Nintendo letters,
+    // unknown-vendor Xbox letters. Rank order follows pad_order.
+    let (mut snapshot, _) = test_payload();
+    snapshot.shared.input.gamepad.pad_ports[2].slot = Some(1);
+    let pads = vec![
+        GamepadInfo {
+            member: "pad:sony".to_string(),
+            name: "Sony Pad".to_string(),
+            vendor_id: Some(0x054C),
+        },
+        GamepadInfo {
+            member: "pad:nin".to_string(),
+            name: "Nintendo Pad".to_string(),
+            vendor_id: Some(0x057E),
+        },
+        GamepadInfo {
+            member: "pad:other".to_string(),
+            name: "Unknown Pad".to_string(),
+            vendor_id: None,
+        },
+    ];
+    let payload = pad_payload(&snapshot, &pads);
+    for (key, want) in [
+        ("pad.1.nes.nes.attachment.player1.nes.control.a", "×"),
+        ("pad.2.nes.nes.attachment.player2.nes.control.a", "B"),
+        ("pad.3.nes.nes.attachment.player2.nes.control.a", "A"),
+    ] {
+        assert_eq!(row(&payload, key).text, *want, "{key} shows its vendor cap");
     }
 }
 

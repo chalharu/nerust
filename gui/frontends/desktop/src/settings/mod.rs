@@ -127,6 +127,9 @@ pub(crate) struct Editor {
     /// Enumerated gamepad count at dialog open. Zero until the gamepad
     /// backend connects its first pad; hotplug while open does not refresh.
     pad_count: usize,
+    /// Session-order USB vendors snapshotted with the count above: entry
+    /// `i` names pad `i`'s button caps while the dialog is open.
+    pad_vendors: Vec<Option<u16>>,
     closed: Rc<Cell<bool>>,
     status: Store<String>,
     page: Store<String>,
@@ -144,12 +147,18 @@ impl Editor {
         adapter: &crate::SessionAdapter,
         executor: Rc<dyn Executor>,
     ) -> Result<Rc<Self>, String> {
+        let pad_vendors = adapter.pad_vendors();
+        let pad_layouts: Vec<nerust_input_traits::PadLayout> = pad_vendors
+            .iter()
+            .map(|vendor| nerust_input_traits::PadLayout::for_vendor(*vendor))
+            .collect();
         let vm = SettingsViewModel::new(
             snapshot.clone(),
             adapter.factories().to_vec(),
             adapter.supported_sample_rates(),
             Rc::new(FilesystemValidator),
             crate::terminal_language(),
+            pad_layouts,
         )
         .map_err(|error| error.to_string())?;
         let defaults = default_snapshot(adapter.factories());
@@ -159,6 +168,7 @@ impl Editor {
             baseline: Rc::new(RefCell::new(snapshot)),
             defaults,
             pad_count,
+            pad_vendors,
             closed: Rc::new(Cell::new(false)),
             status: Store::new(String::new(), executor.clone()),
             page: Store::new("general".into(), executor.clone()),

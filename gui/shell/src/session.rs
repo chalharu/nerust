@@ -206,6 +206,10 @@ struct PadTopology {
     /// Live frontend device id to pad guid. Dropped on disconnect; the
     /// order entry stays so a reconnect reuses the index.
     device_ids: HashMap<i32, PadGuid>,
+    /// USB vendor per pad guid, recorded on connect when the backend
+    /// knows it (gilrs reports it; Android JNI does not yet). Display
+    /// only: button-label layout resolution. Absent means unknown.
+    vendor_by_guid: HashMap<PadGuid, u16>,
     /// Per-pad game-button overrides: pad order index → position button →
     /// override plus the rebind-fused dpad context, so commits never
     /// walk the topology per edge. Sparse (only remapped pairs).
@@ -287,6 +291,7 @@ impl InputDept {
                 order_index: HashMap::new(),
                 descriptor_order: Vec::new(),
                 device_ids: HashMap::new(),
+                vendor_by_guid: HashMap::new(),
                 binding_map: Vec::new(),
                 shortcut_map: HashMap::new(),
             },

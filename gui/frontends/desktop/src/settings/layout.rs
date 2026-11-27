@@ -5,6 +5,7 @@ use nerust_gui_viewmodel::settings::{
     InputSettingsViewModel, SystemSettingsViewModel, ViewModelError,
     dto::{BindingSectionView, BindingValueView, ChoiceView, GamepadTabView, GeneralView},
 };
+use nerust_input_traits::PadLayout;
 use nerust_settings_core::{
     editor::CaptureTarget,
     i18n::{I18n, UiText},
@@ -620,7 +621,8 @@ pub(super) fn gamepads_blocks(
             let assignment = pad_assignment_radio(editor, pad);
             let deadzone = pad_deadzone_row(editor, pad);
             let dpad = pad_dpad_row(editor, pad);
-            let sections = pad_mapping_sections(editor, pad, capture, clear);
+            let layout = PadLayout::for_vendor(editor.pad_vendors.get(pad).copied().flatten());
+            let sections = pad_mapping_sections(editor, pad, capture, clear, layout);
             Keyed::new(
                 format!("pad-{pad}"),
                 Store::new(
@@ -814,12 +816,14 @@ fn pad_dpad_row(editor: &Rc<Editor>, pad: usize) -> Keyed<ChoiceRow> {
 /// Per-system pad mapping sections for one pad, resolved through the
 /// viewmodel in a single pass each. Refreshes only when the port table
 /// or one of the machine key tables changes; unrelated edits (volume
-/// sliders, notifications) stay silent.
+/// sliders, notifications) stay silent. `layout` names the pad's caps
+/// from its USB vendor.
 fn pad_mapping_sections(
     editor: &Rc<Editor>,
     pad: usize,
     capture: &Capture,
     clear: &Capture,
+    layout: PadLayout,
 ) -> Binding<Vec<Keyed<BindingPage>>> {
     let vm = &editor.vm;
     let inputs: Vec<_> = vm.inputs().to_vec();
@@ -841,7 +845,7 @@ fn pad_mapping_sections(
             .and_then(|row| row.port);
         inputs
             .iter()
-            .filter_map(|input| input.pad_sections(pad, slot))
+            .filter_map(|input| input.pad_sections(pad, slot, layout))
             .collect::<Vec<_>>()
     });
     binding_sections(sections, editor, capture, clear)
@@ -976,6 +980,10 @@ mod tests {
         assert_eq!(assignment.choices.get().len(), 3, "none plus two players");
         assert_eq!(assignment.selected.get(), "0", "pad 0 drives player 1");
         assert_eq!(snapshot.label.get(), "Gamepad 1");
+        assert_eq!(
+            snapshot.tab_label, "Gamepad 1",
+            "per-pad tab title snapshots the open-time label"
+        );
         assert!(
             !snapshot
                 .deadzone

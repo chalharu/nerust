@@ -80,7 +80,9 @@ impl super::AndroidFrontend {
         };
         log::info!("handle_settings_result: validating Android settings");
         let system_locale = bridge::with_settings(|state| state.system_locale);
-        match settings::finish_snapshot(&next, system_locale) {
+        let (gamepads, pad_order) =
+            bridge::with_settings(|state| (state.gamepads.clone(), state.pad_order.clone()));
+        match settings::finish_snapshot(&next, system_locale, &gamepads, &pad_order) {
             Ok(validated) => {
                 // The drawer and every Android string follow the saved
                 // choice: push the validated language, never a rejected

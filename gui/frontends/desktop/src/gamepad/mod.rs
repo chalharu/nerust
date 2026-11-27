@@ -99,6 +99,10 @@ pub(crate) fn map_axis(axis: GilrsAxis) -> Option<GamepadAxis> {
 /// suspended.
 pub(crate) struct GilrsPoller {
     gilrs: Gilrs,
+    /// USB vendor per frontend device id, recorded on connect for the
+    /// session's label-layout lookup. Kept across disconnects: the order
+    /// entry stays, so a reconnect reuses its naming.
+    vendors: std::collections::HashMap<i32, u16>,
 }
 
 /// Gilrs attachment slot: probe once, then stay live or stay parked.
@@ -130,7 +134,10 @@ impl GilrsPoller {
     /// instead of retrying noisily. Connect a pad and restart to pick it up.
     pub(crate) fn new() -> Option<Self> {
         match Gilrs::new() {
-            Ok(gilrs) => Some(Self { gilrs }),
+            Ok(gilrs) => Some(Self {
+                gilrs,
+                vendors: std::collections::HashMap::new(),
+            }),
             Err(error) => {
                 log::warn!("gilrs unavailable, gamepads parked as absent: {error:?}");
                 None
@@ -138,12 +145,27 @@ impl GilrsPoller {
         }
     }
 
-    fn convert(&self, id: GamepadId, event: GilrsEventType) -> Option<DeviceEvent> {
+    /// All known device vendors for the per-tick session sync. Usually
+    /// empty (no pads) or one entry; allocation-free when empty.
+    pub(crate) fn vendors(&self) -> Vec<(i32, u16)> {
+        self.vendors
+            .iter()
+            .map(|(device, vendor)| (*device, *vendor))
+            .collect()
+    }
+
+    fn convert(&mut self, id: GamepadId, event: GilrsEventType) -> Option<DeviceEvent> {
         let device = usize::from(id) as i32;
         let event = match event {
-            GilrsEventType::Connected => GamepadEvent::Connected {
-                descriptor: self.gilrs.gamepad(id).name().to_owned(),
-            },
+            GilrsEventType::Connected => {
+                let gamepad = self.gilrs.gamepad(id);
+                if let Some(vendor) = gamepad.vendor_id() {
+                    self.vendors.insert(device, vendor);
+                }
+                GamepadEvent::Connected {
+                    descriptor: gamepad.name().to_owned(),
+                }
+            }
             GilrsEventType::Disconnected => GamepadEvent::Disconnected,
             GilrsEventType::ButtonPressed(button, _) => GamepadEvent::Button {
                 button: map_button(button)?,

@@ -37,6 +37,30 @@ pub enum StandardButton {
     DpadRight,
 }
 
+/// Face-button naming by vendor. Positions stay canonical for bindings;
+/// only the displayed glyph follows the pad in hand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PadLayout {
+    /// Sony (× ○ □ △): VID `0x054C`.
+    Sony,
+    /// Nintendo (B/A/Y/X diamond): VID `0x057E`.
+    Nintendo,
+    /// Xbox and everything else (A/B/X/Y diamond).
+    Xbox,
+}
+
+impl PadLayout {
+    /// Vendor to naming. Unknown or absent VIDs fall back to Xbox, the
+    /// most common PC-pad diamond.
+    pub fn for_vendor(vendor: Option<u16>) -> Self {
+        match vendor {
+            Some(0x054C) => Self::Sony,
+            Some(0x057E) => Self::Nintendo,
+            _ => Self::Xbox,
+        }
+    }
+}
+
 impl StandardButton {
     /// Console-agnostic button for default binding resolution. Stick clicks
     /// have no console counterpart yet, so they stay unbound instead of

@@ -84,7 +84,7 @@ pub(super) fn project_fresh(
     capture: &CaptureSlot,
     truth: Projection,
 ) -> Result<ViewPayload, String> {
-    let vm = build_vm(snapshot, deps, truth.i18n)?;
+    let vm = build_vm(snapshot, deps, truth.i18n, truth.gamepads, truth.pad_order)?;
     Ok(project_payload(&vm, snapshot, capture, truth))
 }
 
@@ -814,8 +814,15 @@ fn shortcut_binding_text(
     pad: bool,
 ) -> String {
     let label = if pad {
-        nerust_settings_core::editor::current_pad_binding(snapshot, target)
-            .map(|button| nerust_settings_core::labels::pad_button_label(i18n, button))
+        // Shared pad column: any connected pad can fire these rows, so no
+        // single pad owns the cap — the default diamond names it.
+        nerust_settings_core::editor::current_pad_binding(snapshot, target).map(|button| {
+            nerust_settings_core::labels::pad_button_label(
+                i18n,
+                button,
+                nerust_input_traits::PadLayout::Xbox,
+            )
+        })
     } else {
         nerust_settings_core::editor::current_binding_key(snapshot, target)
             .map(|key| key.label().to_string())

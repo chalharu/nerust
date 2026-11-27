@@ -149,6 +149,7 @@ internal data class KeyboardRow(
 internal data class GamepadRow(
     val member: String,
     val name: String,
+    val vendorId: Int,
 )
 
 /** One passive scan feeding every device-truth consumer: keyboards,
@@ -187,7 +188,7 @@ private fun scanOneDevice(device: InputDevice): DeviceTruth? {
     val keyboard = keyboardRowFor(device)
     val gamepad =
         if (isCountedGamepad(device) && device.descriptor.isNotBlank()) {
-            GamepadRow("pad:${device.descriptor}", device.name)
+            GamepadRow("pad:${device.descriptor}", device.name, device.vendorId)
         } else {
             null
         }

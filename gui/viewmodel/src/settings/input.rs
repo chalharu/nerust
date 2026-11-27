@@ -1,7 +1,7 @@
 use std::{rc::Rc, sync::Arc};
 
 use nerust_core_traits::identity::SystemId;
-use nerust_input_traits::{AttachmentId, ControllerProfile, SlotInfo, StandardButton};
+use nerust_input_traits::{AttachmentId, ControllerProfile, PadLayout, SlotInfo, StandardButton};
 use nerust_settings_core::{
     bindings::descriptors::KeyboardBindingDescriptor,
     bindings::{conflicting_keys, descriptors::keyboard_binding_sections},
@@ -114,12 +114,13 @@ impl InputSettingsViewModel {
     pub fn pad_row_values(
         &self,
         requests: &[(CaptureTarget, Option<StandardButton>)],
+        layout: PadLayout,
     ) -> Vec<BindingValueView> {
         let current = self.editor.current();
         let i18n = super::state::display_i18n(&current);
         requests
             .iter()
-            .map(|(target, default)| pad_binding_value(&current, target, *default, i18n))
+            .map(|(target, default)| pad_binding_value(&current, target, *default, i18n, layout))
             .collect()
     }
 
@@ -128,7 +129,12 @@ impl InputSettingsViewModel {
     /// own player (unassigned pads map nothing — `None` keeps the
     /// machine off the block). The physical hat stays fixed (its switch
     /// lives with the pad settings), so dpad rows never render here.
-    pub fn pad_sections(&self, pad: usize, slot: Option<usize>) -> Option<BindingSectionView> {
+    pub fn pad_sections(
+        &self,
+        pad: usize,
+        slot: Option<usize>,
+        layout: PadLayout,
+    ) -> Option<BindingSectionView> {
         let slot = slot?;
         let view = self.view.get();
         let current = self.editor.current();
@@ -160,7 +166,8 @@ impl InputSettingsViewModel {
                 attachment: attachment.to_string(),
                 control: control.to_string(),
             };
-            let text = match pad_binding_value(&current, &target, binding.pad_default, i18n) {
+            let text = match pad_binding_value(&current, &target, binding.pad_default, i18n, layout)
+            {
                 BindingValueView::Unbound(label)
                 | BindingValueView::Bound(label)
                 | BindingValueView::Capturing(label) => label,
@@ -272,7 +279,9 @@ pub(super) fn binding_value(
         // Shortcut rows show both columns (`Space / Guide` means either
         // triggers, not both together); a lone pad shows its own cap.
         // Game rows never carry pads (`current_pad_binding` is `None`
-        // for them by construction).
+        // for them by construction). Shortcut bindings are not
+        // pad-specific (any connected pad can fire them), so the cap
+        // uses the default diamond.
         let pad = current_pad_binding(&state.draft, target);
         match (
             current_binding_key(&state.draft, target).map(|key| key.label()),
@@ -280,12 +289,12 @@ pub(super) fn binding_value(
         ) {
             (Some(key), Some(pad)) => BindingValueView::Bound(format!(
                 "{key} / {}",
-                nerust_settings_core::labels::pad_button_label(i18n, pad)
+                nerust_settings_core::labels::pad_button_label(i18n, pad, PadLayout::Xbox)
             )),
             (Some(key), None) => BindingValueView::Bound(key.to_string()),
-            (None, Some(pad)) => {
-                BindingValueView::Bound(nerust_settings_core::labels::pad_button_label(i18n, pad))
-            }
+            (None, Some(pad)) => BindingValueView::Bound(
+                nerust_settings_core::labels::pad_button_label(i18n, pad, PadLayout::Xbox),
+            ),
             (None, None) => BindingValueView::Unbound(i18n.text(UiText::Unbound)),
         }
     }
@@ -299,13 +308,14 @@ pub fn pad_binding_value(
     target: &CaptureTarget,
     default: Option<StandardButton>,
     i18n: I18n,
+    layout: PadLayout,
 ) -> BindingValueView {
     if state.capture_target.as_ref() == Some(target) {
         BindingValueView::Capturing(i18n.text(UiText::CapturePrompt))
     } else {
         match current_pad_game_binding(&state.draft, target).or(default) {
             Some(button) => BindingValueView::Bound(
-                nerust_settings_core::labels::pad_button_label(i18n, button),
+                nerust_settings_core::labels::pad_button_label(i18n, button, layout),
             ),
             None => BindingValueView::Unbound(i18n.text(UiText::Unbound)),
         }
@@ -537,6 +547,7 @@ mod tests {
             std::rc::Rc::new(crate::settings::NoopStoragePathValidator)
                 as std::rc::Rc<dyn crate::settings::StoragePathValidator>,
             nerust_settings_core::model::language::AppLanguage::English,
+            Vec::new(),
         )
         .unwrap();
         let input_vm = &vm.inputs()[0];
@@ -622,6 +633,7 @@ mod tests {
             std::rc::Rc::new(crate::settings::NoopStoragePathValidator)
                 as std::rc::Rc<dyn crate::settings::StoragePathValidator>,
             nerust_settings_core::model::language::AppLanguage::English,
+            Vec::new(),
         )
         .unwrap();
         let input_vm = &vm.inputs()[0];

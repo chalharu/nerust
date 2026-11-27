@@ -65,6 +65,13 @@ impl SessionAdapter {
         self.session.pad_descriptors().len()
     }
 
+    /// Session-order USB vendors aligned with `pad_descriptors`: entry
+    /// `i` is pad `i`'s vendor when its backend reported one. The settings
+    /// dialog snapshots this at open alongside the pad count.
+    pub(crate) fn pad_vendors(&self) -> Vec<Option<u16>> {
+        self.session.pad_vendors()
+    }
+
     pub(crate) fn ppu_live_begin(
         &self,
         generation: Option<u64>,
@@ -220,6 +227,11 @@ impl SessionAdapter {
             cuts = gamepad::drain(poller, |event| {
                 self.session.apply_gamepad_event(event.device, event.event)
             });
+            // Vendor truth rides the same tick: connect registered the
+            // device id above, so every known pad resolves by now.
+            for (device, vendor) in poller.vendors() {
+                self.session.note_pad_vendor(device, vendor);
+            }
         }
         gamepad::drain_motion(&mut *self.motion_source, |motion| {
             self.session.apply_motion(motion);

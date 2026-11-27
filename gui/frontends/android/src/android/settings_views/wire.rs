@@ -168,12 +168,15 @@ pub(crate) struct KeyboardInfo {
 
 /// One gamepad the Auto overlay gate counts (Kotlin `InputDevice`,
 /// same rule as the runtime gate). Member is the stable port-set id
-/// (`pad:<descriptor>`); name is the OS display string. Display-only
-/// device truth, never persisted.
+/// (`pad:<descriptor>`); name is the OS display string; vendor is the
+/// USB vendor id when the OS reports one (`None` on old clients).
+/// Display-only device truth, never persisted.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct GamepadInfo {
     pub member: String,
     pub name: String,
+    #[serde(default)]
+    pub vendor_id: Option<u16>,
 }
 
 /// Bare descriptor behind a `pad:` member id (or the raw descriptor).

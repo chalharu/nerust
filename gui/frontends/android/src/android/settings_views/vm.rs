@@ -20,6 +20,8 @@ use nerust_settings_core::{
 };
 use nerust_system_traits::factory::CoreFactory;
 
+use super::wire::GamepadInfo;
+
 /// View-model dependencies shared across JNI calls. `CoreFactory` is
 /// `Send + Sync`; the snapshot travels per call, so no editor state is kept.
 pub(crate) struct VmDeps {
@@ -78,6 +80,8 @@ pub(super) fn build_vm(
     snapshot: &SettingsSnapshot,
     deps: &VmDeps,
     i18n: I18n,
+    gamepads: &[GamepadInfo],
+    pad_order: &[String],
 ) -> Result<SettingsViewModel, String> {
     // Display copy only: the VM resolves every label through the snapshot
     // language, so SystemDefault is concretized here (the OS query sees
@@ -85,12 +89,24 @@ pub(super) fn build_vm(
     // writebacks restore it via `sync_snapshot_from_vm`.
     let mut resolved = snapshot.clone();
     resolved.shared.general.language = i18n.language();
+    // Session-order button layouts for validation messages, resolved from
+    // live USB vendors: conflict names match the caps on the pad itself.
+    let width = pad_order.len();
+    let mut pad_layouts = vec![nerust_input_traits::PadLayout::Xbox; width];
+    for (rank, layout) in pad_layouts.iter_mut().enumerate() {
+        let vendor = gamepads
+            .iter()
+            .find(|info| super::wire::bare_member(&info.member) == pad_order[rank])
+            .and_then(|info| info.vendor_id);
+        *layout = nerust_input_traits::PadLayout::for_vendor(vendor);
+    }
     SettingsViewModel::new(
         resolved,
         deps.factories.clone(),
         Arc::clone(&deps.rates),
         Rc::new(SafStorageValidator),
         AppLanguage::English,
+        pad_layouts,
     )
     .map_err(|error| error.to_string())
 }
