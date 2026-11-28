@@ -141,7 +141,7 @@ pub(crate) fn apply_command_to(
                 project_after_snapshot_edit(snapshot, deps, capture, truth, *system_locale)
             }
             WireOp::ClearBinding | WireOp::StartCapture => {
-                let vm = build_vm(snapshot, deps, i18n)?;
+                let vm = build_vm(snapshot, deps, i18n, truth.gamepads, truth.pad_order)?;
                 let sections = build_sections(&vm, snapshot, truth);
                 apply_capture_command(snapshot, deps, &vm, &sections, &command, capture, truth)?;
                 // Capture ops mutate through this same model (or not at
@@ -149,7 +149,7 @@ pub(crate) fn apply_command_to(
                 Ok(project_payload(&vm, snapshot, capture, truth))
             }
             WireOp::Set => {
-                let vm = build_vm(snapshot, deps, i18n)?;
+                let vm = build_vm(snapshot, deps, i18n, truth.gamepads, truth.pad_order)?;
                 let sections = build_sections(&vm, snapshot, truth);
                 if apply_set_command(snapshot, deps, &vm, &sections, &command, i18n)? {
                     // The view model holds the mutation: project from it.
@@ -725,10 +725,12 @@ fn copy_system_entry<K, V>(
 pub(crate) fn finish_snapshot(
     snapshot: &SettingsSnapshot,
     system_locale: Option<AppLanguage>,
+    gamepads: &[GamepadInfo],
+    pad_order: &[String],
 ) -> Result<SettingsSnapshot, Vec<String>> {
     with_vm_deps(|deps| {
         let i18n = resolve_display(snapshot.shared.general.language, system_locale);
-        let vm = build_vm(snapshot, deps, i18n)?;
+        let vm = build_vm(snapshot, deps, i18n, gamepads, pad_order)?;
         vm.finish()
             .map(|mut done| {
                 // The VM validated the display copy; the saved file keeps the

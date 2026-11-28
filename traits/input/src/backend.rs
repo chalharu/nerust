@@ -2,7 +2,7 @@
 //! capability reporting. Push edges (Android JNI) and poll readers
 //! (gilrs, hidraw) meet here, so the session never depends on a backend.
 
-use super::source::GamepadEvent;
+use super::source::{GamepadEvent, GamepadMotion};
 
 /// One polled batch item: the reader-local device id plus the event.
 /// Device ids are frontend-assigned (`i32`, matching the session map);
@@ -17,6 +17,16 @@ pub struct DeviceEvent {
 /// implement this; they construct `GamepadEvent` directly instead.
 pub trait PollSource {
     fn poll(&mut self) -> Vec<DeviceEvent>;
+}
+
+/// Motion sample source, at most one IMU frame per poll. The session keeps
+/// the latest sample only, so producers never queue: return `None` when no
+/// new sample arrived since the last poll. gilrs exposes no IMU on any OS,
+/// so desktop motion producers are platform readers (GameController
+/// profile on macOS, raw-HID readers elsewhere); Android feeds its sensor
+/// through the menu lane instead.
+pub trait MotionSource {
+    fn poll_motion(&mut self) -> Option<GamepadMotion>;
 }
 
 /// Rumble output sink, one per backend. Intensity is normalized 0.0-1.0
@@ -76,6 +86,29 @@ impl RumbleSink for FakeSink {
     }
 }
 
+/// Test-only motion source: replays one scripted sample per poll, then
+/// parks at `None`. Pins the poll-to-apply seam without hardware.
+#[derive(Debug, Default)]
+pub struct FakeMotionSource {
+    samples: Vec<GamepadMotion>,
+}
+
+impl FakeMotionSource {
+    pub fn new(samples: Vec<GamepadMotion>) -> Self {
+        Self { samples }
+    }
+}
+
+impl MotionSource for FakeMotionSource {
+    fn poll_motion(&mut self) -> Option<GamepadMotion> {
+        if self.samples.is_empty() {
+            None
+        } else {
+            Some(self.samples.remove(0))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,5 +156,18 @@ mod tests {
         assert_eq!(sink.calls, vec![(7, 0.0, 1.0)]);
         assert!(sink.capability(7).rumble);
         assert!(!sink.capability(7).motion);
+    }
+
+    #[test]
+    fn fake_motion_source_replays_one_sample_per_poll() {
+        use crate::source::GamepadMotion;
+        let sample = |x: f32| GamepadMotion {
+            gyro: [0.0; 3],
+            accel: [x, 0.0, 0.0],
+        };
+        let mut source = FakeMotionSource::new(vec![sample(1.0), sample(-1.0)]);
+        assert_eq!(source.poll_motion().map(|m| m.accel[0]), Some(1.0));
+        assert_eq!(source.poll_motion().map(|m| m.accel[0]), Some(-1.0));
+        assert_eq!(source.poll_motion(), None, "scripted samples run out");
     }
 }

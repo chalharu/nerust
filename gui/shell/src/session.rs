@@ -206,13 +206,17 @@ struct PadTopology {
     /// Live frontend device id to pad guid. Dropped on disconnect; the
     /// order entry stays so a reconnect reuses the index.
     device_ids: HashMap<i32, PadGuid>,
+    /// USB vendor per pad guid, recorded on connect when the backend
+    /// knows it (gilrs reports it; Android JNI does not yet). Display
+    /// only: button-label layout resolution. Absent means unknown.
+    vendor_by_guid: HashMap<PadGuid, u16>,
     /// Per-pad game-button overrides: pad order index → position button →
     /// override plus the rebind-fused dpad context, so commits never
     /// walk the topology per edge. Sparse (only remapped pairs).
     /// Absolute attachments (like keyboard bindings): an explicit entry
     /// wins over the pad's player-slot routing.
     /// Sized at every rebind to cover the live order and the settings
-    /// tables; missing rows read as defaults (no overrides, deadzone 8,
+    /// tables; missing rows read as defaults (no overrides, deadzone 10,
     /// hat on), so a pad that outgrows the last rebind still plays.
     binding_map: Vec<HashMap<StandardButton, PadOverride>>,
 
@@ -287,6 +291,7 @@ impl InputDept {
                 order_index: HashMap::new(),
                 descriptor_order: Vec::new(),
                 device_ids: HashMap::new(),
+                vendor_by_guid: HashMap::new(),
                 binding_map: Vec::new(),
                 shortcut_map: HashMap::new(),
             },
@@ -445,7 +450,7 @@ impl InputDept {
         gamepad: &nerust_settings_core::model::input::GamepadSettings,
     ) {
         // Same width rule as the binding map; missing rows read as
-        // defaults (deadzone 8, hat on), so late connects still play.
+        // defaults (deadzone 10, hat on), so late connects still play.
         let width = self
             .pads
             .order

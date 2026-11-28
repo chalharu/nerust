@@ -240,7 +240,14 @@ class SettingsActivity :
                 )
             }
             val gamepads = JSONArray()
-            scan.gamepads.forEach { gamepads.put(JSONObject().put("member", it.member).put("name", it.name)) }
+            scan.gamepads.forEach {
+                gamepads.put(
+                    JSONObject()
+                        .put("member", it.member)
+                        .put("name", it.name)
+                        .put("vendor_id", it.vendorId),
+                )
+            }
             val payload =
                 JSONObject()
                     .put("keyboards", keyboards)

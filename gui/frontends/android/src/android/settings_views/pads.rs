@@ -47,12 +47,15 @@ pub(super) fn build_pad_sections(
     let mut out = Vec::with_capacity(width);
     for rank in 0..width {
         let live = live_for_rank(gamepads, pad_order, rank);
+        let layout =
+            nerust_input_traits::PadLayout::for_vendor(live.and_then(|info| info.vendor_id));
         out.push(pad_rank_section(
             vm,
             snapshot,
             i18n,
             rank,
             live.map(|info| info.name.clone()),
+            layout,
         ));
     }
     out
@@ -68,6 +71,7 @@ fn pad_rank_section(
     i18n: I18n,
     rank: usize,
     live_name: Option<String>,
+    layout: nerust_input_traits::PadLayout,
 ) -> SectionWire {
     // Disconnected ranks keep every row except mapping captures (nothing
     // to press); their edits persist and restore on reconnect.
@@ -135,7 +139,7 @@ fn pad_rank_section(
     // the rows return with the pad.
     if let Some(slot) = slot.filter(|_| live) {
         for input in vm.inputs() {
-            rows.extend(pad_system_rows(input, &pad_id, rank, slot));
+            rows.extend(pad_system_rows(input, &pad_id, rank, slot, layout));
         }
     } else if slot.is_none() {
         rows.push(info_row(
@@ -167,6 +171,7 @@ fn pad_system_rows(
     pad_id: &str,
     rank: usize,
     slot: usize,
+    layout: nerust_input_traits::PadLayout,
 ) -> Vec<RowWire> {
     use nerust_gui_viewmodel::settings::dto::BindingValueView;
     let view = input.view.get();
@@ -224,6 +229,7 @@ fn pad_system_rows(
                 .iter()
                 .map(|(target, default, _)| (target.clone(), *default))
                 .collect::<Vec<_>>(),
+            layout,
         );
         let mut section_rows = Vec::new();
         for ((target, _, label), value) in pending.into_iter().zip(values) {

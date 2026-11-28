@@ -6,8 +6,9 @@ use nerust_input_traits::{AttachmentId, DigitalControlId, StandardButton};
 
 pub const IMPLICIT_PROFILE_ID: &str = "default";
 
-/// Default stick deadzone in percent.
-pub const DEFAULT_DEADZONE_PERCENT: u8 = 8;
+/// Default stick deadzone in percent. Must be one of `DEADZONE_STEPS:
+/// the choice rows show blank for off-list values.
+pub const DEFAULT_DEADZONE_PERCENT: u8 = 10;
 
 /// Hard ceiling for per-pad deadzones in percent: the schema range for
 /// file-loaded and direct sets. The settings UI offers `DEADZONE_STEPS`

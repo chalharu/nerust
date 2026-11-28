@@ -170,6 +170,7 @@ pub fn test_vm_with_default_shortcuts() -> SettingsViewModel {
         Rc::new(super::editor::NoopStoragePathValidator)
             as Rc<dyn super::editor::StoragePathValidator>,
         nerust_settings_core::model::language::AppLanguage::English,
+        Vec::new(),
     )
     .unwrap()
 }
@@ -193,6 +194,7 @@ pub fn test_vm() -> SettingsViewModel {
         Rc::new(super::editor::NoopStoragePathValidator)
             as Rc<dyn super::editor::StoragePathValidator>,
         nerust_settings_core::model::language::AppLanguage::English,
+        Vec::new(),
     )
     .unwrap()
 }

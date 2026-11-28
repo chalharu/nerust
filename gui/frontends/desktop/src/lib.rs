@@ -1,5 +1,6 @@
 mod debugger;
 mod error;
+mod gamepad;
 mod history;
 mod ppu;
 mod render;
@@ -82,6 +83,7 @@ struct MainHost {
     weak_view: panechord::backend::WeakView,
     picker_active: Rc<Cell<bool>>,
     settings_window: Rc<RefCell<Option<panechord::backend::WeakView>>>,
+    settings_editor: Rc<RefCell<Option<Rc<settings::Editor>>>>,
     history_window: Rc<RefCell<Option<panechord::backend::WeakView>>>,
     history_updates: Rc<RefCell<Option<Rc<history::Pane>>>>,
     debugger_window: Rc<RefCell<Option<panechord::backend::WeakView>>>,
@@ -414,8 +416,10 @@ impl MainHost {
         ));
         let released = self.application.clone();
         let closed = editor.clone();
+        let settings_editor = self.settings_editor.clone();
         view.on_close(Rc::new(move || {
             closed.close();
+            settings_editor.replace(None);
             if let Some(lease) = lease.borrow_mut().take() {
                 released.borrow_mut().release_pause(lease);
             }
@@ -424,6 +428,7 @@ impl MainHost {
         let close = weak.clone();
         let confirm = editor.clone();
         let cancel = editor.clone();
+        self.settings_editor.replace(Some(editor.clone()));
         if let Err(error) = self.host.register_view_with_hooks(
             &self.session,
             "settings",
@@ -443,6 +448,7 @@ impl MainHost {
             },
         ) {
             view.close();
+            self.settings_editor.replace(None);
             let _ = self.model.update(move |model| model.notice = Some(error));
             return false;
         }
@@ -515,31 +521,9 @@ impl MainHost {
                 let Some(key) = SessionAdapter::key(key) else {
                     return;
                 };
-                let result = match app.key_event(key, *pressed) {
-                    Some(KeyboardShortcut::Session(ShortcutAction::TogglePause)) => {
-                        app.toggle_pause();
-                        Ok(())
-                    }
-                    Some(KeyboardShortcut::Session(action)) => {
-                        SessionAdapter::session_action(action)
-                            .map_or(Ok(()), |action| app.execute(action).map(|_| ()))
-                    }
-                    Some(KeyboardShortcut::ToggleFullscreen) => {
-                        self.renderer.borrow().toggle_fullscreen();
-                        Ok(())
-                    }
-                    Some(KeyboardShortcut::OpenDebugger) => {
-                        drop(app);
-                        let dispatch = self.actions.borrow().clone();
-                        if let Some(dispatch) = dispatch {
-                            dispatch(view::Intent::Debugger);
-                        }
-                        return;
-                    }
-                    None => return,
-                };
+                let cut = app.key_event(key, *pressed);
                 drop(app);
-                let _ = self.model.update(move |model| model.notice = result.err());
+                self.route_cut(cut);
             }
             _ => {}
         }
@@ -607,6 +591,9 @@ impl MainHost {
         nerust_gui_application::ApplicationState,
         Result<Option<panechord::ImageFrame>, String>,
     ) {
+        // Peripheral edges land before the frame advance: same tick,
+        // same shortcut tail.
+        self.poll_peripherals();
         let mut app = self.application.borrow_mut();
         let profile = app.session().render_profile();
         let vsync = app.settings().local.video.presentation.vsync;
@@ -678,6 +665,73 @@ impl MainHost {
                 }
             });
         }
+    }
+
+    /// Desktop peripheral frame: one poll feeds capture, pads, motion,
+    /// and rumble; shortcut edges ride the keyboard-identical tail.
+    fn poll_peripherals(&self) {
+        let armed = self
+            .settings_editor
+            .borrow()
+            .clone()
+            .is_some_and(|editor| editor.pad_capture_armed());
+        let (captured, cuts) = {
+            let mut app = self.application.borrow_mut();
+            if app.state().closed {
+                return;
+            }
+            app.session_mut().poll_peripherals(armed)
+        };
+        if let Some(button) = captured
+            && let Some(editor) = self.settings_editor.borrow().clone()
+        {
+            editor.apply_captured_pad(button);
+        }
+        // Hotplug while the dialog is open: push the live pad list so new
+        // pads gain a block (and names/layouts refresh) without reopening.
+        // Skipped when the dialog is closed, and cheap when unchanged.
+        if let Some(editor) = self.settings_editor.borrow().clone() {
+            let (names, vendors) = {
+                let app = self.application.borrow();
+                (app.session().pad_names(), app.session().pad_vendors())
+            };
+            editor.sync_pads(names, vendors);
+        }
+        for cut in cuts {
+            self.route_cut(Some(cut));
+        }
+    }
+
+    /// Shared shortcut tail for keyboard edges and pad edges: pause toggle,
+    /// session actions, fullscreen, debugger. `None` (no edge) does nothing;
+    /// notice text surfaces the same way a key binding failure does.
+    fn route_cut(&self, cut: Option<KeyboardShortcut>) {
+        let Some(cut) = cut else {
+            return;
+        };
+        let mut app = self.application.borrow_mut();
+        let result = match cut {
+            KeyboardShortcut::Session(ShortcutAction::TogglePause) => {
+                app.toggle_pause();
+                Ok(())
+            }
+            KeyboardShortcut::Session(action) => SessionAdapter::session_action(action)
+                .map_or(Ok(()), |action| app.execute(action).map(|_| ())),
+            KeyboardShortcut::ToggleFullscreen => {
+                self.renderer.borrow().toggle_fullscreen();
+                Ok(())
+            }
+            KeyboardShortcut::OpenDebugger => {
+                drop(app);
+                let dispatch = self.actions.borrow().clone();
+                if let Some(dispatch) = dispatch {
+                    dispatch(view::Intent::Debugger);
+                }
+                return;
+            }
+        };
+        drop(app);
+        let _ = self.model.update(move |model| model.notice = result.err());
     }
 
     fn poll_history(&self) {
@@ -940,6 +994,7 @@ pub fn run(
             weak_view: view.downgrade(),
             picker_active: Rc::new(Cell::new(false)),
             settings_window: Rc::new(RefCell::new(None)),
+            settings_editor: Rc::new(RefCell::new(None)),
             history_window: Rc::new(RefCell::new(None)),
             history_updates: Rc::new(RefCell::new(None)),
             debugger_window: Rc::new(RefCell::new(None)),

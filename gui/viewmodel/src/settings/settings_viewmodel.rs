@@ -1,8 +1,8 @@
-use std::{collections::HashMap, rc::Rc, sync::Arc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
 
 use crate::settings::catalog::FactoryCatalog;
 use crate::settings::topology_adapter::build_topology;
-use nerust_input_traits::{InputAssignments, InputPorts};
+use nerust_input_traits::{InputAssignments, InputPorts, PadLayout};
 use nerust_settings_core::bindings::{BindingIndex, conflicting_keys_indexed};
 use nerust_settings_core::model::input::ShortcutAction;
 use nerust_settings_core::model::snapshot::SettingsSnapshot;
@@ -36,6 +36,10 @@ pub struct SettingsViewModel {
     pub capture: CaptureViewModel,
     pub shortcuts: ShortcutsViewModel,
     pub gamepads: GamepadViewModel,
+    /// Session-order button layouts for validation messages. Frontends
+    /// snapshot vendors at dialog open and push updates on hotplug;
+    /// validation reads the current list on every run.
+    pad_layouts: Rc<RefCell<Vec<PadLayout>>>,
     pub rumble_motion: RumbleMotionViewModel,
     systems: Vec<SystemSettingsViewModel>,
     inputs: Vec<InputSettingsViewModel>,
@@ -48,15 +52,23 @@ impl SettingsViewModel {
         supported_sample_rates: Arc<[u32]>,
         storage_validator: Rc<dyn StoragePathValidator>,
         system_fallback: nerust_settings_core::model::language::AppLanguage,
+        // Session-order button layouts for validation messages, snapshotted
+        // by the frontend at dialog open (vendors are live, not draft).
+        // Missing entries read as the default diamond.
+        pad_layouts: Vec<PadLayout>,
     ) -> Result<Self, super::catalog::CatalogError> {
         let catalog = FactoryCatalog::new(factories.clone())?;
 
+        // Shared with the validator closure so frontends can push
+        // hotplug updates without rebuilding the view model.
+        let pad_layouts = Rc::new(RefCell::new(pad_layouts));
+        let layouts = pad_layouts.clone();
         let editor = SettingsEditor::new(
             snapshot,
             catalog,
             supported_sample_rates,
             storage_validator,
-            validator,
+            move |state| validator(state, &layouts.borrow()),
             system_fallback,
         );
 
@@ -91,11 +103,18 @@ impl SettingsViewModel {
             capture,
             shortcuts,
             gamepads,
+            pad_layouts,
             rumble_motion,
             systems,
             inputs,
             editor,
         })
+    }
+
+    /// Replace the session-order button layouts (hotplug refresh).
+    /// Validation messages pick the new caps up on the next run.
+    pub fn set_pad_layouts(&self, layouts: Vec<PadLayout>) {
+        *self.pad_layouts.borrow_mut() = layouts;
     }
 
     pub fn snapshot(&self) -> SettingsSnapshot {
@@ -328,13 +347,13 @@ fn validate_factory_settings(
     }
 }
 
-fn validator(state: &super::EditorState) -> super::ValidationState {
+fn validator(state: &super::EditorState, layouts: &[PadLayout]) -> super::ValidationState {
     let mut issues = Vec::new();
     validate_storage_policy(state, &mut issues);
     validate_audio_settings(state, &mut issues);
     validate_notification_settings(state, &mut issues);
     validate_pad_shortcuts(state, &mut issues);
-    validate_pad_game_bindings(state, &mut issues);
+    validate_pad_game_bindings(state, &mut issues, layouts);
     validate_port_devices(state, &mut issues);
     for factory in state.catalog.all() {
         validate_factory_settings(state, factory, &mut issues);
@@ -363,6 +382,9 @@ fn validate_pad_shortcuts(state: &super::EditorState, issues: &mut Vec<super::Va
             scope: super::ValidationScope::Controllers,
             kind: super::ValidationIssueKind::PadConflict {
                 button,
+                // Shortcut bindings are not pad-specific: any connected
+                // pad can fire them, so the cap uses the default diamond.
+                layout: PadLayout::Xbox,
                 labels: names.iter().map(ToString::to_string).collect(),
             },
         });
@@ -376,9 +398,11 @@ fn validate_pad_shortcuts(state: &super::EditorState, issues: &mut Vec<super::Va
 fn validate_pad_game_bindings(
     state: &super::EditorState,
     issues: &mut Vec<super::ValidationIssue>,
+    layouts: &[PadLayout],
 ) {
     for (system, settings) in state.draft.shared.input.systems.iter() {
-        for entries in settings.pad_bindings.iter() {
+        for (pad, entries) in settings.pad_bindings.iter().enumerate() {
+            let layout = layouts.get(pad).copied().unwrap_or(PadLayout::Xbox);
             for (button, controls) in
                 nerust_settings_core::model::input::pad_game_binding_conflicts(entries)
             {
@@ -390,6 +414,7 @@ fn validate_pad_game_bindings(
                     scope: super::ValidationScope::Controllers,
                     kind: super::ValidationIssueKind::PadConflict {
                         button,
+                        layout,
                         labels: vec![format!("{}: {}", system, names.join(", "))],
                     },
                 });
@@ -439,6 +464,7 @@ mod tests {
                 Arc::new([]),
                 Rc::new(crate::settings::NoopStoragePathValidator),
                 nerust_settings_core::model::language::AppLanguage::English,
+                Vec::new(),
             )
             .unwrap()
         };
@@ -500,7 +526,7 @@ mod tests {
             supported_sample_rates,
             Rc::new(crate::settings::NoopStoragePathValidator)
                 as Rc<dyn crate::settings::StoragePathValidator>,
-            validator,
+            |state| validator(state, &[]),
             nerust_settings_core::model::language::AppLanguage::English,
         );
 

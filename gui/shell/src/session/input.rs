@@ -241,6 +241,30 @@ impl SessionHandle {
         &self.input.pads.descriptor_order
     }
 
+    /// USB vendor for one frontend device id, recorded when the backend
+    /// reports it at connect. Display only (button-label layout); unknown
+    /// backends never call, and their pads read `None`.
+    pub fn note_pad_vendor(&mut self, device_id: i32, vendor: u16) {
+        if let Some(guid) = self.input.pads.device_ids.get(&device_id).copied() {
+            self.input.pads.vendor_by_guid.insert(guid, vendor);
+        } else {
+            log::warn!("ignoring pad vendor for unknown device id {device_id}");
+        }
+    }
+
+    /// Session-order vendors aligned with [`Self::pad_descriptors`]:
+    /// `vendors[i]` is pad `i`'s USB vendor id, if its backend reported
+    /// one. The settings dialog snapshots this at open alongside the
+    /// pad count, so rows keep their pad's naming while open.
+    pub fn pad_vendors(&self) -> Vec<Option<u16>> {
+        self.input
+            .pads
+            .order
+            .iter()
+            .map(|guid| self.input.pads.vendor_by_guid.get(guid).copied())
+            .collect()
+    }
+
     /// Move every entry keyed by `old` source to `new`: one drain per
     /// table instead of collect-remove-insert triple loops.
     fn migrate_source_entries(&mut self, old: SourceId, new: SourceId) {

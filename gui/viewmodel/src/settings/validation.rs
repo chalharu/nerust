@@ -73,6 +73,9 @@ pub enum ValidationIssueKind {
     /// instead of the validator naming glyphs.
     PadConflict {
         button: nerust_input_traits::StandardButton,
+        /// Naming diamond for the button cap. Game rows carry their pad's
+        /// layout; pad-agnostic shortcut rows use the default.
+        layout: nerust_input_traits::PadLayout,
         labels: Vec<String>,
     },
     ExclusiveMember {
@@ -104,10 +107,14 @@ impl ValidationIssueKind {
             }
             Self::Placement { system, detail } => format!("{system}: {detail}"),
             Self::KeyConflict { key, labels } => format!("{key}: {}", labels.join(", ")),
-            Self::PadConflict { button, labels } => {
+            Self::PadConflict {
+                button,
+                layout,
+                labels,
+            } => {
                 format!(
                     "{}: {}",
-                    nerust_settings_core::labels::pad_button_label(i18n, *button),
+                    nerust_settings_core::labels::pad_cap(*button, *layout),
                     labels.join(", ")
                 )
             }

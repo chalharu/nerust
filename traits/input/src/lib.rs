@@ -10,7 +10,10 @@ mod profile;
 mod source;
 mod topology;
 
-pub use backend::{Capability, DeviceEvent, FakeSink, FakeSource, PollSource, RumbleSink};
+pub use backend::{
+    Capability, DeviceEvent, FakeMotionSource, FakeSink, FakeSource, MotionSource, PollSource,
+    RumbleSink,
+};
 pub use devices::{
     BUILTIN_KEYBOARD_MEMBER, Controller, ControllerCollection, ControllerHub, FieldEntry,
     GAMEPAD_MEMBER_PREFIX, KEYBOARD_MEMBER_PREFIX, Port, SimplePort, StrobeTarget,
@@ -31,8 +34,8 @@ pub use profile::{
     port_index_for_slot,
 };
 pub use source::{
-    GamepadAxis, GamepadEvent, GamepadMotion, PadGuid, SourceButtonId, SourceId, StandardButton,
-    apply_deadzone,
+    CARTRIDGE_ACCEL_MAX_G, GamepadAxis, GamepadEvent, GamepadMotion, NINTENDO_VENDOR_ID, PadGuid,
+    PadLayout, SONY_VENDOR_ID, SourceButtonId, SourceId, StandardButton, apply_deadzone,
 };
 pub use topology::{
     AnalogControlDescriptor, AttachmentSlotDescriptor, ControlDescriptor, DeviceDescriptor,

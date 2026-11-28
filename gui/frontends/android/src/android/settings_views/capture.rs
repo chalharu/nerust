@@ -75,7 +75,7 @@ pub(crate) fn apply_hardware_key(
                 (android_keycode_to_key(keycode), None)
             };
             if key.is_some() || button.is_some() {
-                let vm = build_vm(snapshot, deps, i18n)?;
+                let vm = build_vm(snapshot, deps, i18n, truth.gamepads, truth.pad_order)?;
                 vm.capture
                     .start_capture(target)
                     .map_err(|error| error.to_string())?;
@@ -113,7 +113,7 @@ fn commit_captured_button(
     target: CaptureTarget,
     button: StandardButton,
 ) -> Result<(Option<ViewPayload>, bool), String> {
-    let vm = build_vm(snapshot, deps, truth.i18n)?;
+    let vm = build_vm(snapshot, deps, truth.i18n, truth.gamepads, truth.pad_order)?;
     vm.capture
         .start_capture(target)
         .map_err(|error| error.to_string())?;

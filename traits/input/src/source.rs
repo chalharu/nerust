@@ -37,6 +37,41 @@ pub enum StandardButton {
     DpadRight,
 }
 
+/// Face-button naming by vendor. Positions stay canonical for bindings;
+/// only the displayed glyph follows the pad in hand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PadLayout {
+    Sony,
+    Nintendo,
+    /// Xbox diamond; also the fallback for unknown vendors.
+    #[default]
+    Xbox,
+}
+
+/// USB vendor ids that select a naming diamond.
+pub const SONY_VENDOR_ID: u16 = 0x054C;
+pub const NINTENDO_VENDOR_ID: u16 = 0x057E;
+
+impl PadLayout {
+    /// Vendor to naming. Unknown or absent VIDs fall back to Xbox, the
+    /// most common PC-pad diamond.
+    pub fn for_vendor(vendor: Option<u16>) -> Self {
+        match vendor {
+            Some(SONY_VENDOR_ID) => Self::Sony,
+            Some(NINTENDO_VENDOR_ID) => Self::Nintendo,
+            _ => Self::Xbox,
+        }
+    }
+
+    /// Session-order layouts from session-order vendor ids.
+    pub fn for_vendors(vendors: &[Option<u16>]) -> Vec<Self> {
+        vendors
+            .iter()
+            .map(|vendor| Self::for_vendor(*vendor))
+            .collect()
+    }
+}
+
 impl StandardButton {
     /// Console-agnostic button for default binding resolution. Stick clicks
     /// have no console counterpart yet, so they stay unbound instead of
@@ -178,6 +213,11 @@ pub struct GamepadMotion {
     pub gyro: [f32; 3],
     pub accel: [f32; 3],
 }
+
+/// Cartridge acceleration bound, g. Producers clamp to it; the session
+/// never does (single home for the desktop bound; the Android bridge
+/// enforces the same value from its generated contract).
+pub const CARTRIDGE_ACCEL_MAX_G: f32 = 8.0;
 
 #[cfg(test)]
 mod tests {

@@ -4,51 +4,53 @@
 //! HID topology (ports, slots, pad caps) lives here so viewmodels and
 //! frontends format through one home instead of each owning a copy.
 
-use nerust_input_traits::StandardButton;
+use nerust_input_traits::{PadLayout, StandardButton};
 
 use crate::{
     i18n::{I18n, UiText},
     model::language::AppLanguage,
 };
 
-/// Plain cap print for one pad button: the single home for the
+/// Cap print for one pad button: the single home for the
 /// position-to-glyph table. Positions are the binding identity
 /// (vendors transpose caps); this table only names what is printed.
-fn pad_button_plain(button: StandardButton) -> &'static str {
-    match button {
-        StandardButton::South => "A",
-        StandardButton::East => "B",
-        StandardButton::West => "X",
-        StandardButton::North => "Y",
-        StandardButton::Back => "Back",
-        StandardButton::Guide => "Guide",
-        StandardButton::Start => "Start",
-        StandardButton::Capture => "Capture",
-        StandardButton::LeftStick => "L3",
-        StandardButton::RightStick => "R3",
-        StandardButton::LeftShoulder => "LB",
-        StandardButton::RightShoulder => "RB",
-        StandardButton::LeftTrigger => "LT",
-        StandardButton::RightTrigger => "RT",
-        StandardButton::DpadUp => "D-pad up",
-        StandardButton::DpadDown => "D-pad down",
-        StandardButton::DpadLeft => "D-pad left",
-        StandardButton::DpadRight => "D-pad right",
-    }
-}
-
-pub fn pad_button_label(i18n: I18n, button: StandardButton) -> String {
+pub fn pad_cap(button: StandardButton, layout: PadLayout) -> &'static str {
     use StandardButton as Pad;
-    let position = match button {
-        Pad::South => Some(UiText::PosBottom),
-        Pad::East => Some(UiText::PosRight),
-        Pad::West => Some(UiText::PosLeft),
-        Pad::North => Some(UiText::PosTop),
-        _ => None,
-    };
-    match position {
-        Some(place) => format!("{} ({})", pad_button_plain(button), i18n.text(place)),
-        None => pad_button_plain(button).to_string(),
+    match button {
+        Pad::South => match layout {
+            PadLayout::Sony => "×",
+            PadLayout::Nintendo => "B",
+            PadLayout::Xbox => "A",
+        },
+        Pad::East => match layout {
+            PadLayout::Sony => "○",
+            PadLayout::Nintendo => "A",
+            PadLayout::Xbox => "B",
+        },
+        Pad::West => match layout {
+            PadLayout::Sony => "□",
+            PadLayout::Nintendo => "Y",
+            PadLayout::Xbox => "X",
+        },
+        Pad::North => match layout {
+            PadLayout::Sony => "△",
+            PadLayout::Nintendo => "X",
+            PadLayout::Xbox => "Y",
+        },
+        Pad::Back => "Back",
+        Pad::Guide => "Guide",
+        Pad::Start => "Start",
+        Pad::Capture => "Capture",
+        Pad::LeftStick => "L3",
+        Pad::RightStick => "R3",
+        Pad::LeftShoulder => "LB",
+        Pad::RightShoulder => "RB",
+        Pad::LeftTrigger => "LT",
+        Pad::RightTrigger => "RT",
+        Pad::DpadUp => "D-pad up",
+        Pad::DpadDown => "D-pad down",
+        Pad::DpadLeft => "D-pad left",
+        Pad::DpadRight => "D-pad right",
     }
 }
 
@@ -70,6 +72,17 @@ pub fn pad_label(i18n: I18n, index: usize) -> String {
     match i18n.language() {
         AppLanguage::Japanese => format!("ゲームパッド {pad}"),
         _ => format!("Gamepad {pad}"),
+    }
+}
+
+/// Pad heading: the OS device name when the rank is connected, else the
+/// rank label above. Ranks are stable (disconnects keep their order
+/// entry), so the fallback never misnames a reconnect.
+pub fn pad_display_name(i18n: I18n, index: usize, name: &str) -> String {
+    if name.is_empty() {
+        pad_label(i18n, index)
+    } else {
+        name.to_string()
     }
 }
 
@@ -99,18 +112,49 @@ mod tests {
         I18n::new(AppLanguage::English)
     }
 
+    #[test]
+    fn pad_display_name_prefers_device_name() {
+        assert_eq!(
+            pad_display_name(en(), 0, "Wireless Controller"),
+            "Wireless Controller"
+        );
+        assert_eq!(pad_display_name(en(), 0, ""), "Gamepad 1");
+        assert_eq!(
+            pad_display_name(I18n::new(AppLanguage::Japanese), 1, ""),
+            "ゲームパッド 2"
+        );
+    }
+
     fn ja() -> I18n {
         I18n::new(AppLanguage::Japanese)
     }
 
     #[test]
-    fn pad_buttons_pair_cap_with_plain_position() {
+    fn pad_buttons_follow_vendor_layout() {
         use StandardButton as Pad;
-        assert_eq!(pad_button_label(en(), Pad::South), "A (bottom)");
-        assert_eq!(pad_button_label(ja(), Pad::South), "A (下)");
-        assert_eq!(pad_button_label(en(), Pad::North), "Y (top)");
-        assert_eq!(pad_button_label(en(), Pad::Guide), "Guide");
-        assert_eq!(pad_button_label(ja(), Pad::LeftShoulder), "LB");
+        use nerust_input_traits::PadLayout as Layout;
+        assert_eq!(pad_cap(Pad::South, Layout::Sony), "×");
+        assert_eq!(pad_cap(Pad::East, Layout::Sony), "○");
+        assert_eq!(pad_cap(Pad::South, Layout::Nintendo), "B");
+        assert_eq!(pad_cap(Pad::East, Layout::Nintendo), "A");
+        assert_eq!(pad_cap(Pad::South, Layout::Xbox), "A");
+        assert_eq!(pad_cap(Pad::East, Layout::Xbox), "B");
+        assert_eq!(pad_cap(Pad::Guide, Layout::Sony), "Guide");
+        assert_eq!(pad_cap(Pad::LeftShoulder, Layout::Nintendo), "LB");
+    }
+
+    #[test]
+    fn layout_for_vendor_pins_sony_nintendo_and_fallback() {
+        use nerust_input_traits::PadLayout as Layout;
+        use nerust_input_traits::{NINTENDO_VENDOR_ID, SONY_VENDOR_ID};
+        assert_eq!(Layout::for_vendor(Some(SONY_VENDOR_ID)), Layout::Sony);
+        assert_eq!(
+            Layout::for_vendor(Some(NINTENDO_VENDOR_ID)),
+            Layout::Nintendo
+        );
+        assert_eq!(Layout::for_vendor(Some(0x045E)), Layout::Xbox);
+        assert_eq!(Layout::for_vendor(None), Layout::Xbox);
+        assert_eq!(Layout::default(), Layout::Xbox);
     }
 
     #[test]

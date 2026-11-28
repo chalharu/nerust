@@ -1,7 +1,7 @@
-use nerust_settings_core::model::input::{DEADZONE_MAX_PERCENT, DEADZONE_STEPS};
+use nerust_settings_core::model::input::DEADZONE_MAX_PERCENT;
 
 use super::{
-    dto::{ChoiceView, GamepadTabView, PadPortView},
+    dto::{GamepadTabView, PadPortView},
     editor::SettingsEditor,
     property::ReadOnlyObservableProperty,
 };
@@ -118,13 +118,6 @@ impl GamepadViewModel {
 fn project_view(state: &super::EditorState) -> GamepadTabView {
     let gamepad = &state.draft.shared.input.gamepad;
     GamepadTabView {
-        deadzone_choices: DEADZONE_STEPS
-            .iter()
-            .map(|step| ChoiceView {
-                value: *step,
-                label: format!("{step}%"),
-            })
-            .collect(),
         pads: (0..gamepad.pad_ports.len())
             .map(|index| {
                 let port = &gamepad.pad_ports[index];

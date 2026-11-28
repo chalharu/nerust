@@ -1,5 +1,6 @@
 use std::{collections::HashSet, path::Path, sync::Arc};
 
+use crate::gamepad;
 use nerust_core_traits::{audio::AudioBackendRegistry, identity::SystemId};
 use nerust_gui_application::{
     EmulationPort, FramePort, HistoryPort, KeyboardPort, MediaPort, SessionAction,
@@ -11,6 +12,7 @@ use nerust_gui_shell::{
     registry::SystemRegistry,
     session::{KeyboardShortcut, SessionHandle, access::PauseControl, commands::SessionCommand},
 };
+use nerust_input_traits::{GamepadEvent, MotionSource, PollSource, RumbleSink, StandardButton};
 use nerust_render_traits::{FrameBuffer, VideoRenderProfile};
 use nerust_system_traits::factory::load::{DynSystemLoadOptions, MediaObject, ResolvedLoadRequest};
 
@@ -22,6 +24,16 @@ pub struct SessionAdapter {
     pressed_keys: HashSet<nerust_input_traits::Key>,
     audio: Arc<AudioBackendRegistry>,
     osd: nerust_gui_shell::session::osd::OsdManager,
+    /// Frame-polled gilrs slot (evdev / WGI / IOHID behind one
+    /// vocabulary). Probes once, then stays live or stays parked.
+    gamepads: gamepad::GilrsSlot,
+    /// Rumble sink and motion producer for the peripheral tick. macOS
+    /// motion and rumble are live (GameController profile + haptics);
+    /// other platforms report honest absence until their drivers land.
+    rumble_sink: Box<dyn RumbleSink>,
+    motion_source: Box<dyn MotionSource>,
+    /// Edge state for the console-global rumble fan-out.
+    rumble_edge: gamepad::RumbleEdge,
 }
 
 impl SessionAdapter {
@@ -44,13 +56,19 @@ impl SessionAdapter {
         &self.session
     }
 
-    /// Enumerated gamepad count for the settings dialog. Zero until
-    /// the gamepad backend connects its first pad. Snapshot at dialog
-    /// open; hotplug while open does not refresh. The dialog only needs
-    /// the count (row labels derive from the rank), so descriptors stay
-    /// in the session.
-    pub(crate) fn gamepad_count(&self) -> usize {
-        self.session.pad_descriptors().len()
+    /// Session-order USB vendors aligned with `pad_descriptors`: entry
+    /// `i` is pad `i`'s vendor when its backend reported one. The settings
+    /// dialog snapshots these at open alongside the pad names and refreshes
+    /// both on hotplug.
+    pub(crate) fn pad_vendors(&self) -> Vec<Option<u16>> {
+        self.session.pad_vendors()
+    }
+
+    /// Session-order device names aligned with `pad_descriptors`, cloned
+    /// for the settings dialog snapshot. Ranks are stable: disconnects
+    /// keep their order entry, so a reconnect reuses its index.
+    pub(crate) fn pad_names(&self) -> Vec<String> {
+        self.session.pad_descriptors().to_vec()
     }
 
     pub(crate) fn ppu_live_begin(
@@ -180,6 +198,10 @@ impl SessionAdapter {
             pressed_keys: HashSet::new(),
             audio,
             osd: nerust_gui_shell::session::osd::OsdManager::new(),
+            gamepads: gamepad::GilrsSlot::Unprobed,
+            rumble_sink: gamepad::rumble_sink(),
+            motion_source: gamepad::motion_source(),
+            rumble_edge: gamepad::RumbleEdge::default(),
         })
     }
 
@@ -189,6 +211,49 @@ impl SessionAdapter {
 
     pub fn frame_counter(&self) -> u64 {
         self.session.tick_metrics().frame_counter
+    }
+
+    /// One frame of peripherals, polled exactly once: pad batch, at most
+    /// one motion sample, and the console-global rumble level. When
+    /// `capture_armed` the first pressed button is peeled off for the
+    /// settings dialog and never reaches gameplay; every other event in
+    /// the same batch still does, so hotplug/axis edges are never lost
+    /// during capture. Returns the capture button plus shortcut edges
+    /// for the keyboard-identical tail.
+    pub(crate) fn poll_peripherals(
+        &mut self,
+        capture_armed: bool,
+    ) -> (Option<StandardButton>, Vec<KeyboardShortcut>) {
+        let mut captured = None;
+        let mut cuts = Vec::new();
+        if let Some(poller) = self.gamepads.poller() {
+            for event in poller.poll() {
+                if capture_armed
+                    && captured.is_none()
+                    && matches!(event.event, GamepadEvent::Button { pressed: true, .. })
+                {
+                    if let GamepadEvent::Button { button, .. } = event.event {
+                        captured = Some(button);
+                    }
+                    continue;
+                }
+                if let Some(cut) = self.session.apply_gamepad_event(event.device, event.event) {
+                    cuts.push(cut);
+                }
+            }
+            for (device, vendor) in poller.take_new_vendors() {
+                self.session.note_pad_vendor(device, vendor);
+            }
+        }
+        if let Some(motion) = self.motion_source.poll_motion() {
+            self.session.apply_motion(motion);
+        }
+        self.rumble_edge
+            .sync(self.session.rumble_intensity(), &mut *self.rumble_sink);
+        if !self.loaded() || self.metrics().paused {
+            self.session.clear_input();
+        }
+        (captured, cuts)
     }
 
     pub fn factories(&self) -> &[Arc<dyn nerust_system_traits::factory::CoreFactory>] {
