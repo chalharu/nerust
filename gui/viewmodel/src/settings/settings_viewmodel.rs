@@ -1,4 +1,4 @@
-use std::{collections::HashMap, rc::Rc, sync::Arc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
 
 use crate::settings::catalog::FactoryCatalog;
 use crate::settings::topology_adapter::build_topology;
@@ -36,6 +36,10 @@ pub struct SettingsViewModel {
     pub capture: CaptureViewModel,
     pub shortcuts: ShortcutsViewModel,
     pub gamepads: GamepadViewModel,
+    /// Session-order button layouts for validation messages. Frontends
+    /// snapshot vendors at dialog open and push updates on hotplug;
+    /// validation reads the current list on every run.
+    pad_layouts: Rc<RefCell<Vec<PadLayout>>>,
     pub rumble_motion: RumbleMotionViewModel,
     systems: Vec<SystemSettingsViewModel>,
     inputs: Vec<InputSettingsViewModel>,
@@ -55,12 +59,16 @@ impl SettingsViewModel {
     ) -> Result<Self, super::catalog::CatalogError> {
         let catalog = FactoryCatalog::new(factories.clone())?;
 
+        // Shared with the validator closure so frontends can push
+        // hotplug updates without rebuilding the view model.
+        let pad_layouts = Rc::new(RefCell::new(pad_layouts));
+        let layouts = pad_layouts.clone();
         let editor = SettingsEditor::new(
             snapshot,
             catalog,
             supported_sample_rates,
             storage_validator,
-            move |state| validator(state, &pad_layouts),
+            move |state| validator(state, &layouts.borrow()),
             system_fallback,
         );
 
@@ -95,11 +103,18 @@ impl SettingsViewModel {
             capture,
             shortcuts,
             gamepads,
+            pad_layouts,
             rumble_motion,
             systems,
             inputs,
             editor,
         })
+    }
+
+    /// Replace the session-order button layouts (hotplug refresh).
+    /// Validation messages pick the new caps up on the next run.
+    pub fn set_pad_layouts(&self, layouts: Vec<PadLayout>) {
+        *self.pad_layouts.borrow_mut() = layouts;
     }
 
     pub fn snapshot(&self) -> SettingsSnapshot {

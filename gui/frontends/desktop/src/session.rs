@@ -56,20 +56,19 @@ impl SessionAdapter {
         &self.session
     }
 
-    /// Enumerated gamepad count for the settings dialog. Zero until
-    /// the gamepad backend connects its first pad. Snapshot at dialog
-    /// open; hotplug while open does not refresh. The dialog only needs
-    /// the count (row labels derive from the rank), so descriptors stay
-    /// in the session.
-    pub(crate) fn gamepad_count(&self) -> usize {
-        self.session.pad_descriptors().len()
-    }
-
     /// Session-order USB vendors aligned with `pad_descriptors`: entry
     /// `i` is pad `i`'s vendor when its backend reported one. The settings
-    /// dialog snapshots this at open alongside the pad count.
+    /// dialog snapshots these at open alongside the pad names and refreshes
+    /// both on hotplug.
     pub(crate) fn pad_vendors(&self) -> Vec<Option<u16>> {
         self.session.pad_vendors()
+    }
+
+    /// Session-order device names aligned with `pad_descriptors`, cloned
+    /// for the settings dialog snapshot. Ranks are stable: disconnects
+    /// keep their order entry, so a reconnect reuses its index.
+    pub(crate) fn pad_names(&self) -> Vec<String> {
+        self.session.pad_descriptors().to_vec()
     }
 
     pub(crate) fn ppu_live_begin(

@@ -61,6 +61,20 @@ fn default_snapshot(factories: &[Arc<dyn CoreFactory>]) -> SettingsSnapshot {
     }
 }
 
+/// Zip session-order names with vendors into pad entries. Lengths
+/// always match live (both derive from the order list); the get is
+/// defensive so a short vendor tail reads as unknown, never panics.
+fn pad_entries(names: Vec<String>, vendors: &[Option<u16>]) -> Vec<PadEntry> {
+    names
+        .into_iter()
+        .enumerate()
+        .map(|(index, name)| PadEntry {
+            name,
+            vendor: vendors.get(index).copied().flatten(),
+        })
+        .collect()
+}
+
 /// Copy one reset scope's backing fields wholesale from the defaults.
 fn apply_reset_scope(
     draft: &mut SettingsSnapshot,
@@ -117,6 +131,15 @@ impl StoragePathValidator for FilesystemValidator {
     }
 }
 
+/// One enumerated pad for the Gamepads page: the session-order device
+/// name plus the USB vendor when the backend reported one. Snapshot of
+/// the live session list, refreshed on hotplug while the dialog is open.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct PadEntry {
+    pub name: String,
+    pub vendor: Option<u16>,
+}
+
 pub(crate) struct Editor {
     vm: SettingsViewModel,
     executor: Rc<dyn Executor>,
@@ -124,12 +147,15 @@ pub(crate) struct Editor {
     /// Canonical defaults for the two reset buttons, built once from
     /// the installed factories (mirrors the Android reset source).
     defaults: SettingsSnapshot,
-    /// Enumerated gamepad count at dialog open. Zero until the gamepad
-    /// backend connects its first pad; hotplug while open does not refresh.
-    pad_count: usize,
-    /// Session-order USB vendors snapshotted with the count above: entry
-    /// `i` names pad `i`'s button caps while the dialog is open.
-    pad_vendors: Vec<Option<u16>>,
+    /// Live pad list (session-order names + vendors). The frame loop
+    /// pushes hotplug changes through `sync_pads`, which rebuilds the
+    /// per-pad blocks below; per-pad inner bindings follow the view
+    /// model live from there.
+    pads: Store<Vec<PadEntry>>,
+    /// Per-pad inner tab selections, owned here so the derived bindings
+    /// in each block stay writable for the dialog lifetime. Never shrinks:
+    /// ranks are stable, so index `i` always means pad `i`.
+    pad_system_selections: RefCell<Vec<Store<String>>>,
     closed: Rc<Cell<bool>>,
     status: Store<String>,
     page: Store<String>,
@@ -147,6 +173,7 @@ impl Editor {
         adapter: &crate::SessionAdapter,
         executor: Rc<dyn Executor>,
     ) -> Result<Rc<Self>, String> {
+        let pad_names = adapter.pad_names();
         let pad_vendors = adapter.pad_vendors();
         let pad_layouts = nerust_input_traits::PadLayout::for_vendors(&pad_vendors);
         let vm = SettingsViewModel::new(
@@ -159,13 +186,13 @@ impl Editor {
         )
         .map_err(|error| error.to_string())?;
         let defaults = default_snapshot(adapter.factories());
-        let pad_count = adapter.gamepad_count();
+        let pads = Store::new(pad_entries(pad_names, &pad_vendors), executor.clone());
         Ok(Rc::new(Self {
             vm,
             baseline: Rc::new(RefCell::new(snapshot)),
             defaults,
-            pad_count,
-            pad_vendors,
+            pads,
+            pad_system_selections: RefCell::new(Vec::new()),
             closed: Rc::new(Cell::new(false)),
             status: Store::new(String::new(), executor.clone()),
             page: Store::new("general".into(), executor.clone()),
@@ -229,7 +256,45 @@ impl Editor {
         self.controllers_page.close();
         self.systems_page.close();
         self.gamepads_page.close();
+        self.pads.close();
+        for selection in self.pad_system_selections.borrow().iter() {
+            selection.close();
+        }
         self.close_prompt.close();
+    }
+
+    /// Per-pad inner tab selection, owned here so the binding in each
+    /// block outlives the block builder. Never shrinks: ranks are stable,
+    /// so index `i` always means pad `i`.
+    pub(super) fn pad_system_selection(&self, pad: usize) -> Store<String> {
+        let mut selections = self.pad_system_selections.borrow_mut();
+        while selections.len() <= pad {
+            selections.push(Store::new(String::new(), self.executor.clone()));
+        }
+        selections[pad].clone()
+    }
+
+    /// Push the live session pad list into the dialog. Returns true when
+    /// the list changed (blocks rebuild through the pads binding).
+    /// Called once per frame while the dialog is open; cheap when closed
+    /// over (the caller skips it) and when nothing changed.
+    pub(crate) fn sync_pads(&self, names: Vec<String>, vendors: Vec<Option<u16>>) -> bool {
+        let entries = pad_entries(names, &vendors);
+        if self.pads.with(|pads| *pads == entries) {
+            return false;
+        }
+        self.vm
+            .set_pad_layouts(nerust_input_traits::PadLayout::for_vendors(
+                &entries.iter().map(|entry| entry.vendor).collect::<Vec<_>>(),
+            ));
+        {
+            let mut selections = self.pad_system_selections.borrow_mut();
+            while selections.len() < entries.len() {
+                selections.push(Store::new(String::new(), self.executor.clone()));
+            }
+        }
+        let _ = self.pads.update(move |pads| *pads = entries);
+        true
     }
     fn validation_status(&self) {
         let language = self.vm.general.view.get().language;
@@ -695,12 +760,7 @@ impl Editor {
             systems_selection: self
                 .systems_page
                 .bind(Clone::clone, Some(|page: &mut String, value| *page = value)),
-            gamepads_blocks: Binding::constant(layout::gamepads_blocks(
-                self,
-                &capture,
-                &clear,
-                self.pad_count,
-            )),
+            gamepads_blocks: layout::gamepads_blocks(self, &capture, &clear),
             gamepads_selection: self
                 .gamepads_page
                 .bind(Clone::clone, Some(|page: &mut String, value| *page = value)),

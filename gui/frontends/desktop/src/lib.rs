@@ -687,6 +687,16 @@ impl MainHost {
         {
             editor.apply_captured_pad(button);
         }
+        // Hotplug while the dialog is open: push the live pad list so new
+        // pads gain a block (and names/layouts refresh) without reopening.
+        // Skipped when the dialog is closed, and cheap when unchanged.
+        if let Some(editor) = self.settings_editor.borrow().clone() {
+            let (names, vendors) = {
+                let app = self.application.borrow();
+                (app.session().pad_names(), app.session().pad_vendors())
+            };
+            editor.sync_pads(names, vendors);
+        }
         for cut in cuts {
             self.route_cut(Some(cut));
         }

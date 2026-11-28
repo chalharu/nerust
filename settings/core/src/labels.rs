@@ -75,6 +75,17 @@ pub fn pad_label(i18n: I18n, index: usize) -> String {
     }
 }
 
+/// Pad heading: the OS device name when the rank is connected, else the
+/// rank label above. Ranks are stable (disconnects keep their order
+/// entry), so the fallback never misnames a reconnect.
+pub fn pad_display_name(i18n: I18n, index: usize, name: &str) -> String {
+    if name.is_empty() {
+        pad_label(i18n, index)
+    } else {
+        name.to_string()
+    }
+}
+
 /// Description for a controller-slot choice row: which port the row drives
 /// is in the row label, so the description only states the action.
 pub fn slot_description(i18n: I18n) -> String {
@@ -99,6 +110,19 @@ mod tests {
 
     fn en() -> I18n {
         I18n::new(AppLanguage::English)
+    }
+
+    #[test]
+    fn pad_display_name_prefers_device_name() {
+        assert_eq!(
+            pad_display_name(en(), 0, "Wireless Controller"),
+            "Wireless Controller"
+        );
+        assert_eq!(pad_display_name(en(), 0, ""), "Gamepad 1");
+        assert_eq!(
+            pad_display_name(I18n::new(AppLanguage::Japanese), 1, ""),
+            "ゲームパッド 2"
+        );
     }
 
     fn ja() -> I18n {
