@@ -260,16 +260,40 @@ templates:
           id: assignment
           content: {bind: {path: assignment}}
           content_template: choice_row
-        - type: ContentControl
-          id: deadzone
-          content: {bind: {path: deadzone}}
-          content_template: choice_row
+        - type: StackLayout
+          id: deadzone_row
+          orientation: Horizontal
+          gap: 12
+          children:
+            - type: Label
+              id: deadzone_label
+              style: {vertical_alignment: Center, placement: {width: 192}}
+              text: {bind: {path: deadzone_label, source: External}}
+            - type: Slider
+              id: deadzone
+              value: {bind: {path: deadzone, source: External, mode: TwoWay}}
+              min: 0
+              max: 90
+              step: 1
         - type: ContentControl
           id: dpad
           content: {bind: {path: dpad}}
           content_template: choice_row
+        - type: TabItems
+          id: pad_system_tabs
+          selected: {bind: {path: system_selection, source: External, mode: TwoWay}}
+          items: {bind: {path: system_pages, source: External}}
+          title: {bind: {path: label}}
+          item_template: gamepad_system_page
+  gamepad_system_page:
+    root:
+      type: StackLayout
+      id: pad_system_page
+      padding: 6
+      gap: 12
+      children:
         - type: Repeat
-          id: pad_sections
+          id: sections
           items: {bind: {path: sections, source: External}}
           gap: 12
           item_template: binding_page

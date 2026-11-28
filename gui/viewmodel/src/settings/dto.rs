@@ -2,6 +2,7 @@ use nerust_core_traits::identity::SystemId;
 use nerust_input_traits::{AttachmentId, StandardButton};
 use nerust_settings_core::editor::CaptureTarget;
 use nerust_settings_core::model::{
+    input::PadBinding,
     language::AppLanguage,
     local::{
         NotificationAreaMode, NotificationColor, NotificationPosition, RumbleTarget, ScalingMode,
@@ -143,6 +144,12 @@ pub struct InputTabView {
     /// Per-machine binding sections (controller attachments).
     pub sections: Vec<BindingSectionView>,
     pub conflicts: Vec<InputConflictView>,
+    /// Per-pad button overrides for this machine, indexed by
+    /// connection-order pad. The gamepad tab subscribes to the input
+    /// views, so pad writes must surface here: without this field the
+    /// projected view compares equal across pad edits and the gamepads
+    /// page never rebuilds.
+    pub pad_bindings: Vec<Vec<PadBinding>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -193,13 +200,11 @@ pub struct InputConflictView {
 // ── Gamepads ─────────────────────────────────────────────────────────
 
 /// Per-pad gamepads screen: each connection-order pad carries its own
-/// deadzone, D-pad switch, and player port. Steps stay tab-level
-/// (identical for every pad); values ride the pad rows. Row labels and
-/// port options are built by the frontend (the only reader), so the
-/// view carries no per-pad strings.
+/// deadzone, D-pad switch, and player port. Values ride the pad rows.
+/// Row labels and port options are built by the frontend (the only
+/// reader), so the view carries no per-pad strings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GamepadTabView {
-    pub deadzone_choices: Vec<ChoiceView<u8>>,
     pub pads: Vec<PadPortView>,
 }
 

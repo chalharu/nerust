@@ -447,6 +447,18 @@ fn project_view(state: &EditorState, factory: &dyn CoreFactory) -> InputTabView 
         .unwrap_or_else(|| Rc::new(build_topology(&assignments, slots_descs)));
     let sections = project_binding_sections(state, system_id.as_ref(), &topology, &assignments);
 
+    // Per-pad overrides live outside the keyboard sections, but the
+    // gamepad tab subscribes to this view: carry the pad tables so pad
+    // writes change the projected value and mapping rows refresh.
+    let pad_bindings = state
+        .draft
+        .shared
+        .input
+        .systems
+        .get(system_id.as_ref())
+        .map(|settings| settings.pad_bindings.clone())
+        .unwrap_or_default();
+
     // Build conflict messages — prefer cached result from validator
     let conflicts: Vec<InputConflictView> = state
         .conflicts_cache
@@ -466,6 +478,7 @@ fn project_view(state: &EditorState, factory: &dyn CoreFactory) -> InputTabView 
         slots,
         sections,
         conflicts,
+        pad_bindings,
     }
 }
 
